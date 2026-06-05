@@ -31,7 +31,7 @@ from db.supabase_client import get_client
 # Wrapper page already gated auth; just pick up the user.
 user = st.session_state.get("chai_user") or {}
 role = user.get("role", "collaborator")
-can_edit = role in ("admin", "reviewer", "collaborator")
+can_edit = role in ("super_user", "admin", "reviewer", "collaborator")
 sb = get_client()
 
 
