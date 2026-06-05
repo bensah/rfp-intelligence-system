@@ -137,6 +137,61 @@ _GLOBAL_CSS = f"""
   }}
   .rfpis-footer-brand strong {{ color: {THEME_NAVY}; }}
   .rfpis-footer-brand .ver  {{ color: {THEME_SLATE_LIGHT}; }}
+
+  /* ============================================================
+     PRINT MODE — make the Report (and any other page with charts)
+     fit on a standard letter / A4 landscape PDF without overflow.
+     The default Streamlit + Plotly combo lays out for wide screens
+     and the right-edge legends get clipped at the print page
+     boundary. These rules:
+       * Constrain block-container to the printable width.
+       * Shrink the in-chart typography so labels still read after
+         the page-scale-to-fit kicks in.
+       * Tell the browser to avoid breaking a chart across pages.
+       * Hide the sidebar / toolbar / buttons (already done in
+         views/report.py's own print block; duplicated here so any
+         page that prints gets clean output, not just the Report).
+     ============================================================ */
+  @media print {{
+    [data-testid="stSidebar"],
+    [data-testid="stToolbar"],
+    [data-testid="stHeader"],
+    [data-testid="stDecoration"],
+    section[data-testid="stSidebarNav"],
+    button,
+    .stDownloadButton,
+    details {{ display: none !important; }}
+
+    .block-container {{
+      padding: 0.4rem !important;
+      max-width: 100% !important;
+    }}
+
+    /* Charts: cap to page width + avoid mid-chart page breaks. */
+    [data-testid="stPlotlyChart"],
+    .stPlotlyChart {{
+      max-width: 100% !important;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }}
+    /* Plotly's internal SVG sizes itself; force the container to
+       shrink-to-fit so a long legend doesn't push the chart off-page. */
+    .js-plotly-plot, .plot-container {{
+      max-width: 100% !important;
+      width: 100% !important;
+    }}
+    /* Shrink in-chart text so first-name labels still render when
+       the page-scale-to-fit kicks in. */
+    .js-plotly-plot text {{ font-size: 9px !important; }}
+
+    /* Headings / metric tiles: keep with following content. */
+    h1, h2, h3, h4 {{ page-break-after: avoid; break-after: avoid; }}
+    [data-testid="stMetric"] {{ page-break-inside: avoid; break-inside: avoid; }}
+
+    /* Color-print everything (otherwise green / amber / red bars
+       come out grey on most browsers' default print settings). */
+    body {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+  }}
 </style>
 """
 
