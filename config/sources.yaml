@@ -1,0 +1,345 @@
+# RFP sources to scan. `method` is one of: rss, rest_json, html.
+# Phase 4 implements the first five entries; the rest are stubs for Phase 5.
+
+sources:
+  - name: NIH Guide
+    method: rss
+    url: https://grants.nih.gov/grants/guide/rss/
+    priority: 1
+  - name: FundsForNGOs
+    method: rss
+    url: https://www2.fundsforngos.org/feed/
+    priority: 1
+  - name: ReliefWeb
+    method: rss
+    url: https://reliefweb.int/jobs/funding/rss.xml
+    priority: 2
+  - name: Grants.gov
+    method: rest_json
+    url: https://api.grants.gov/v1/api/search2
+    priority: 1
+  - name: UNGM
+    method: html
+    url: https://www.ungm.org/Public/Notice
+    priority: 1
+  - name: BMGF Grand Challenges
+    method: html
+    url: https://gcgh.grandchallenges.org/challenges
+    priority: 1
+  - name: Unitaid
+    method: html
+    url: https://unitaid.org/call-for-proposals/
+    priority: 1
+  - name: Gavi
+    # 404 on /about-us/work-us/rfps-eois — Gavi moved their procurement
+    # landing page and now publishes tenders through a separate platform
+    # (gavi.org/business-opportunities / Gavi Vendor Portal) that requires
+    # a session. Until we find a stable scrape target, watch their
+    # vendor-portal announcements manually and submit via the Submit page.
+    method: manual
+    url: https://www.gavi.org/business-opportunities
+    priority: 2
+  - name: Wellcome Trust
+    method: html
+    url: https://wellcome.org/grant-funding
+    priority: 2
+  - name: Global Fund
+    # /funding-model/ entered a redirect loop on every probe — that page
+    # is a funding-model overview, not a calls listing anyway. Global Fund
+    # tenders are at /en/sourcing-management/ (procurement) which is JS-
+    # rendered + login-gated. Submit manually when announcements appear.
+    method: manual
+    url: https://www.theglobalfund.org/en/sourcing-management/
+    priority: 2
+  - name: World Bank Projects
+    # The /projects API returns ONGOING / completed projects, not open
+    # funding opportunities. We removed the handler in core/scraper.py
+    # because implementing-NGO deployments shouldn't pursue these via auto-scan. To restore a
+    # productive World Bank source, point at procurement.worldbank.org
+    # or the e-Procurement Marketplace and write a per-source parser.
+    method: manual
+    url: https://projects.worldbank.org/en/projects-operations/projects-home
+    priority: 2
+  - name: EC Funding (EU4Health/EDCTP)
+    # The EU Funding & Tenders Portal is an Angular SPA. Investigated
+    # 2026-06-04: Playwright renders only the navigation shell — result
+    # cards never materialise even with scroll-and-wait. The portal
+    # backs onto a public search API (api.tech.ec.europa.eu/search-api/
+    # prod/rest/search?apiKey=SEDIA) but the status filter lives in the
+    # POST body which Playwright can't read; every JSON-body and
+    # query-string filter syntax I tried returned the full 648K-row
+    # archive. Until a dedicated handler lands (task #35), the page-
+    # monitor will surface portal-wide HTML changes; per-call email
+    # alerts on the portal itself remain the highest-signal channel.
+    method: manual
+    url: https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/calls-for-proposals
+    priority: 1
+  - name: Google.org Impact Challenges
+    # SPA — content rendered client-side; scraper sees no anchors. The
+    # challenges page sporadically lists open calls but our generic
+    # extractor can't find them. Manual until per-donor parser exists.
+    method: manual
+    url: https://www.google.org/our-work/
+    priority: 3
+  - name: MIT Solve
+    # SPA — same situation as Google.org and EU Portal. Manual until a
+    # dedicated parser hits solve.mit.edu/api directly.
+    method: manual
+    url: https://solve.mit.edu/challenges
+    priority: 3
+  - name: GiveWell
+    # GiveWell publishes RFIs as Google Docs (non-indexable) and the
+    # /research/grants page shows AWARDED grants, not open calls.
+    # No reliable scrape target; submit RFIs manually via the Submit page
+    # when they appear (e.g. via mesamalaria.org or other aggregators).
+    method: manual
+    url: https://www.givewell.org/research/grants
+    priority: 3
+
+  # ============================================================================
+  # Extended donor list — added 2026-06-04 to broaden coverage. URLs are
+  # best-effort starting points; some may need adjustment if a donor moves
+  # their RFP page. Test individually with:
+  #     python scripts/run_scan.py --dry-run --source "<name>"
+  # If a source consistently returns 0, switch its method to "manual" and
+  # subscribe to the donor's email alerts instead.
+  # ============================================================================
+  - name: CEPI
+    # Verified via WebFetch 2026-06-04. Hub page for current calls; the
+    # scraper will pick up anchor links to individual call pages.
+    method: html
+    url: https://cepi.net/calls-for-proposals
+    priority: 1
+  - name: Mastercard Foundation
+    # Mastercard Foundation does not publish public RFPs — their model is
+    # invitation-based partnerships (their partners page errors out for
+    # public visitors). Subscribe to their newsletter for announcements.
+    method: manual
+    url: https://mastercardfdn.org/en/partners/
+    priority: 1
+  - name: Novo Nordisk Foundation
+    # User-discovered backend endpoint 2026-06-04 (via DevTools Network
+    # tab). The public /en/grant/ page is JS-rendered, but its tile widget
+    # calls this WordPress admin-ajax endpoint which returns the rendered
+    # HTML of the grant tiles directly. Our existing HTML scraper can
+    # extract anchors from it.
+    method: html
+    url: https://novonordiskfonden.dk/wp/wp-admin/admin-ajax.php?action=content_api&type=grants&status=open&page=1&forced_lang=en&funding_area=&sort=DESC
+    priority: 1
+  - name: Fund for Innovation in Development (FID)
+    # WebFetch returned ECONNREFUSED (possibly geo-blocked or temporarily
+    # down). Re-probe periodically; URL itself may still be correct.
+    method: manual
+    url: https://fund-innovation-development.org/en/calls/
+    priority: 1
+  - name: AFD (Agence Française de Développement)
+    method: html
+    url: https://www.afd.fr/en/calls-for-projects
+    priority: 1
+  - name: Open Society Foundations
+    # Verified via WebFetch 2026-06-04: page lists BOTH open and past.
+    # At the time of verification only 1 open opportunity was listed (its
+    # deadline had passed). Worth keeping as a low-volume source; the
+    # past-deadline gate naturally filters out the noise.
+    method: html
+    url: https://www.opensocietyfoundations.org/grants
+    priority: 2
+  - name: Hewlett Foundation
+    # Verified via WebFetch 2026-06-04: page intro says "grants once they
+    # have been reported to and approved by our board of directors". All
+    # listings show "Awarded: <date>" — past-grant database only, no
+    # open calls. Hewlett's funding is largely invitation-based.
+    method: manual
+    url: https://hewlett.org/grants/
+    priority: 3
+  - name: Rockefeller Foundation
+    # Verified via WebFetch 2026-06-04: page explicitly states "The
+    # Rockefeller Foundation does NOT accept unsolicited grant
+    # proposals." Listing is "active and past grants within the past
+    # five years" — there is no scrapable open-RFP page.
+    method: manual
+    url: https://www.rockefellerfoundation.org/grants/
+    priority: 3
+  - name: Packard Foundation
+    # Verified via WebFetch 2026-06-04: "Explore the last three years of
+    # our grantmaking" — past-grant database only. Open funding
+    # opportunities live elsewhere (/grantees/funding-opportunities/ is
+    # 404; needs human research to locate the correct path).
+    method: manual
+    url: https://www.packard.org/grantees/search-our-grants/
+    priority: 3
+  - name: African Development Bank (AfDB)
+    method: html
+    url: https://www.afdb.org/en/projects-and-operations/procurement
+    priority: 2
+  - name: EC INTPA (International Partnerships)
+    method: html
+    url: https://international-partnerships.ec.europa.eu/funding-and-technical-assistance_en
+    priority: 2
+  - name: EC DG ECHO (Humanitarian Aid)
+    # Verified via WebFetch 2026-06-04. Listings can be empty between
+    # annual cycles, but page structure works for anchor extraction.
+    method: html
+    url: https://civil-protection-humanitarian-aid.ec.europa.eu/funding-evaluations/financing-civil-protection/calls-proposals_en
+    priority: 2
+  - name: WHO Procurement
+    # WHO routes all open tenders through UNGM (which we already scan as
+    # a separate source). No useful WHO-direct scrape target. Keep manual.
+    method: manual
+    url: https://www.who.int/about/accountability/procurement
+    priority: 2
+  - name: WHO AHPSR (Alliance for Health Policy and Systems Research)
+    # User-provided URL 2026-06-04. Lists multi-year archive of CFPs;
+    # individual calls link to PDFs (deadlines in the PDF body, not the
+    # listing page). Worth scanning the listing titles — high
+    # signal-to-noise for our themes.
+    method: html
+    url: https://ahpsr.who.int/call-for-proposals
+    priority: 1
+  - name: UNICEF Supply Division
+    # Returned 403 Forbidden to our user-agent — UNICEF blocks unauth'd
+    # bots. Would need authenticated UNICEF supplier-portal access.
+    method: manual
+    url: https://www.unicef.org/supply/
+    priority: 2
+  - name: UNFPA Procurement
+    method: html
+    url: https://www.unfpa.org/procurement
+    priority: 2
+  - name: Chan Zuckerberg Initiative
+    # CZI grants page is a database of PAST awards, not open RFPs (their
+    # funding is mostly invitation-based + program-specific). Keep manual.
+    method: manual
+    url: https://chanzuckerberg.com/grants-ventures/grants/
+    priority: 2
+  - name: KfW Development Bank
+    # KfW publishes only procurement *regulations* publicly. Actual tenders
+    # are routed through ted.europa.eu / direct supplier invitations.
+    method: manual
+    url: https://www.kfw-entwicklungsbank.de/Service/Vergaberegularien/
+    priority: 3
+  - name: JICA Africa Hiroba
+    # User-provided URL 2026-06-04. Lists Africa-focused calls and
+    # initiatives (AUDA-NEPAD accelerator, TICAD9 thematic events, ABE
+    # Initiative). Better fit than the general JICA procurement portal,
+    # which requires supplier pre-registration.
+    method: html
+    url: https://www.jica.go.jp/english/africahiroba/index.html
+    priority: 3
+  - name: ELMA Philanthropies
+    method: html
+    url: https://www.elmaphilanthropies.org/
+    priority: 3
+  - name: Sida (Swedish International Development Cooperation Agency)
+    # Verified via WebFetch 2026-06-04. Active calls listed (e.g. Health/
+    # SRHR Research deadline 16 Aug 2026).
+    method: html
+    url: https://www.sida.se/en/for-partners/calls-and-announcements
+    priority: 3
+  - name: Sida calls portal
+    # User-provided URL 2026-06-04. Secondary Sida endpoint — Swedish-
+    # primary but ?lang=en toggle exposes English entries. Mostly CSO
+    # / training calls; signal-to-noise may be lower than the main
+    # /calls-and-announcements page above.
+    method: html
+    url: https://calls.sida.se/course/index.php?lang=en
+    priority: 3
+  - name: Fondation Pierre Fabre
+    # New donor added 2026-06-04. French foundation funding health
+    # access, dermatology, eHealth, and albinism support globally with
+    # strong sub-Saharan Africa focus. Verified yield: 18 found / 11 new
+    # on first scan — most productive new source.
+    method: html
+    url: https://www.fondationpierrefabre.org/en/current-initiatives/call-for-projects/
+    priority: 1
+
+  # ============================================================================
+  # Anti-bot / SPA / login-walled sources — kept as `manual` so the team
+  # has them in the catalogue but the scanner doesn't waste time. To
+  # convert any of these to scrapable status, find the underlying JSON /
+  # AJAX endpoint via browser DevTools → Network tab (Novo Nordisk
+  # pattern) OR add headless-browser (Playwright) support to the scraper.
+  # ============================================================================
+  - name: WHO ETDR Solicitations
+    # Salesforce-hosted (who.my.site.com) — returns 403 to bots. Browse
+    # manually for active GS_Solicitation__c entries. Public URL format:
+    #   https://who.my.site.com/etdr/s/gs-solicitation/GS_Solicitation__c/<ID>
+    method: manual
+    url: https://who.my.site.com/etdr/s/
+    priority: 1
+  - name: WHO TDR Grants (deprecated portal)
+    # User confirmed 2026-06-04 the TDR portal no longer publishes recent
+    # listings. Kept in catalogue as a reference; check periodically for
+    # revival.
+    method: manual
+    url: https://who.my.site.com/etdr/s/tdr-grant/TDR_Grant__c/Default
+    priority: 3
+  - name: DevelopmentAid Grants Aggregator
+    # Third-party aggregator covering many donors. Verified via Playwright
+    # 2026-06-04: Chromium-rendered listing yields ~100 grant anchors
+    # (/grants/view/<id>/<slug>) for the donor filter `donors=118388`
+    # (= World Health Organization HQ). Detail pages have rich structured
+    # data (status, deadline, budget, eligible countries, attachments).
+    # To extend coverage, add additional sources below with different
+    # `donors=<id>` filters or other facets (region, sector).
+    method: html_js
+    url: https://www.developmentaid.org/grants/search?hiddenAdvancedFilters=0&locations=16,41&sectors=11,87&applicantNationalities=16,41&languages=92
+    priority: 1
+
+  # ============================================================================
+  # Google Alerts — user-configurable RSS feeds. Set up at
+  # https://www.google.com/alerts. Google issues a per-alert RSS URL.
+  # Each new Google-indexed hit becomes a candidate. Empty feed at
+  # creation is normal — populates as Google crawls matching content.
+  # See docs/EXTENDING_SOURCES.md (Bucket D) for query suggestions.
+  # ============================================================================
+  - name: Google Alert — RFPs / CFPs / EOIs (Global Health)
+    # Query: 'request for proposal' 'expression of interests' 'call for
+    # proposals' 'request for proposals' 'request for information'
+    # 'grants' 'Funding Opportunity' Low and Middle Income Countries OR
+    # Cameroon OR Mali 'Health' 'Public health' 'Global Health'
+    method: rss
+    url: https://www.google.com/alerts/feeds/11375502939470857620/4042177278441426697
+    priority: 1
+  - name: Google Alert — Gov/Org RFPs (Global Health, no PDF)
+    # Query: site:.gov OR site:.org 'request for proposals' 'global
+    # health' 2026 -filetype:pdf
+    # Tight filter — government / nonprofit domains, excludes PDFs (our
+    # scraper doesn't read PDF bodies). High signal-to-noise.
+    method: rss
+    url: https://www.google.com/alerts/feeds/11375502939470857620/16113984356459273159
+    priority: 1
+
+# Negative filter — donors the team has explicitly ruled out of scope.
+# Lifted verbatim from the Excel Dropdown sheet (column "Removed (out of scope)").
+out_of_scope_donors:
+  - "la Caixa Fdn"
+  - "AIIB"
+  - "AsDB"
+  - "BEF"
+  - "BMP"
+  - "CAMFED"
+  - "CGF"
+  - "CIDCA"
+  - "CIF"
+  - "DC"
+  - "DFAT"
+  - "EBRD"
+  - "EIB"
+  - "FF"
+  - "FdF"
+  - "GBCF"
+  - "GCF"
+  - "GEF"
+  - "GMH"
+  - "HHMI"
+  - "IADB"
+  - "IFAD"
+  - "IMF"
+  - "INGKA Fdn"
+  - "IsDB"
+  - "JF"
+  - "KFAED"
+  - "LE"
+  - "LF"
+  - "MAVA"
