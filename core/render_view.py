@@ -177,6 +177,20 @@ def render_view(view_name: str) -> None:
         except StopException:
             # View called st.stop() — abort the view only, page continues.
             pass
+        except Exception as exc:
+            # Without this catch, a crash inside a tab-rendered view
+            # leaves the tab completely blank — the exception is
+            # swallowed by Streamlit's tab rendering and the user sees
+            # an empty body with no clue what went wrong. Render the
+            # error visibly so debugging doesn't require the Cloud
+            # logs panel.
+            import traceback as _tb
+            st.error(
+                f"⚠ View **`{view_name}`** crashed: "
+                f"`{type(exc).__name__}: {exc}`"
+            )
+            with st.expander("Full traceback", expanded=False):
+                st.code(_tb.format_exc(), language="text")
     finally:
         # Restore widget wrappers. If a rerun interrupts before this
         # finally runs, the widget wrappers leak — but they only auto-

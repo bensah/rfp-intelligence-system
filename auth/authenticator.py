@@ -114,7 +114,16 @@ def login_gate() -> Optional[dict[str, Any]]:
 
     When not authenticated, also renders self-service Sign Up + Forgot
     Password expanders directly under the login form so a first-time
-    visitor can register without admin help."""
+    visitor can register without admin help.
+
+    Cookie-restore quirk: streamlit-authenticator fetches the session
+    cookie via a JS component round-trip. On the FIRST script run after
+    a hard refresh, the JS hasn't returned yet → `authentication_status`
+    is None → user incorrectly sees the login form despite holding a
+    valid cookie. We force one rerun (capped per browser session) to
+    give the cookie manager time to settle before falling through to
+    the login form.
+    """
     auth = get_authenticator()
     try:
         auth.login(location="main")
@@ -122,6 +131,16 @@ def login_gate() -> Optional[dict[str, Any]]:
         auth.login("Login", "main")  # back-compat with older API
 
     status = st.session_state.get("authentication_status")
+
+    if status is None and not st.session_state.get("_auth_cookie_settled"):
+        # First post-refresh render — let the cookie manager finish its
+        # JS round-trip, then rerun once. The flag prevents an infinite
+        # loop when there genuinely is no cookie (anonymous visitor).
+        st.session_state["_auth_cookie_settled"] = True
+        import time as _t
+        _t.sleep(0.4)
+        st.rerun()
+
     if status is False:
         _hide_sidebar_on_login()
         st.error("Username or password is incorrect.")
@@ -132,6 +151,9 @@ def login_gate() -> Optional[dict[str, Any]]:
         st.info("Please log in to continue.")
         _render_signup_and_reset_forms()
         return None
+    # Successful auth — clear the cookie-settled flag so the next
+    # logout-then-login cycle gets a fresh wait window.
+    st.session_state.pop("_auth_cookie_settled", None)
 
     email = st.session_state.get("username")
     name = st.session_state.get("name")
