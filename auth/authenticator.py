@@ -110,7 +110,11 @@ def get_authenticator() -> stauth.Authenticate:
 
 
 def login_gate() -> Optional[dict[str, Any]]:
-    """Render the login form. Returns the authenticated user dict, or None."""
+    """Render the login form. Returns the authenticated user dict, or None.
+
+    When not authenticated, also renders self-service Sign Up + Forgot
+    Password expanders directly under the login form so a first-time
+    visitor can register without admin help."""
     auth = get_authenticator()
     try:
         auth.login(location="main")
@@ -119,10 +123,14 @@ def login_gate() -> Optional[dict[str, Any]]:
 
     status = st.session_state.get("authentication_status")
     if status is False:
+        _hide_sidebar_on_login()
         st.error("Username or password is incorrect.")
+        _render_signup_and_reset_forms()
         return None
     if status is None:
+        _hide_sidebar_on_login()
         st.info("Please log in to continue.")
+        _render_signup_and_reset_forms()
         return None
 
     email = st.session_state.get("username")
@@ -204,8 +212,100 @@ def ensure_logged_in() -> Optional[dict[str, Any]]:
         # the user navigates away from Home.
         user = st.session_state["app_user"]
         _render_sidebar_user(user)
+        _gate_must_change_password(user)
         return user
-    return login_gate()
+    user = login_gate()
+    if user:
+        _gate_must_change_password(user)
+    return user
+
+
+# ---------------------------------------------------------------------------
+# First-login password gate
+# ---------------------------------------------------------------------------
+# When admin creates a user OR resets their password, the users row is
+# stamped with `must_change_password = true`. Until the user picks a
+# new password, every page render runs through this gate. The gate
+# renders an inline "Change your password" form on top of whatever page
+# they're trying to visit, then `st.stop()`s — they cannot access any
+# app content until the flag is cleared.
+
+def _gate_must_change_password(user: dict[str, Any]) -> None:
+    """Block all page rendering while user.must_change_password is True.
+
+    Renders a self-contained Change Password form. Once the user
+    successfully changes their password, the flag is cleared, the
+    session_state copy is updated, and st.rerun() lets the original
+    page render normally."""
+    if not user or not user.get("must_change_password"):
+        return
+
+    # Hide the sidebar nav while gated — same UX as the login screen,
+    # so the user can't escape the gate by clicking another page.
+    _hide_sidebar_on_login()
+
+    st.title("🔐 Set a new password")
+    st.warning(
+        "You're using a temporary password issued by an administrator. "
+        "Choose a new password before continuing."
+    )
+
+    with st.form("force_change_pw", clear_on_submit=True):
+        current_pw = st.text_input(
+            "Current (temporary) password", type="password",
+            key="fcp_current")
+        new_pw = st.text_input(
+            "New password", type="password", key="fcp_new",
+            help="At least 8 characters, mix of letters and digits.")
+        confirm_pw = st.text_input(
+            "Confirm new password", type="password", key="fcp_confirm")
+        submit = st.form_submit_button(
+            "🔐 Save new password", type="primary")
+
+    if submit:
+        # Re-fetch the user's stored hash — session copy could be stale.
+        fresh = _fetch_user(user.get("email") or "")
+        stored_hash = (fresh or {}).get("password_hash") or ""
+        errs: list[str] = []
+        try:
+            ok = bool(current_pw) and bcrypt.checkpw(
+                current_pw.encode("utf-8"), stored_hash.encode("utf-8"))
+        except Exception:
+            ok = False
+        if not ok:
+            errs.append("Current password is incorrect.")
+        if not new_pw or len(new_pw) < 8:
+            errs.append("New password must be at least 8 characters.")
+        if new_pw and (not any(c.isalpha() for c in new_pw)
+                       or not any(c.isdigit() for c in new_pw)):
+            errs.append("New password must include letters AND digits.")
+        if new_pw != confirm_pw:
+            errs.append("Confirm password does not match.")
+        if new_pw and new_pw == current_pw:
+            errs.append("New password must be different from the "
+                         "temporary one.")
+
+        if errs:
+            st.error("Please fix:\n\n- " + "\n- ".join(errs))
+        else:
+            try:
+                get_client().table("users").update({
+                    "password_hash": hash_password(new_pw),
+                    "must_change_password": False,
+                    "password_changed_at":
+                        datetime.now(timezone.utc).isoformat(),
+                }).eq("email", user.get("email")).execute()
+                clear_credentials_cache()
+                # Update the session copy so the same render doesn't
+                # bounce back through the gate.
+                user["must_change_password"] = False
+                st.session_state["app_user"] = user
+                st.success("Password updated. Loading the app…")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Save failed: {exc}")
+
+    st.stop()
 
 
 def require_role(user: dict[str, Any], roles: list[str]) -> bool:
@@ -216,3 +316,202 @@ def require_role(user: dict[str, Any], roles: list[str]) -> bool:
 
 def hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Hide the sidebar on the login screen
+# ---------------------------------------------------------------------------
+# Visitors who aren't logged in shouldn't see page names they can't
+# access. Inject CSS only in the not-authenticated branches of
+# `login_gate()` so the hide rule disappears the moment the user
+# authenticates and the regular app renders.
+def _hide_sidebar_on_login() -> None:
+    st.markdown(
+        """
+        <style>
+          [data-testid="stSidebar"],
+          section[data-testid="stSidebar"],
+          [data-testid="collapsedControl"] {
+            display: none !important;
+          }
+          /* Reclaim the full viewport width for the login form. */
+          [data-testid="stMainBlockContainer"],
+          .block-container {
+            max-width: 720px !important;
+            margin: 0 auto !important;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Self-service forms shown under the login screen
+# ---------------------------------------------------------------------------
+# Sign Up: any visitor can register but the account lands inactive
+# (is_active=false) so they can't log in until admin / super_user
+# approves them from the Manage Users tab.
+#
+# Forgot Password: writes a row to `password_reset_requests`. Admin
+# picks it up from the Manage Users banner and issues a temp password
+# via the existing reset action. No email infrastructure required —
+# the request is the notification.
+
+def _render_signup_and_reset_forms() -> None:
+    """Render Sign Up + Forgot Password expanders below the login form.
+
+    Both are collapsed by default so the login UX stays uncluttered for
+    returning users. Expand-on-click reveals the form."""
+    st.markdown(" ")  # small spacer below the login form
+
+    # Open the Sign Up expander automatically when a sign-up has just
+    # completed, so the user sees the confirmation block in place of
+    # the form (the form is hidden once `_signup_done_for` is set).
+    signup_done_for = st.session_state.get("_signup_done_for")
+    with st.expander("📝 Sign Up — new account",
+                     expanded=bool(signup_done_for)):
+        if signup_done_for:
+            # ─── Post-success state: form HIDDEN, confirmation shown ──
+            st.success(
+                f"✅ **Account created for `{signup_done_for}`.** "
+                f"Your access is **pending admin approval** — you'll "
+                f"be able to log in once an admin activates your "
+                f"account."
+            )
+            st.caption(
+                "A confirmation email was sent (if our email service is "
+                "configured). If you don't see it, contact your admin "
+                "directly. You can close this panel and log in once "
+                "you've been approved."
+            )
+            if st.button("Sign up another account",
+                          key="signup_reset_btn"):
+                st.session_state.pop("_signup_done_for", None)
+                for k in ("su_email", "su_name", "su_pw", "su_confirm",
+                          "su_dept"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+        else:
+            # ─── Pre-success state: render the form ───────────────────
+            st.caption(
+                "Create an account. Your access will be **pending "
+                "admin approval** — you'll be able to log in once an "
+                "admin activates your account and assigns a role."
+            )
+            with st.form("signup_form", clear_on_submit=False):
+                sc1, sc2 = st.columns(2)
+                su_email = sc1.text_input("Email *", key="su_email")
+                su_name = sc2.text_input("Full name *", key="su_name")
+                sc3, sc4 = st.columns(2)
+                su_pw = sc3.text_input(
+                    "Password *", type="password", key="su_pw",
+                    help="At least 8 characters, mix of letters and "
+                         "digits.")
+                su_confirm = sc4.text_input(
+                    "Confirm password *", type="password",
+                    key="su_confirm")
+                su_dept = st.text_input("Department (optional)",
+                                          key="su_dept")
+                su_submit = st.form_submit_button(
+                    "➕ Create account", type="primary")
+
+            if su_submit:
+                errs: list[str] = []
+                if not su_email or "@" not in (su_email or ""):
+                    errs.append("Valid email is required.")
+                if not su_name:
+                    errs.append("Full name is required.")
+                if not su_pw or len(su_pw) < 8:
+                    errs.append("Password must be at least 8 "
+                                 "characters.")
+                if su_pw and (not any(c.isalpha() for c in su_pw)
+                               or not any(c.isdigit() for c in su_pw)):
+                    errs.append("Password must include letters AND "
+                                 "digits.")
+                if su_pw != su_confirm:
+                    errs.append("Passwords do not match.")
+                # Email uniqueness — fail-soft if Supabase blips.
+                if not errs:
+                    try:
+                        existing = get_client().table("users") \
+                            .select("email") \
+                            .eq("email", su_email.strip()) \
+                            .limit(1).execute().data or []
+                        if existing:
+                            errs.append("An account with this email "
+                                         "already exists. Use Forgot "
+                                         "password if you can't log "
+                                         "in.")
+                    except Exception:
+                        pass
+
+                if errs:
+                    st.error("Please fix:\n\n- " + "\n- ".join(errs))
+                else:
+                    try:
+                        get_client().table("users").insert({
+                            "email": su_email.strip(),
+                            "name":  su_name.strip(),
+                            "role":  "collaborator",
+                            "department":
+                                (su_dept or "").strip() or None,
+                            "password_hash": hash_password(su_pw),
+                            "is_active": False,  # pending approval
+                            "must_change_password": False,
+                            "password_changed_at":
+                                datetime.now(timezone.utc).isoformat(),
+                        }).execute()
+                        clear_credentials_cache()
+                    except Exception as exc:
+                        st.error(f"Sign-up failed: {exc}")
+                        return
+                    # Best-effort confirmation email — silent on error
+                    # so a transient SMTP issue doesn't block the
+                    # signup itself.
+                    try:
+                        from core.user_emails import (
+                            send_signup_received_email,
+                        )
+                        send_signup_received_email(
+                            to_email=su_email.strip(),
+                            to_name=su_name.strip(),
+                        )
+                    except Exception:
+                        pass
+                    # Flag completion + rerun to swap the form for the
+                    # confirmation block.
+                    st.session_state["_signup_done_for"] = \
+                        su_email.strip()
+                    st.rerun()
+
+    with st.expander("🔐 Forgot password?", expanded=False):
+        st.caption(
+            "Enter your email and an admin will issue you a temporary "
+            "password. They'll share it with you out-of-band (Signal / "
+            "verbal — not email). You'll be forced to set a new password "
+            "on your next login."
+        )
+        with st.form("forgot_pw_form", clear_on_submit=True):
+            fp_email = st.text_input("Email", key="fp_email")
+            fp_submit = st.form_submit_button("📨 Request password reset")
+
+        if fp_submit:
+            if not fp_email or "@" not in fp_email:
+                st.error("Enter a valid email.")
+            else:
+                try:
+                    # Don't reveal whether the email exists (anti-
+                    # enumeration). Insert the request either way; admin
+                    # will see it and decide whether to action.
+                    get_client().table("password_reset_requests").insert({
+                        "email": fp_email.strip(),
+                    }).execute()
+                    st.success(
+                        "✅ Request received. An admin will contact you "
+                        "with a temporary password. (No confirmation is "
+                        "sent by the app — please reach out to your "
+                        "team admin directly.)"
+                    )
+                except Exception as exc:
+                    st.error(f"Could not record request: {exc}")

@@ -2,8 +2,8 @@
 
 Monday Business Development Team call notes. Per-week view: rota at top,
 "Add a note" button opens a modal. Unresolved actions carry forward as a
-proper table with headers on top and a Status toggle (Not Achieved ↔
-Achieved). Notes for the selected week display below.
+proper table with headers on top and a Status toggle (Not Resolved ↔
+Resolved). Notes for the selected week display below.
 """
 from __future__ import annotations
 
@@ -283,7 +283,7 @@ else:
         row[4].markdown(str(n.get("deadline") or "—"))
 
         resolved = bool(n.get("is_resolved"))
-        label = "✓ Achieved" if resolved else "Not Achieved"
+        label = "✓ Resolved" if resolved else "Not Resolved"
         # Key prefix `status_yes_` / `status_no_` lets our CSS target the
         # button's wrapper (.stKey-status_yes_<id>) for tint colors.
         key_prefix = "status_yes_" if resolved else "status_no_"

@@ -36,8 +36,11 @@ if not user:
     st.stop()
 
 from core.app_header import render_app_header  # noqa: E402
+from core import permissions  # noqa: E402
 render_app_header()
-if user.get("role") != "admin":
+# Gate to admin OR super_user (super is admin + more, per the role
+# hierarchy; permissions.is_admin() returns True for both).
+if not permissions.is_admin(user):
     st.error("Admins only.")
     st.stop()
 
@@ -744,7 +747,7 @@ with tab_data:
                 ("actions",       "area",   "Actions / Recommendations"),
                 ("owner",         "text",   "Owner"),
                 ("deadline",      "date",   "Due date"),
-                ("is_resolved",   "bool",   "Status: Achieved?"),
+                ("is_resolved",   "bool",   "Status: Resolved?"),
                 ("rfp_uid",       "text",   "Linked RFP UID"),
             ],
             "caption": (
