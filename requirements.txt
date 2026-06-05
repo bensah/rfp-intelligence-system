@@ -21,3 +21,7 @@ playwright>=1.40.0
 # (`core/llm_extractor.py`). Activated only if ANTHROPIC_API_KEY is set
 # in .env (gitignored). Falls back gracefully to regex if absent.
 anthropic>=0.34.0
+# Optional — word cloud on the Report dashboard (Section 1 — keyword
+# cloud expander). Falls back to a top-keywords table when missing.
+wordcloud>=1.9.0
+matplotlib>=3.7.0
