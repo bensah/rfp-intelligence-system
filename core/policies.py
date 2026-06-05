@@ -21,8 +21,8 @@ from core.settings import get_setting, set_setting
 POLICIES_KEY = "scan_policies"
 
 
-# Sensible defaults seeded from the the organisation BDT reference deployment —
-# admin can tune from the UI per deploying org.
+# Sensible defaults for a typical global-health implementing-NGO
+# deployment. Admin can tune from the UI per deploying org.
 DEFAULT_POLICIES: dict[str, Any] = {
     "countries": {
         # Primary countries the deploying org works in. RFPs explicitly

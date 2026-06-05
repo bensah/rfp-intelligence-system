@@ -34,7 +34,7 @@ The rest is hype for our scale. Here's the breakdown.
    ├── Deadline gate (explicit + URL-year fallback)
    ├── Country gate (inclusive-eligibility aware)
    ├── Theme gate
-   └── the organisation decision tree
+   └── Deploying-org decision tree
         ↓
 [ core/scan_pipeline.py ]
    ├── find_duplicates (link / title-similarity / triple-key)
@@ -64,7 +64,7 @@ Our regex-based extraction is fine for explicit phrases like "Deadline: April 10
 - The deadline is in a table row without a label
 - "Applications open from 1 Jan to 31 Mar 2027" (two dates, no label)
 - Eligibility hidden in a paragraph: "Open to non-profits in the WHO African region"
-- the organisation role signals buried in a multi-paragraph "Who can apply" section
+- Applicant-role signals buried in a multi-paragraph "Who can apply" section
 - Cross-language pages (we currently reject non-Latin instead of translating)
 
 **Fix that would actually help: Claude API call per enriched candidate.** ~$0.001 per call with Haiku, ~$0.01 with Sonnet. For ~125 candidates per scan that's $0.10-1.20 per scan.

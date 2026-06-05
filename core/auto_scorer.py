@@ -466,31 +466,31 @@ _CRITERION_DB_VOCAB = {"Yes": "True", "No": "False", "Partial": "Partial"}
 # Signals that route a candidate to "Proceed as Sub" instead of straight
 # "Proceed".
 #
-# NOTE: The logic below encodes the REFERENCE-DEPLOYMENT business rules
-# (the organisation BDT — Cameroon country office of the organisation Inc., a US 501(c)(3)).
-# When RFPIS goes multi-tenant, this signal list should move into a
-# per-org config table (`organizations.sub_role_signals`) and stop
-# living in code. For now it ships with the the organisation BDT rules verbatim.
+# NOTE: The logic below encodes reference-deployment business rules
+# patterned on a typical implementing-NGO with a US-parent + country-
+# office structure. When RFPIS goes multi-tenant, this signal list
+# should move into a per-org config table
+# (`organizations.sub_role_signals`) and stop living in code. For now
+# it ships hard-coded; deploying orgs can override by editing this list.
 #
-# the organisation BDT structure:
-#   * the organisation Inc. is a US-registered 501(c)(3) — the global parent entity.
-#   * 35+ semi-autonomous country offices (including the organisation Cameroon) can
-#     apply directly OR route through the organisation US.
+# Typical implementing-NGO structure assumed here:
+#   * Parent org registered as a US 501(c)(3) — eligible for US-only RFPs.
+#   * Country offices apply directly OR route through the US parent.
 # So "US-based applicant required" is NOT an exclusion — it's a directive
-# to apply via the organisation US, with the country team (e.g. Cameroon) as sub. The
-# Cameroon-facing app surfaces that as "Proceed as sub" so the team knows
-# they will be downstream of the organisation US on this one.
+# to apply via the US entity, with the country team as sub. The app
+# surfaces that as "Proceed as sub" so the team knows they'll be
+# downstream of HQ on this one.
 #
-# For research-institution / university requirements: the organisation is an
-# implementation-focused NGO, not a research-degree-granting institution,
-# so we'd need a research-org partner as Prime with the organisation sub. Same Sub
+# For research-institution / university requirements: an implementing
+# NGO is typically not a research-degree-granting institution, so it
+# would need a research-org partner as Prime with NGO sub. Same Sub
 # routing.
 #
-# For EU/Canada/etc. residency requirements: the organisation lacks a local 501(c)
-# equivalent in most of those geographies, so it would partner with a
-# regional NGO as Prime — again the organisation as Sub.
+# For EU/Canada/etc. residency requirements: the deploying org may lack
+# a local 501(c) equivalent in most of those geographies, so it would
+# partner with a regional NGO as Prime — again as Sub.
 _SUB_ROLE_SIGNALS = (
-    # Research / academic — the organisation is not a research institution
+    # Research / academic — typical implementing NGO is not a research institution
     "academic institution",
     "academic institutions",
     "research institution",
@@ -502,12 +502,12 @@ _SUB_ROLE_SIGNALS = (
     "hochschule",
     "ihe",  # Institutions of Higher Education (US fed grants term)
     "phd-granting",
-    # US residency — the organisation Cameroon goes sub to the organisation US (which IS US-based)
+    # US residency — country office goes sub to US-parent (which IS US-based)
     "u.s.-based",
     "us-based",
     "based in the united states",
     "domestic applicants only",
-    # EU / Canada / other — the organisation would partner with a regional lead
+    # EU / Canada / other — partner with a regional lead
     "based in the eu",
     "based in europe",
     "european institution",
@@ -517,14 +517,14 @@ _SUB_ROLE_SIGNALS = (
 
 
 def _detect_applicant_role(text: str) -> str:
-    """Default the organisation to **Prime**. Switch to **Sub** when the RFP text
-    contains signals that route the organisation Cameroon downstream of another
-    applicant — most commonly:
+    """Default the applicant role to **Prime**. Switch to **Sub** when
+    the RFP text contains signals that route the deploying org
+    downstream of another applicant — most commonly:
 
-      * Research / university requirement → the organisation sub to a research-org Prime
-      * US-residency requirement → the organisation Cameroon sub to the organisation US (which IS
-        a US 501(c)(3))
-      * Other regional residency (EU, Canada) → the organisation sub to a regional NGO
+      * Research / university requirement → sub to a research-org Prime
+      * US-residency requirement → country-office sub to US-parent (which
+        IS a US 501(c)(3))
+      * Other regional residency (EU, Canada) → sub to a regional NGO
 
     Critically: these are NOT exclusions — they're sub-routing signals.
     The recommendation stays Proceed; only the role flips."""
@@ -537,7 +537,7 @@ def _detect_applicant_role(text: str) -> str:
 
 
 def _decision_from_criteria(values: dict[str, str]) -> str:
-    """the organisation-specific decision tree (overrides scorer.auto_recommendation):
+    """Deploying-org decision tree (overrides scorer.auto_recommendation):
 
       * Any MUST = No (False)           → Decline
       * ≥2 MUSTs = Partial               → Decline
@@ -735,7 +735,7 @@ def auto_score(
     # configurable shape; the function below is the executor.
     values = _apply_scoring_rules(values, candidate, policies, text, criteria_rules)
 
-    # NEW decline_flags rule (per the organisation policy):
+    # decline_flags rule (per the reference deployment's policy):
     #   Decline flag = NO only when all 5 MUSTs == Yes AND ≥3 of 4 PREFERs == Yes
     #   Decline flag = YES otherwise
     all_musts_yes = all(values.get(m) == "Yes" for m in _MUST_KEYS)
@@ -747,7 +747,7 @@ def auto_score(
     scorer_input = {k: values[k] for k in values if k != "feasibility"}
     score, _legacy_rec = score_submission(scorer_input, decline_flags)
 
-    # Recommendation is now driven by the explicit the organisation decision tree:
+    # Recommendation is driven by the explicit decision tree:
     # ANY MUST=No → Decline; ≥2 MUSTs=Partial → Decline; 1 Partial → Park;
     # all MUSTs=Yes + ≥3 PREFERs=Yes → Proceed; else → Park.
     rec = _decision_from_criteria(values)
@@ -782,8 +782,9 @@ def auto_score(
     if rec in ("Proceed", "Proceed as sub") and not candidate.get("submission_deadline"):
         rec = "Park"
 
-    # Default the organisation role = Prime unless RFP text demands a research /
-    # region-specific institution (in which case the organisation applies as Sub).
+    # Default applicant role = Prime unless RFP text demands a research /
+    # region-specific institution (in which case the deploying org
+    # applies as Sub).
     applicant_role = _detect_applicant_role(text)
     # Use "Proceed as sub" so the Tracking page can distinguish role-aware
     # rows from straight Proceed ones.
