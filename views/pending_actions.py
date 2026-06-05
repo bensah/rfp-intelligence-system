@@ -115,7 +115,14 @@ st.caption(
 # ===========================================================================
 st.markdown("### 🗓️ BDT Meetings")
 
-@st.cache_data(ttl=15)
+# NOTE: @st.cache_data was removed from this and the engagements fetch
+# below on 2026-06-06. When this view runs via render_view's exec(), the
+# cached function's qualified name resolves as `views.pending_actions.
+# _fetch_meetings` but Streamlit's cache occasionally couldn't hash the
+# exec namespace which silently returned a "missing argument" warning —
+# the section rendered as a blank placeholder. Direct calls are fine
+# for a per-render fetch of ~tens of rows.
+
 def _fetch_meetings() -> pd.DataFrame:
     res = (
         get_client()
@@ -133,7 +140,15 @@ def _fetch_meetings() -> pd.DataFrame:
     return df
 
 
-df_m = _fetch_meetings()
+try:
+    df_m = _fetch_meetings()
+except Exception as exc:
+    st.error(
+        f"⚠ Could not load meeting_logs: `{type(exc).__name__}: {exc}`. "
+        f"Confirm the table exists in Supabase and RLS is disabled."
+    )
+    df_m = pd.DataFrame()
+
 df_m_open = df_m[~df_m["is_resolved"]] if not df_m.empty else df_m
 
 _kpi_row(len(df_m_open), len(df_m), key_prefix="pa_m_kpi")
@@ -215,7 +230,8 @@ st.divider()
 # ===========================================================================
 st.markdown("### 🤝 Partner Engagements")
 
-@st.cache_data(ttl=15)
+# @st.cache_data removed for the same exec-namespace reason — see the
+# meetings fetch above.
 def _fetch_engagements() -> tuple[pd.DataFrame, bool]:
     """Returns (dataframe, has_is_resolved_column).
 
@@ -254,7 +270,14 @@ def _fetch_engagements() -> tuple[pd.DataFrame, bool]:
         return df, False
 
 
-df_e, has_resolved_col = _fetch_engagements()
+try:
+    df_e, has_resolved_col = _fetch_engagements()
+except Exception as exc:
+    st.error(
+        f"⚠ Could not load engagement_logs: `{type(exc).__name__}: {exc}`. "
+        f"Confirm the table exists in Supabase and RLS is disabled."
+    )
+    df_e, has_resolved_col = pd.DataFrame(), False
 
 if df_e.empty:
     st.info("No partner engagements logged yet.")
