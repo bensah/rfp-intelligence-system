@@ -251,8 +251,8 @@ CARDS = [
      "Two tabs — weekly meeting notes and donor engagement touchpoints."),
     ("Report", "pages/04_Report.py", "📊", "KPI dashboard",
      "Activity dashboard tracing the full pipeline — search → triage → reviews → engagements → grants secured."),
-    ("Submit", "pages/05_Submit.py", "📝", "Capture a new RFP",
-     "Log an opportunity you found outside the Friday scan. Auto-scored and duplicate-checked."),
+    ("User", "pages/05_User.py", "👤", "Profile · Password · Access",
+     "Manage your profile, change your password, see what you can access. Admins also get a Manage Users tab."),
 ]
 if role == "admin":
     CARDS.append(("Admin", "pages/06_Admin.py", "⚙", "Settings · Data · Donor Sources · Scans",

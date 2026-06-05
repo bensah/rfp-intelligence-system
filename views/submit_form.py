@@ -1,9 +1,11 @@
 """Reusable RFP submission form.
 
-Renders the same form whether it's the standalone page (`pages/05_Submit.py`)
-or a modal (`@st.dialog`) opened from Home / Leads. Each rendering context
-passes a unique `key_prefix` so widget keys don't collide when the form is
-mounted in two places in the same Streamlit session.
+Renders inside the @st.dialog modal opened from the Home + Pipeline pages.
+The standalone Submit page was removed on 2026-06-05 (nav slot reassigned
+to the User page) — the only entry points now are the two modal buttons.
+Each modal context passes a unique `key_prefix` so widget keys don't
+collide when the form is mounted in two places in the same Streamlit
+session.
 
 DEDUP POLICY (per user request, 2026-06-05):
   The submit handler no longer blocks on duplicates. Every form submission
