@@ -1,0 +1,23 @@
+streamlit>=1.35.0
+streamlit-authenticator>=0.3.3
+supabase>=2.4.0
+pandas>=2.2.0
+numpy>=1.26.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+feedparser>=6.0.11
+resend>=0.7.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+plotly>=5.22.0
+openpyxl>=3.1.0
+bcrypt>=4.1.0
+pypdf>=4.0.0
+# Optional — Playwright for JS-rendered SPA donor portals (method: html_js).
+# After pip install, also run: playwright install chromium
+# Falls back gracefully to plain HTML scan if not installed.
+playwright>=1.40.0
+# Optional — Anthropic SDK powers the LLM-assisted extraction layer
+# (`core/llm_extractor.py`). Activated only if ANTHROPIC_API_KEY is set
+# in .env (gitignored). Falls back gracefully to regex if absent.
+anthropic>=0.34.0
