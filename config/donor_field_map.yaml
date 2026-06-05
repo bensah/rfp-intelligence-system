@@ -1,0 +1,222 @@
+# Donor field-map dictionary
+# ===========================
+#
+# Purpose
+# -------
+# Every donor portal exposes its own field names ("Estimated Total Program
+# Funding" on Grants.gov, "Project value" on DevelopmentAid, "Award ceiling"
+# on NIH, etc.). This file is the single source of truth for translating
+# each donor's vocabulary into the canonical RFPIS columns in `rfp_submissions`.
+#
+# Why this matters
+# ----------------
+# Without a registry the codebase grows ad-hoc per-donor parsers that drift
+# out of sync with the DB schema. Bugs like the Grants.gov fetchOpportunity
+# `oppId` typo (silently dropped every detail field since launch) become
+# invisible because nothing audits the contract between scraper output
+# and DB column.
+#
+# How handlers use it
+# -------------------
+# Per-donor extractors (core/extractors/*.py) read their section here and
+# walk the `field_map` to populate candidates. The map supports:
+#
+#   * Dotted paths   — "synopsis.estimatedFunding" navigates nested dicts
+#   * Array indexers — "synopsis.applicantTypes[*].description" collects
+#                      every element's `.description` into a list
+#   * Coercions      — "as: int" / "as: date" / "as: money" run the
+#                      named normalizer (see core/extractors/coerce.py)
+#   * Fallbacks      — list multiple source paths; first non-null wins
+#
+# Maintenance rule
+# ----------------
+# When you add a new donor source, add its section here FIRST, then write
+# the handler. When you discover the donor exposes a new field we'd like
+# (e.g. "Cost share %"), add it here and let the handler pick it up —
+# don't bury per-donor logic inside the extractor.
+
+# ---------------------------------------------------------------------------
+# CANONICAL RFPIS COLUMNS (the right-hand side of every field_map entry must
+# come from this list — these are the columns in rfp_submissions).
+# ---------------------------------------------------------------------------
+canonical_columns:
+  - opportunity_id          # text  — donor's own unique RFP number/code
+  - opportunity_title       # text  — RFP headline
+  - opportunity_link        # text  — URL of the public RFP page
+  - funding_agency          # text  — the donor / funder (display name)
+  - brief_description       # text  — short narrative, scoring-friendly
+  - date_posted             # date  — when the donor published the call
+  - submission_deadline     # date  — final application closing date
+  - expected_award_date     # date  — when decisions land
+  - geographic_scope        # text[]— countries / regions in scope
+  - program_area            # text[]— donor's own category labels
+  - focus_theme             # text  — deploying-org's internal theme tag
+  - chai_role               # text  — Prime / Sub / Technical / Other
+  - funding_window          # text  — One-off / Rolling / Annual / etc.
+  - funding_type            # text  — Grant / Cooperative Agreement / Award etc.
+  - estimated_value         # numeric — total program funding
+  - currency                # text  — ISO 4217 code (USD, EUR, …)
+  - project_duration        # integer — months
+  - submission_format       # text  — concept note, full proposal, EOI, …
+  - feasibility             # text  — populated by auto-scorer
+  - notes                   # text  — free-form scraper hints (cost-share, etc.)
+
+# ===========================================================================
+# DONOR PORTALS
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Grants.gov — US federal opportunities search API
+# Listing endpoint  : POST https://api.grants.gov/v1/api/search2
+#   body: {keyword, rows, oppStatuses: "posted", sortBy: "openDate|desc"}
+# Detail endpoint   : POST https://api.grants.gov/v1/api/fetchOpportunity
+#   body: {opportunityId: <int>}           # NOTE: NOT "oppId"
+# ---------------------------------------------------------------------------
+grants_gov:
+  method: rest_json
+  base_url: https://api.grants.gov/v1/api
+  search_endpoint: /search2
+  detail_endpoint: /fetchOpportunity
+  detail_body_param: opportunityId          # historical trap — was "oppId"
+  search_keywords:                          # multi-keyword fanout
+    - global health
+    - infectious disease
+    - HIV
+    - tuberculosis
+    - malaria
+    - non-communicable disease
+  # Listing-call fields (the search2 oppHits array)
+  list_field_map:
+    title:                  opportunity_title
+    number:                 opportunity_id        # human-readable RFA, e.g. HT942526PRMRPDA
+    agencyName:             funding_agency        # fallback only
+    openDate:               { to: date_posted,         as: date }
+    closeDate:              { to: submission_deadline, as: date }
+  # Detail-call fields (the fetchOpportunity payload — fully populated only
+  # when the body key is `opportunityId`, NOT `oppId`)
+  detail_field_map:
+    opportunityNumber:                                  opportunity_id   # override list if different
+    opportunityTitle:                                   opportunity_title
+    "agencyDetails.agencyName":                         funding_agency   # "Dept. of the Army -- USAMRAA"
+    "synopsis.synopsisDesc":                            { to: brief_description, as: html_to_text, max_chars: 1800 }
+    "synopsis.estimatedFunding":                        { to: estimated_value,   as: money }
+    # Backup if estimatedFunding is blank (some agencies only publish per-award ceiling)
+    "synopsis.awardCeiling":                            { to: estimated_value,   as: money, only_if_blank: true }
+    "synopsis.responseDate":                            { to: submission_deadline, as: date }
+    "synopsis.postingDate":                             { to: date_posted,         as: date }
+    "synopsis.applicantTypes[*].description":           { to: notes,              as: prefix, prefix: "Eligible applicants" }
+    "synopsis.fundingActivityCategories[*].description": { to: program_area,      as: list }
+    "synopsis.fundingInstruments[*].description":       { to: funding_window,     as: join, sep: " / " }
+    "synopsis.costSharing":                             { to: notes, as: prefix, prefix: "Cost sharing required" }
+    "cfdas[0].cfdaNumber":                              { to: notes, as: prefix, prefix: "CFDA" }
+    "synopsis.numberOfAwards":                          { to: notes, as: prefix, prefix: "Expected awards" }
+  # Hard-coded values applied to every Grants.gov candidate
+  static_fields:
+    currency: USD
+  # How the public detail-page URL is constructed from the search-hit `id`
+  detail_url_template: https://www.grants.gov/search-results-detail/{id}
+
+# ---------------------------------------------------------------------------
+# DevelopmentAid — aggregator of multi-donor grant calls
+# Listing endpoint  : Playwright-rendered SPA at
+#   https://www.developmentaid.org/grants/list?donors=...
+# Detail page       : /grants/view/{id}/{slug}   (server-rendered HTML)
+# Notes             : Anchor scrape pulls title+link only; rich fields (budget,
+#                     eligibility, geography, donor) live on the detail page.
+# ---------------------------------------------------------------------------
+developmentaid:
+  method: html_js                            # listing render via Playwright
+  list_anchor_pattern: '/grants/view/\d+/'
+  detail_fetch: requests                     # detail pages are server-rendered HTML
+  detail_field_map:
+    # CSS selectors on the detail page. Pattern: dt:contains(label) + dd
+    "dt:contains('Project value') ~ dd":          { to: estimated_value,     as: money }
+    "dt:contains('Currency') ~ dd":               opportunity_currency
+    "dt:contains('Beneficiary countries') ~ dd":  { to: geographic_scope,    as: country_list }
+    "dt:contains('Sectors') ~ dd":                { to: program_area,        as: list }
+    "dt:contains('Donor') ~ dd":                  funding_agency
+    "dt:contains('Eligible applicants') ~ dd":    { to: notes, as: prefix, prefix: "Eligible" }
+    "dt:contains('Deadline') ~ dd":               { to: submission_deadline, as: date }
+    "dt:contains('Launch date') ~ dd":            { to: date_posted,         as: date }
+    "dt:contains('Reference') ~ dd":              opportunity_id
+    ".grant-description":                         { to: brief_description, as: text, max_chars: 1800 }
+  static_fields: {}
+
+# ---------------------------------------------------------------------------
+# EC Funding & Tenders Portal — Horizon Europe / EU4Health / EDCTP3
+# Listing endpoint  : POST https://api.tech.ec.europa.eu/search-api/prod/rest/search
+#                     ?apiKey=SEDIA&pageSize=50
+# Status            : PENDING — filter mechanism not yet reverse-engineered
+#                     (task #35). Listed here so the field map is ready when
+#                     the handler lands.
+# ---------------------------------------------------------------------------
+ec_sedia:
+  method: ec_sedia
+  base_url: https://api.tech.ec.europa.eu/search-api/prod/rest
+  api_key: SEDIA
+  list_field_map:
+    "metadata.callTitle[0]":                      opportunity_title
+    "metadata.identifier[0]":                     opportunity_id
+    "metadata.callIdentifier[0]":                 { to: notes, as: prefix, prefix: "Call ID" }
+    "metadata.deadlineDate[0]":                   { to: submission_deadline, as: iso_date }
+    "metadata.startDate[0]":                      { to: date_posted,         as: iso_date }
+    "metadata.frameworkProgramme[0]":             { to: program_area, as: list }
+    "metadata.descriptionByte[0]":                { to: brief_description, as: html_to_text, max_chars: 1800 }
+  static_fields:
+    funding_agency: European Commission
+    currency: EUR
+  detail_url_template: https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/{opportunity_id}
+
+# ---------------------------------------------------------------------------
+# Generic HTML / RSS donors — long-tail fallback
+# No per-field mapping; the generic _scan_html / _scan_rss path populates
+# whatever it can via regex + meta tags. Listed here so it's obvious that
+# every other source falls into this bucket and gets only:
+#   opportunity_title, opportunity_link, funding_agency (from source name),
+#   brief_description (best-effort from page text or meta), submission_deadline
+#   (regex-extracted), program_area / estimated_value / geographic_scope all
+#   blank unless the LLM layer (off by default) fills them.
+# ---------------------------------------------------------------------------
+generic:
+  method: html | rss
+  notes: |
+    Long-tail donors (~30 of the 43 configured sources) use this path. To
+    promote one to a bespoke handler, add a new top-level section to this
+    YAML and a corresponding extractor under core/extractors/.
+
+# ===========================================================================
+# DEDUP SIGNALS (consumed by core/deduplicator.py)
+# ---------------------------------------------------------------------------
+# Order matters: the first signal that matches wins. Stronger signals
+# (opportunity_id exact match across sources) are listed first.
+# ===========================================================================
+dedup_signals:
+  - name: opportunity_id_exact
+    description: |
+      Identical donor-issued ID across rows. Strongest signal — catches the
+      cross-source case where the same RFP was both manually entered from
+      Excel and re-discovered by the scanner (e.g. Grants.gov RFP
+      HT942526PRMRPDA exists with source='migration' AND is later scanned
+      with source='auto'). Case-insensitive, whitespace-trimmed.
+    fields: [opportunity_id]
+
+  - name: identical_link
+    description: |
+      Same opportunity_link after normalization (scheme/host lowercased,
+      trailing slash + query + fragment stripped).
+    fields: [opportunity_link]
+
+  - name: title_similarity
+    description: |
+      difflib.SequenceMatcher on normalised titles (lowercased, punctuation
+      stripped). Threshold 0.90 — high enough to ignore minor formatting
+      ("Round 3" vs "Round III") but low enough to catch real reposts.
+    fields: [opportunity_title]
+    threshold: 0.90
+
+  - name: funder_deadline_value_triple
+    description: |
+      All three of (funder, deadline, estimated_value) match and none is
+      null. Useful for cases where titles drift but the underlying call is
+      identifiable by its envelope.
+    fields: [funding_agency, submission_deadline, estimated_value]
