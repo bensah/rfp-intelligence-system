@@ -886,23 +886,196 @@ else:
                    "history for the actual error messages.")
 
     # Discovery timeline — driven by rfp_submissions.search_date so the
-    # curve covers the entire period (not just days scans ran).
+    # curve covers the entire period (not just days scans ran). Each
+    # bar is STACKED by submitted_by so you can see who's contributing
+    # to the funnel month-over-month.
     if not rfps_all.empty:
         disc = rfps_all[~rfps_all["is_duplicate"]].copy()
         if _start:
             disc = disc[disc["_discovered_in_period"]]
         if not disc.empty and disc["search_date"].notna().any():
-            disc_df = _bucketed_count(disc["search_date"].dropna(), "RFPs discovered")
-            fig = px.bar(
-                disc_df, x="bucket", y="RFPs discovered",
-                title=f"RFPs discovered ({_period_label_str}, {bucket_mode.lower()})",
-                labels={"bucket": _bucket_label(bucket_mode)},
+            # Stack-by-submitter — split comma-separated names, normalize,
+            # and use first-name display when unique (same logic as
+            # Section 4's Submissions chart).
+            disc_with_members = disc.assign(
+                _members=disc["submitted_by"].apply(split_and_normalize_names),
+                bucket=_bucket_start(disc["search_date"], bucket_mode),
             )
-            fig.update_layout(height=320, margin=dict(t=40, b=10),
-                              xaxis=_fmt_bucket_ticks(bucket_mode))
-            st.plotly_chart(fig, use_container_width=True)
+            exp_disc = disc_with_members.explode("_members").dropna(subset=["_members"])
+            exp_disc = exp_disc[exp_disc["_members"] != ""]
+            if not exp_disc.empty:
+                disp_map = first_name_display_map(exp_disc["_members"])
+                exp_disc["submitter"] = exp_disc["_members"].map(disp_map).fillna(exp_disc["_members"])
+                stacked_disc = (
+                    exp_disc.groupby(["bucket", "submitter"]).size()
+                    .reset_index(name="RFPs discovered")
+                )
+                fig = px.bar(
+                    stacked_disc, x="bucket", y="RFPs discovered",
+                    color="submitter", barmode="stack",
+                    title=f"RFPs discovered by submitter ({_period_label_str}, {bucket_mode.lower()})",
+                    labels={"bucket": _bucket_label(bucket_mode), "submitter": "Submitted by"},
+                )
+                fig.update_layout(
+                    height=360, margin=dict(t=40, b=10),
+                    xaxis=_fmt_bucket_ticks(bucket_mode),
+                    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                                xanchor="center", x=0.5, font=dict(size=11)),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                # No submitter data — fall back to a plain bucket count
+                disc_df = _bucketed_count(disc["search_date"].dropna(), "RFPs discovered")
+                fig = px.bar(
+                    disc_df, x="bucket", y="RFPs discovered",
+                    title=f"RFPs discovered ({_period_label_str}, {bucket_mode.lower()})",
+                    labels={"bucket": _bucket_label(bucket_mode)},
+                )
+                fig.update_layout(height=320, margin=dict(t=40, b=10),
+                                  xaxis=_fmt_bucket_ticks(bucket_mode))
+                st.plotly_chart(fig, use_container_width=True)
         else:
             st.info(f"No RFPs discovered in this {period_mode.lower()} period yet.")
+
+        # ───── RFPs by donor (non-time-series) ──────────────────────────
+        # Snapshot of which donors contribute the most RFPs to the
+        # pipeline. Top 15, horizontal so long donor names fit.
+        if not disc.empty:
+            donor_counts = (
+                disc["funding_agency"].fillna("(unspecified)")
+                .replace("", "(unspecified)")
+                .value_counts().head(15).reset_index()
+            )
+            donor_counts.columns = ["Donor", "RFPs"]
+            if not donor_counts.empty:
+                fig_dn = px.bar(
+                    donor_counts, x="RFPs", y="Donor", orientation="h",
+                    text="RFPs",
+                    title=f"RFPs by donor — top 15 ({_period_label_str})",
+                    color_discrete_sequence=["#10b981"],
+                )
+                fig_dn.update_layout(
+                    height=max(280, 28 * len(donor_counts) + 80),
+                    margin=dict(t=40, b=10),
+                    yaxis={"categoryorder": "total ascending"},
+                )
+                st.plotly_chart(fig_dn, use_container_width=True)
+
+        # ───── RFPs by program area (filtered to non-zero) ──────────────
+        # program_area is a text[] column; explode and count. Only
+        # show areas with at least one hit — the Unspecified bucket
+        # surfaces what the classifier couldn't tag (action item).
+        if not disc.empty and "program_area" in disc.columns:
+            pa = (
+                disc[["program_area"]].copy()
+                .assign(program_area=disc["program_area"]
+                        .apply(lambda v: v if isinstance(v, list) else
+                               ([v] if v else [])))
+                .explode("program_area").dropna(subset=["program_area"])
+            )
+            pa = pa[pa["program_area"].astype(str).str.strip() != ""]
+            if not pa.empty:
+                pa_counts = pa["program_area"].value_counts().reset_index()
+                pa_counts.columns = ["Program area", "RFPs"]
+                # Already filtered to positive hits by value_counts;
+                # nothing-matched would not appear at all.
+                fig_pa = px.bar(
+                    pa_counts, x="RFPs", y="Program area", orientation="h",
+                    text="RFPs",
+                    title=f"RFPs by program area ({_period_label_str})",
+                    color_discrete_sequence=["#3b82f6"],
+                )
+                fig_pa.update_layout(
+                    height=max(280, 24 * len(pa_counts) + 80),
+                    margin=dict(t=40, b=10),
+                    yaxis={"categoryorder": "total ascending"},
+                )
+                st.plotly_chart(fig_pa, use_container_width=True)
+
+        # ───── Keyword cloud + success table ─────────────────────────────
+        # Frequency of program-area keywords across RFP titles +
+        # descriptions. The cloud surfaces what topics dominate the
+        # incoming pipeline; the success table ranks keywords by how
+        # often the RFPs containing them progressed to Proceed /
+        # Submitted / Approved — actionable signal for what to search
+        # for more aggressively.
+        if not disc.empty:
+            from core.program_area_classifier import matched_keywords
+            _kw_rows = []
+            for _, r in disc.iterrows():
+                text = " ".join([
+                    str(r.get("opportunity_title") or ""),
+                    str(r.get("brief_description") or ""),
+                ])
+                if not text.strip():
+                    continue
+                pairs = matched_keywords(text)
+                if not pairs:
+                    continue
+                decision_str = str(r.get("decision") or "").lower()
+                progress_str = str(r.get("progress_status") or "").lower()
+                donor_str = str(r.get("donor_decision") or "").lower()
+                is_proceed = decision_str.startswith("proceed")
+                is_submitted = progress_str == "completed"
+                is_approved = donor_str == "approved"
+                for area, kw in pairs:
+                    _kw_rows.append({
+                        "keyword": kw, "area": area,
+                        "is_proceed": is_proceed,
+                        "is_submitted": is_submitted,
+                        "is_approved": is_approved,
+                    })
+            if _kw_rows:
+                kw_df = pd.DataFrame(_kw_rows)
+                # Aggregate per keyword
+                kw_agg = (
+                    kw_df.groupby("keyword").agg(
+                        Hits=("keyword", "count"),
+                        Proceed=("is_proceed", "sum"),
+                        Submitted=("is_submitted", "sum"),
+                        Approved=("is_approved", "sum"),
+                    ).reset_index()
+                    .sort_values("Hits", ascending=False)
+                    .head(40)
+                )
+
+                # ─── Word cloud ───
+                with st.expander("Keyword cloud — what topics dominate the incoming pipeline", expanded=False):
+                    try:
+                        from wordcloud import WordCloud
+                        import matplotlib.pyplot as plt
+                        freq = dict(zip(kw_agg["keyword"], kw_agg["Hits"]))
+                        wc = WordCloud(
+                            width=1200, height=400, background_color="white",
+                            colormap="viridis", prefer_horizontal=0.9,
+                            collocations=False,
+                        ).generate_from_frequencies(freq)
+                        fig_wc, ax = plt.subplots(figsize=(12, 4))
+                        ax.imshow(wc, interpolation="bilinear")
+                        ax.axis("off")
+                        st.pyplot(fig_wc, use_container_width=True)
+                        plt.close(fig_wc)
+                    except ImportError:
+                        st.info(
+                            "Word cloud requires `wordcloud` + `matplotlib`. "
+                            "Run `pip install wordcloud matplotlib` to enable. "
+                            "Top keywords are still shown in the success table below."
+                        )
+
+                # ─── Keyword success table ───
+                with st.expander(
+                    "Keywords driving success — top by Proceed / Submitted / Approved",
+                    expanded=False,
+                ):
+                    st.caption(
+                        "Each row: keyword + how many RFPs that matched it "
+                        "made it through each gate. Use this to focus future "
+                        "donor searches on the topics that consistently win."
+                    )
+                    st.dataframe(
+                        kw_agg.rename(columns={"keyword": "Keyword"}),
+                        use_container_width=True, hide_index=True,
+                    )
 
     # Top sources by yield
     src = (
