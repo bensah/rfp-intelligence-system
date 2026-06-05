@@ -21,12 +21,22 @@ visible at a glance.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
-
-import pandas as pd
 import streamlit as st
 
-from db.supabase_client import get_client
+# ── DEBUG MARKER ────────────────────────────────────────────────────────
+# Hard-coded literal that MUST render if exec() reaches the top of this
+# file. If you don't see this marker in the Pending Actions tab, the
+# view isn't being loaded at all (compile cache stale, file not
+# deployed, or render_view returning early). Remove once Pending
+# Actions is confirmed working end-to-end.
+st.caption(":wrench: pending_actions.py loaded — DEBUG MARKER v1")
+# ─────────────────────────────────────────────────────────────────────────
+
+from datetime import date, datetime, timedelta  # noqa: E402
+
+import pandas as pd  # noqa: E402
+
+from db.supabase_client import get_client  # noqa: E402
 
 # Wrapper page already gated auth; just pick up the user.
 user = st.session_state.get("app_user") or {}
