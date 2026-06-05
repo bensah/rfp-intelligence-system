@@ -30,7 +30,7 @@ HASH_KEY = "manual_source_hashes"
 HTTP_TIMEOUT = 12
 USER_AGENT = (
     "Mozilla/5.0 (compatible; RFPIS-PageMonitor/1.0; "
-    "+contact: bdt@example.org)"
+    "+contact: autoscan@example.org)"
 )
 
 
