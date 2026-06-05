@@ -17,7 +17,7 @@ from db.supabase_client import get_client
 # auth handled by wrapper page
 user = st.session_state["chai_user"]
 role = user.get("role", "collaborator")
-can_edit = role in ("admin", "reviewer", "collaborator")  # any logged-in user can log engagements
+can_edit = role in ("super_user", "admin", "reviewer", "collaborator")  # any logged-in user can log engagements
 sb = get_client()
 
 st.title("Engagement Logs")
