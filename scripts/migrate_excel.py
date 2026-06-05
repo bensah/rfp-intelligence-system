@@ -1,8 +1,9 @@
-"""One-time migration of the legacy Excel screener into Supabase.
+"""One-time migration of a legacy Excel screener into Supabase.
 
-Reads `the organisation_Cameroon_RFP_Eligibility_Screener.xlsx` (Form1, Schedule,
-Meeting_Log, Engagement_Log, Active_Grants_Log, Narrative_Log) and upserts the
-records into the corresponding Supabase tables with source='migration'.
+Reads the workbook at `EXCEL_SOURCE_PATH` (or the first *.xlsx beside
+the project root as fallback) — expects sheets: Form1, Schedule,
+Meeting_Log, Engagement_Log, Active_Grants_Log, Narrative_Log. Upserts
+the records into the corresponding Supabase tables with source='migration'.
 
 Usage:
     python scripts/migrate_excel.py [--dry-run] [--xlsx PATH]
@@ -24,10 +25,12 @@ from db.supabase_client import get_client  # noqa: E402
 from core.scorer import CRITERIA, score_submission  # noqa: E402
 from core.review_week import review_week_label  # noqa: E402
 
-DEFAULT_XLSX = (
-    Path(__file__).resolve().parent.parent
-    / "the organisation_Cameroon_RFP_Eligibility_Screener.xlsx"
-)
+# Repo-root *.xlsx fallback — Excel files are gitignored so this is a
+# developer-local convenience. Resolves to whichever *.xlsx happens to
+# sit beside the project root.
+_repo_root = Path(__file__).resolve().parent.parent
+_xlsx_candidates = sorted(_repo_root.glob("*.xlsx"))
+DEFAULT_XLSX = _xlsx_candidates[0] if _xlsx_candidates else None
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +157,12 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
         "program_area": _multi(get("Program Area")),
         "focus_theme": _txt(get("Focus Theme")),
         "opportunity_link": _txt(get("Opportunity Link")),
-        "chai_role": _txt(get("the organisation Role")),
+        # `chai_role` is the legacy column name from the original Excel
+        # screener; the Excel header just says "the organisation Role" so we still
+        # look for that header text in case a deploying org keeps the
+        # historical workbook column name. The DB column is renamed in
+        # spirit (applicant role) but kept under chai_role for back-compat.
+        "chai_role": _txt(get("the organisation Role", "Applicant Role", "Role")),
         "lead_applicant": _txt(get("Lead Applicant")),
         "sub_applicant": _txt(get("Sub Applicant")),
         "funding_window": _txt(get("Funding Window")),

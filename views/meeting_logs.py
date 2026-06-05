@@ -105,8 +105,9 @@ mon_date = _monday(sel_week)
 # Rota: who's note-taker / presenter / chair this week
 # -----------------------------------------------------------------------------
 def _short_name(name: str | None) -> str:
-    """Shorten 'Chancelin Jordan Blake' → 'Chancelin Magloire'.
-    Single names stay as-is. Helps long names not get truncated in metrics."""
+    """Shorten a 3-token name like 'First Middle Last' → 'First Middle'.
+    Single- and two-token names stay as-is. Helps long names not get
+    truncated in metric tile labels."""
     if not name:
         return "—"
     parts = str(name).strip().split()
