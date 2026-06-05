@@ -50,4 +50,28 @@ with tab_engagements:
     render_view("engagements")
 
 with tab_pending:
-    render_view("pending_actions")
+    # ── DEBUG (temp) — confirm whether the tab itself renders at all ──
+    st.caption(":mag: tab_pending body reached")
+    # Show what render_view does step-by-step so we catch any failure
+    # in the import-and-exec chain.
+    try:
+        from core import render_view as _rv  # noqa: PLC0415
+        st.caption(f":mag: render_view module = `{_rv.__file__}`")
+        view_path = _rv._VIEWS_DIR / "pending_actions.py"
+        st.caption(
+            f":mag: view file = `{view_path}` · exists = "
+            f"`{view_path.exists()}` · "
+            f"size = `{view_path.stat().st_size if view_path.exists() else 'n/a'}`"
+        )
+    except Exception as _exc:
+        st.error(f"diagnostic failed: {type(_exc).__name__}: {_exc}")
+
+    try:
+        render_view("pending_actions")
+    except Exception as _exc:
+        import traceback as _tb
+        st.error(
+            f"⚠ render_view('pending_actions') raised: "
+            f"`{type(_exc).__name__}: {_exc}`"
+        )
+        st.code(_tb.format_exc(), language="text")
