@@ -28,8 +28,8 @@ user = st.session_state["chai_user"]
 role = user.get("role", "collaborator")
 sb = get_client()
 
-is_admin = role == "admin"
-can_edit = role in ("admin", "reviewer")
+is_admin = role in ("super_user", "admin")
+can_edit = role in ("super_user", "admin", "reviewer")
 
 st.title("Records — All RFPs")
 st.caption(

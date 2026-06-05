@@ -254,7 +254,7 @@ CARDS = [
     ("User", "pages/05_User.py", "👤", "Profile · Password · Access",
      "Manage your profile, change your password, see what you can access. Admins also get a Manage Users tab."),
 ]
-if role == "admin":
+if role in ("super_user", "admin"):
     CARDS.append(("Admin", "pages/06_Admin.py", "⚙", "Settings · Data · Donor Sources · Scans",
                   "Org profile, year setting, Excel sync, currency rates, the full Data backend "
                   "(incl. RFP Records), donor sources, manual scans."))

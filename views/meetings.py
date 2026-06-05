@@ -20,7 +20,7 @@ from db.supabase_client import get_client
 # auth handled by wrapper page
 user = st.session_state["chai_user"]
 role = user.get("role", "collaborator")
-can_edit = role in ("admin", "reviewer")
+can_edit = role in ("super_user", "admin", "reviewer")
 sb = get_client()
 
 _TITLE_COL, _BTN_COL = st.columns([5, 1])
