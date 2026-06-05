@@ -106,44 +106,44 @@ def _make_wrapper(original, view_name: str, widget_name: str, counters: dict):
     return wrapper
 
 
-class _ViewStop(Exception):
-    """Raised when a view calls (monkey-patched) `st.stop()`. Caught by
-    `render_view` so the view aborts gracefully without halting the parent
-    page (which would blank out subsequent tabs on the same page)."""
-    pass
-
-
 # ---------------------------------------------------------------------------
-# Permanent st.stop patch — bug-resistant against rerun leaks
+# View-stop handling — no monkey-patching, no leaks
 # ---------------------------------------------------------------------------
-# Previously we patched `st.stop` *inside* render_view() and restored it
-# in a `finally` block. That broke when `st.rerun()` fired mid-view —
-# the rerun aborts the script and Python's finally interaction with
-# Streamlit's RerunException occasionally leaves the patch in place. On
-# the NEXT navigation, any page that called `st.stop()` (e.g. an Admin
-# page rejecting an anonymous visitor) would raise a stray _ViewStop
-# that nothing catches → page crash.
+# Earlier iterations patched `st.stop` (inside render_view, then at module
+# load) so that views could early-exit without halting the parent page.
+# Both versions were defeated by Streamlit Cloud's hot-reload: when the
+# module gets re-imported after a code push, the captured "real" st.stop
+# was the previously-patched function, creating a self-referencing loop
+# that surfaced as `_ViewStop` errors on totally unrelated pages.
 #
-# Fix: patch `st.stop` ONCE at module load and have it check whether
-# we're actually inside a render_view via a depth counter. Outside a
-# view context the patched stop delegates to the real one, so behaviour
-# matches stock Streamlit. Inside a view it raises _ViewStop so the
-# view exits cleanly without halting the parent page.
-_REAL_ST_STOP = st.stop
-_render_depth = 0
-
-
-def _view_stop() -> None:
-    """Smart st.stop replacement — view-scoped when inside render_view,
-    delegates to the real st.stop everywhere else."""
-    if _render_depth > 0:
-        raise _ViewStop()
-    return _REAL_ST_STOP()
-
-
-# Apply the patch once. Subsequent module imports are no-ops (Python
-# caches imports), so this runs exactly one time per process.
-st.stop = _view_stop  # type: ignore[assignment]
+# New approach: don't patch anything. Views call `st.stop()` normally —
+# Streamlit raises its internal `StopException`. We catch that exception
+# inside render_view's exec() and swallow it, so the view aborts cleanly
+# without affecting the rest of the parent page.
+#
+# StopException's import path moves between Streamlit minor versions, so
+# probe the known locations and fall back to a sentinel that matches
+# nothing if all probes fail (in which case views' st.stop() will halt
+# the whole page — same as stock Streamlit behaviour, which is the safe
+# default).
+StopException: type[BaseException] | None = None
+for _path in (
+    "streamlit.runtime.scriptrunner.exceptions",
+    "streamlit.runtime.scriptrunner.script_runner",
+    "streamlit.runtime.scriptrunner",
+    "streamlit.errors",
+):
+    try:
+        _mod = __import__(_path, fromlist=["StopException"])
+        StopException = _mod.StopException
+        break
+    except (ImportError, AttributeError):
+        continue
+if StopException is None:
+    class StopException(BaseException):  # type: ignore[no-redef]
+        """Placeholder — Streamlit's real StopException couldn't be
+        imported. Catching this class is a no-op; views' st.stop() will
+        halt the whole page (stock behaviour)."""
 
 
 def render_view(view_name: str) -> None:
@@ -152,10 +152,10 @@ def render_view(view_name: str) -> None:
     Each call gets a fresh namespace so variables from one view don't leak
     into another. Widgets without explicit `key=` are auto-keyed under a
     namespace derived from `view_name` to prevent cross-view ID collisions.
-    `st.stop()` is intercepted (via the module-level patch above) so a
-    view's early-exit doesn't blank out other tabs on the parent page.
+    `st.stop()` calls inside the view raise Streamlit's StopException,
+    which we catch here so the view aborts without blanking out sibling
+    tabs on the parent page.
     """
-    global _render_depth
     code = _compiled(view_name)
 
     counters: dict = {}
@@ -167,7 +167,6 @@ def render_view(view_name: str) -> None:
         originals[w] = orig
         setattr(st, w, _make_wrapper(orig, view_name, w, counters))
 
-    _render_depth += 1
     try:
         ns: dict = {
             "__name__": f"views.{view_name}",
@@ -175,12 +174,10 @@ def render_view(view_name: str) -> None:
         }
         try:
             exec(code, ns)
-        except _ViewStop:
-            # View aborted gracefully (empty state, no selection, etc.).
-            # Continue executing the rest of the parent page.
+        except StopException:
+            # View called st.stop() — abort the view only, page continues.
             pass
     finally:
-        _render_depth -= 1
         # Restore widget wrappers. If a rerun interrupts before this
         # finally runs, the widget wrappers leak — but they only auto-
         # generate `key=` arguments, which is harmless outside a view.
