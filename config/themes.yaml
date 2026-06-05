@@ -1,0 +1,68 @@
+# Search keywords applied across all scraped sources to maximise recall.
+# Tune these as the team gathers signal on noisy donors / themes.
+
+geographic:
+  - Cameroon
+  - Mali
+  - Nigeria
+  - Senegal
+  - Cote d'Ivoire
+  - West Africa
+  - Central Africa
+  - WCA
+  - sub-Saharan Africa
+  - LMICs
+
+thematic:
+  - malaria
+  - HIV
+  - tuberculosis
+  - TB
+  - NTDs
+  - neglected tropical diseases
+  - maternal health
+  - MNCH
+  - reproductive health
+  - family planning
+  - vaccines
+  - immunisation
+  - immunization
+  - Gavi
+  - cancer
+  - NCDs
+  - non-communicable diseases
+  - diabetes
+  - hypertension
+  - digital health
+  - mHealth
+  - health information systems
+  - eHealth
+  - AI health
+  - health financing
+  - health systems strengthening
+  - UHC
+  - pandemic preparedness
+  - One Health
+  - AMR
+  - antimicrobial resistance
+  - nutrition
+  - stunting
+  - wasting
+  - SAM
+  - climate and health
+  - climate adaptation
+  - community health workers
+  - CHW
+  - frontline health workers
+  - evidence synthesis
+  - implementation research
+  - health data
+
+organisation_type:
+  - technical assistance
+  - implementation support
+  - capacity building
+  - NGO
+  - nonprofit
+  - non-profit
+  - INGO eligible

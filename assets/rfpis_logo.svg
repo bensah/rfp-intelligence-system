@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 80" preserveAspectRatio="xMidYMid meet" role="img" aria-label="RFPIS — RFP Intelligence System">
+  <title>RFPIS — RFP Intelligence System</title>
+  <!-- =================================================================
+       Placeholder logo for RFPIS.
+       Compact mark + bold wordmark — designed to remain readable at the
+       small sizes Streamlit's st.logo() renders in the sidebar header.
+       Caption-style text ("RFP Intelligence System") was REMOVED from
+       inside the SVG because it became illegible when scaled down;
+       core/app_header.py renders it as a separate st.sidebar.caption()
+       below the logo instead, where Streamlit applies readable typography.
+       Swap this file out when a real brand asset lands.
+       ================================================================= -->
+
+  <!-- Document + magnifying glass icon -->
+  <g transform="translate(4,8)">
+    <rect x="0" y="0" width="56" height="64" rx="6" fill="#1e3a8a"/>
+    <path d="M 48 0 L 56 8 L 48 8 Z" fill="#3b5cb8"/>
+    <line x1="10" y1="18" x2="48" y2="18" stroke="#fbbf24" stroke-width="4" stroke-linecap="round"/>
+    <line x1="10" y1="30" x2="42" y2="30" stroke="#e2e8f0" stroke-width="3" stroke-linecap="round"/>
+    <line x1="10" y1="40" x2="48" y2="40" stroke="#e2e8f0" stroke-width="3" stroke-linecap="round"/>
+    <line x1="10" y1="50" x2="38" y2="50" stroke="#e2e8f0" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="50" cy="60" r="15" fill="#1e3a8a" stroke="#fbbf24" stroke-width="4"/>
+    <circle cx="50" cy="60" r="7" fill="none" stroke="#fbbf24" stroke-width="3"/>
+    <line x1="60" y1="70" x2="70" y2="80" stroke="#fbbf24" stroke-width="4.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- Wordmark — single line, big + bold so it survives downscaling. -->
+  <text x="88" y="52" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
+        font-size="38" font-weight="800" fill="#1e3a8a" letter-spacing="-1">RFPIS</text>
+</svg>

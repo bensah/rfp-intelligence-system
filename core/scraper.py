@@ -1,0 +1,1400 @@
+"""RFP scrapers — fetch listing pages / feeds / APIs and return candidates.
+
+Public entry point: `scan_source(source)` dispatches on `method` and returns
+a list of candidate dicts. Each candidate has the shape:
+
+    {
+      "opportunity_title": str,        # REQUIRED
+      "opportunity_link":  str | None, # canonical URL
+      "funding_agency":    str | None, # donor / agency
+      "brief_description": str | None,
+      "date_posted":       date | None,
+      "submission_deadline": date | None,
+      "_source_origin":    str,        # human-readable (where we found it)
+    }
+
+The pipeline in `core/scan_pipeline.py` is responsible for:
+  * generating UID
+  * running find_duplicates
+  * inserting into rfp_submissions
+
+Scrapers themselves stay pure — they don't touch the DB.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import re
+from datetime import date, datetime
+from typing import Any
+from urllib.parse import urljoin, urlsplit
+
+import feedparser
+import requests
+from bs4 import BeautifulSoup
+
+log = logging.getLogger(__name__)
+
+# Network defaults — keep per-request timeout aggressive so the orchestrator
+# doesn't hang on slow donor sites.
+HTTP_TIMEOUT = 15
+USER_AGENT = (
+    "Mozilla/5.0 (compatible; RFPIS/1.0; "
+    "+contact: nsah.ben03@gmail.com)"
+)
+
+# Health-relevant keyword filter applied to candidate titles + descriptions.
+# Keeps generic donor listings from flooding the inbox with totally
+# off-mission opportunities.
+HEALTH_KEYWORDS = [
+    "health", "disease", "infection", "epidemic", "pandemic",
+    "hiv", "aids", "tuberculosis", "tb", "malaria",
+    "vaccine", "immuni", "amr", "antimicrobial",
+    "maternal", "newborn", "child health", "nutrition",
+    "global health", "primary care", "ncd", "non-communicable",
+    "diagnostic", "treatment", "therapeutic", "outbreak",
+    "essential medicine", "lmic", "low- and middle",
+    "drr", "tropical", "neglected disease",
+]
+
+# HTML anchors whose href / text look like opportunity / grant pages.
+_GRANTY_RE = re.compile(
+    r"(grant|funding|fund|rfp|rfa|call|propos|award|opportunity|"
+    r"challenge|tender|notice|solicit|innovation)",
+    re.IGNORECASE,
+)
+
+# URLs pointing at blog / guidance / news / GRANTEE-PROFILE pages —
+# never RFPs. Negative filter: reject any anchor whose path matches.
+# `/grantee/<name>/`, `/grantees/`, `/recipients/`, `/awardees/` etc. are
+# pages ABOUT past recipients of grants, not calls for new applications.
+_BLOG_URL_RE = re.compile(
+    r"/(guidance|guide|guides|about|news|blog|policy|policies|"
+    r"learn|team|teams|people|contact|help|faq|faqs|story|stories|"
+    r"insight|insights|article|articles|press|media|publication|publications|"
+    r"event|events|webinar|webinars|video|videos|report|reports|"
+    r"grantee|grantees|recipient|recipients|awardee|awardees|"
+    r"our-grantees|our-partners|portfolio|portfolios|"
+    r"who-we-fund|where-we-work|impact-stories)/",
+    re.IGNORECASE,
+)
+
+# URLs that are themselves SEARCH or FILTER pages, not the actual grant /
+# call detail. Common signals:
+#   * `?filter_<field>=…` (Rockefeller, WordPress facet plugins)
+#   * `?post_type=…` plus other filters
+#   * `?search=…`, `?keyword=…`, `?q=…`
+#   * a path segment of `/search/` paired with a query string
+#   * `?submit=Submit` (the form's submit value lingering in the URL)
+# Each candidate matched here is the result-page URL, not a navigable
+# RFP. Reject before enrichment / scoring — they'd waste a fetch and
+# enter the DB with no useful detail page to point reviewers at.
+_SEARCH_PAGE_URL_RE = re.compile(
+    r"(?:"
+    r"[?&]filter_\w+="
+    r"|[?&]search="
+    r"|[?&]keyword="
+    r"|[?&]q="
+    r"|[?&]submit="
+    r"|[?&]post_type="
+    r"|/search/?[?&]"
+    r"|/(?:catalog|listing|results?)/?\?"
+    r")",
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
+# Detail-page enrichment — fetch each HTML candidate's URL and try to extract
+# a deadline, a brief description, and eligibility text. Best-effort: any
+# extraction failure leaves the candidate untouched. Cap per scan to keep
+# scan time manageable.
+# ---------------------------------------------------------------------------
+# Per-source detail-page enrichment caps.
+#   ENRICH_MAX_PAGES — how many candidates to enrich per source. Higher =
+#     more deadline/description coverage but linearly slower.
+#   ENRICH_TIMEOUT  — seconds per detail-page fetch. Lower trades some
+#     extraction for speed against slow donor sites.
+# Tightened from (25, 5) → (15, 4) on 2026-06-04 after the source list
+# grew past 35: full-scan wall time was hitting the 5-min timeout.
+ENRICH_MAX_PAGES = 15
+ENRICH_TIMEOUT = 4
+
+# Deadline / closing-date label patterns. Captures whatever follows the
+# label up to a sentence terminator or newline. We then run the captured
+# string through dateutil for robust parsing of free-form date strings.
+_DEADLINE_LABEL_RE = re.compile(
+    r"(?:"
+    # "Extended deadline" wins over plain deadline since donors usually
+    # extend rather than shorten — but both patterns match; we resolve
+    # winner in _extract_deadline_from_text() (latest match wins).
+    r"extended\s+deadline"
+    r"|revised\s+deadline"
+    r"|new\s+deadline"
+    r"|deadline"
+    r"|application\s+(?:due|deadline|closing|close)\s+date"
+    r"|applications?\s+close[sd]?\s+(?:on\s+|by\s+)?"
+    r"|applications?\s+accepted\s+until"
+    r"|applications?\s+(?:must\s+be\s+)?submitted\s+(?:by|no\s+later\s+than)"
+    r"|accepting\s+submissions?\s+(?:through|until|up\s+to)"
+    r"|submissions?\s+(?:through|until|by|no\s+later\s+than)"
+    r"|submit\s+(?:by|before|no\s+later\s+than)"
+    r"|submission\s+(?:deadline|due\s+date|date)"
+    r"|closing\s+date"
+    r"|close[sd]?\s*(?:date|on)?"
+    r"|date\s+closed"
+    r"|due\s+(?:date|by|on)"
+    r"|apply\s+(?:by|before|no\s+later\s+than|until)"
+    r"|open\s+until"
+    r"|expected\s+(?:closing|close|due)\s+date"
+    r"|estimated\s+application\s+due\s+date"
+    r"|response\s+(?:due|deadline)"
+    r")"
+    # Separator is OPTIONAL — BMGF writes "Date Closed May 21, 2026" with
+    # no colon, "Apply by 15 March 2026" with just a space, etc.
+    r"\s*[:\-–]?\s+"
+    r"([A-Za-z0-9 ,\-/.]{6,60})",
+    re.IGNORECASE,
+)
+
+# Year-in-URL/title heuristic. RFP pages typically embed the year in the
+# slug or title — "2020-call-for-projects", "year/2024/alliance-tsc-…".
+# When the URL clearly says a past year, treat the candidate as expired
+# even if no explicit deadline phrase parsed.
+_URL_YEAR_RE = re.compile(r"(?<!\d)(20\d{2})(?!\d)")
+
+# Eligibility / geography label patterns.
+_ELIGIBILITY_LABEL_RE = re.compile(
+    r"(?:"
+    r"eligibility|eligible\s+(?:countries?|applicants?|entities|geographies?)"
+    r"|who\s+(?:can|may)\s+apply"
+    r"|geographic(?:al)?\s+(?:focus|scope|eligibility|coverage)"
+    r"|target\s+(?:countries?|geographies?|regions?)"
+    r"|country\s+focus"
+    r")"
+    r"\s*[:\-–]?\s*\n?\s*"
+    r"([^\n]{20,800})",
+    re.IGNORECASE,
+)
+
+
+def _parse_freeform_date(s: str) -> date | None:
+    """Try every known date format on a candidate string."""
+    if not s:
+        return None
+    s = s.strip().rstrip(".,;:")
+    # Strip common trailing time annotations.
+    s = re.sub(r"\s+(?:at|by)\s+\d{1,2}[:.]\d{2}.*$", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s+\d{1,2}[:.]\d{2}\s*(?:am|pm|et|pdt|pst)?.*$", "", s, flags=re.IGNORECASE)
+    fmts = [
+        "%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y",
+        "%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d",
+    ]
+    for fmt in fmts:
+        try:
+            return datetime.strptime(s[:len(fmt)+10].strip(", ."), fmt).date()
+        except (ValueError, TypeError):
+            continue
+    # dateutil fallback if available (and accurate)
+    try:
+        from dateutil import parser as _du  # type: ignore
+        return _du.parse(s, fuzzy=True, dayfirst=False).date()
+    except Exception:
+        return None
+
+
+# "From <date> to <date>" / "Open from <date> to <date>" patterns.
+# Donors like Pierre Fabre publish application windows without a
+# "Deadline:" label, e.g. "APPLICATIONS — FROM OCT 9TH TO NOV 7TH 2025".
+# We want the END date as the deadline.
+_DATE_RANGE_RE = re.compile(
+    r"(?:from|open(?:s|ing)?(?:\s+from)?|between|applications?)"
+    r"[\s:\-–—]*"
+    r"(?:[A-Za-z0-9.,/\- ]{4,40}?)"   # start date (non-greedy)
+    r"\s+(?:to|until|through|and|–|—|until\s+the)\s+"
+    r"([A-Za-z0-9.,/\- ]{4,40})",      # end date (captured)
+    re.IGNORECASE,
+)
+
+
+def _extract_deadline_from_text(text: str) -> date | None:
+    """Find ALL labelled deadlines in text. Returns the latest parseable
+    one — this naturally handles extended deadlines (donors typically
+    say 'Deadline: Mar 23' then 'Extended deadline: Mar 30' and we want
+    Mar 30). Also catches unlabelled date ranges ("from X to Y" → Y)."""
+    candidates: list[date] = []
+    if not text:
+        return None
+    # Labelled patterns (Deadline:, Closing Date:, etc.)
+    for m in _DEADLINE_LABEL_RE.finditer(text):
+        d = _parse_freeform_date(m.group(1))
+        if d:
+            candidates.append(d)
+    # Unlabelled date ranges — "APPLICATIONS: FROM OCT 9TH TO NOV 7TH 2025"
+    for m in _DATE_RANGE_RE.finditer(text):
+        d = _parse_freeform_date(m.group(1))
+        if d:
+            candidates.append(d)
+    if not candidates:
+        return None
+    return max(candidates)
+
+
+def _detect_url_year(url: str, title: str = "") -> int | None:
+    """Find the latest year mentioned in the URL or title. Used as a
+    fallback past-deadline signal when no explicit deadline phrase
+    parsed (donor pages frequently have the year in the slug)."""
+    blob = f"{url or ''} {title or ''}"
+    years = [int(y) for y in _URL_YEAR_RE.findall(blob)]
+    return max(years) if years else None
+
+
+def _extract_eligibility_from_text(text: str) -> str | None:
+    m = _ELIGIBILITY_LABEL_RE.search(text or "")
+    if not m:
+        return None
+    return _clean(m.group(1))[:500]
+
+
+def _extract_description_from_soup(soup: BeautifulSoup) -> str | None:
+    """Prefer og:description / meta description, fall back to first long <p>."""
+    for sel in (
+        ("meta", {"property": "og:description"}),
+        ("meta", {"name": "description"}),
+        ("meta", {"name": "twitter:description"}),
+    ):
+        el = soup.find(*sel)
+        if el and el.get("content"):
+            txt = _clean(el["content"])
+            if len(txt) > 40:
+                return txt[:800]
+    # Fall back to the first paragraph with reasonable length.
+    for p in soup.find_all("p"):
+        txt = _clean(p.get_text(" ", strip=True))
+        if 60 <= len(txt) <= 1200:
+            return txt[:800]
+    return None
+
+
+# Max PDF size we'll download for enrichment (bytes). Donor RFP PDFs are
+# usually 0.5-5 MB; above 10 MB it's typically a glossy report we don't
+# need and the bandwidth/CPU isn't worth it.
+ENRICH_PDF_MAX_BYTES = 10 * 1024 * 1024
+# Pages to parse. Bumped 3 → 8 on 2026-06-04 after Pierre Fabre guide
+# PDFs put the Timeline / Closing Date on page 4-5. Each extra page
+# costs ~50ms of pypdf parsing which is dwarfed by the 1-3s download.
+ENRICH_PDF_MAX_PAGES = 8
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract text from the first N pages of a PDF. Returns empty string
+    on any failure (encrypted PDF, scanned image, parse error, etc.)."""
+    try:
+        from pypdf import PdfReader
+        from io import BytesIO
+        reader = PdfReader(BytesIO(pdf_bytes))
+        chunks: list[str] = []
+        for i, page in enumerate(reader.pages):
+            if i >= ENRICH_PDF_MAX_PAGES:
+                break
+            try:
+                chunks.append(page.extract_text() or "")
+            except Exception:
+                continue
+        return _clean(" ".join(chunks))
+    except Exception as exc:
+        log.debug("pdf parse failed: %s", exc)
+        return ""
+
+
+# Anchor text words that signal "this PDF is the application guide" —
+# used to find the most relevant PDF on a landing page like Pierre Fabre.
+_GUIDE_PDF_KEYWORDS = (
+    "guide", "application", "applicant", "instruction",
+    "call", "rfp", "rfa", "tender", "proposal", "submission",
+    "terms", "conditions", "tor", "terms of reference",
+    "download", "details",
+)
+
+
+def _find_application_pdf(soup: "BeautifulSoup | None", base_url: str) -> str | None:
+    """Find the most likely 'application guide' PDF linked from an HTML
+    page. Pierre Fabre (and many foundations) publish a landing page
+    with the deadline buried inside a downloadable PDF. We follow that
+    PDF for deadline extraction.
+
+    Strategy: prefer PDFs whose anchor text mentions guide / application
+    / call / etc. If none match, fall back to the first PDF on the page.
+    """
+    if soup is None:
+        return None
+    relevant: list[tuple[int, str]] = []
+    fallback: str | None = None
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href:
+            continue
+        if not href.lower().split("?", 1)[0].split("#", 1)[0].endswith(".pdf"):
+            continue
+        full = urljoin(base_url, href)
+        text = (a.get_text(" ", strip=True) or "").lower()
+        # Score: how many guide-relevant keywords appear in anchor text.
+        score = sum(1 for kw in _GUIDE_PDF_KEYWORDS if kw in text)
+        if score > 0:
+            relevant.append((score, full))
+        elif fallback is None:
+            fallback = full
+    if relevant:
+        relevant.sort(reverse=True)  # highest score first
+        return relevant[0][1]
+    return fallback
+
+
+def _try_pdf_guide_deadline(pdf_url: str) -> tuple[date | None, str | None]:
+    """Fetch a linked guide PDF and try to extract (deadline, brief_text).
+    Returns (None, None) on any failure. Heavily bounded — same caps as
+    the main PDF enrichment path."""
+    try:
+        r = requests.get(
+            pdf_url,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/pdf, */*"},
+            timeout=ENRICH_TIMEOUT,
+            allow_redirects=True,
+            stream=True,
+        )
+        r.raise_for_status()
+        cl = int(r.headers.get("Content-Length") or 0)
+        if cl and cl > ENRICH_PDF_MAX_BYTES:
+            return None, None
+        pdf_bytes = r.content[:ENRICH_PDF_MAX_BYTES]
+    except Exception as exc:
+        log.debug("pdf-guide fetch failed for %s: %s", pdf_url, exc)
+        return None, None
+    text = _extract_pdf_text(pdf_bytes)
+    if not text:
+        return None, None
+    return _extract_deadline_from_text(text), text[:600] if text else None
+
+
+# DevelopmentAid detail-page title pattern.
+# Their <title> element follows a STRICT pattern that packs four
+# high-value fields we'd otherwise miss (donor / countries / sectors /
+# brief). Variations handled:
+#   * Status prefix: "Open" / "Awarded" / "Closed" — we filter past-tense.
+#   * "by DONOR" is OPTIONAL (some grants don't name a funder there).
+#   * "in X sector" (singular) and "in X sectors" (plural) both occur.
+#   * The <title> is the FULL string — og:title is truncated at ~200 chars
+#     and unusable for the donor / sectors fields at the tail.
+# Deadline / project value DO NOT appear in plain text on these pages —
+# they're paywalled behind a DevelopmentAid Pro membership. Best we can
+# do without auth.
+_DEVELOPMENTAID_TITLE_RE = re.compile(
+    r"^(?P<status>Open|Awarded|Closed)\s+grant\s*[—-]\s*"
+    r"(?P<title>.+?)\s*[—-]\s*"
+    r"for\s+(?P<countries>.+?)"
+    r"(?:\s+by\s+(?P<donor>.+?))?"
+    r"\s+in\s+(?P<sectors>.+?)\s+sectors?\s*[—-]\s*DevelopmentAid$",
+    re.IGNORECASE,
+)
+
+
+def _enrich_developmentaid(cand: dict[str, Any]) -> dict[str, Any] | None:
+    """Fetch a DevelopmentAid detail page and merge in fields from the
+    <title>-tag pattern.
+
+    Returns:
+      * the mutated candidate dict on success
+      * None if the grant is in past-tense status ("Awarded" / "Closed")
+        — these shouldn't enter the RFP pipeline at all
+      * the candidate unchanged if the URL doesn't match or fetch fails
+    """
+    link = cand.get("opportunity_link") or ""
+    if "developmentaid.org/grants/view/" not in link:
+        return cand
+    try:
+        r = requests.get(link, headers={"User-Agent": USER_AGENT},
+                         timeout=HTTP_TIMEOUT, allow_redirects=True)
+        r.raise_for_status()
+    except Exception as exc:
+        log.debug("DevelopmentAid fetch failed for %s: %s", link, exc)
+        return cand
+    try:
+        soup = BeautifulSoup(r.text, "html.parser")
+    except Exception:
+        return cand
+    full_title = soup.title.get_text() if soup.title else ""
+    m = _DEVELOPMENTAID_TITLE_RE.match(full_title)
+    if not m:
+        log.debug("DevelopmentAid title pattern did not match: %s",
+                  full_title[:120])
+        return cand
+
+    # Past-tense → drop entirely. These show up on the "all grants"
+    # listing but are not active opportunities.
+    status = (m.group("status") or "").lower()
+    if status in ("awarded", "closed"):
+        log.info("DevelopmentAid skip past-tense (%s): %s",
+                 status, m.group("title")[:60])
+        return None
+
+    # Merge into the candidate, preferring extracted values over any
+    # generic placeholders from the listing scrape.
+    cand["opportunity_title"] = (m.group("title") or "").strip() or cand.get("opportunity_title")
+    if m.group("donor"):
+        cand["funding_agency"] = m.group("donor").strip()
+    countries = [c.strip() for c in (m.group("countries") or "").split(",") if c.strip()]
+    if countries:
+        cand["geographic_scope"] = countries
+    sectors = [s.strip() for s in (m.group("sectors") or "").split(",") if s.strip()]
+    if sectors:
+        cand["program_area"] = sectors
+    # Brief description from og:description (full body text isn't
+    # uniquely structured; og:description is the curated summary).
+    og_desc_tag = soup.find("meta", attrs={"property": "og:description"})
+    og_desc = (og_desc_tag.get("content") if og_desc_tag else "") or ""
+    if og_desc and not cand.get("brief_description"):
+        cand["brief_description"] = og_desc[:1800]
+    return cand
+
+
+def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
+    """Fetch the candidate's detail page and fill in missing fields.
+
+    Handles both HTML and PDF detail pages — many donor sites
+    (e.g. WHO AHPSR) link to PDF call documents that hold the deadline
+    and description in the body text, not on the listing page.
+
+    Mutates and returns `cand`. Failures (timeout, 4xx, parse errors) are
+    silently swallowed — the candidate stays in its original state.
+    """
+    link = cand.get("opportunity_link")
+    if not link:
+        return cand
+
+    # DevelopmentAid runs a paywalled grants aggregator. Their detail
+    # pages don't expose deadline / project value in plain text, but the
+    # <title> tag packs donor / countries / sectors / brief reliably.
+    # Run the bespoke enricher FIRST — it can either (a) merge those
+    # four fields into the candidate, (b) leave it alone if the title
+    # pattern doesn't match, or (c) return None to signal a past-tense
+    # grant that should be rejected entirely.
+    if "developmentaid.org/grants/view/" in link:
+        result = _enrich_developmentaid(cand)
+        if result is None:
+            cand["_past_tense_grant"] = True  # signal to ingest
+            return cand
+        cand = result
+        # Don't return — let the generic fetch run too, in case the
+        # generic deadline regex picks something up.
+
+    # Don't waste a fetch on search/filter pages — these won't yield a
+    # deadline or eligibility section because they're query results, not
+    # grant detail. Marker on the candidate so downstream can reject.
+    if _SEARCH_PAGE_URL_RE.search(link):
+        cand["_is_search_page"] = True
+        return cand
+
+    # Short-circuit on past-year URLs (e.g. /year/2022/foo.pdf) — no
+    # point downloading something we'll reject. Stamp the deadline so
+    # downstream eligibility cleanly logs WHY it was rejected.
+    url_yr = _detect_url_year(link, cand.get("opportunity_title") or "")
+    if url_yr and url_yr < date.today().year and not cand.get("submission_deadline"):
+        cand["submission_deadline"] = date(url_yr, 12, 31)
+        cand["_deadline_from_url_year"] = True
+        return cand
+
+    # Route PDFs to the dedicated parser.
+    is_pdf = link.lower().split("?", 1)[0].endswith(".pdf")
+
+    try:
+        r = requests.get(
+            link,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "application/pdf, text/html, */*" if is_pdf else "text/html",
+            },
+            timeout=ENRICH_TIMEOUT,
+            allow_redirects=True,
+            stream=is_pdf,  # stream PDFs so we can size-cap before reading
+        )
+        r.raise_for_status()
+    except Exception as exc:
+        log.debug("enrich fetch failed for %s: %s", link, exc)
+        return cand
+
+    if is_pdf or r.headers.get("Content-Type", "").lower().startswith("application/pdf"):
+        try:
+            # Size-cap to keep memory + CPU bounded.
+            cl = int(r.headers.get("Content-Length") or 0)
+            if cl and cl > ENRICH_PDF_MAX_BYTES:
+                log.debug("pdf too large (%d bytes): %s", cl, link)
+                return cand
+            pdf_bytes = r.content[:ENRICH_PDF_MAX_BYTES]
+        except Exception:
+            return cand
+        text = _extract_pdf_text(pdf_bytes)
+        if not text:
+            return cand
+        # PDF path: no soup, just use the extracted text for the same
+        # downstream extractors.
+        soup = None
+    else:
+        try:
+            soup = BeautifulSoup(r.text, "html.parser")
+            text = soup.get_text(" ", strip=True)
+        except Exception:
+            return cand
+
+    # Deadline detection — four sources, in priority order:
+    #   1. Explicit deadline phrase in body text (most reliable).
+    #   2. PDF guide linked from the HTML page (Pierre Fabre case —
+    #      page shows publish date only; real deadline is in the
+    #      downloadable Guide-*.pdf).
+    #   3. Latest year mentioned in URL / title.
+    if not cand.get("submission_deadline"):
+        d = _extract_deadline_from_text(text)
+        if d:
+            cand["submission_deadline"] = d
+        elif soup is not None:
+            # Follow the most-likely application-guide PDF on the page
+            # and try to extract the deadline from THERE.
+            pdf_url = _find_application_pdf(soup, link)
+            if pdf_url:
+                pdf_deadline, pdf_brief = _try_pdf_guide_deadline(pdf_url)
+                if pdf_deadline:
+                    cand["submission_deadline"] = pdf_deadline
+                    cand["_deadline_from_guide_pdf"] = pdf_url
+                if pdf_brief and not cand.get("brief_description"):
+                    cand["brief_description"] = pdf_brief
+        # Final fallback: year-in-URL heuristic.
+        if not cand.get("submission_deadline"):
+            yr = _detect_url_year(link, cand.get("opportunity_title", ""))
+            today = date.today()
+            if yr and yr < today.year:
+                cand["submission_deadline"] = date(yr, 12, 31)
+                cand["_deadline_from_url_year"] = True
+
+    # Brief description — prefer meta tags / first paragraph for HTML,
+    # else the leading text from the PDF body.
+    if not cand.get("brief_description"):
+        desc = _extract_description_from_soup(soup) if soup is not None else None
+        if not desc and text:
+            # PDF path: take the first ~600 chars of meaningful text.
+            stripped = text.strip()
+            if len(stripped) > 40:
+                desc = stripped[:600]
+        if desc:
+            cand["brief_description"] = desc
+
+    # Eligibility — append to brief_description so the country gate in
+    # auto_scorer.country_eligible() sees it. (The gate scans
+    # title + brief_description + geographic_scope + focus_theme + funder.)
+    elig = _extract_eligibility_from_text(text)
+    if elig:
+        existing = cand.get("brief_description") or ""
+        if elig.lower() not in existing.lower():
+            cand["brief_description"] = (
+                existing + ("\n\n" if existing else "") + "Eligibility: " + elig
+            )[:1800]
+
+    # LAST RESORT — LLM-assisted extraction. Only runs when (a) the user
+    # has set ANTHROPIC_API_KEY in .env, and (b) the regex pipeline left
+    # the deadline OR brief_description empty after every other strategy
+    # above. This is exactly the Pierre Fabre case: the deadline lives
+    # in a banner image / on a companion site that no regex can read.
+    #
+    # Cost: ~$0.0008 per call at Haiku tier. Only triggered for the
+    # subset of candidates the regex layer couldn't fully fill — usually
+    # a handful per scan, not the full 100.
+    missing_deadline = not cand.get("submission_deadline")
+    missing_desc = not cand.get("brief_description") or len(
+        (cand.get("brief_description") or "")
+    ) < 60
+    if (missing_deadline or missing_desc) and text:
+        try:
+            from core.llm_extractor import extract as _llm_extract, is_enabled as _llm_on
+        except ImportError:
+            _llm_on = lambda: False  # noqa: E731
+            _llm_extract = None
+        if _llm_on() and _llm_extract is not None:
+            llm = _llm_extract(
+                title=cand.get("opportunity_title", "") or "",
+                url=link,
+                page_text=text,
+            )
+            if llm:
+                if missing_deadline and llm.get("submission_deadline"):
+                    try:
+                        cand["submission_deadline"] = date.fromisoformat(
+                            llm["submission_deadline"]
+                        )
+                        cand["_deadline_from_llm"] = True
+                    except ValueError:
+                        pass
+                if missing_desc and llm.get("brief_description"):
+                    cand["brief_description"] = llm["brief_description"][:1800]
+                    cand["_desc_from_llm"] = True
+
+    return cand
+
+
+# Title fragments that signal blog / explainer / FAQ content, NOT an RFP.
+_BLOG_TITLE_RE = re.compile(
+    r"(what we (do|don['']t|will|won['']t) ?(fund|support)?|"
+    r"how (we|to) (work|apply|fund)|"
+    r"guide(line)?s? (for|to|on)|"
+    r"about (our|the|us)|"
+    r"frequently asked|"
+    r"read (about|what|more)|"
+    r"learn (about|how|more)|"
+    r"introduction to|"
+    r"our (approach|process|priorities|values)|"
+    r"meet (our|the) team|"
+    r"contact us|"
+    r"who we (are|fund))",
+    re.IGNORECASE,
+)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+class ScraperNotImplemented(NotImplementedError):
+    """Raised when a method dispatcher has no handler."""
+
+
+def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return candidate RFP dicts for one source. Never raises — errors are
+    logged and converted to an empty list so the orchestrator can move on."""
+    method = (source.get("method") or source.get("scrape_method") or "").lower()
+    url = source.get("url")
+    name = source.get("name") or url or "(unnamed)"
+    if not url:
+        log.warning("scan_source: no URL for %s", name)
+        return []
+
+    try:
+        # Theme/country filtering now happens in core.scan_pipeline (policy-
+        # driven, admin-configurable). Scrapers return raw candidates.
+        if method == "rss":
+            # Google Alerts feeds need a dedicated handler — entries link
+            # to arbitrary third-party sites through Google's redirect,
+            # so we unwrap URLs, set funder from destination domain, and
+            # apply tighter noise filters.
+            if "google.com/alerts/feeds" in url:
+                return _scan_google_alerts(name, url)
+            return _scan_rss(name, url)
+        if method == "rest_json":
+            return _scan_rest_json(name, url)
+        if method == "html":
+            return _scan_html(name, url)
+        if method == "html_js":
+            # Playwright-rendered scan for SPA donor portals (EC Funding
+            # Portal, CZI, etc.) where the listing widget only appears
+            # after JavaScript executes.
+            return _scan_html_js(name, url)
+        if method == "manual":
+            return []  # nothing to scan; admin curates donor_sources directly
+        raise ValueError(f"Unknown scrape method: {method!r}")
+    except Exception as exc:  # pragma: no cover — surfaced via scan_logs.errors
+        log.exception("scan_source error for %s (%s): %s", name, url, exc)
+        # Re-raise so the orchestrator can record the error in scan_logs.
+        raise
+
+
+# ---------------------------------------------------------------------------
+# RSS
+# ---------------------------------------------------------------------------
+def _scan_rss(name: str, url: str) -> list[dict[str, Any]]:
+    # Some feeds (NIH Guide, ReliefWeb) return XML that feedparser flags as
+    # malformed when fetched directly. Pre-fetch with requests so we get
+    # browser-like headers, then hand the bytes to feedparser — which is more
+    # forgiving with bytes input than with a URL it fetched itself.
+    try:
+        r = requests.get(
+            url,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml"},
+            timeout=HTTP_TIMEOUT,
+        )
+        r.raise_for_status()
+        feed = feedparser.parse(r.content)
+    except Exception:
+        # Last-resort: try the URL directly.
+        feed = feedparser.parse(
+            url, agent=USER_AGENT,
+            request_headers={"User-Agent": USER_AGENT},
+        )
+    if not feed.entries:
+        # Quietly return [] — log via scan_logs.errors if truly broken
+        # downstream, but don't crash the source if the feed is just empty.
+        log.info("RSS %s returned 0 entries (bozo=%s)", name, getattr(feed, "bozo", False))
+        return []
+    out: list[dict[str, Any]] = []
+    funder = _funder_from_source_name(name)
+    for entry in feed.entries[:100]:  # cap per-source
+        title = _clean(getattr(entry, "title", "") or "")
+        link = _clean(getattr(entry, "link", "") or "")
+        if not title or not link:
+            continue
+        summary = _clean(getattr(entry, "summary", "") or "")
+        published = _parse_struct_time(getattr(entry, "published_parsed", None))
+        out.append({
+            "opportunity_title": title,
+            "opportunity_link": link,
+            "funding_agency": funder,
+            "brief_description": summary[:1500] or None,
+            "date_posted": published,
+            "submission_deadline": None,
+            "_source_origin": f"{name} (RSS)",
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Google Alerts — special-case RSS handler
+#
+# Differences from curated donor RSS:
+#   * Each entry links to an arbitrary third-party site (donor, news,
+#     aggregator, social, government, foundation, etc.).
+#   * Google wraps the link in its tracking redirect:
+#       https://www.google.com/url?rct=j&sa=t&url=<REAL_URL>&usg=...
+#     We need to unwrap to get the destination.
+#   * The "funder" should be the destination domain, not "Google Alert".
+#   * Some entries are news articles / LinkedIn / Twitter / YouTube
+#     posts ABOUT a funding opportunity rather than the opportunity
+#     itself — they're noise; filter them out.
+#   * Google's snippet (entry.summary) is high-quality — keep it as the
+#     starting brief_description so the policy gate has something to
+#     work with even before detail-page enrichment.
+# ---------------------------------------------------------------------------
+from urllib.parse import unquote, parse_qs
+
+# Domains that surface RFP mentions but aren't the RFP source themselves.
+# Strip them at the alert level — they only inflate dedup work.
+_GOOGLE_ALERT_NOISE_DOMAINS = (
+    "twitter.com", "x.com",
+    "facebook.com", "fb.com", "m.facebook.com",
+    "linkedin.com", "lnkd.in",
+    "youtube.com", "youtu.be",
+    "instagram.com", "reddit.com",
+    "tiktok.com",
+    "news.google.com", "feedburner.com",
+    "scholar.google.com",
+)
+
+
+def _unwrap_google_url(url: str) -> str:
+    """Strip the google.com/url? redirect wrapper to get the real target."""
+    if not url:
+        return url
+    if "google.com/url" not in url:
+        return url
+    try:
+        parsed = urlsplit(url)
+        qs = parse_qs(parsed.query)
+        for key in ("url", "q"):  # Google uses either depending on context
+            if key in qs and qs[key]:
+                return unquote(qs[key][0])
+    except Exception:
+        pass
+    return url
+
+
+def _is_google_alert_noise(url: str) -> bool:
+    """Return True if the URL is from a known noise domain."""
+    try:
+        host = urlsplit(url).netloc.lower().lstrip("www.")
+        return any(host == d or host.endswith("." + d) for d in _GOOGLE_ALERT_NOISE_DOMAINS)
+    except Exception:
+        return False
+
+
+def _domain_to_funder(url: str) -> str:
+    """Convert a URL host into a readable funder label, e.g.
+    'https://www.fondation-mma.org/calls' → 'fondation-mma.org'."""
+    try:
+        host = urlsplit(url).netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        return host or "(unknown)"
+    except Exception:
+        return "(unknown)"
+
+
+def _scan_google_alerts(name: str, url: str) -> list[dict[str, Any]]:
+    """Special-case RSS handler for Google Alerts feeds.
+
+    Behavior differs from `_scan_rss` in three ways:
+      1. Unwraps `google.com/url?` redirects on each entry's link.
+      2. Sets funding_agency from the destination domain (not the
+         alert name).
+      3. Filters out social-media / news-aggregator noise domains.
+
+    The cleaned candidate then flows into the standard enrichment +
+    eligibility + scoring pipeline like any other source.
+    """
+    try:
+        r = requests.get(
+            url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "application/atom+xml, application/rss+xml, text/xml",
+            },
+            timeout=HTTP_TIMEOUT,
+        )
+        r.raise_for_status()
+        feed = feedparser.parse(r.content)
+    except Exception:
+        feed = feedparser.parse(
+            url, agent=USER_AGENT,
+            request_headers={"User-Agent": USER_AGENT},
+        )
+    if not feed.entries:
+        log.info("Google Alert %s returned 0 entries", name)
+        return []
+
+    out: list[dict[str, Any]] = []
+    skipped_noise = 0
+    for entry in feed.entries[:100]:
+        title = _clean(getattr(entry, "title", "") or "")
+        raw_link = _clean(getattr(entry, "link", "") or "")
+        link = _unwrap_google_url(raw_link)
+        if not title or not link:
+            continue
+        if _is_google_alert_noise(link):
+            skipped_noise += 1
+            continue
+        # Google's <summary> already strips bold tags etc. into clean
+        # snippet text — use it as the starting description.
+        summary = _clean(getattr(entry, "summary", "") or "")
+        published = _parse_struct_time(getattr(entry, "published_parsed", None))
+        out.append({
+            "opportunity_title": title,
+            "opportunity_link": link,
+            "funding_agency": _domain_to_funder(link),
+            "brief_description": summary[:1500] or None,
+            "date_posted": published,
+            "submission_deadline": None,
+            "_source_origin": f"{name} (Google Alert)",
+        })
+    if skipped_noise:
+        log.info(
+            "Google Alert %s: skipped %d noise-domain entr%s (social / aggregator)",
+            name, skipped_noise, "y" if skipped_noise == 1 else "ies",
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# REST JSON — Grants.gov is the only well-known endpoint in sources.yaml
+# ---------------------------------------------------------------------------
+def _scan_rest_json(name: str, url: str) -> list[dict[str, Any]]:
+    if "api.grants.gov" in url:
+        return _scan_grants_gov(name, url)
+    # NOTE: The World Bank projects API (search.worldbank.org/api/v3/projects)
+    # returns ONGOING / COMPLETED projects, not open funding opportunities.
+    # Implementing-NGO deployments shouldn't pursue these via the scan pipeline — removed the
+    # handler. To restore proper World Bank RFP scanning, point a new
+    # handler at the procurement / business-opportunities endpoint instead.
+    log.info("REST JSON endpoint not specifically handled: %s — returning []", url)
+    return []
+
+
+def _fetch_grants_gov_details(numeric_id: str) -> dict[str, Any] | None:
+    """Call Grants.gov fetchOpportunity to get the full opportunity payload.
+
+    Returns None on any failure. Used to enrich candidates with:
+      * synopsis / description text         → brief_description
+      * estimated total program funding      → estimated_value
+      * response / posting / archive dates  → submission_deadline / date_posted
+      * funding activity categories          → program_area
+      * applicant types + cost sharing       → notes (eligibility hints)
+      * funding instruments                  → funding_window
+      * CFDA + expected # of awards          → notes
+
+    HISTORICAL TRAP — the request body MUST use `opportunityId`. The
+    previous implementation sent `oppId` and the API silently returned a
+    bare error stub `{serverURI, message}` with NO synopsis/data — which
+    is why every Grants.gov RFP since launch has had blank
+    `estimated_value`, `brief_description`, etc. The data was always
+    there; we just weren't asking for it correctly.
+    """
+    if not numeric_id:
+        return None
+    try:
+        # Coerce to int so the API accepts the body (string ids also fail
+        # silently and return the error stub).
+        opp_id_int = int(str(numeric_id).strip())
+    except (TypeError, ValueError):
+        return None
+    try:
+        r = requests.post(
+            "https://api.grants.gov/v1/api/fetchOpportunity",
+            json={"opportunityId": opp_id_int},
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            timeout=HTTP_TIMEOUT,
+        )
+        r.raise_for_status()
+        j = r.json() or {}
+    except Exception as exc:
+        log.debug("fetchOpportunity %s failed: %s", numeric_id, exc)
+        return None
+    # The API returns 200 with {data: {serverURI, message}} when the body
+    # shape is wrong — detect that case so callers don't think they got
+    # real data. Real responses always have data.synopsis populated.
+    data = j.get("data") or {}
+    if not isinstance(data, dict) or "synopsis" not in data:
+        log.warning("fetchOpportunity %s returned no synopsis (stub response)", numeric_id)
+        return None
+    return j
+
+
+def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
+    """Grants.gov search2 API. Posts JSON body, returns oppHits list, then
+    enriches each hit with fetchOpportunity for the synopsis + funding info."""
+    out: list[dict[str, Any]] = []
+    for keyword in ["global health", "infectious disease", "HIV", "tuberculosis", "malaria"]:
+        body = {
+            "rows": 25,
+            "keyword": keyword,
+            # 'posted' only — forecasts have no firm close date and pollute
+            # the table with deadline=None rows that look like expired RFPs.
+            # When a forecast goes live it'll show up here on the next scan.
+            "oppStatuses": "posted",
+            "sortBy": "openDate|desc",
+        }
+        try:
+            r = requests.post(
+                url, json=body,
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+                timeout=HTTP_TIMEOUT,
+            )
+            r.raise_for_status()
+            data = r.json() or {}
+        except Exception as exc:
+            log.warning("Grants.gov keyword=%s failed: %s", keyword, exc)
+            continue
+        hits = (((data.get("data") or {}).get("oppHits")) or [])
+        for h in hits:
+            title = _clean(h.get("title") or "")
+            # Detail page URL needs the NUMERIC internal `id`, not the
+            # human-readable `number` (e.g. "RFA-AI-28-024"). Passing the
+            # number makes every link redirect to the generic search page.
+            numeric_id = _clean(h.get("id") or "")
+            opp_number = _clean(h.get("number") or "")
+            link = (
+                f"https://www.grants.gov/search-results-detail/{numeric_id}"
+                if numeric_id else None
+            )
+            agency = _clean(h.get("agencyName") or h.get("agencyCode") or "")
+            close_iso = h.get("closeDate")
+            open_iso = h.get("openDate")
+            if not title:
+                continue
+            out.append({
+                "opportunity_title": title,
+                "opportunity_link": link,
+                "opportunity_id": opp_number,  # surface the human-readable RFA number
+                "funding_agency": agency or "US Federal (Grants.gov)",
+                "brief_description": None,
+                "date_posted": _parse_iso_date(open_iso),
+                "submission_deadline": _parse_iso_date(close_iso),
+                "_source_origin": f"{name} (kw={keyword!r})",
+                "_grants_gov_id": numeric_id,
+            })
+    # Dedup within this scrape by opportunity_link / title
+    deduped = _dedup_by_link_or_title(out)
+
+    # Enrich each unique hit with the detail payload. Until the
+    # `oppId` → `opportunityId` bug was fixed (2026-06-04), this loop
+    # was a no-op — every detail call returned the error stub and we
+    # were storing only the listing-call fields. Now that the detail
+    # call works, enrichment carries the rest of the rich payload
+    # (estimated_value, program_area, etc.) so we want to cover EVERY
+    # deduped candidate, not just the first 50. At 5 keywords × 25 rows
+    # we typically see 60-80 unique hits; each detail call is ~500ms-1s
+    # → +30-80s scan time, but the alternative is shipping the table
+    # with most rows empty (the bug we just fixed).
+    #
+    # Field map per config/donor_field_map.yaml → grants_gov.detail_field_map.
+    # This block is the executor; keep it aligned with the dictionary when
+    # the donor exposes new fields.
+    enrich_cap = int(os.environ.get("GRANTS_GOV_ENRICH_CAP", "100"))
+    for cand in deduped[:enrich_cap]:
+        details = _fetch_grants_gov_details(cand.get("_grants_gov_id", ""))
+        if not details:
+            continue
+        d = (details.get("data") or {}) if isinstance(details, dict) else {}
+        syn = d.get("synopsis") or {}
+
+        # --- opportunity_id (override list value if detail is canonical) ---
+        opp_num = _clean(d.get("opportunityNumber") or "")
+        if opp_num and not cand.get("opportunity_id"):
+            cand["opportunity_id"] = opp_num
+
+        # --- funding_agency: prefer the human-readable agencyDetails.agencyName
+        # ("Dept. of the Army -- USAMRAA") over the listing's agencyCode
+        # ("DOD-AMRAA") which is opaque to reviewers ---
+        agency_detail = (d.get("agencyDetails") or {}).get("agencyName")
+        if agency_detail:
+            cand["funding_agency"] = _clean(agency_detail)
+
+        # --- brief_description (synopsisDesc, HTML-stripped, capped) ---
+        desc = _clean(syn.get("synopsisDesc") or "")
+        if desc:
+            desc = re.sub(r"<[^>]+>", " ", desc)
+            desc = re.sub(r"\s+", " ", desc).strip()
+            cand["brief_description"] = desc[:1800]
+
+        # --- estimated_value: PRIMARY = total program funding, FALLBACK = per-award ceiling.
+        # Both fields arrive as strings like "11165000" or "none"/None. ---
+        money_paths = [syn.get("estimatedFunding"), syn.get("awardCeiling")]
+        for raw in money_paths:
+            money = _coerce_money(raw)
+            if money is not None:
+                cand["estimated_value"] = money
+                cand["currency"] = "USD"
+                break
+
+        # --- date fields (DB column is `date_posted`, not `date_posted`) ---
+        dp = _parse_iso_date(syn.get("postingDate") or "")
+        if dp:
+            cand["date_posted"] = dp
+        # Detail-call deadline overrides the list-call value (it's the
+        # authoritative `responseDate` rather than the abbreviated closeDate).
+        dl = _parse_iso_date(syn.get("responseDate") or "")
+        if dl:
+            cand["submission_deadline"] = dl
+
+        # --- program_area: from fundingActivityCategories[*].description ---
+        cats = syn.get("fundingActivityCategories") or []
+        if isinstance(cats, list):
+            labels = [_clean(c.get("description") or "") for c in cats if isinstance(c, dict)]
+            labels = [x for x in labels if x]
+            if labels:
+                cand["program_area"] = labels
+
+        # --- funding_window: instrument types joined ---
+        instrs = syn.get("fundingInstruments") or []
+        if isinstance(instrs, list):
+            labels = [_clean(i.get("description") or "") for i in instrs if isinstance(i, dict)]
+            labels = [x for x in labels if x]
+            if labels:
+                cand["funding_window"] = " / ".join(labels)
+
+        # --- notes: eligibility + cost-share + CFDA + expected #awards ---
+        notes_parts: list[str] = []
+        applicants = syn.get("applicantTypes") or []
+        if isinstance(applicants, list):
+            a_labels = [_clean(a.get("description") or "") for a in applicants if isinstance(a, dict)]
+            a_labels = [x for x in a_labels if x]
+            if a_labels:
+                notes_parts.append("Eligible applicants: " + "; ".join(a_labels))
+        cs = syn.get("costSharing")
+        if cs is not None and str(cs).lower() not in ("none", ""):
+            notes_parts.append(f"Cost sharing required: {cs}")
+        cfdas = d.get("cfdas") or []
+        if isinstance(cfdas, list) and cfdas:
+            first = cfdas[0] if isinstance(cfdas[0], dict) else {}
+            cfda_num = _clean(first.get("cfdaNumber") or "")
+            cfda_title = _clean(first.get("programTitle") or "")
+            if cfda_num:
+                notes_parts.append(f"CFDA {cfda_num}{' — ' + cfda_title if cfda_title else ''}")
+        n_awards = syn.get("numberOfAwards")
+        if n_awards and str(n_awards).lower() not in ("none", ""):
+            notes_parts.append(f"Expected awards: {n_awards}")
+        if notes_parts:
+            cand["notes"] = " | ".join(notes_parts)[:1800]
+
+    # Drop the temporary id helper before returning.
+    for cand in deduped:
+        cand.pop("_grants_gov_id", None)
+    return deduped
+
+
+def _coerce_money(raw: Any) -> float | None:
+    """Coerce a Grants.gov money-as-string into a float, treating the
+    string literal 'none' (which the API uses for unspecified fields) as
+    null. Returns None when the value is missing or unparseable."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s.lower() == "none":
+        return None
+    s = s.replace(",", "").replace("$", "")
+    try:
+        v = float(s)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
+def _scan_worldbank(name: str, url: str) -> list[dict[str, Any]]:
+    """World Bank Projects API. Returns active health-sector projects."""
+    params = {
+        "format": "json",
+        "rows": 50,
+        "fl": "id,project_name,boardapprovaldate,closingdate,countryname_exact",
+        "kw": "health",
+        "status_exact": "Active",
+    }
+    try:
+        r = requests.get(
+            url, params=params,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            timeout=HTTP_TIMEOUT,
+        )
+        r.raise_for_status()
+        data = r.json() or {}
+    except Exception as exc:
+        log.warning("World Bank query failed: %s", exc)
+        return []
+    projects = (data.get("projects") or {})
+    out: list[dict[str, Any]] = []
+    for pid, p in projects.items():
+        title = _clean(p.get("project_name") or "")
+        if not title:
+            continue
+        out.append({
+            "opportunity_title": title,
+            "opportunity_link": f"https://projects.worldbank.org/en/projects-operations/project-detail/{pid}",
+            "funding_agency": "World Bank",
+            "brief_description": None,
+            "date_posted": _parse_iso_date(p.get("boardapprovaldate")),
+            "submission_deadline": _parse_iso_date(p.get("closingdate")),
+            "_source_origin": name,
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# HTML — generic best-effort anchor extraction
+# ---------------------------------------------------------------------------
+def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[dict[str, Any]]:
+    """Pure anchor-extraction logic — shared by `_scan_html` (requests) and
+    `_scan_html_js` (Playwright-rendered). Takes pre-fetched HTML text;
+    returns enriched candidate dicts."""
+    soup = BeautifulSoup(html_text, "html.parser")
+    funder = _funder_from_source_name(name)
+    base_host = urlsplit(url).netloc.lower()
+
+    candidates: dict[str, dict[str, Any]] = {}
+    for a in soup.find_all("a", href=True):
+        text = _clean(a.get_text(" ", strip=True))
+        href = a["href"].strip()
+        if not text or len(text) < 25 or len(text) > 220:
+            continue
+        if href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            continue
+        full = urljoin(url, href)
+        # Stay within the same domain to avoid scraping nav links to other sites.
+        if urlsplit(full).netloc.lower() != base_host:
+            continue
+        # Reject obvious blog / guidance / FAQ pages by URL path …
+        if _BLOG_URL_RE.search(urlsplit(full).path):
+            continue
+        # … reject search-result / filter URLs (Rockefeller's
+        # ?post_type=grant&filter_regions[0]=…, ?keyword=, /search/?)
+        # which list grants but aren't grant detail pages themselves.
+        if _SEARCH_PAGE_URL_RE.search(full):
+            continue
+        # … reject URLs whose path embeds a past year, e.g.
+        # /year/2022/alliance-rfp.pdf — short-circuits the whole
+        # download+parse cycle since the deadline will never be future.
+        url_yr = _detect_url_year(full)
+        if url_yr and url_yr < date.today().year:
+            continue
+        # … and by title fragment ("what we do and don't fund", etc.)
+        if _BLOG_TITLE_RE.search(text):
+            continue
+        # Heuristic: title OR url must mention something granty.
+        if not (_GRANTY_RE.search(text) or _GRANTY_RE.search(href)):
+            continue
+        if full in candidates:
+            # Keep the longest title (typically the most descriptive)
+            if len(text) > len(candidates[full]["opportunity_title"]):
+                candidates[full]["opportunity_title"] = text
+            continue
+        candidates[full] = {
+            "opportunity_title": text,
+            "opportunity_link": full,
+            "funding_agency": funder,
+            "brief_description": None,
+            "date_posted": None,
+            "submission_deadline": None,
+            "_source_origin": f"{name} (HTML)",
+        }
+        if len(candidates) >= 40:  # cap noise
+            break
+
+    # Detail-page enrichment — fetch each candidate's URL and try to fill
+    # missing deadline / description / eligibility. This is what allows the
+    # eligibility gate downstream to reject US-only or past-deadline RFPs
+    # that the listing-page title alone didn't reveal.
+    results = list(candidates.values())[:ENRICH_MAX_PAGES]
+    for i, c in enumerate(results, 1):
+        _enrich_candidate(c)
+        if i >= ENRICH_MAX_PAGES:
+            log.info("enrich cap reached at %d candidates", ENRICH_MAX_PAGES)
+            break
+    return results + list(candidates.values())[ENRICH_MAX_PAGES:]
+
+
+def _scan_html(name: str, url: str) -> list[dict[str, Any]]:
+    """Generic HTML listing-page scraper using `requests` (no JS).
+    Suitable for static / server-rendered donor pages."""
+    try:
+        r = requests.get(
+            url,
+            headers={"User-Agent": USER_AGENT, "Accept": "text/html"},
+            timeout=HTTP_TIMEOUT,
+        )
+        r.raise_for_status()
+    except Exception as exc:
+        log.warning("HTML fetch failed for %s: %s", url, exc)
+        return []
+    return _extract_candidates_from_html(name, url, r.text)
+
+
+def _scan_html_js(name: str, url: str) -> list[dict[str, Any]]:
+    """JS-rendered HTML scraper using Playwright headless Chromium.
+    For SPA donor portals (EC Funding Portal, CZI, Mastercard, etc.)
+    where the listing widget only populates after JavaScript runs.
+
+    Falls back to plain `_scan_html` if Playwright isn't installed —
+    so the scanner stays usable without the optional dependency.
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: WPS433 (lazy)
+    except ImportError:
+        log.warning(
+            "playwright not installed — falling back to plain HTML scan for %s. "
+            "Install with: pip install playwright && playwright install chromium",
+            name,
+        )
+        return _scan_html(name, url)
+
+    html_text: str | None = None
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                ctx = browser.new_context(user_agent=USER_AGENT)
+                page = ctx.new_page()
+                page.set_default_timeout(20000)  # 20s default for goto / waits
+                page.goto(url, wait_until="networkidle", timeout=20000)
+                # Give late-loading widgets one extra second to settle.
+                page.wait_for_timeout(1000)
+                # SPA listings (EC Funding Portal, DevelopmentAid, etc.) often
+                # lazy-render result cards as the user scrolls. Scroll to
+                # bottom once + wait so deferred items materialise. Cheap and
+                # safe on static pages (scroll-to-bottom is a no-op).
+                try:
+                    page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+                    page.wait_for_timeout(1500)
+                except Exception:
+                    pass  # don't let a JS quirk kill the whole scan
+                html_text = page.content()
+            finally:
+                browser.close()
+    except Exception as exc:
+        log.warning("Playwright render failed for %s: %s", url, exc)
+        # Last-ditch fallback so the source isn't dead.
+        return _scan_html(name, url)
+
+    if not html_text:
+        return []
+    return _extract_candidates_from_html(name, url, html_text)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _clean(s: Any) -> str:
+    if s is None:
+        return ""
+    return re.sub(r"\s+", " ", str(s)).strip()
+
+
+def _parse_struct_time(t) -> date | None:
+    if not t:
+        return None
+    try:
+        return date(t.tm_year, t.tm_mon, t.tm_mday)
+    except Exception:
+        return None
+
+
+def _parse_iso_date(s: str | None) -> date | None:
+    """Parse a wide variety of date string formats donors emit.
+
+    Handles ISO 8601, US slash format, AND Grants.gov's natural-language
+    timestamps ("May 08, 2026 12:00:00 AM EDT") which were previously
+    silently dropping to None.
+    """
+    if not s:
+        return None
+    raw = str(s).strip()
+    if not raw or raw.lower() == "none":
+        return None
+    # Strip trailing timezone abbreviation (EDT, PST, UTC, etc.) so the
+    # natural-language formats below parse cleanly.
+    cleaned = re.sub(r"\s+[A-Z]{2,4}$", "", raw)
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d",
+        "%m/%d/%Y",
+        "%b %d, %Y %I:%M:%S %p",       # "May 08, 2026 12:00:00 AM"
+        "%B %d, %Y %I:%M:%S %p",       # "May 08, 2026 12:00:00 AM" (full month)
+        "%b %d, %Y",                   # "May 08, 2026"
+        "%B %d, %Y",
+    ):
+        try:
+            return datetime.strptime(
+                cleaned[:len(fmt) + 5] if "%f" in fmt else cleaned,
+                fmt,
+            ).date()
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _funder_from_source_name(name: str) -> str:
+    """Strip trailing context like ' — donor catalog' or ' RSS' from name."""
+    base = name.split("—")[0].strip()
+    return re.sub(r"\s+(RSS|API|Feed)$", "", base, flags=re.IGNORECASE)
+
+
+def _dedup_by_link_or_title(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """In-scrape dedup — same link / same title in one batch."""
+    seen_links: set[str] = set()
+    seen_titles: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        link = (r.get("opportunity_link") or "").lower().rstrip("/")
+        title = (r.get("opportunity_title") or "").lower().strip()
+        if link and link in seen_links:
+            continue
+        if title and title in seen_titles:
+            continue
+        if link:
+            seen_links.add(link)
+        if title:
+            seen_titles.add(title)
+        out.append(r)
+    return out
+
+
+def _filter_relevant(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Apply the deploying org's health-domain keyword filter to candidate titles +
+    descriptions. Permissive: any match keeps the row. Use for noise control
+    on aggregator feeds (e.g. FundsForNGOs lists everything)."""
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        hay = (
+            (r.get("opportunity_title") or "") + " " +
+            (r.get("brief_description") or "")
+        ).lower()
+        if any(kw in hay for kw in HEALTH_KEYWORDS):
+            out.append(r)
+    return out
