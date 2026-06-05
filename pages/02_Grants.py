@@ -166,7 +166,7 @@ else:
 
 # Lead / Sub Applicant display logic.
 # Role drives the defaults (using the deploying-org short name from
-# settings — defaults to "the organisation BDT" if not configured):
+# settings — defaults to "Org" if not configured):
 #   * Prime     → the deploying org is the lead; no sub by default.
 #   * Sub       → another institution leads; the deploying org is the sub.
 #   * Technical → the deploying org provides TA, neither lead nor sub.
@@ -180,8 +180,8 @@ _role_lc = _role.lower()
 _raw_lead = _placeholder(r.get("lead_applicant"))
 _raw_sub = _placeholder(r.get("sub_applicant"))
 
-# Pull the deploying-org short name (e.g. "the organisation BDT") so this page works
-# for any deployment, not just the reference customer.
+# Pull the deploying-org short name so this page works for any
+# deployment without code changes.
 from core.settings import get_org_short  # noqa: E402
 _org = get_org_short()
 

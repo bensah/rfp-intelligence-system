@@ -44,12 +44,12 @@ from db.supabase_client import get_client
 # ---------------------------------------------------------------------------
 # Team-member name normalization
 # ---------------------------------------------------------------------------
-# Different submitters spell their names inconsistently in the Excel
-# workbook and via the Submit form:
-#   "Yauba"           → should be "Drew Hall"
-#   "Ben"             → should be "Jane Doe"  (nickname)
-#   "BERNARD NSAH"    → should be "Jane Doe"  (case)
-#   "bernard nsah"    → should be "Jane Doe"
+# Different submitters spell their names inconsistently across the
+# Excel workbook and the Submit form. Common cases:
+#   "First"             → should resolve to "First Last"
+#   "Nickname"          → should resolve to canonical "First Last"
+#   "FIRST LAST"        → should normalise to "First Last"  (case)
+#   "first last"        → should normalise to "First Last"
 # Without normalisation, the "Submissions by team member" chart shows
 # the same person two or three times as separate stacked-bar series.
 #
@@ -59,13 +59,14 @@ from db.supabase_client import get_client
 #   2. If the normalised name is an exact canonical match → return canonical.
 #   3. Tokenise both. After applying the nickname map, if the input
 #      tokens are a subset of any canonical name's tokens → return that
-#      canonical name. Subset rule handles "Yauba" → "Drew Hall".
-#   4. Tie-break: longest canonical wins (so "Jane Doe" beats "Bernard").
+#      canonical name. Subset rule handles single-name → full-name.
+#   4. Tie-break: longest canonical wins (so "First Last" beats "First").
 #   5. Fall back to the title-cased input if nothing matches.
 #
 # The team-is-small assumption (no two members share first OR last name)
-# makes the subset rule safe — flagged in this docstring so it doesn't
-# bite us later if a Yauba Issa joins alongside Drew Hall.
+# makes the subset rule safe — when two members DO share a token, the
+# subset rule could incorrectly merge them. Re-evaluate this strategy
+# if the team grows past ~30 members.
 # ---------------------------------------------------------------------------
 _NICKNAME_TO_FULL = {
     # nickname (lowercase) → full first name (lowercase)
@@ -137,13 +138,13 @@ def normalize_member_name(raw: str | None) -> str:
         c_tokens = _tokenize_name(c)
         if not c_tokens:
             continue
-        # Input ⊆ canonical (e.g. "Yauba" ⊆ "Drew Hall") OR
-        # canonical ⊆ input (rare — e.g. "Jane Doe Cameroon" submitted)
+        # Input ⊆ canonical (e.g. single-name ⊆ full-name) OR
+        # canonical ⊆ input (rare — when a fuller form is submitted)
         if input_tokens <= c_tokens or c_tokens <= input_tokens:
             matches.append(c)
     if matches:
         # Tie-break: prefer the canonical name with MORE tokens (the
-        # fully-specified form). "Jane Doe" beats "Bernard".
+        # fully-specified form). "First Last" beats "First".
         matches.sort(key=lambda x: (-len(_tokenize_name(x)), x))
         return matches[0]
 
@@ -1196,8 +1197,8 @@ else:
     else:
         by_member = (
             sub_period.assign(
-                # Normalize names so "Ben" + "Jane Doe" + "BERNARD NSAH"
-                # all collapse onto the canonical "Jane Doe" series.
+                # Normalize names so nickname / case variants of the
+                # same person collapse onto a single canonical series.
                 member=sub_period["submitted_by"].apply(normalize_member_name),
                 bucket=_bucket_start(sub_period["_disc_ts"], bucket_mode),
             )

@@ -86,13 +86,14 @@ def get_year() -> int:
 # RFPIS is designed to be deployed by any non-profit / research org running
 # an RFP discovery + screening pipeline. The deploying org's profile lives
 # in app_settings (single-org model — when we go multi-tenant later, this
-# becomes an organizations table with a foreign key). Default values point
-# at the organisation BDT (the reference deployment) so a fresh install isn't blank.
+# becomes an organizations table with a foreign key). Defaults are intentional
+# placeholders — each deployment should set its real values via the Admin
+# UI on first install. Nothing here exposes who's actually running the app.
 # -----------------------------------------------------------------------------
 _ORG_DEFAULTS = {
-    "org_name":            "the organisation Cameroon — Business Development Team",
-    "org_short":           "the organisation BDT",
-    "org_country":         "Cameroon",
+    "org_name":            "Your Organization",
+    "org_short":           "Org",
+    "org_country":         "",
     "org_team":            "Business Development Team",
     "org_contact_email":   "",
     "org_logo_url":        "",  # legacy — uploaded logo lives in org_logo_b64
@@ -102,7 +103,7 @@ _ORG_DEFAULTS = {
 
 def get_org() -> dict[str, str]:
     """Full deploying-org profile as a dict. Missing keys fall back to
-    the the organisation BDT defaults so the UI never renders an empty header."""
+    placeholder defaults so the UI never renders an empty header."""
     out: dict[str, str] = {}
     for key, default in _ORG_DEFAULTS.items():
         out[key] = get_setting(key, default) or default
@@ -115,7 +116,7 @@ def get_org_name() -> str:
 
 
 def get_org_short() -> str:
-    """Short name for page titles / breadcrumbs (e.g. 'the organisation BDT')."""
+    """Short name for page titles / breadcrumbs (e.g. 'Acme BD')."""
     return get_setting("org_short", _ORG_DEFAULTS["org_short"]) or _ORG_DEFAULTS["org_short"]
 
 

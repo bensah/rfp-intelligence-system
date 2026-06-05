@@ -102,7 +102,7 @@ def _kpi(label: str, value, helper: str | None = None) -> None:
     """Stacked KPI rendered as a bordered card.
 
     Card framing matches the global metric-tile styling in
-    core/app_header._GLOBAL_CSS (the organisation green left-border, soft bg, padding)
+    core/app_header._GLOBAL_CSS (green left-border, soft bg, padding)
     so the snapshot row reads as a uniform card grid rather than
     free-floating numbers.
     """
