@@ -151,6 +151,69 @@ def normalize_member_name(raw: str | None) -> str:
     return tidy
 
 
+def split_and_normalize_names(value) -> list[str]:
+    """Split a comma-separated name (or list-of-strings) into a flat
+    list of canonical names.
+
+    Cases handled:
+      * None / NaN / empty                  → []
+      * "Bernard Nsah"                       → ["Bernard Nsah"]
+      * "Michael Budzi, Bernard Nsah"        → ["Michael Budzi", "Bernard Nsah"]
+      * ["Michael Budzi", "Bernard Nsah"]    → ["Michael Budzi", "Bernard Nsah"]
+        (Postgres text[] arrays — contributors column)
+      * ["Michael Budzi, Bernard Nsah"]      → ["Michael Budzi", "Bernard Nsah"]
+        (one list element that ITSELF contains commas — common when a
+        sloppy form submission packed two names into one entry)
+
+    Each split piece is run through `normalize_member_name()` so
+    nickname / case / partial variants collapse to the canonical form.
+    "(unknown)" results are filtered out — they only appear when the
+    input was empty/None.
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return []
+    if isinstance(value, (list, tuple)):
+        out: list[str] = []
+        for v in value:
+            out.extend(split_and_normalize_names(v))
+        return out
+    parts = [p.strip() for p in str(value).split(",")]
+    normalized = [normalize_member_name(p) for p in parts if p]
+    return [n for n in normalized if n and n != "(unknown)"]
+
+
+def first_name_display_map(canonical_names) -> dict[str, str]:
+    """Return {canonical_name → display_name} where display is the
+    FIRST name only when it's unique, or the full name if two
+    canonical members share a first name.
+
+    Example: given ["Bernard Nsah", "Yauba Saidu", "Michael Budzi"]
+      → {"Bernard Nsah": "Bernard", "Yauba Saidu": "Yauba", "Michael Budzi": "Michael"}
+
+    Example with a collision (two Bernards on the team):
+      ["Bernard Nsah", "Bernard Smith"]
+      → {"Bernard Nsah": "Bernard Nsah", "Bernard Smith": "Bernard Smith"}
+
+    Shorter labels mean narrower chart legends — important for
+    print-to-PDF where wide right-side legends get cut off.
+    """
+    canonical = [n for n in set(canonical_names) if n and n != "(unknown)"]
+    by_first: dict[str, list[str]] = {}
+    for name in canonical:
+        first = name.split()[0]
+        by_first.setdefault(first, []).append(name)
+    display: dict[str, str] = {}
+    for first, names in by_first.items():
+        if len(names) == 1:
+            display[names[0]] = first       # unique first name → use it
+        else:
+            for n in names:
+                display[n] = n               # collision → fall back to full
+    # Pass through "(unknown)" so it still groups
+    display["(unknown)"] = "(unknown)"
+    return display
+
+
 # ---------------------------------------------------------------------------
 # FX — every monetary aggregate on this page is shown in USD.
 # Conversion happens row-by-row using each row's own currency field via
@@ -1195,33 +1258,61 @@ else:
     if sub_period.empty or "submitted_by" not in sub_period.columns:
         st.info("No submissions in this period.")
     else:
-        by_member = (
+        # Split comma-separated names + normalize variants so one row
+        # with "Alice, Bob" counts for BOTH (each gets +1, not one
+        # combined "Alice, Bob" bucket).
+        exploded = (
             sub_period.assign(
-                # Normalize names so nickname / case variants of the
-                # same person collapse onto a single canonical series.
-                member=sub_period["submitted_by"].apply(normalize_member_name),
+                _members=sub_period["submitted_by"].apply(split_and_normalize_names),
                 bucket=_bucket_start(sub_period["_disc_ts"], bucket_mode),
             )
-            .groupby(["bucket", "member"]).size().reset_index(name="submissions")
+            .explode("_members").dropna(subset=["_members"])
         )
-        if not by_member.empty:
+        exploded = exploded[exploded["_members"] != ""]
+        if not exploded.empty:
+            # First-name display: short labels when unique, full names on collision.
+            disp = first_name_display_map(exploded["_members"])
+            exploded["member"] = exploded["_members"].map(disp).fillna(exploded["_members"])
+            by_member = (
+                exploded.groupby(["bucket", "member"]).size()
+                .reset_index(name="submissions")
+            )
             fig_mem = px.bar(
                 by_member, x="bucket", y="submissions", color="member",
                 title=f"Submissions by member ({_period_label_str}, {bucket_mode.lower()})",
                 labels={"bucket": _bucket_label(bucket_mode), "member": "Submitted by"},
                 barmode="stack",
             )
-            fig_mem.update_layout(height=320, margin=dict(t=40, b=10),
-                                  xaxis=_fmt_bucket_ticks(bucket_mode))
+            # Legend at bottom (was right-side default) so it doesn't get
+            # clipped at the page boundary when printed to PDF.
+            fig_mem.update_layout(
+                height=340, margin=dict(t=40, b=10),
+                xaxis=_fmt_bucket_ticks(bucket_mode),
+                legend=dict(
+                    orientation="h",
+                    yanchor="top", y=-0.18,
+                    xanchor="center", x=0.5,
+                    font=dict(size=11),
+                ),
+            )
             st.plotly_chart(fig_mem, use_container_width=True)
 
-        leaderboard = (
-            sub_period["submitted_by"].apply(normalize_member_name)
-            .value_counts().reset_index()
-            .rename(columns={"submitted_by": "Member", "count": "Submissions"})
+        # Leaderboard — same split + normalize + first-name display logic.
+        all_members = (
+            sub_period["submitted_by"]
+            .apply(split_and_normalize_names)
+            .explode().dropna()
         )
-        with st.expander("Submission leaderboard", expanded=False):
-            st.dataframe(leaderboard, use_container_width=True, hide_index=True)
+        all_members = all_members[all_members != ""]
+        if not all_members.empty:
+            disp_lb = first_name_display_map(all_members)
+            leader_series = (
+                all_members.map(disp_lb).fillna(all_members)
+                .value_counts().reset_index()
+            )
+            leader_series.columns = ["Member", "Submissions"]
+            with st.expander("Submission leaderboard", expanded=False):
+                st.dataframe(leader_series, use_container_width=True, hide_index=True)
 
     # ───────────── Helpers for stacked Submitted / Unsubmitted bars ───────
     # An RFP counts as "Submitted" when progress_status = Completed
@@ -1267,24 +1358,26 @@ else:
     _STACK_COLORS = {"Submitted": "#10b981", "Unsubmitted": "#cbd5e1"}
 
     # ───────────── Proposal Leads (stacked) ───────────────────────────────
+    # `proposal_lead` is a free-text field that can hold a single name
+    # OR a comma-separated list ("Alice, Bob"). Split + explode so each
+    # named person gets their own bar; first-name display when unique.
     st.markdown("##### Proposal Leads")
     if "proposal_lead" in activity_rows.columns:
-        lead_rows = (
-            activity_rows[["proposal_lead", "progress_status"]]
-            .dropna(subset=["proposal_lead"])
-            .copy()
-        )
-        lead_rows = lead_rows[lead_rows["proposal_lead"].astype(str).str.strip() != ""]
+        lead_rows = activity_rows[["proposal_lead", "progress_status"]].copy()
+        lead_rows["_members"] = lead_rows["proposal_lead"].apply(split_and_normalize_names)
+        lead_rows = lead_rows.explode("_members").dropna(subset=["_members"])
+        lead_rows = lead_rows[lead_rows["_members"] != ""]
         if not lead_rows.empty:
-            lead_rows["proposal_lead"] = lead_rows["proposal_lead"].apply(normalize_member_name)
+            disp = first_name_display_map(lead_rows["_members"])
+            lead_rows["display"] = lead_rows["_members"].map(disp).fillna(lead_rows["_members"])
             lead_rows["is_submitted"] = lead_rows["progress_status"].apply(_is_submitted)
             stacked = _stacked_chart_df(
-                lead_rows[["proposal_lead", "is_submitted"]],
-                "proposal_lead",
+                lead_rows[["display", "is_submitted"]],
+                "display",
             )
             if not stacked.empty:
                 fig_pl = px.bar(
-                    stacked, x="RFPs", y="proposal_lead",
+                    stacked, x="RFPs", y="display",
                     color="Status", orientation="h",
                     color_discrete_map=_STACK_COLORS,
                     title="Proposal lead — top 15 by RFP count "
@@ -1293,13 +1386,14 @@ else:
                     category_orders={"Status": ["Submitted", "Unsubmitted"]},
                 )
                 fig_pl.update_layout(
-                    height=max(280, 30 * stacked["proposal_lead"].nunique() + 100),
+                    height=max(280, 30 * stacked["display"].nunique() + 100),
                     margin=dict(t=50, b=10), barmode="stack",
                     yaxis={"categoryorder": "total ascending",
                            "title": "Proposal lead"},
                     xaxis={"title": "RFPs"},
                     legend={"orientation": "h", "yanchor": "bottom",
-                            "y": 1.02, "xanchor": "right", "x": 1},
+                            "y": 1.02, "xanchor": "right", "x": 1,
+                            "font": dict(size=11)},
                 )
                 st.plotly_chart(fig_pl, use_container_width=True)
             else:
@@ -1308,26 +1402,26 @@ else:
             st.info("No proposal_lead values recorded yet.")
 
     # ───────────── Contributors (stacked) ─────────────────────────────────
+    # `contributors` is a Postgres text[] array, but individual list
+    # elements can themselves carry comma-separated names from sloppy
+    # form submissions. split_and_normalize_names handles both shapes.
     st.markdown("##### Contributors")
     if "contributors" in activity_rows.columns:
-        contribs = (
-            activity_rows[["contributors", "progress_status"]]
-            .dropna(subset=["contributors"])
-            .assign(contributors=activity_rows["contributors"]
-                    .apply(lambda v: v if isinstance(v, list) else []))
-            .explode("contributors").dropna(subset=["contributors"])
-        )
-        contribs = contribs[contribs["contributors"].astype(str).str.strip() != ""]
+        contribs = activity_rows[["contributors", "progress_status"]].copy()
+        contribs["_members"] = contribs["contributors"].apply(split_and_normalize_names)
+        contribs = contribs.explode("_members").dropna(subset=["_members"])
+        contribs = contribs[contribs["_members"] != ""]
         if not contribs.empty:
-            contribs["contributors"] = contribs["contributors"].apply(normalize_member_name)
+            disp = first_name_display_map(contribs["_members"])
+            contribs["display"] = contribs["_members"].map(disp).fillna(contribs["_members"])
             contribs["is_submitted"] = contribs["progress_status"].apply(_is_submitted)
             stacked = _stacked_chart_df(
-                contribs[["contributors", "is_submitted"]],
-                "contributors",
+                contribs[["display", "is_submitted"]],
+                "display",
             )
             if not stacked.empty:
                 fig_ct = px.bar(
-                    stacked, x="RFPs", y="contributors",
+                    stacked, x="RFPs", y="display",
                     color="Status", orientation="h",
                     color_discrete_map=_STACK_COLORS,
                     title="Contributor — top 15 by RFPs supported "
@@ -1336,13 +1430,14 @@ else:
                     category_orders={"Status": ["Submitted", "Unsubmitted"]},
                 )
                 fig_ct.update_layout(
-                    height=max(280, 30 * stacked["contributors"].nunique() + 100),
+                    height=max(280, 30 * stacked["display"].nunique() + 100),
                     margin=dict(t=50, b=10), barmode="stack",
                     yaxis={"categoryorder": "total ascending",
                            "title": "Contributor"},
                     xaxis={"title": "RFP contributions"},
                     legend={"orientation": "h", "yanchor": "bottom",
-                            "y": 1.02, "xanchor": "right", "x": 1},
+                            "y": 1.02, "xanchor": "right", "x": 1,
+                            "font": dict(size=11)},
                 )
                 st.plotly_chart(fig_ct, use_container_width=True)
             else:
