@@ -588,8 +588,32 @@ def _extract_geographic_scope(text: str, policies: dict[str, Any]) -> list[str]:
 
 
 def _extract_program_area(text: str, policies: dict[str, Any]) -> list[str]:
-    """Match candidate text against the policy themes.required_any list.
-    Each matched theme keyword is added (verbatim) to program_area."""
+    """Classify candidate text into one or more canonical program areas.
+
+    Delegates to `core.program_area_classifier.classify_program_areas`
+    which uses a comprehensive keyword bag per area (HIV, TB, malaria,
+    cancer, mental health, diabetes, nutrition, digital health, etc.)
+    and falls back to "Unspecified Program Area" when nothing matches —
+    NOT "Other" (which would imply a real bucket; Unspecified makes the
+    classifier's failure explicit).
+
+    The `policies` arg is kept for backward compatibility but no longer
+    consulted — classifier rules live in code, not policy config, to
+    stay reviewable at PR time. Move to per-deployment overrides later
+    if a tenant wants to tune without code edits.
+    """
+    if not text:
+        return [_UNSPECIFIED_PROGRAM_AREA]
+    from core.program_area_classifier import classify_program_areas
+    return classify_program_areas(text)
+
+
+_UNSPECIFIED_PROGRAM_AREA = "Unspecified Program Area"
+
+
+def _extract_program_area_LEGACY(text: str, policies: dict[str, Any]) -> list[str]:
+    """Legacy keyword-extractor — kept as a reference for backward
+    comparison. NOT called anywhere. Delete on the next cleanup pass."""
     if not text:
         return []
     required = (policies.get("themes") or {}).get("required_any", []) or []
