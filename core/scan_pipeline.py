@@ -83,7 +83,7 @@ def _build_row(
         "submitted_by": "auto-scan",
         # Default contact for auto-scanned rows. Avoids leaving the column
         # NULL — useful for filtering / replies on shared records.
-        "submitted_by_email": "cm_bdt@example.org",
+        "submitted_by_email": "autoscan@example.org",
         "submitted_at": iso_now,
         "search_date": iso_now,
         "opportunity_title": candidate["opportunity_title"],
