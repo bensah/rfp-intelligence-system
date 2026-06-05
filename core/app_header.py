@@ -49,6 +49,53 @@ _GLOBAL_CSS = f"""
      Primary green, clean typography, consistent metric tiles.
      ============================================================ */
 
+  /* ============================================================
+     PAGE-TOP TRIM — single source of truth
+     ============================================================
+     The vertical real estate above the org-logo strip kept growing
+     as new fragments were added across releases. Three culprits
+     accumulate from a stock Streamlit page:
+       1. `[data-testid="stHeader"]`     — top decoration strip (~3.5rem)
+       2. `[data-testid="stDecoration"]` — a thin coloured line below it
+       3. `.block-container` padding-top — defaults to ~6rem
+     The deploy/menu toolbar (`stToolbar`) lives INSIDE stHeader, so
+     collapsing stHeader hides it too — fine for end-users, who never
+     need the deploy button. Devs running `streamlit run` locally can
+     still access the menu via the keyboard shortcut.
+
+     This block sets every one to a tight, predictable value so the
+     header strip starts ~0.4rem under the viewport top and never
+     drifts when new code is added elsewhere. */
+  [data-testid="stHeader"] {{
+    height: 0 !important;
+    min-height: 0 !important;
+    background: transparent !important;
+  }}
+  [data-testid="stDecoration"] {{
+    display: none !important;
+  }}
+  .block-container,
+  [data-testid="stMainBlockContainer"] {{
+    padding-top: 0.4rem !important;
+    padding-bottom: 1rem !important;
+  }}
+  [data-testid="stSidebar"] > div:first-child {{
+    padding-top: 0.6rem !important;
+  }}
+  /* Tighten the divider that separates the header strip from
+     content — the default st.divider has hefty top/bottom margins. */
+  hr {{
+    margin-top: 0.5rem !important;
+    margin-bottom: 0.75rem !important;
+  }}
+  /* Zero out the implicit top margin Streamlit adds to the very
+     first element in the main column (often a column wrapper for
+     the org-logo strip). */
+  [data-testid="stMainBlockContainer"] > div:first-child > div:first-child {{
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }}
+
   /* Headings — match existing Home.py style and propagate to every page */
   h1, h2, h3, h4 {{
     color: {THEME_PRIMARY};
@@ -212,6 +259,34 @@ def render_app_header() -> None:
     # ────────────────── Global theme CSS ──────────────────────────────
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
 
+    # ────────────────── Role-gated nav hiding ─────────────────────────
+    # The Admin page is gated on entry by `permissions.is_admin()`, but
+    # the multi-page nav still SHOWS the link to everyone by default —
+    # creating a discoverable surface non-admin users can't actually
+    # use. Always inject an EXPLICIT visibility rule (block vs none)
+    # rather than conditionally injecting hide-only — a hide-only CSS
+    # from a prior rerun (when role was different / not yet loaded)
+    # can otherwise persist in the DOM and incorrectly hide the link
+    # for a user who's since been upgraded. The block rule overrides
+    # any stale hide; the hide rule is fresh each render.
+    from core import permissions as _perms  # local import — avoid cycle
+    _u = st.session_state.get("app_user") or {}
+    _visibility = "block" if _perms.is_admin(_u) else "none"
+    st.markdown(
+        f"""
+        <style>
+          /* Match the Admin nav link by its href suffix. Streamlit
+             names sidebar links after the page-file basename. */
+          [data-testid="stSidebarNav"] a[href$="/Admin"],
+          [data-testid="stSidebarNavLink"][href$="/Admin"],
+          section[data-testid="stSidebar"] a[href$="/Admin"] {{
+            display: {_visibility} !important;
+          }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # ────────────────── SIDEBAR — RFPIS product brand ─────────────────
     if _LOGO_PATH.exists():
         kwargs: dict = {"image": str(_LOGO_PATH), "size": "large"}
@@ -237,13 +312,19 @@ def render_app_header() -> None:
         with l_icon:
             if org_bytes:
                 try:
-                    st.image(org_bytes, width=55)
+                    st.image(org_bytes, width=45)
                 except Exception:
                     pass
         with l_text:
+            # Vertically centre the org name against the (smaller)
+            # logo. Padding-top was 0.65rem to push the text down
+            # to the logo's vertical centre; with width=45 the new
+            # offset is ~0.45rem. Margins zeroed so nothing pads
+            # away the gain from the block-container trim.
             st.markdown(
-                f"<div style='padding-top:0.65rem; font-weight:600; "
-                f"font-size:1rem; color:{THEME_NAVY}; line-height:1.2;'>"
+                f"<div style='padding-top:0.45rem; margin:0; "
+                f"font-weight:600; font-size:1rem; "
+                f"color:{THEME_NAVY}; line-height:1.2;'>"
                 f"{settings.get_org_name()}</div>",
                 unsafe_allow_html=True,
             )

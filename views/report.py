@@ -77,6 +77,26 @@ _NICKNAME_TO_FULL = {
     # room to grow: "avery": "avery"  (no-op — placeholder)
 }
 
+# ---------------------------------------------------------------------------
+# Full-name aliases — maps an INPUT string (lowercased, whitespace-normalised)
+# to the canonical full name it should resolve to.
+#
+# Why this exists in addition to _NICKNAME_TO_FULL: the nickname dict is
+# keyed on individual TOKENS ("ben" → "bernard"), but some cases need to
+# override an exact-match-on-itself. If "Morgan" is also present in the
+# team_members dropdown as a standalone entry, the exact-match shortcut
+# in `normalize_member_name` returns "Morgan" before the subset rule
+# can match it to "Riley Vance". This alias dict short-circuits that
+# trap so first-name-only mentions roll up to the right person.
+#
+# Add new entries when two people don't share a first name AND the
+# shorter form keeps showing up in the data (Excel imports, old form
+# submissions, etc.). Format: lowercased input → exact canonical name.
+# ---------------------------------------------------------------------------
+_FULLNAME_ALIASES = {
+    "morgan": "Riley Vance",
+}
+
 
 def _title_case(s: str) -> str:
     """ALL CAPS / lower / Mixed → Sentence Case per word. Keeps hyphens and
@@ -123,6 +143,19 @@ def normalize_member_name(raw: str | None) -> str:
     canonical_list = tuple(dropdowns.get("team_members") or [])
     if not canonical_list:
         return tidy
+
+    # Full-name alias check (runs BEFORE the exact-match shortcut so
+    # collisions like "Morgan" → "Riley Vance" win even when
+    # "Morgan" is also a dropdown entry on its own).
+    alias_target = _FULLNAME_ALIASES.get(tidy.lower())
+    if alias_target:
+        for c in canonical_list:
+            if c.lower() == alias_target.lower():
+                return c
+        # Alias target isn't in the dropdown — return it anyway so the
+        # rollup happens; downstream chart code doesn't require canonical
+        # membership.
+        return alias_target
 
     # Exact match on the cleaned-up form
     for c in canonical_list:
@@ -913,7 +946,7 @@ else:
                 fig = px.bar(
                     stacked_disc, x="bucket", y="RFPs discovered",
                     color="submitter", barmode="stack",
-                    title=f"RFPs discovered by submitter ({_period_label_str}, {bucket_mode.lower()})",
+                    title=f"RFPs discovered by member ({_period_label_str}, {bucket_mode.lower()})",
                     labels={"bucket": _bucket_label(bucket_mode), "submitter": "Submitted by"},
                 )
                 fig.update_layout(
@@ -923,6 +956,20 @@ else:
                                 xanchor="center", x=0.5, font=dict(size=11)),
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+                # ─── Submission leaderboard ─────────────────────────────
+                # Moved here from Section 4 (Team & Partnership Activity)
+                # so the totals-per-member sit directly under the chart
+                # showing the per-bucket breakdown — same data, two views.
+                # Uses `exp_disc["submitter"]` which already has the
+                # first-name display map applied (collision-safe).
+                leader_series = (
+                    exp_disc["submitter"].value_counts().reset_index()
+                )
+                leader_series.columns = ["Member", "RFPs discovered"]
+                with st.expander("Submission leaderboard", expanded=False):
+                    st.dataframe(leader_series,
+                                  use_container_width=True, hide_index=True)
             else:
                 # No submitter data — fall back to a plain bucket count
                 disc_df = _bucketed_count(disc["search_date"].dropna(), "RFPs discovered")
@@ -961,36 +1008,77 @@ else:
                 )
                 st.plotly_chart(fig_dn, use_container_width=True)
 
-        # ───── RFPs by program area (filtered to non-zero) ──────────────
-        # program_area is a text[] column; explode and count. Only
-        # show areas with at least one hit — the Unspecified bucket
-        # surfaces what the classifier couldn't tag (action item).
-        if not disc.empty and "program_area" in disc.columns:
-            pa = (
-                disc[["program_area"]].copy()
-                .assign(program_area=disc["program_area"]
-                        .apply(lambda v: v if isinstance(v, list) else
-                               ([v] if v else [])))
-                .explode("program_area").dropna(subset=["program_area"])
-            )
-            pa = pa[pa["program_area"].astype(str).str.strip() != ""]
-            if not pa.empty:
-                pa_counts = pa["program_area"].value_counts().reset_index()
-                pa_counts.columns = ["Program area", "RFPs"]
-                # Already filtered to positive hits by value_counts;
-                # nothing-matched would not appear at all.
-                fig_pa = px.bar(
-                    pa_counts, x="RFPs", y="Program area", orientation="h",
-                    text="RFPs",
-                    title=f"RFPs by program area ({_period_label_str})",
-                    color_discrete_sequence=["#3b82f6"],
+        # ───── Keyword cloud — niche-vocabulary, frequency-sized ────────
+        # Replaces the old "by program area" bar chart. Source is the
+        # RFP title + description (NOT the program-area classifier
+        # labels). Words go through `core.keyword_cloud` which:
+        #   * tokenizes single words (HIV/AIDS → hiv, aids)
+        #   * stems related forms together (finance/financing/financed
+        #     → "Financing"; vaccine/vaccination → "Vaccine")
+        #   * keeps only words in a curated ~80-stem global-health
+        #     niche vocabulary — surfaces the topics we should be
+        #     searching more aggressively, not a sprawling cloud of
+        #     top-200 English words.
+        # Font size scales to frequency via WordCloud.generate_from_
+        # frequencies — that IS the "size grows with count" effect.
+        if not disc.empty:
+            from core.keyword_cloud import extract_keyword_frequencies
+
+            _titles_and_briefs = [
+                " ".join([
+                    str(r.get("opportunity_title") or ""),
+                    str(r.get("brief_description") or ""),
+                ])
+                for _, r in disc.iterrows()
+            ]
+            kw_freq = extract_keyword_frequencies(_titles_and_briefs)
+            if kw_freq:
+                st.markdown(
+                    f"#### Search Keywords ({_period_label_str})"
                 )
-                fig_pa.update_layout(
-                    height=max(280, 24 * len(pa_counts) + 80),
-                    margin=dict(t=40, b=10),
-                    yaxis={"categoryorder": "total ascending"},
+                st.caption(
+                    "Word size scales to how often the keyword (or any of "
+                    "its variants — e.g. *Financing* covers finance / "
+                    "financed / financial) appears across RFP titles + "
+                    "briefs. Vocabulary is a curated global-health niche."
                 )
-                st.plotly_chart(fig_pa, use_container_width=True)
+                try:
+                    from wordcloud import WordCloud
+                    import matplotlib.pyplot as plt
+
+                    wc = WordCloud(
+                        width=1600, height=600,
+                        background_color="white",
+                        colormap="viridis",
+                        prefer_horizontal=0.9,
+                        collocations=False,
+                        relative_scaling=0.6,    # font scales ~linearly with count
+                        min_font_size=12,
+                        max_font_size=180,
+                    ).generate_from_frequencies(kw_freq)
+                    fig_wc, ax = plt.subplots(figsize=(14, 5))
+                    ax.imshow(wc, interpolation="bilinear")
+                    ax.axis("off")
+                    fig_wc.tight_layout(pad=0)
+                    st.pyplot(fig_wc, use_container_width=True)
+                    plt.close(fig_wc)
+                except ImportError:
+                    # Graceful fallback when WordCloud / matplotlib not
+                    # installed (e.g. Streamlit Cloud pre-deploy). Show a
+                    # ranked list so the user still gets the signal.
+                    st.info(
+                        "Word cloud requires `wordcloud` + `matplotlib`. "
+                        "Run `pip install wordcloud matplotlib` to enable "
+                        "the visual cloud. Top keywords shown below."
+                    )
+                    _kw_top = (
+                        pd.DataFrame(
+                            sorted(kw_freq.items(), key=lambda kv: -kv[1]),
+                            columns=["Keyword", "Hits"],
+                        ).head(40)
+                    )
+                    st.dataframe(_kw_top, use_container_width=True,
+                                 hide_index=True)
 
         # ───── Keyword cloud + success table ─────────────────────────────
         # Frequency of program-area keywords across RFP titles +
@@ -1000,7 +1088,15 @@ else:
         # Submitted / Approved — actionable signal for what to search
         # for more aggressively.
         if not disc.empty:
-            from core.program_area_classifier import matched_keywords
+            # Use the SAME curated `keyword_cloud` vocabulary as the
+            # visual cloud above (not the legacy program_area_classifier
+            # keywords). This makes the table and the cloud consistent
+            # — and crucially picks up bare acronyms like "AI" that the
+            # classifier only knew as "artificial intelligence". Per
+            # user feedback: AI-titled RFPs were being missed because
+            # the classifier vocabulary required the spelled-out form.
+            from core.keyword_cloud import extract_keyword_frequencies
+
             _kw_rows = []
             for _, r in disc.iterrows():
                 text = " ".join([
@@ -1009,8 +1105,11 @@ else:
                 ])
                 if not text.strip():
                     continue
-                pairs = matched_keywords(text)
-                if not pairs:
+                # Presence per RFP (set of stems), NOT token occurrence
+                # count — so an RFP saying "AI" twice still counts as
+                # one AI hit on the conversion side.
+                stems_in_row = set(extract_keyword_frequencies([text]).keys())
+                if not stems_in_row:
                     continue
                 decision_str = str(r.get("decision") or "").lower()
                 progress_str = str(r.get("progress_status") or "").lower()
@@ -1018,16 +1117,15 @@ else:
                 is_proceed = decision_str.startswith("proceed")
                 is_submitted = progress_str == "completed"
                 is_approved = donor_str == "approved"
-                for area, kw in pairs:
+                for kw in stems_in_row:
                     _kw_rows.append({
-                        "keyword": kw, "area": area,
+                        "keyword": kw,
                         "is_proceed": is_proceed,
                         "is_submitted": is_submitted,
                         "is_approved": is_approved,
                     })
             if _kw_rows:
                 kw_df = pd.DataFrame(_kw_rows)
-                # Aggregate per keyword
                 kw_agg = (
                     kw_df.groupby("keyword").agg(
                         Hits=("keyword", "count"),
@@ -1035,42 +1133,27 @@ else:
                         Submitted=("is_submitted", "sum"),
                         Approved=("is_approved", "sum"),
                     ).reset_index()
-                    .sort_values("Hits", ascending=False)
-                    .head(40)
+                    .sort_values(
+                        ["Approved", "Submitted", "Proceed", "Hits"],
+                        ascending=[False, False, False, False],
+                    )
+                    .head(50)
                 )
 
-                # ─── Word cloud ───
-                with st.expander("Keyword cloud — what topics dominate the incoming pipeline", expanded=False):
-                    try:
-                        from wordcloud import WordCloud
-                        import matplotlib.pyplot as plt
-                        freq = dict(zip(kw_agg["keyword"], kw_agg["Hits"]))
-                        wc = WordCloud(
-                            width=1200, height=400, background_color="white",
-                            colormap="viridis", prefer_horizontal=0.9,
-                            collocations=False,
-                        ).generate_from_frequencies(freq)
-                        fig_wc, ax = plt.subplots(figsize=(12, 4))
-                        ax.imshow(wc, interpolation="bilinear")
-                        ax.axis("off")
-                        st.pyplot(fig_wc, use_container_width=True)
-                        plt.close(fig_wc)
-                    except ImportError:
-                        st.info(
-                            "Word cloud requires `wordcloud` + `matplotlib`. "
-                            "Run `pip install wordcloud matplotlib` to enable. "
-                            "Top keywords are still shown in the success table below."
-                        )
-
                 # ─── Keyword success table ───
+                # The visual cloud above answers "what topics dominate";
+                # this table answers "which topics convert" — same
+                # vocabulary, broken out by Proceed / Submitted / Approved.
                 with st.expander(
-                    "Keywords driving success — top by Proceed / Submitted / Approved",
+                    "Keywords driving success — top by Approved / Submitted / Proceed",
                     expanded=False,
                 ):
                     st.caption(
-                        "Each row: keyword + how many RFPs that matched it "
-                        "made it through each gate. Use this to focus future "
-                        "donor searches on the topics that consistently win."
+                        "One row per niche keyword. Hits = number of RFPs "
+                        "whose title or brief mentions that keyword (or any "
+                        "of its stemmed variants). Use this to focus future "
+                        "donor searches on the topics that consistently win. "
+                        "Sorted by Approved → Submitted → Proceed → Hits."
                     )
                     st.dataframe(
                         kw_agg.rename(columns={"keyword": "Keyword"}),
@@ -1425,67 +1508,11 @@ else:
     activity_rows = rfps_all[~rfps_all["is_duplicate"]].copy()
 
     # ───────────── Submissions by team member ─────────────────────────────
-    st.markdown("")  # spacer between donor block and team block
-    st.markdown("##### Submissions by team member")
-    sub_period = activity_rows[activity_rows["_discovered_in_period"]] if _start else activity_rows
-    if sub_period.empty or "submitted_by" not in sub_period.columns:
-        st.info("No submissions in this period.")
-    else:
-        # Split comma-separated names + normalize variants so one row
-        # with "Alice, Bob" counts for BOTH (each gets +1, not one
-        # combined "Alice, Bob" bucket).
-        exploded = (
-            sub_period.assign(
-                _members=sub_period["submitted_by"].apply(split_and_normalize_names),
-                bucket=_bucket_start(sub_period["_disc_ts"], bucket_mode),
-            )
-            .explode("_members").dropna(subset=["_members"])
-        )
-        exploded = exploded[exploded["_members"] != ""]
-        if not exploded.empty:
-            # First-name display: short labels when unique, full names on collision.
-            disp = first_name_display_map(exploded["_members"])
-            exploded["member"] = exploded["_members"].map(disp).fillna(exploded["_members"])
-            by_member = (
-                exploded.groupby(["bucket", "member"]).size()
-                .reset_index(name="submissions")
-            )
-            fig_mem = px.bar(
-                by_member, x="bucket", y="submissions", color="member",
-                title=f"Submissions by member ({_period_label_str}, {bucket_mode.lower()})",
-                labels={"bucket": _bucket_label(bucket_mode), "member": "Submitted by"},
-                barmode="stack",
-            )
-            # Legend at bottom (was right-side default) so it doesn't get
-            # clipped at the page boundary when printed to PDF.
-            fig_mem.update_layout(
-                height=340, margin=dict(t=40, b=10),
-                xaxis=_fmt_bucket_ticks(bucket_mode),
-                legend=dict(
-                    orientation="h",
-                    yanchor="top", y=-0.18,
-                    xanchor="center", x=0.5,
-                    font=dict(size=11),
-                ),
-            )
-            st.plotly_chart(fig_mem, use_container_width=True)
-
-        # Leaderboard — same split + normalize + first-name display logic.
-        all_members = (
-            sub_period["submitted_by"]
-            .apply(split_and_normalize_names)
-            .explode().dropna()
-        )
-        all_members = all_members[all_members != ""]
-        if not all_members.empty:
-            disp_lb = first_name_display_map(all_members)
-            leader_series = (
-                all_members.map(disp_lb).fillna(all_members)
-                .value_counts().reset_index()
-            )
-            leader_series.columns = ["Member", "Submissions"]
-            with st.expander("Submission leaderboard", expanded=False):
-                st.dataframe(leader_series, use_container_width=True, hide_index=True)
+    # REMOVED 2026-06-05: chart + leaderboard moved to Section 1, directly
+    # under "RFPs discovered by member" — same data presented twice was
+    # redundant. The leaderboard expander now sits inline with the
+    # discovery chart, and Section 4 jumps straight from KPIs to the
+    # stacked Submitted/Unsubmitted views.
 
     # ───────────── Helpers for stacked Submitted / Unsubmitted bars ───────
     # An RFP counts as "Submitted" when progress_status = Completed
