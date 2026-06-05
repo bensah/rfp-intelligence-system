@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="RFPIS icon">
+  <title>RFPIS</title>
+  <!-- Compact icon for the collapsed-sidebar state. Mirrors the document
+       + magnifying glass motif from rfpis_logo.svg, scaled to square. -->
+  <rect x="8" y="6" width="42" height="54" rx="4" fill="#1e3a8a"/>
+  <path d="M 43 6 L 50 13 L 43 13 Z" fill="#3b5cb8"/>
+  <line x1="15" y1="22" x2="42" y2="22" stroke="#fbbf24" stroke-width="3" stroke-linecap="round"/>
+  <line x1="15" y1="31" x2="38" y2="31" stroke="#e2e8f0" stroke-width="2.2" stroke-linecap="round"/>
+  <line x1="15" y1="40" x2="42" y2="40" stroke="#e2e8f0" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="44" cy="50" r="13" fill="#1e3a8a" stroke="#fbbf24" stroke-width="3"/>
+  <circle cx="44" cy="50" r="7" fill="none" stroke="#fbbf24" stroke-width="2.5"/>
+  <line x1="53" y1="59" x2="60" y2="66" stroke="#fbbf24" stroke-width="3.5" stroke-linecap="round"/>
+</svg>

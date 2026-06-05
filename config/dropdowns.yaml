@@ -1,0 +1,199 @@
+# Controlled vocabularies extracted from the original Excel Dropdown sheet.
+# Keep these in sync with the schema check constraints and the form pages.
+
+team_members:
+  - Jane Doe
+  - John Smith
+  - Alex Kim
+  - Sam Patel
+  - Robin Lee
+  - Chris Diaz
+  - Pat Morgan
+  - Taylor Reed
+  - Jordan Blake
+  - Casey Fox
+  - Clarence Mbanga
+  - Njike Sibenu
+  - Drew Hall
+  - Other
+
+donors:
+  - "AECID – Spanish Agency for International Development Cooperation"
+  - "AFD – Agence Française de Développement"
+  - "AfDB – African Development Bank"
+  - "AICS – Italian Agency for Development Cooperation"
+  - "AKF – Aga Khan Foundation"
+  - "BMGF – Gates Foundation"
+  - "BMZ – German Federal Ministry for Economic Cooperation and Development"
+  - "BP – Bloomberg Philanthropies"
+  - "CEPI – Coalition for Epidemic Preparedness Innovations"
+  - "CIFF – Children's Investment Fund Foundation"
+  - "CNHF – Conrad N. Hilton Foundation"
+  - "CR – Comic Relief"
+  - "CZI – Chan Zuckerberg Initiative"
+  - "EC – European Commission (INTPA)"
+  - "DG ECHO – EU Civil Protection and Humanitarian Aid"
+  - "ELMA – The ELMA Philanthropies"
+  - "END Fund – The END Fund"
+  - "FB – Fondation Botnar"
+  - "FCDO – UK Foreign, Commonwealth & Development Office"
+  - "GAC – Global Affairs Canada"
+  - "Gavi – Gavi, the Vaccine Alliance"
+  - "Global Fund – The Global Fund to Fight AIDS, Tuberculosis and Malaria"
+  - "GIZ – Deutsche Gesellschaft für Internationale Zusammenarbeit"
+  - "HF – Hewlett Foundation"
+  - "IDA – International Development Association (World Bank)"
+  - "IKEA Fdn – IKEA Foundation"
+  - "JICA – Japan International Cooperation Agency"
+  - "KfW – KfW Development Bank"
+  - "KOICA – Korea International Cooperation Agency"
+  - "KSrelief – King Salman Humanitarian Aid and Relief Centre"
+  - "MCF – Mastercard Foundation"
+  - "MSDF – Michael & Susan Dell Foundation"
+  - "NNF – Novo Nordisk Foundation"
+  - "Norad – Norwegian Agency for Development Cooperation"
+  - "OP – Open Philanthropy"
+  - "OSF – Open Society Foundations"
+  - "PPF – David and Lucile Packard Foundation"
+  - "QFFD – Qatar Fund for Development"
+  - "RF – The Rockefeller Foundation"
+  - "SDC – Swiss Agency for Development and Cooperation"
+  - "SF – Skoll Foundation"
+  - "Sida – Swedish International Development Cooperation Agency"
+  - "STBF – Susan Thompson Buffett Foundation"
+  - "TAP – The Audacious Project"
+  - "UNAIDS – Joint United Nations Programme on HIV/AIDS"
+  - "UNFPA – United Nations Population Fund"
+  - "UNHCR – United Nations High Commissioner for Refugees"
+  - "UNICEF – United Nations Children's Fund"
+  - "Unitaid – Unitaid"
+  - "USDoS - US Department of State"
+  - "WB – World Bank"
+  - "Wellcome – Wellcome Trust"
+  - "WHO – World Health Organization"
+  - "FID – Fund for Innovation in Development"
+  - "ICF – International Cancer Foundation"
+  - "Other"
+
+feasibility: [High, Medium, Low]
+
+# Quoted to prevent YAML 1.1 boolean coercion ("Yes" → True, "No" → False).
+# These are the canonical labels for the 9 MUST/PREFER criteria.
+eligibility_values: ["True", "Partial", "False"]
+
+stages:
+  - Identification & screening
+  - Go/no-go decision & bid planning
+  - Proposal development
+  - Budgeting development
+  - Review, compliance check & approvals
+  - Final packaging & submission
+  - Post-submission follow-up
+
+decisions: [Proceed, Proceed as sub, Park, Decline]
+
+donor_decision: [Approved, Not Approved, Under Review, Not submitted]
+
+funding_window: [One-off, Rolling]
+
+applicant_role: [Prime, Sub, Technical]
+
+time_to_award: ["<=3 months", "3-6 months", ">=6 months"]
+
+submission_format:
+  - Online Application Form
+  - Narrative Template
+  - Concept Note
+  - Letter of Interest
+  - Expression of Interest
+  - Other
+
+# Lifecycle of a Proceed RFP.
+# - Not Started / In Progress: pre-submission work
+# - Completed:    proposal submitted to donor (donor decision determines next)
+# - Discontinued: team intentionally dropped the opportunity (still in window)
+# - Missed:       deadline passed without submission (unintended miss)
+progress_status: ["Not Started", "In Progress", "Completed", "Discontinued", "Missed"]
+
+deadline_status: [On Track, Due Soon, Overdue]
+
+engagement_types: [Call, Pitch, Conference, Scoping, Site Visit, Email Exchange, Other]
+
+engagement_formats: [In-person, Virtual, Written, Hybrid]
+
+report_types: [Financial, Annual, Final, Ad-hoc, Interim]
+
+report_statuses: [Not Started, In Progress, Submitted, Overdue, Accepted]
+
+narrative_uses: [Partner meeting, Conference, Website, Internal brief, Other]
+
+narrative_statuses: [Current, Archived]
+
+program_areas:
+  - WCH - Vaccines
+  - WCH - SRH
+  - WCH - Nutrition
+  - WCH - MNCH
+  - NCDs - Mental Health
+  - NCDs - Diabetes
+  - NCDs - Cardiovascular Diseases
+  - NCDs - Cancer
+  - IDs - Tuberculosis
+  - IDs - Pandemic Response
+  - IDs - Malaria & NTDs
+  - IDs - HIV/AIDS
+  - IDs - Hepatitis
+  - HSS - Health Workforce
+  - HSS - Health Financing
+  - Cross-cutting - Market Shaping
+  - Cross-cutting - Digital Health (+AI)
+  - Cross-cutting - Diagnostics
+  - Cross-cutting - Climate & Health
+  - Cross-cutting - Assistive Technology
+  - Cross-cutting - Research
+  - Unspecified Program Area
+  - Other
+
+geographic_scope:
+  - Cameroon
+  - Mali
+  - Nigeria
+  - Senegal
+  - Cote d'Ivoire
+  - West Africa
+  - Central Africa
+  - WCA
+  - Sub-Saharan Africa
+  - LMICs
+  - Global
+  - Other
+
+# 1 unit of currency -> X USD (i.e. multiply native amount by rate to get USD).
+# Source: original Excel Dropdown sheet, columns "currency" + "rate".
+# XAF/CAD are inverted in the Excel (USD per native); kept faithful here.
+currencies:
+  - code: USD
+    label: "USD"
+    symbol: "$"
+    aliases: ["USD $", "US$", "$"]
+    usd_rate: 1.0
+  - code: GBP
+    label: "GBP"
+    symbol: "£"
+    aliases: ["GBP £", "£"]
+    usd_rate: 1.33   # matches the Excel workbook's USD conversion rate
+  - code: EUR
+    label: "EUR"
+    symbol: "€"
+    aliases: ["Euro", "Euro €", "€"]
+    usd_rate: 1.16   # matches the Excel workbook's USD conversion rate
+  - code: XAF
+    label: "FCFA"
+    symbol: null      # no official symbol; render as "XAF 500,000 FCFA"
+    aliases: ["FCFA", "F CFA"]
+    usd_rate: 0.00166  # ~1/603
+  - code: CAD
+    label: "CAD"
+    symbol: "C$"
+    aliases: ["CAD $", "Can$", "C$"]
+    usd_rate: 0.73     # ~1/1.44
