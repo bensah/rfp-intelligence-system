@@ -2,7 +2,7 @@
 
 This is the core algorithm. Every RFP that lands in the database has been through this pipeline. Every metric you see on the Screen tab, every Proceed row on the Tracking page, every Declined entry — they are all the output of these rules.
 
-> **Reference-deployment caveat:** the decision tree, MUST/PREFER rubric, and role-routing logic described below were specified by CHAI BDT and currently ship hard-coded. They make sense for any global-health implementing org with a US 501(c)(3) parent + country offices, but they're not org-agnostic the way the rest of the scraper is. When RFPIS goes multi-tenant, these rules will move into per-org config. Until then, treat "CHAI" mentions in this document as describing the reference-deployment's policy choices, not a hard constraint of the system.
+> **Reference-deployment caveat:** the decision tree, MUST/PREFER rubric, and role-routing logic described below ship hard-coded but were patterned on a typical global-health implementing-NGO structure (US 501(c)(3) parent + country offices). They're not org-agnostic the way the rest of the scraper is — when RFPIS goes multi-tenant, these rules will move into per-org config. Until then, deploying orgs can override by editing `core/policies.py` and `core/auto_scorer.py` directly.
 
 The pipeline has **two stages**:
 
@@ -34,7 +34,7 @@ flowchart LR
 |---|---|---|
 | Scrape | `core/scraper.py` | Returns candidate dicts |
 | Strict Gate | `core/auto_scorer.is_eligible()` | Drops candidate if any check fails |
-| Scoring | `core/auto_scorer.auto_score()` | Sets the 9 criteria + score + recommendation + decision + CHAI role |
+| Scoring | `core/auto_scorer.auto_score()` | Sets the 9 criteria + score + recommendation + decision + applicant role |
 | Insert | `core/scan_pipeline.py` | Writes row, runs dedup, logs counts |
 
 ---
@@ -69,7 +69,7 @@ flowchart TD
 
 | Gate | Source policy | Failing examples |
 |---|---|---|
-| **Feasibility hard-reject** | `criteria.feasibility.negative` | "clinical trial", "high risk" — CHAI doesn't pursue these |
+| **Feasibility hard-reject** | `criteria.feasibility.negative` | "clinical trial", "high risk" — typical implementing-NGO won't pursue these |
 | **Deadline** | `submission_deadline < today` | RFPs that already closed |
 | **Country** | `countries.eligible` + `countries.broad_terms` | RFP targets the US only, none of our countries listed |
 | **Required theme** | `themes.required_any` | RFP about robotics; no health keyword matches |
@@ -114,7 +114,7 @@ Configure in **Admin → Settings → Criteria → \<criterion expander\> → Ri
 
 ---
 
-## 4. CHAI Decision Tree (the core rule)
+## 4. Decision Tree (the core rule)
 
 After all 9 criteria have values, the decision is determined by **counts**, not by score:
 
@@ -132,9 +132,9 @@ flowchart TD
     I --> J{"3 or 4 PREFERs<br/>= Yes?"}
     J -->|YES| K["PROCEED candidate"]
     J -->|NO| G
-    K --> L{"CHAI-role signals<br/>in text?<br/>research-institution<br/>university / EU-based<br/>US-based / Canadian"}
-    L -->|YES| M["Proceed AS SUB<br/>CHAI applies as sub-recipient"]
-    L -->|NO| N["PROCEED - Prime<br/>CHAI applies directly"]
+    K --> L{"Applicant-role signals<br/>in text?<br/>research-institution<br/>university / EU-based<br/>US-based / Canadian"}
+    L -->|YES| M["Proceed AS SUB<br/>org applies as sub-recipient"]
+    L -->|NO| N["PROCEED - Prime<br/>org applies directly"]
 ```
 
 ### Rule cheat-sheet
@@ -149,13 +149,13 @@ flowchart TD
 
 ### Why count-based instead of score-based?
 
-CHAI's experience showed that a single "false" on a MUST criterion (e.g. "we cannot meet the eligibility compliance requirement") is a categorical no — no amount of strong PREFER signals should override it. A weighted-sum score would let strong PREFERs partially compensate for a failed MUST, which produces false-positive Proceed recommendations.
+Operational experience from the reference deployment showed that a single "false" on a MUST criterion (e.g. "we cannot meet the eligibility compliance requirement") is a categorical no — no amount of strong PREFER signals should override it. A weighted-sum score would let strong PREFERs partially compensate for a failed MUST, which produces false-positive Proceed recommendations.
 
 The count-based rule eliminates that: any failed MUST is final. Multiple Partials on MUSTs signal too much uncertainty; one Partial is borderline and triggers a Park for human judgement; all Yes + 3 or 4 PREFERs Yes is a clean go.
 
 ---
 
-## 5. CHAI Role determination
+## 5. Applicant Role determination
 
 ```mermaid
 flowchart TD
@@ -167,21 +167,21 @@ flowchart TD
 
 ### Why Sub is a routing signal, not an exclusion
 
-CHAI's organisational structure:
+Typical implementing-NGO structure assumed by the role-routing logic:
 
-- **CHAI Inc.** is a US-registered 501(c)(3) — the global parent entity.
-- **35+ semi-autonomous country offices** (including CHAI Cameroon) operate locally. They can apply for grants directly **OR** route through CHAI US as the lead applicant.
+- **Parent org** — registered as a US 501(c)(3) (eligible for US-only RFPs).
+- **Country offices** — semi-autonomous local entities. They can apply for grants directly **OR** route through the US parent as the lead applicant.
 
-So when an RFP demands a US-based applicant, that's **not** "CHAI can't apply". It's "**CHAI US** takes the lead and CHAI Cameroon becomes sub-recipient". From this Cameroon-facing app's perspective, that lands as `Proceed as sub` — the team knows the work happens but they'll be downstream of HQ on this one.
+So when an RFP demands a US-based applicant, that's **not** "the org can't apply". It's "**US-parent** takes the lead and the country office becomes sub-recipient". From the country-office perspective that lands as `Proceed as sub` — the team knows the work happens but they'll be downstream of HQ on this one.
 
 Same routing applies for other residency requirements:
 
 | Requirement | What it means for the Cameroon team |
 |---|---|
-| "US-based applicant required" | CHAI US leads → Cameroon is sub |
-| "EU / Canada / regional residency required" | Regional NGO partner leads → Cameroon is sub |
-| "Research institution required" | Research-org partner leads (CHAI isn't a research institution) → Cameroon is sub |
-| "University / academic only" | University partner leads → Cameroon is sub |
+| "US-based applicant required" | US-parent leads → country office is sub |
+| "EU / Canada / regional residency required" | Regional NGO partner leads → country office is sub |
+| "Research institution required" | Research-org partner leads (implementing NGO isn't research-focused) → country office is sub |
+| "University / academic only" | University partner leads → country office is sub |
 
 In every case the recommendation stays **Proceed** — only the `chai_role` field flips from `Prime` → `Sub`. The Cameroon team still pursues the opportunity; they just know upfront they're not leading the application.
 
@@ -229,8 +229,8 @@ It's **True** for any row that didn't clear the Proceed bar (Park, Decline, or a
 | Per-criterion positive keywords | Admin → Settings → policies → **Criteria → expand → Positive keywords** |
 | Per-criterion negative keywords | Admin → Settings → policies → **Criteria → expand → Negative keywords** |
 | Feasibility negative = hard reject | Admin → Settings → policies → **Criteria → Feasibility → Negative keywords** |
-| Decision rule (MUST/PREFER counts) | Hard-coded in `_decision_from_criteria()` — by design (this is the CHAI policy) |
-| CHAI-role default | Hard-coded — Prime unless text matches `_SUB_ROLE_SIGNALS` |
+| Decision rule (MUST/PREFER counts) | Hard-coded in `_decision_from_criteria()` — by design (this is the reference-deployment policy) |
+| Applicant-role default | Hard-coded — Prime unless text matches `_SUB_ROLE_SIGNALS` |
 | Probability tier thresholds | `config/scoring_weights.yaml` (only affects the gauge colour bands) |
 
 ---

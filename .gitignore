@@ -16,9 +16,10 @@ _dump.json
 _inspect_out.txt
 _drop.txt
 
-# Excel workbooks — the CHAI Cameroon screener contains real RFP data
-# and must not enter the repo. EXCEL_SOURCE_PATH in .env points each
-# deployment at its own workbook location (OneDrive / SharePoint /
+# Excel workbooks — the legacy screener / migration source contains
+# real RFP data and must not enter the repo. EXCEL_SOURCE_PATH in
+# .env points each deployment at its own workbook location (OneDrive /
+# SharePoint /
 # whatever) so the path stays deployment-local.
 *.xlsx
 *.xlsm

@@ -2,8 +2,8 @@
 
 Three placements, one helper (`render_app_header`):
   * SIDEBAR TOP    — RFPIS logo via st.logo()
-  * MAIN CONTENT   — CHAI org logo + name, left-aligned strip + divider
-  * GLOBAL CSS     — theme variables (CHAI green primary), card styles,
+  * MAIN CONTENT   — Deploying-org logo + name, left-aligned strip + divider
+  * GLOBAL CSS     — theme variables (primary green), card styles,
                      consistent metric / heading typography
 
 A second helper (`render_sidebar_footer`) is called at the end of every
@@ -26,11 +26,10 @@ APP_NAME = "RFP Intelligence System"
 APP_SHORT = "RFPIS"
 APP_VERSION = "v1.0"
 
-# CHAI brand green — used as the global accent. Pulled from the
-# existing Home.py inline style (h1/h2/h3 color) so this is a no-change
-# extension of what was already there. When RFPIS spins out as a
-# standalone product, swap this constant + the CSS below.
-THEME_PRIMARY = "#00703C"      # CHAI green
+# Primary brand green — used as the global accent across all metric
+# tiles, headings, buttons, and tab underlines. Swap this constant +
+# the CSS below to rebrand for a different deployment.
+THEME_PRIMARY = "#00703C"      # primary brand green
 THEME_PRIMARY_DARK = "#005a30"
 THEME_PRIMARY_LIGHT = "#e6f2eb"
 THEME_NAVY = "#1e3a8a"          # RFPIS brand color (sidebar logo)
@@ -47,7 +46,7 @@ _GLOBAL_CSS = f"""
 <style>
   /* ============================================================
      RFPIS global theme — applied once at the top of every page.
-     CHAI green primary, clean typography, consistent metric tiles.
+     Primary green, clean typography, consistent metric tiles.
      ============================================================ */
 
   /* Headings — match existing Home.py style and propagate to every page */
@@ -146,8 +145,8 @@ def render_app_header() -> None:
     """Top-of-page branding.
 
     Renders the RFPIS lockup at the top of the sidebar (via st.logo)
-    and the CHAI org logo + name as a left-aligned strip at the top of
-    the main content area. Also injects the global theme CSS — once
+    and the deploying-org logo + name as a left-aligned strip at the
+    top of the main content area. Also injects the global theme CSS — once
     per page render, before any chart / table renders so colors apply
     consistently.
 

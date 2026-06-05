@@ -23,8 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCES = ROOT / "config" / "sources.yaml"
 
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; CHAI-RFP-Intelligence-URL-Probe/1.0; "
-    "+contact: bdt@clintonhealthaccess.org)"
+    "Mozilla/5.0 (compatible; RFPIS-URL-Probe/1.0)"
 )
 
 

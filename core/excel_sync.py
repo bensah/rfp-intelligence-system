@@ -2,7 +2,7 @@
 
 Resolves the source workbook in this order:
   1. EXCEL_SOURCE_PATH environment variable / Streamlit secret
-  2. Local copy at the repo root (CHAI_Cameroon_RFP_Eligibility_Screener.xlsx)
+  2. Local copy at the repo root (any *.xlsx — gitignored)
 
 Sync runs migrate_excel.py as a subprocess so import-time state is fresh
 (no stale openpyxl handles between runs) and stdout is captured for display.
@@ -75,10 +75,13 @@ def resolve_excel_path() -> dict:
             "If the path contains \\n (e.g. \\nbernard), wrap the .env value in "
             "single quotes — double quotes let dotenv interpret \\n as a newline."
         )
-    fallback = REPO_ROOT / "CHAI_Cameroon_RFP_Eligibility_Screener.xlsx"
-    if fallback.exists():
-        out["resolved_path"] = fallback
+    # Repo-root fallback: pick any *.xlsx sitting beside the project.
+    # Excel workbooks are gitignored so this is a developer-local
+    # convenience, not a shipped path.
+    for candidate in REPO_ROOT.glob("*.xlsx"):
+        out["resolved_path"] = candidate
         out["source"] = "repo fallback"
+        break
     return out
 
 

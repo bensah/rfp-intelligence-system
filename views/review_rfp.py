@@ -151,7 +151,7 @@ def _safe_str(v) -> str:
 det1, det2, det3 = st.columns(3)
 with det1:
     st.markdown("**Key details**")
-    st.write(f"CHAI role: {_fmt(row.get('chai_role'))}")
+    st.write(f"Applicant role: {_fmt(row.get('chai_role'))}")
     st.write(f"Window: {_fmt(row.get('funding_window'))}")
     st.write(f"Deadline: {_fmt(row.get('submission_deadline'))}")
     st.write(f"Award date: {_fmt(row.get('expected_award_date'))}")

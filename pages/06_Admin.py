@@ -96,9 +96,8 @@ with tab_settings:
     st.caption(
         "RFPIS ships as a multi-tenant product — the deploying-org profile "
         "below stamps every page header, the Report dashboard, and outgoing "
-        "email digests. Defaults to **CHAI BDT** (the reference deployment) "
-        "so a fresh install isn't blank; change these fields the first time "
-        "you set up the app for your organization."
+        "email digests. Defaults are intentional placeholders — fill these "
+        "in the first time you set up the app for your organization."
     )
 
     _org = settings.get_org()
@@ -106,12 +105,12 @@ with tab_settings:
     org_name = oc1.text_input(
         "Organization name", value=_org.get("org_name", ""),
         help="Full name shown in page captions and the Report header. "
-             "e.g. 'CHAI Cameroon — Business Development Team'.",
+             "e.g. 'Acme Foundation — Business Development Team'.",
     )
     org_short = oc2.text_input(
         "Short name / abbreviation", value=_org.get("org_short", ""),
         help="Compact label used in page titles, grant lead/sub defaults, "
-             "and scan-log displays. e.g. 'CHAI BDT'.",
+             "and scan-log displays. e.g. 'Acme BD'.",
     )
     oc3, oc4 = st.columns(2)
     org_country = oc3.text_input(

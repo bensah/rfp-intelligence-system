@@ -25,8 +25,8 @@ console.anthropic.com. Paste the key into `.env` as
 `ANTHROPIC_API_KEY=sk-ant-...`. The `.env` file is already gitignored —
 verified at `.gitignore:1`. The key is read at runtime by
 `os.environ.get("ANTHROPIC_API_KEY")` and never written anywhere else.
-Deploying orgs (CHAI BDT being the reference deployment) should use a
-workspace-scoped key owned by their org, not a personal one.
+Deploying orgs should use a workspace-scoped API key owned by their
+org's Console account, not a personal one.
 
 If `ANTHROPIC_API_KEY` is not set, every public function in this module
 returns `None` and the calling code falls back to the regex pipeline.

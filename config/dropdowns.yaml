@@ -1,20 +1,23 @@
 # Controlled vocabularies extracted from the original Excel Dropdown sheet.
 # Keep these in sync with the schema check constraints and the form pages.
 
+# Placeholder team-member list — overwrite via Admin → Settings →
+# Team members when you stand up a new deployment. The real names live
+# in the database (app_settings JSON override), NOT in this checked-in
+# config, so a public repo never exposes who's on the deploying-org's
+# team. Adding "Other" as the last entry lets submitters type in a
+# guest contributor's name without admin needing to update this list.
 team_members:
-  - Bernard Nsah
-  - Tata Pepson
-  - Michael Budzi
-  - Shariffa Iliassu
-  - Ornella Pokam
-  - Barke Cisse
-  - Abdoulaye Traore
-  - Lambi Joyce Lambif
-  - Magloire Kuetche
-  - Anne Lutgarde
-  - Clarence Mbanga
-  - Njike Sibenu
-  - Yauba Saidu
+  - Team Member 1
+  - Team Member 2
+  - Team Member 3
+  - Team Member 4
+  - Team Member 5
+  - Team Member 6
+  - Team Member 7
+  - Team Member 8
+  - Team Member 9
+  - Team Member 10
   - Other
 
 donors:
