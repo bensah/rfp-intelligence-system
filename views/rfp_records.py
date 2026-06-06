@@ -24,7 +24,7 @@ from core.scorer import score_submission
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
-user = st.session_state["chai_user"]
+user = st.session_state["app_user"]
 role = user.get("role", "collaborator")
 sb = get_client()
 
@@ -153,7 +153,7 @@ DISPLAY = [
     "opportunity_title",
     "opportunity_link",   # clickable on first view (no audit mode needed)
     "funding_agency",
-    "chai_role",
+    "applicant_role",
     "submission_deadline",
     "estimated_value",
     "currency",
@@ -216,7 +216,7 @@ event = st.dataframe(
             help="Open the opportunity page in a new tab.",
         ),
         "funding_agency": st.column_config.TextColumn("Funder"),
-        "chai_role": st.column_config.TextColumn("Role", width="small"),
+        "applicant_role": st.column_config.TextColumn("Role", width="small"),
         "submission_deadline": st.column_config.DateColumn("Deadline"),
         "estimated_value": st.column_config.NumberColumn("Value", format="%.0f"),
         "currency": st.column_config.TextColumn("Cur", width="small"),
@@ -360,7 +360,7 @@ def edit_dialog(row: dict) -> None:
         ad = c5.date_input("Expected award", value=_date(row.get("expected_award_date")), key=f"e_ad_{row['uid']}")
         c6, c7, c8, c9 = st.columns(4)
         with c6:
-            role_in = _opt("Applicant role", "role", dropdowns.get("chai_role"), row.get("chai_role"))
+            role_in = _opt("Applicant role", "role", dropdowns.get("applicant_role"), row.get("applicant_role"))
         with c7:
             win_in = _opt("Funding window", "win", dropdowns.get("funding_window"), row.get("funding_window"))
         with c8:
@@ -543,7 +543,7 @@ def edit_dialog(row: dict) -> None:
             "date_posted": dp.isoformat() if isinstance(dp, date) else None,
             "submission_deadline": dl.isoformat() if isinstance(dl, date) else None,
             "expected_award_date": ad.isoformat() if isinstance(ad, date) else None,
-            "chai_role": _val(role_in),
+            "applicant_role": _val(role_in),
             "funding_window": _val(win_in),
             "time_to_award": _val(tta_in),
             "submission_format": _val(fmt_in),
@@ -635,7 +635,7 @@ def _markdown_summary(row: dict) -> str:
         f"# {row.get('opportunity_title') or '(untitled)'}\n\n"
         f"- **UID:** {row.get('uid')}\n"
         f"- **Funder:** {row.get('funding_agency') or '—'}\n"
-        f"- **Applicant role:** {row.get('chai_role') or '—'}\n"
+        f"- **Applicant role:** {row.get('applicant_role') or '—'}\n"
         f"- **Window:** {row.get('funding_window') or '—'}\n"
         f"- **Deadline:** {row.get('submission_deadline') or '—'}\n"
         f"- **Estimated value:** {row.get('estimated_value') or '—'} {row.get('currency') or ''}\n"

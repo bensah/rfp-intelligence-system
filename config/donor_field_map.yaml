@@ -51,7 +51,7 @@ canonical_columns:
   - geographic_scope        # text[]— countries / regions in scope
   - program_area            # text[]— donor's own category labels
   - focus_theme             # text  — deploying-org's internal theme tag
-  - chai_role               # text  — Prime / Sub / Technical / Other
+  - applicant_role               # text  — Prime / Sub / Technical / Other
   - funding_window          # text  — One-off / Rolling / Annual / etc.
   - funding_type            # text  — Grant / Cooperative Agreement / Award etc.
   - estimated_value         # numeric — total program funding

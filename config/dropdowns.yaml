@@ -99,7 +99,7 @@ donor_decision: [Approved, Not Approved, Under Review, Not submitted]
 
 funding_window: [One-off, Rolling]
 
-chai_role: [Prime, Sub, Technical]
+applicant_role: [Prime, Sub, Technical]
 
 time_to_award: ["<=3 months", "3-6 months", ">=6 months"]
 

@@ -61,7 +61,7 @@ def render_submit_form(
     donor_list = dropdowns.get("donors")
     elig = dropdowns.get("eligibility_values")
     feasibility = dropdowns.get("feasibility")
-    chai_roles = dropdowns.get("chai_role")
+    applicant_roles = dropdowns.get("applicant_role")
     funding_windows = dropdowns.get("funding_window")
     time_to_award = dropdowns.get("time_to_award")
     submission_formats = dropdowns.get("submission_format")
@@ -141,8 +141,8 @@ def render_submit_form(
 
         c6, c7, c8, c9 = st.columns(4)
         with c6:
-            role = st.selectbox("Applicant role", _none_first(chai_roles),
-                                key=_k("chai_role"),
+            role = st.selectbox("Applicant role", _none_first(applicant_roles),
+                                key=_k("applicant_role"),
                                 help="Whether your org applies as Prime, Sub, "
                                      "or Technical assistance provider.")
         with c7:
@@ -296,7 +296,7 @@ def render_submit_form(
         "program_area": resolved.get("program"),
         "focus_theme": _none(focus_theme),
         "opportunity_link": _none(link),
-        "chai_role": _none(role),
+        "applicant_role": _none(role),
         "lead_applicant": _none(lead_applicant),
         "sub_applicant": _none(sub_applicant),
         "funding_window": _none(window),
