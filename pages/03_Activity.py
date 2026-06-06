@@ -39,30 +39,15 @@ st.caption(
 # Pending Actions as the third tab so unresolved items from both data
 # sources are visible on a single screen (no jumping per-week to find
 # what's still open).
-# ── DIAGNOSTIC BEFORE tabs ──
-st.write("✅ MARKER A — before st.tabs() call")
-
 tab_meetings, tab_engagements, tab_pending = st.tabs(
     ["Weekly Touchpoints", "Engagements", "Pending Actions"]
 )
 
-st.write(f"✅ MARKER B — after st.tabs() · got {sum([bool(tab_meetings), bool(tab_engagements), bool(tab_pending)])} tabs")
-
 with tab_meetings:
-    st.write("✅ MARKER C1 — inside tab_meetings (before render_view)")
     render_view("meetings")
-    st.write("✅ MARKER C2 — inside tab_meetings (after render_view)")
 
 with tab_engagements:
-    st.write("✅ MARKER D1 — inside tab_engagements (before render_view)")
     render_view("engagements")
-    st.write("✅ MARKER D2 — inside tab_engagements (after render_view)")
 
 with tab_pending:
-    st.write("✅ MARKER E1 — inside tab_pending (no render_view)")
-    st.write("# HELLO FROM PENDING TAB")
-    st.error("BIG VISIBLE ERROR BLOCK")
-    st.success("BIG VISIBLE SUCCESS BLOCK")
-    st.write("✅ MARKER E2 — last line of tab_pending body")
-
-st.write("✅ MARKER F — after all with blocks (end of page)")
+    render_view("pending_actions")
