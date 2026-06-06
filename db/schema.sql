@@ -115,7 +115,7 @@ create index if not exists rfp_submissions_funder_idx       on rfp_submissions(f
 create index if not exists rfp_submissions_is_duplicate_idx on rfp_submissions(is_duplicate);
 
 -- =========================================================================
--- meeting_logs  (Monday BDT call notes)
+-- meeting_logs  (Monday team call notes)
 -- =========================================================================
 create table if not exists meeting_logs (
     id              uuid primary key default gen_random_uuid(),
@@ -155,7 +155,7 @@ create table if not exists engagement_logs (
     donor               text,
     engagement_type     text,
     format              text,
-    application_lead           text,
+    internal_lead           text,
     donor_contacts      text,
     purpose             text,
     outcome             text,

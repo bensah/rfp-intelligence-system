@@ -40,7 +40,7 @@ from core.app_header import render_app_header  # noqa: E402
 render_app_header()
 
 role = user.get("role", "collaborator")
-st.session_state["applicant_role"] = role
+st.session_state["app_role"] = role
 display_name = user.get("name") or user.get("email") or "there"
 
 # ----- Auto-sync from Excel when the workbook is newer than the last sync -----
@@ -284,7 +284,7 @@ with st.expander("📖 How to use this app", expanded=False):
         2. **Friday → Sunday** — anyone who finds an RFP outside the scan submits it
            via **Submit**. The form runs duplicate detection, computes an alignment
            score, and tags it to next Monday's review week.
-        3. **Monday 09:00** — the BDT call. Open **Screenings**, walk through each
+        3. **Monday 09:00** — the team call. Open **Screenings**, walk through each
            opportunity. For deep discussion of a single RFP, open **Review** and use
            the badge grid. Capture meeting notes in **Meeting Log**, linked to the
            RFP under discussion. Decisions saved here override the auto-recommendation

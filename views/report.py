@@ -1420,14 +1420,14 @@ st.divider()
 st.subheader("4 · Team & Partnership Activity")
 st.caption(
     "Everything about WHO does the work and WHO we do it with — internal "
-    "triage meetings (**BDT Touchpoints**), donor-facing engagements "
+    "triage meetings (**Team Touchpoints**), donor-facing engagements "
     "(**Donor Touchpoints**), member-level submission activity, proposal "
     "leadership, partner trends, status mix, funding economics, and the "
     "Proceed-to-Submitted conversion."
 )
 
-# ─── BDT Touchpoints (internal team meetings) ─────────────────────────────
-st.markdown("##### BDT Touchpoints")
+# ─── Team Touchpoints (internal team meetings) ─────────────────────────────
+st.markdown("##### Team Touchpoints")
 n_meetings_total = int(len(meetings))
 n_resolved = int(meetings["is_resolved"].sum()) if not meetings.empty else 0
 n_open = n_meetings_total - n_resolved

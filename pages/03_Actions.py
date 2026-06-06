@@ -29,19 +29,18 @@ render_app_header()
 
 st.title("Meetings and Engagement Activities")
 st.caption(
-    "**Weekly Touchpoints** — Monday Business Development Team call notes "
+    "**Team Calls** — Monday team call notes "
     "(per-week, with the rota and follow-up tracker). **Engagements** — "
     "every donor-facing touchpoint (call, pitch, conference, scoping) "
     "towards the KR2.2 quarterly target. **Pending** — every "
     "open follow-up from both, owner-summarised + filterable."
 )
 
-# Tabs renamed 2026-06-05: BDT Check-Ins → BDT Touchpoints. Added
-# Pending as the third tab so unresolved items from both data sources
-# are visible on a single screen (no jumping per-week to find what's
-# still open).
+# Tab labels use generic team terms. "Pending" is the third tab so
+# unresolved items from both data sources are visible on a single
+# screen (no jumping per-week to find what's still open).
 tab_meetings, tab_engagements, tab_pending = st.tabs(
-    ["Weekly Touchpoints", "Engagements", "Pending"]
+    ["Team Calls", "Engagements", "Pending"]
 )
 
 with tab_meetings:

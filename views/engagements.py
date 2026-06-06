@@ -20,7 +20,7 @@ role = user.get("role", "collaborator")
 can_edit = role in ("super_user", "admin", "reviewer", "collaborator")  # any logged-in user can log engagements
 sb = get_client()
 
-st.title("Engagement Logs")
+st.title("Review Engagements with Donors")
 st.caption(
     "Donor-facing interactions: calls, pitches, conferences, scoping conversations. "
     "Link to an RFP only when the engagement is directly about that opportunity."
@@ -113,10 +113,10 @@ with st.form("new_engagement", clear_on_submit=True):
     donor_other = ""
     if donor == "Other":
         donor_other = c4.text_input("Specify donor *")
-    application_lead = c5.selectbox("Internal lead *", ["—"] + team)
-    application_lead_other = ""
-    if application_lead == "Other":
-        application_lead_other = c5.text_input("Specify internal lead *")
+    internal_lead = c5.selectbox("Internal lead *", ["—"] + team)
+    internal_lead_other = ""
+    if internal_lead == "Other":
+        internal_lead_other = c5.text_input("Specify internal lead *")
 
     donor_contacts = st.text_input("Donor contact(s)")
     purpose = st.text_area("Purpose", height=70)
@@ -132,7 +132,7 @@ if submit_pressed:
     final_donor = donor_other.strip() if donor == "Other" else (None if donor == "—" else donor)
     if not final_donor:
         errors.append("Donor is required.")
-    final_lead = application_lead_other.strip() if application_lead == "Other" else (None if application_lead == "—" else application_lead)
+    final_lead = internal_lead_other.strip() if internal_lead == "Other" else (None if internal_lead == "—" else internal_lead)
     if not final_lead:
         errors.append("Internal lead is required.")
     if errors:
@@ -144,7 +144,7 @@ if submit_pressed:
                 "donor": final_donor,
                 "engagement_type": e_type,
                 "format": None if e_format == "—" else e_format,
-                "application_lead": final_lead,
+                "internal_lead": final_lead,
                 "donor_contacts": donor_contacts.strip() or None,
                 "purpose": purpose.strip() or None,
                 "outcome": outcome.strip() or None,
@@ -171,7 +171,7 @@ with st.expander("Filters", expanded=False):
     fc1, fc2, fc3 = st.columns(3)
     f_type = fc1.multiselect("Type", sorted(df["engagement_type"].dropna().unique().tolist()))
     f_donor = fc2.multiselect("Donor", sorted(df["donor"].dropna().unique().tolist()))
-    f_lead = fc3.multiselect("Internal lead", sorted(df["application_lead"].dropna().unique().tolist()))
+    f_lead = fc3.multiselect("Internal lead", sorted(df["internal_lead"].dropna().unique().tolist()))
 
 mask = pd.Series(True, index=df.index)
 if f_type:
@@ -179,13 +179,13 @@ if f_type:
 if f_donor:
     mask &= df["donor"].isin(f_donor)
 if f_lead:
-    mask &= df["application_lead"].isin(f_lead)
+    mask &= df["internal_lead"].isin(f_lead)
 
 show = df[mask].copy()
 show["engagement_date"] = show["engagement_date"].dt.date
 st.dataframe(
     show[
-        ["engagement_date", "donor", "engagement_type", "format", "application_lead",
+        ["engagement_date", "donor", "engagement_type", "format", "internal_lead",
          "donor_contacts", "purpose", "outcome", "linked_rfp_uid"]
     ],
     use_container_width=True,
