@@ -116,16 +116,19 @@ def _make_wrapper(original, view_name: str, widget_name: str, counters: dict):
 # was the previously-patched function, creating a self-referencing loop
 # that surfaced as `_ViewStop` errors on totally unrelated pages.
 #
-# New approach: don't patch anything. Views call `st.stop()` normally —
-# Streamlit raises its internal `StopException`. We catch that exception
-# inside render_view's exec() and swallow it, so the view aborts cleanly
-# without affecting the rest of the parent page.
+# Catching StopException alone is NOT enough. `st.stop()` does two things:
+# (1) `ctx.script_requests.request_stop()` flips the script's state to STOP,
+# (2) `st.empty()` forces a yield point which raises StopException.
+# Once (1) has happened, EVERY subsequent `st.*` call anywhere in the
+# script (parent page, other tab bodies, MARKER lines after `render_view`)
+# hits a yield point, sees state==STOP, and re-raises StopException —
+# Streamlit's `on_scriptrunner_yield` deliberately does NOT clear the
+# STOP state ("return the request and remain stopped"). So we MUST reset
+# the state to CONTINUE after catching, otherwise sibling tabs render
+# blank.
 #
-# StopException's import path moves between Streamlit minor versions, so
-# probe the known locations and fall back to a sentinel that matches
-# nothing if all probes fail (in which case views' st.stop() will halt
-# the whole page — same as stock Streamlit behaviour, which is the safe
-# default).
+# StopException + ScriptRequestType locations have moved between
+# Streamlit minor versions, so probe the known locations.
 StopException: type[BaseException] | None = None
 for _path in (
     "streamlit.runtime.scriptrunner.exceptions",
@@ -144,6 +147,51 @@ if StopException is None:
         """Placeholder — Streamlit's real StopException couldn't be
         imported. Catching this class is a no-op; views' st.stop() will
         halt the whole page (stock behaviour)."""
+
+# ScriptRequestType.CONTINUE — needed to clear the STOP flag after a
+# view's `st.stop()`. Probe in order: 1.30+ location first, older
+# fallback second.
+_ScriptRequestType = None
+for _path in (
+    "streamlit.runtime.scriptrunner_utils.script_requests",
+    "streamlit.runtime.scriptrunner.script_requests",
+):
+    try:
+        _mod = __import__(_path, fromlist=["ScriptRequestType"])
+        _ScriptRequestType = _mod.ScriptRequestType
+        break
+    except (ImportError, AttributeError):
+        continue
+
+try:
+    from streamlit.runtime.scriptrunner import get_script_run_ctx as _get_ctx
+except ImportError:
+    _get_ctx = lambda: None  # noqa: E731
+
+
+def _clear_stop_state() -> None:
+    """Reset the script's STOP state to CONTINUE so subsequent `st.*`
+    calls on the parent page don't re-raise StopException at every
+    yield point.
+
+    Touches `script_requests._state` directly — Streamlit exposes no
+    public API for this because they never expected `st.stop()` to be
+    catchable. If the layout changes upstream, this becomes a no-op and
+    the original "all sibling tabs blank" symptom returns; the assert
+    in the verify branch below will surface that quickly."""
+    if _ScriptRequestType is None:
+        return
+    ctx = _get_ctx()
+    if ctx is None or not getattr(ctx, "script_requests", None):
+        return
+    sr = ctx.script_requests
+    try:
+        with sr._lock:  # type: ignore[attr-defined]
+            if sr._state == _ScriptRequestType.STOP:  # type: ignore[attr-defined]
+                sr._state = _ScriptRequestType.CONTINUE  # type: ignore[attr-defined]
+    except AttributeError:
+        # Streamlit changed the internal layout — fail open rather than crash.
+        pass
 
 
 def render_view(view_name: str) -> None:
@@ -175,8 +223,13 @@ def render_view(view_name: str) -> None:
         try:
             exec(code, ns)
         except StopException:
-            # View called st.stop() — abort the view only, page continues.
-            pass
+            # View called st.stop(). Catching the exception is half the
+            # job — we also have to reset the script's STOP state, or
+            # every subsequent st.* call on the parent page (sibling
+            # tabs, markers, anything after this render_view call) will
+            # re-raise StopException at its yield point. See the long
+            # comment above _clear_stop_state.
+            _clear_stop_state()
         except Exception as exc:
             # Without this catch, a crash inside a tab-rendered view
             # leaves the tab completely blank — the exception is
