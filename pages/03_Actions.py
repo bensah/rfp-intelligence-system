@@ -1,9 +1,10 @@
-"""Page 3 — Activities.
+"""Page 3 — Actions.
 
 Combines Meeting Logs (weekly team-call notes) and Engagement Logs
-(donor touchpoints) into a single 2-tab page. Renamed from "Meetings"
-on 2026-06-05 to avoid confusion with "team leads" / "proposal leads"
-terminology used elsewhere in the app.
+(donor touchpoints) into a single tabbed page. Renamed from "Meetings"
+on 2026-06-05, then from "Activity" to "Actions" on 2026-06-06, to avoid
+confusion with "team leads" / "proposal leads" terminology used elsewhere
+in the app.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ import streamlit as st
 
 # Must be the FIRST Streamlit call so a direct refresh lands in wide layout.
 st.set_page_config(
-    page_title="Activity - RFPIS",
+    page_title="Actions - RFPIS",
     page_icon="🛈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -31,16 +32,16 @@ st.caption(
     "**Weekly Touchpoints** — Monday Business Development Team call notes "
     "(per-week, with the rota and follow-up tracker). **Engagements** — "
     "every donor-facing touchpoint (call, pitch, conference, scoping) "
-    "towards the KR2.2 quarterly target. **Pending Actions** — every "
+    "towards the KR2.2 quarterly target. **Pending** — every "
     "open follow-up from both, owner-summarised + filterable."
 )
 
 # Tabs renamed 2026-06-05: BDT Check-Ins → BDT Touchpoints. Added
-# Pending Actions as the third tab so unresolved items from both data
-# sources are visible on a single screen (no jumping per-week to find
-# what's still open).
+# Pending as the third tab so unresolved items from both data sources
+# are visible on a single screen (no jumping per-week to find what's
+# still open).
 tab_meetings, tab_engagements, tab_pending = st.tabs(
-    ["Weekly Touchpoints", "Engagements", "Pending Actions"]
+    ["Weekly Touchpoints", "Engagements", "Pending"]
 )
 
 with tab_meetings:
