@@ -36,35 +36,18 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(
-    page_title="User — RFPIS",
-    page_icon="🛈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 from auth.authenticator import (  # noqa: E402
-    ensure_logged_in, hash_password, clear_credentials_cache,
+    hash_password, clear_credentials_cache,
 )
 from core import permissions  # noqa: E402
-from core.app_header import render_app_header  # noqa: E402
 from db.supabase_client import get_client  # noqa: E402
 
 import bcrypt  # noqa: E402
 
-user = ensure_logged_in()
-if not user:
-    st.stop()
-
-render_app_header()
+user = st.session_state["app_user"]
 sb = get_client()
 
 st.title("User")
-st.caption(
-    "Your profile, password, and what you can access across the app. "
-    "Admins also get a Manage Users tab to onboard new teammates and "
-    "adjust roles."
-)
 
 
 # ---------------------------------------------------------------------------

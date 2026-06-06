@@ -19,27 +19,13 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-# Must be the FIRST Streamlit call so a direct refresh lands in wide layout.
-st.set_page_config(
-    page_title="Admin — RFPIS",
-    page_icon="🛈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-from auth.authenticator import ensure_logged_in
 from core import excel_sync, settings
+from core import permissions
 from db.supabase_client import get_client
 
-user = ensure_logged_in()
-if not user:
-    st.stop()
-
-from core.app_header import render_app_header  # noqa: E402
-from core import permissions  # noqa: E402
-render_app_header()
-# Gate to admin OR super_user (super is admin + more, per the role
-# hierarchy; permissions.is_admin() returns True for both).
+user = st.session_state["app_user"]
+# Defense in depth: the nav already omits this page for non-admins, but
+# gate here too in case someone deep-links to it.
 if not permissions.is_admin(user):
     st.error("Admins only.")
     st.stop()
@@ -48,7 +34,7 @@ sb = get_client()
 st.title("Admin Panel")
 
 tab_settings, tab_data, tab_sources, tab_scan = st.tabs(
-    ["Settings", "Data", "Sources", "Manual Scan"]
+    ["Settings", "Records", "Sources", "Manual Scan"]
 )
 
 
@@ -119,7 +105,7 @@ with tab_settings:
     org_country = oc3.text_input(
         "Primary country", value=_org.get("org_country", ""),
         help="Country the deploying org operates from. Used in the Report "
-             "geographic context. e.g. 'Cameroon'.",
+             "geographic context. e.g. your primary country of operation.",
     )
     org_team = oc4.text_input(
         "Team / department", value=_org.get("org_team", ""),
@@ -136,6 +122,32 @@ with tab_settings:
         "Website (optional)", value=_org.get("org_website", ""),
         help="Public URL — surfaces in the Report footer and exported PDFs.",
     )
+    # ---- Eligibility gates used by the scan classifier ------------------
+    st.markdown("**Eligibility gates** — drive the scanner's hard screens and "
+                "the donor-intelligence compliance check.")
+    eg1, eg2 = st.columns(2)
+    us_entity = eg1.checkbox(
+        "We are a US-based entity",
+        value=str(_org.get("org_is_us_entity", "false")).lower() == "true",
+        help="When unchecked (a non-US deployment), the scanner rejects "
+             "US-domestic-only RFPs (e.g. 'open to US-based applicants only'). "
+             "Check this for a US-based organization.",
+    )
+    _board_opts = {
+        "Unknown — don't apply this gate": "",
+        "Yes — we have a local board": "yes",
+        "No — we don't have one": "no",
+    }
+    _board_cur = str(_org.get("org_has_local_board", "") or "").lower()
+    _board_labels = list(_board_opts)
+    _board_idx = next((i for i, v in enumerate(_board_opts.values()) if v == _board_cur), 0)
+    local_board = eg2.selectbox(
+        "Locally-constituted Board of Directors?",
+        _board_labels, index=_board_idx,
+        help="If 'No', donors whose intel requires a local board become a hard "
+             "MUST-4 disqualifier during scoring. 'Unknown' leaves the gate off.",
+    )
+
     # ---- Logo: file uploader stored as base64 in app_settings -----------
     # The file is encoded inline into the settings table — no filesystem
     # dependency, so it survives Streamlit Cloud container restarts (where
@@ -180,6 +192,8 @@ with tab_settings:
             "org_team":          org_team.strip(),
             "org_contact_email": org_email.strip(),
             "org_website":       org_website.strip(),
+            "org_is_us_entity":  "true" if us_entity else "false",
+            "org_has_local_board": _board_opts[local_board],
         }, updated_by=user.get("email"))
         # Save the uploaded logo (if any) alongside the text fields so a
         # single button click captures everything.

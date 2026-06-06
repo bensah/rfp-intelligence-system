@@ -25,7 +25,7 @@ are the lowercased surface forms matched in titles.
 Usage
 -----
     from core.keyword_cloud import extract_keyword_frequencies
-    freq = extract_keyword_frequencies(["HIV vaccine trial in Cameroon"])
+    freq = extract_keyword_frequencies(["HIV vaccine trial in a low- and middle-income country"])
     # → {"HIV": 1, "Vaccine": 1}
 """
 from __future__ import annotations

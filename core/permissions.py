@@ -1,9 +1,9 @@
 """Access matrix + role helpers.
 
 Single source of truth for "who can do what". Imported by:
-  * `pages/05_User.py` — to render the "My Access" read-only matrix
+  * `app_pages/user.py` — to render the "My Access" read-only matrix
     and to gate the "Manage Users" tab to admin only.
-  * `pages/06_Admin.py` — already gates the whole page to admin via
+  * `app_pages/admin.py` — already gates the whole page to admin via
     `user.role != "admin"`. The CSS nav-link hide is injected from
     `core/app_header.py` based on `is_admin()`.
   * Future: any page that needs fine-grained per-action gating.
@@ -55,10 +55,11 @@ from typing import Any
 ACCESS_MATRIX: dict[str, dict[str, str]] = {
     # ── Top-level pages ─────────────────────────────────────────────────
     "Home":                       {"admin": "edit",    "user": "edit"},
-    "Pipeline":                   {"admin": "edit",    "user": "edit"},
+    "Pipelines":                  {"admin": "edit",    "user": "edit"},
     "Grants":                     {"admin": "edit",    "user": "edit"},
     "Actions":                    {"admin": "edit",    "user": "edit"},
     "Report":                     {"admin": "edit",    "user": "view"},
+    "Donors":                     {"admin": "edit",    "user": "view"},
     "User → My Profile":          {"admin": "self",    "user": "self"},
     "User → Change Password":     {"admin": "self",    "user": "self"},
     "User → My Access":           {"admin": "view",    "user": "view"},

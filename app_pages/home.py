@@ -1,7 +1,8 @@
-"""RFPIS — RFP Intelligence System · entry page.
+"""Home dashboard — welcome, live KPIs, quick-start cards, how-to guide.
 
-Login gate + role-aware welcome dashboard with real KPIs and a quick-start
-guide. Page-level routing is handled by Streamlit's pages/ directory.
+Rendered as the default page by the st.navigation router in `App.py`.
+Auth + global header already ran in the router, so this file is
+content-only (it reads the logged-in user from session_state).
 """
 from __future__ import annotations
 
@@ -10,37 +11,20 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from auth.authenticator import login_gate
 from core import excel_sync
-from core.settings import get_org_name
 from db.supabase_client import get_client
 from views.submit_form import render_submit_form
 
-st.set_page_config(
-    page_title="RFP Intelligence System - RFPIS",
-    page_icon="🛈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 # Home-specific block-container padding only — global theme (headings,
 # .quickcard, metric tiles, buttons) lives in core/app_header._GLOBAL_CSS
-# which is injected by render_app_header() right after login.
+# which is injected by render_app_header() in the router.
 st.markdown(
     "<style>.block-container { padding-top: 1.5rem; }</style>",
     unsafe_allow_html=True,
 )
 
-user = login_gate()
-if not user:
-    st.stop()
-
-# Persistent top-right brand header (logo + RFPIS v1.0).
-from core.app_header import render_app_header  # noqa: E402
-render_app_header()
-
+user = st.session_state["app_user"]
 role = user.get("role", "collaborator")
-st.session_state["app_role"] = role
 display_name = user.get("name") or user.get("email") or "there"
 
 # ----- Auto-sync from Excel when the workbook is newer than the last sync -----
@@ -90,8 +74,8 @@ if _pending:
 
 # ---- Submit-RFP modal (Streamlit ≥1.32 @st.dialog) ----
 # The form lives in views/submit_form.py so the same code renders here in
-# the modal AND on the standalone Submit page. key_prefix keeps widget
-# IDs unique so both can coexist in one session.
+# the modal AND on the Pipelines page. key_prefix keeps widget IDs unique
+# so both can coexist in one session.
 @st.dialog("Submit a new RFP", width="large")
 def _submit_rfp_modal():
     render_submit_form(
@@ -105,14 +89,10 @@ def _submit_rfp_modal():
 _title_col, _btn_col = st.columns([5, 1])
 with _title_col:
     st.title(f"Welcome, {display_name.split()[0]} 👋")
-    st.caption(
-        "Weekly RFP discovery, eligibility scoring, and decision pipeline for "
-        f"the **{get_org_name()}**."
-    )
 with _btn_col:
     # Vertical spacer aligns the button roughly with the title baseline.
     st.markdown("<div style='height: 0.8rem'></div>", unsafe_allow_html=True)
-    if st.button("📝 Submit RFP", type="primary",
+    if st.button("📝 Submit Discovered RFP", type="primary",
                  use_container_width=True, key="home_submit_rfp_btn",
                  help="Capture an opportunity you found outside the Friday scan. "
                       "Opens a modal; no duplicate-check gate — submitted "
@@ -213,7 +193,6 @@ except Exception as exc:
          "submitted": 0, "awarded_grants": 0}
 
 
-
 # Row 1 — pipeline status (deduplicated)
 r1c1, r1c2, r1c3, r1c4 = st.columns(4)
 r1c1.metric(
@@ -243,19 +222,19 @@ st.divider()
 st.subheader("Where to start")
 
 CARDS = [
-    ("Pipeline", "pages/01_Pipeline.py", "📚", "Screen → Review → Tracking → Summary",
+    ("Pipelines", "app_pages/pipelines.py", "📚", "Screen → Review → Tracking → Summary",
      "Friday-scan + manual submissions through the full lifecycle: 4 tabs (Screen, Review, Tracking, Summary)."),
-    ("Grants", "pages/02_Grants.py", "💼", "Active Grants",
+    ("Grants", "app_pages/grants.py", "💼", "Active Grants",
      "Grants under donor review or already awarded, with reporting deadlines."),
-    ("Actions", "pages/03_Actions.py", "🗒", "Team check-ins + Engagements",
+    ("Actions", "app_pages/actions.py", "🗒️", "Team check-ins + Engagements",
      "Three tabs — weekly meeting notes, donor engagement touchpoints, and pending follow-ups."),
-    ("Report", "pages/04_Report.py", "📊", "KPI dashboard",
+    ("Report", "app_pages/report.py", "📊", "KPI dashboard",
      "Activity dashboard tracing the full pipeline — search → triage → reviews → engagements → grants secured."),
-    ("User", "pages/05_User.py", "👤", "Profile · Password · Access",
+    ("User", "app_pages/user.py", "👤", "Profile · Password · Access",
      "Manage your profile, change your password, see what you can access. Admins also get a Manage Users tab."),
 ]
 if role in ("super_user", "admin"):
-    CARDS.append(("Admin", "pages/06_Admin.py", "⚙", "Settings · Data · Donor Sources · Scans",
+    CARDS.append(("Admin", "app_pages/admin.py", "⚙️", "Settings · Data · Donor Sources · Scans",
                   "Org profile, year setting, Excel sync, currency rates, the full Data backend "
                   "(incl. RFP Records), donor sources, manual scans."))
 
@@ -297,8 +276,8 @@ with st.expander("📖 How to use this app", expanded=False):
         - **Reviewer** — confirm decisions, edit RFPs, but no delete.
         - **Collaborator** — submit RFPs and read dashboards.
 
-        **Need help?** Most pages have a one-line caption at the top explaining what
-        they're for. The **Data** page is the master record — every column in the
-        old Excel screener lives there and can be edited via the Edit modal.
+        **Need help?** The **Data** page (under Admin) is the master record — every
+        column in the old Excel screener lives there and can be edited via the Edit
+        modal.
         """
     )

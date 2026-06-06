@@ -1,6 +1,6 @@
 """Helper for rendering a view module inside a Streamlit tab context.
 
-Wrapper pages (e.g. `pages/01_RFPs.py`) call `render_view("screened_rfp")`
+Wrapper pages (e.g. `app_pages/pipelines.py`) call `render_view("screened_rfp")`
 inside each `with tab:` block. The view file's body executes inside that tab,
 so its `st.*` calls become the tab's contents.
 

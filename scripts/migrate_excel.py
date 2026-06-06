@@ -157,11 +157,8 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
         "program_area": _multi(get("Program Area")),
         "focus_theme": _txt(get("Focus Theme")),
         "opportunity_link": _txt(get("Opportunity Link")),
-        # applicant_role is recognised under several spreadsheet headers.
-        # Preferred headers are "Applicant Role" / "Role"; the original
-        # screener workbook labelled this column "the organisation Role", which we still
-        # accept last so a legacy workbook keeps importing without edits.
-        "applicant_role": _txt(get("Applicant Role", "Role", "the organisation Role")),
+        # applicant_role is recognised under either spreadsheet header.
+        "applicant_role": _txt(get("Applicant Role", "Role")),
         "lead_applicant": _txt(get("Lead Applicant")),
         "sub_applicant": _txt(get("Sub Applicant")),
         "funding_window": _txt(get("Funding Window")),

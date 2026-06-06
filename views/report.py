@@ -1257,7 +1257,7 @@ else:
               help="All non-duplicate rows across every source "
                    "(auto-scanned, manually submitted, Excel migration).")
     k2.metric("Proceed", proceed_all,
-              help="Decision = Proceed or Proceed as sub. The actionable pipeline.")
+              help="Decision = Proceed. The actionable pipeline.")
     k3.metric("Park", park_all,
               help="Held for later review — uncertain fit or no extractable deadline.")
     k4.metric("Decline", decline_all,
