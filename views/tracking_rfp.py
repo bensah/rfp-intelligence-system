@@ -37,7 +37,7 @@ sb = get_client()
 year = settings.get_year()
 today = date.today()
 
-st.title(f"YTD Proceed Pipeline ({year})")
+st.title(f"Proceed Pipeline — {year} YTD")
 st.caption(
     "Read-only pipeline of active **Proceed** RFPs for "
     f"**{year}** that haven't been submitted to a donor, aren't past deadline, "

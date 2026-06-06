@@ -27,7 +27,7 @@ role = user.get("role", "collaborator")
 can_edit = role in ("super_user", "admin", "reviewer")
 sb = get_client()
 
-st.title("Review RFP — Team triage")
+st.title("Review Pipeline — Weekly Team Triage")
 
 
 # -----------------------------------------------------------------------------
