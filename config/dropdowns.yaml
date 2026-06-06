@@ -93,7 +93,7 @@ stages:
   - Final packaging & submission
   - Post-submission follow-up
 
-decisions: [Proceed, Proceed as sub, Park, Decline]
+decisions: [Proceed, Park, Decline]
 
 donor_decision: [Approved, Not Approved, Under Review, Not submitted]
 
@@ -158,17 +158,28 @@ program_areas:
   - Other
 
 geographic_scope:
+  - Sub-Saharan Africa
+  - West Africa
+  - East Africa
+  - Southern Africa
+  - Central Africa
+  - Asia
+  - South Asia
+  - Southeast Asia
+  - India
+  - Latin America
+  - Caribbean
+  - Middle East
+  - Global South
+  - LMICs
+  - Global
+  # Specific countries kept so existing RFP tags still edit cleanly; a
+  # deployment can prune/extend this list freely.
   - Cameroon
   - Mali
   - Nigeria
   - Senegal
   - Cote d'Ivoire
-  - West Africa
-  - Central Africa
-  - WCA
-  - Sub-Saharan Africa
-  - LMICs
-  - Global
   - Other
 
 # 1 unit of currency -> X USD (i.e. multiply native amount by rate to get USD).

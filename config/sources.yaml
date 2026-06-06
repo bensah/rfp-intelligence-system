@@ -252,6 +252,17 @@ sources:
     method: html
     url: https://www.fondationpierrefabre.org/en/current-initiatives/call-for-projects/
     priority: 1
+  - name: Fondation Pierre Fabre — ODESS detail
+    # Companion to Fondation Pierre Fabre. The FPF call page shows the
+    # application window only as a banner IMAGE (unscrapable), so the close
+    # date slips past the deadline gate. The ODESS observatory page carries
+    # the full calendar in TEXT ("9 october to 7 november 2025: applications
+    # open"; form-return window "from 18 dec 2025 to 23 jan 2026"), which the
+    # deadline extractor reads and rejects once past. Monitor alongside the FPF
+    # parent; update the URL when ODESS publishes a new call cycle.
+    method: html
+    url: https://www.odess.io/en/call-for-projects-2026-applications-open-2/
+    priority: 1
 
   # ============================================================================
   # Anti-bot / SPA / login-walled sources — kept as `manual` so the team
@@ -297,7 +308,7 @@ sources:
     # Query: 'request for proposal' 'expression of interests' 'call for
     # proposals' 'request for proposals' 'request for information'
     # 'grants' 'Funding Opportunity' Low and Middle Income Countries OR
-    # Cameroon OR Mali 'Health' 'Public health' 'Global Health'
+    # <your countries> 'Health' 'Public health' 'Global Health'
     method: rss
     url: https://www.google.com/alerts/feeds/11375502939470857620/4042177278441426697
     priority: 1

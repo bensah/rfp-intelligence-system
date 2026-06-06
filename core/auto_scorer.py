@@ -292,6 +292,52 @@ def feasibility_hard_reject(candidate: dict[str, Any], policies: dict[str, Any])
     return False, ""
 
 
+# US-domestic-only signal — the decisive geography reject for a non-US
+# deployment. See docs/SCAN_CLASSIFICATION_ALGORITHM.md §6 (the "domestic"
+# test from HRSA-26-083: "All domestic public or private … entities").
+# Context-anchored so it won't trip on unrelated "domestic" uses (e.g.
+# "domestic violence").
+_US_DOMESTIC_ONLY_PATTERN = re.compile(
+    r"\ball\s+domestic\b"
+    r"|\bdomestic\s+(?:public|private|non-?profit|for-?profit|entit|organi|"
+    r"applicant|institution|faith-based|community-based)"
+    r"|u\.?s\.?-based\s+(?:entit|organi|applicant|institution)"
+    r"|must\s+be\s+(?:a\s+|an\s+)?u\.?s\.?\b"
+    r"|located\s+in\s+the\s+united\s+states"
+    r"|(?:u\.?s\.?|united\s+states)\s+(?:entit|organi|applicant)[a-z]*\s+only",
+    re.IGNORECASE,
+)
+
+
+def us_domestic_only_reject(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
+    """Reject US-domestic-only opportunities for a non-US deployment.
+
+    US-federal NOFOs frequently restrict eligibility to "domestic" (US-based)
+    entities — decisive for a non-US deployment (a country office can't apply as
+    prime). The signal lives in the eligibility text, which the grants.gov
+    scraper now captures into `notes` (applicantEligibilityDesc); `_full_text`
+    excludes notes, so we read it explicitly here.
+
+    Skipped when the deploying org IS a US entity (`org_is_us_entity` setting)
+    or when the RFP carries an explicit inclusive-foreign statement.
+    """
+    try:
+        from core import settings as _settings
+        us_entity = str(
+            _settings.get_setting("org_is_us_entity", "false")
+        ).strip().lower() in ("true", "yes", "1")
+    except Exception:
+        us_entity = False
+    if us_entity:
+        return False, ""
+    text = _full_text(candidate) + " " + (candidate.get("notes") or "")
+    if _has_inclusive_eligibility(text):
+        return False, ""
+    if _US_DOMESTIC_ONLY_PATTERN.search(text):
+        return True, "US-domestic-only eligibility — out of scope for a non-US deployment"
+    return False, ""
+
+
 _URL_YEAR_RE_AS = re.compile(r"(?<!\d)(20\d{2})(?!\d)")
 
 
@@ -357,14 +403,23 @@ def deadline_in_future(candidate: dict[str, Any]) -> tuple[bool, str]:
     deadline = candidate.get("submission_deadline")
     if not deadline:
         # Fallback: look for a year in the URL or title.
+        # Scan URL + title AND the body text / notes. Donors like Fondation
+        # Pierre Fabre put the application window only in prose ("accepting
+        # submissions through 30 January 2018") with no year in the URL or
+        # title — so a URL/title-only scan missed them and they leaked through
+        # as Park. If the LATEST year mentioned ANYWHERE is in the past (i.e.
+        # the page cites no current/future year), treat the call as expired.
         blob = " ".join([
             candidate.get("opportunity_link") or "",
             candidate.get("opportunity_title") or "",
+            candidate.get("brief_description") or "",
+            candidate.get("notes") or "",
         ])
         yr = _latest_year_in(blob)
         if yr and yr < today.year:
             return False, (
-                f"URL/title year {yr} is past (no explicit deadline parsed)"
+                f"latest year on page is {yr} (past) and no explicit deadline "
+                "parsed — treating as expired"
             )
         return True, ""
     # Below this point we have an actual `deadline` value to inspect.
@@ -422,6 +477,9 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     ok, reason = deadline_in_future(candidate)
     if not ok:
         return False, f"deadline: {reason}"
+    rejected, reason = us_domestic_only_reject(candidate, policies)
+    if rejected:
+        return False, f"geography: {reason}"
     ok, reason = country_eligible(candidate, policies)
     if not ok:
         return False, f"country: {reason}"
@@ -581,7 +639,7 @@ def _extract_geographic_scope(text: str, policies: dict[str, Any]) -> list[str]:
             continue
         seen.add(key)
         found.append(m)
-    # Prioritise eligible countries first in the list (so Cameroon shows
+    # Prioritise eligible countries first in the list (so an eligible country shows
     # before Nigeria if both are mentioned).
     found.sort(key=lambda c: (0 if c.lower() in eligible else 1, c))
     return found[:8]  # cap to avoid overflowing the column
@@ -671,17 +729,22 @@ def _apply_scoring_rules(
 
     # --- 2. Funding-quality tiers ------------------------------------------
     fq = rules.get("funding_quality_tiers") or {}
-    if fq.get("enabled") and amount_usd > 0:
-        tiers = fq.get("tiers") or []
-        # Tiers should be ordered HIGH → LOW; first satisfied wins.
-        for tier in tiers:
-            try:
-                threshold = float(tier.get("threshold_usd", 0))
-            except (TypeError, ValueError):
-                continue
-            if amount_usd >= threshold:
-                values["prefer_6_funding_quality"] = tier.get("value") or values.get("prefer_6_funding_quality")
-                break
+    if fq.get("enabled"):
+        if amount_usd > 0:
+            tiers = fq.get("tiers") or []
+            # Tiers should be ordered HIGH → LOW; first satisfied wins.
+            for tier in tiers:
+                try:
+                    threshold = float(tier.get("threshold_usd", 0))
+                except (TypeError, ValueError):
+                    continue
+                if amount_usd >= threshold:
+                    values["prefer_6_funding_quality"] = tier.get("value") or values.get("prefer_6_funding_quality")
+                    break
+        else:
+            # No funding amount published → we can't judge funding quality.
+            # Flag Partial (review) rather than scoring the lowest "No" tier.
+            values["prefer_6_funding_quality"] = "Partial"
 
     # --- 3. Resourcing large-amount ----------------------------------------
     res = rules.get("resourcing_large_amount") or {}
@@ -722,6 +785,16 @@ def _apply_scoring_rules(
         # Monitorable defaults Yes (most modern grants assume M&E);
         # Partnership defaults No (reviewer-confirmed signal).
         values[crit_key] = default_val
+
+    # --- 5. Donor intelligence — authoritative real-world evidence ----------
+    # Match the funder to the donor_intel matrix and let verified donor
+    # metadata override MUST 4 / PREFER 8 / (fallback when the RFP is silent
+    # on amount) PREFER 6. Wrapped so a lookup failure never breaks scoring.
+    try:
+        from core import donor_intel
+        donor_intel.apply_to_values(values, candidate, policies)
+    except Exception:
+        pass
 
     return values
 
@@ -803,17 +876,15 @@ def auto_score(
     # lands in Park instead of Proceed (cheap to promote). False-
     # negative cost (current): expired calls land in Proceed (expensive
     # to clean up + risks the team chasing dead RFPs).
-    if rec in ("Proceed", "Proceed as sub") and not candidate.get("submission_deadline"):
+    if rec == "Proceed" and not candidate.get("submission_deadline"):
         rec = "Park"
 
     # Default applicant role = Prime unless RFP text demands a research /
-    # region-specific institution (in which case the deploying org
-    # applies as Sub).
+    # region-specific institution (in which case the deploying org applies
+    # as Sub). The Sub distinction now lives ENTIRELY in `applicant_role` —
+    # the decision stays "Proceed" (the "Proceed as sub" decision value was
+    # dropped 2026-06-06; Role: Prime/Sub/Technical carries the sub signal).
     applicant_role = _detect_applicant_role(text)
-    # Use "Proceed as sub" so the Tracking page can distinguish role-aware
-    # rows from straight Proceed ones.
-    if rec == "Proceed" and applicant_role == "Sub":
-        rec = "Proceed as sub"
 
     # Vocabulary translation at the DB boundary. The scoring logic above
     # uses "Yes"/"No" (semantic — lots of comparisons depend on these
@@ -831,9 +902,9 @@ def auto_score(
         "auto_recommendation": rec,
         "decline_flags_present": decline_flags,
         # Auto-promote the recommendation into `decision` so the Tracking
-        # page (filters decision IN Proceed / Proceed as sub) immediately
-        # reflects post-scan triage without requiring a human click per
-        # row. Reviewers can override anything on the Review tab.
+        # page (filters decision = Proceed) immediately reflects post-scan
+        # triage without requiring a human click per row. Reviewers can
+        # override anything on the Review tab.
         "decision": rec,
         # Default the applicant role. Park / Decline rows still get a role
         # so the team has context if they choose to review.

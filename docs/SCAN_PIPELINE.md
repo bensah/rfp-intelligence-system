@@ -176,14 +176,14 @@ So when an RFP demands a US-based applicant, that's **not** "the org can't apply
 
 Same routing applies for other residency requirements:
 
-| Requirement | What it means for the Cameroon team |
+| Requirement | What it means for the deploying team |
 |---|---|
 | "US-based applicant required" | US-parent leads → country office is sub |
 | "EU / Canada / regional residency required" | Regional NGO partner leads → country office is sub |
 | "Research institution required" | Research-org partner leads (implementing NGO isn't research-focused) → country office is sub |
 | "University / academic only" | University partner leads → country office is sub |
 
-In every case the recommendation stays **Proceed** — only the `applicant_role` field flips from `Prime` → `Sub`. The Cameroon team still pursues the opportunity; they just know upfront they're not leading the application.
+In every case the recommendation stays **Proceed** — only the `applicant_role` field flips from `Prime` → `Sub`. The deploying team still pursues the opportunity; they just know upfront they're not leading the application.
 
 ### Override path
 

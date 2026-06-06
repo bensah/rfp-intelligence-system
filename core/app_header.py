@@ -1,7 +1,7 @@
 """App branding + global theme.
 
 Three placements, one helper (`render_app_header`):
-  * SIDEBAR TOP    — RFPIS logo via st.logo()
+  * SIDEBAR TOP    — "RFPIS" wordmark (CSS ::before on the sidebar nav)
   * MAIN CONTENT   — Deploying-org logo + name, left-aligned strip + divider
   * GLOBAL CSS     — theme variables (primary green), card styles,
                      consistent metric / heading typography
@@ -67,16 +67,19 @@ _GLOBAL_CSS = f"""
      header strip starts ~0.4rem under the viewport top and never
      drifts when new code is added elsewhere. */
   [data-testid="stHeader"] {{
-    height: 0 !important;
-    min-height: 0 !important;
+    height: 1.5rem !important;
+    min-height: 1.5rem !important;
     background: transparent !important;
   }}
+  /* NOTE: we no longer hide stToolbar — the st.logo (stHeaderLogo) shares
+     that toolbar region, so hiding it removed the logo. The header now has
+     height (above) which gives the logo + collapse arrows room. */
   [data-testid="stDecoration"] {{
     display: none !important;
   }}
   .block-container,
   [data-testid="stMainBlockContainer"] {{
-    padding-top: 0.4rem !important;
+    padding-top: 0.8rem !important;
     padding-bottom: 1rem !important;
   }}
   [data-testid="stSidebar"] > div:first-child {{
@@ -96,7 +99,118 @@ _GLOBAL_CSS = f"""
     padding-top: 0 !important;
   }}
 
-  /* Headings — match existing Home.py style and propagate to every page */
+  /* ── Sidebar top clearance ────────────────────────────────────────
+     We zero stHeader above, which also tucks the sidebar's top control
+     row under the viewport edge. Pad the sidebar header so the logo +
+     collapse « clear the top, and nudge the floating » expand button
+     (shown when the sidebar is hidden) down + right out of the corner. */
+  [data-testid="stSidebarHeader"] {{
+    padding-top: 0.2rem !important;
+  }}
+  [data-testid="stExpandSidebarButton"] {{
+    top: 0.5rem !important;
+    left: 0.6rem !important;
+  }}
+
+  /* ── Click-sticky icon rail ───────────────────────────────────────
+     The native collapse button is the toggle, and Streamlit persists
+     the open/closed choice in localStorage — so it stays where you
+     click it (no hover). We restyle the COLLAPSED state (which normally
+     slides the whole sidebar off-screen) into a visible narrow rail of
+     page icons; EXPANDED is the full sidebar with labels. App.py sets
+     initial_sidebar_state="collapsed" so a fresh launch shows the rail. */
+  section[data-testid="stSidebar"][aria-expanded="false"] {{
+    transform: none !important;
+    margin-left: 0 !important;
+    visibility: visible !important;
+    width: 4.2rem !important;
+    min-width: 4.2rem !important;
+  }}
+  /* Rail: clip nav labels; hide the user block (signed-in / logout /
+     footer) and the wide logo — all return in the expanded state. */
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"] {{
+    overflow-x: hidden !important;
+  }}
+  /* Rail nav links: center the icon, hide the label text (the icon is an
+     stIconEmoji, the label is markdown — hide only the markdown), and
+     render each link as a padded rounded block so the active highlight
+     wraps the icon neatly. */
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"] {{
+    display: flex !important;
+    box-sizing: border-box !important;
+    justify-content: center !important;
+    white-space: nowrap !important;
+    margin: 0.15rem 0 !important;
+    padding: 0.55rem 0 !important;
+    border-radius: 8px !important;
+  }}
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"] [data-testid="stMarkdownContainer"] {{
+    display: none !important;
+  }}
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarUserContent"] {{
+    display: none !important;
+  }}
+  /* Bigger page icons (rail + expanded). */
+  section[data-testid="stSidebar"] [data-testid="stSidebarNavLink"] [data-testid="stIconEmoji"] {{
+    font-size: 1.5rem !important;
+    line-height: 1 !important;
+  }}
+  /* Keep nav links full-width so the highlight + hit-area span the whole
+     row (margin to margin), not just behind the icon/label. */
+  section[data-testid="stSidebar"] [data-testid="stSidebarNavLink"] {{
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }}
+  /* Active-page highlight: fill the entire nav row in both states. Paint
+     the container (full row) AND the link, then clear Streamlit's small
+     default grey box on the inner icon/label so only the brand block shows. */
+  section[data-testid="stSidebar"] [data-testid="stSidebarNavLinkContainer"]:has([aria-current="page"]),
+  section[data-testid="stSidebar"] [data-testid="stSidebarNavLink"][aria-current="page"] {{
+    background: rgba(0, 112, 60, 0.16) !important;
+    border-radius: 8px !important;
+  }}
+  section[data-testid="stSidebar"] [data-testid="stSidebarNavLink"][aria-current="page"] > * {{
+    background: transparent !important;
+  }}
+  /* Make the nav-item container full-width and give the items list a small
+     symmetric inset, so the active highlight spans the whole row (margin to
+     margin) rather than hugging the icon/label. */
+  section[data-testid="stSidebar"] [data-testid="stSidebarNavLinkContainer"] {{
+    width: 100% !important;
+  }}
+  section[data-testid="stSidebar"] [data-testid="stSidebarNavItems"] {{
+    padding-left: 0.4rem !important;
+    padding-right: 0.4rem !important;
+  }}
+  /* "RFPIS" wordmark at the top of the sidebar nav — replaces the graphic
+     logo and stays visible in both the expanded and the collapsed rail
+     states. (A CSS ::before isn't clickable; the 🏠 Home item right below
+     navigates home.) */
+  [data-testid="stSidebarNav"]::before {{
+    content: "RFPIS";
+    display: block;
+    font-weight: 700;
+    font-size: 1.15rem;
+    letter-spacing: 0.04em;
+    color: {THEME_NAVY};
+    padding: 0 0.85rem 0.55rem;
+    margin-top: -0.9rem;
+  }}
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNav"]::before {{
+    font-size: 0.72rem;
+    padding: 0 0 0.5rem;
+    text-align: center;
+  }}
+  /* Collapse/expand arrows follow the rule WIDE → « (collapse) / NARROW →
+     » (expand) — which is already Streamlit's native direction, so we flip
+     NOTHING. We only hide the redundant in-sidebar collapse « while in the
+     rail; the floating » expand control is the one that belongs there, so
+     the narrow view shows a single, correctly-pointing (») arrow. */
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] {{
+    display: none !important;
+  }}
+
+  /* Headings — match existing Home-page style and propagate to every page */
   h1, h2, h3, h4 {{
     color: {THEME_PRIMARY};
     letter-spacing: -0.01em;
@@ -246,8 +360,9 @@ _GLOBAL_CSS = f"""
 def render_app_header() -> None:
     """Top-of-page branding.
 
-    Renders the RFPIS lockup at the top of the sidebar (via st.logo)
-    and the deploying-org logo + name as a left-aligned strip at the
+    Renders the "RFPIS" wordmark at the top of the sidebar (via the CSS
+    ::before in _GLOBAL_CSS — no image asset) and the deploying-org logo +
+    name as a left-aligned strip at the
     top of the main content area. Also injects the global theme CSS — once
     per page render, before any chart / table renders so colors apply
     consistently.
@@ -287,18 +402,11 @@ def render_app_header() -> None:
         unsafe_allow_html=True,
     )
 
-    # ────────────────── SIDEBAR — RFPIS product brand ─────────────────
-    if _LOGO_PATH.exists():
-        kwargs: dict = {"image": str(_LOGO_PATH), "size": "large"}
-        if _ICON_PATH.exists():
-            kwargs["icon_image"] = str(_ICON_PATH)
-        try:
-            st.logo(**kwargs)
-        except Exception:
-            with st.sidebar:
-                st.image(str(_LOGO_PATH), width=200)
-    # Caption (full product name + version) moved to the FOOTER —
-    # see render_sidebar_footer().
+    # ────────────────── SIDEBAR — RFPIS wordmark ─────────────────────
+    # No graphic logo. The "RFPIS" wordmark is drawn at the top of the
+    # sidebar nav via CSS (::before on stSidebarNav in _GLOBAL_CSS), so it
+    # shows in BOTH the expanded and the collapsed icon-rail states without
+    # an image asset. The 🏠 Home nav item directly below it goes home.
 
     # ────────────────── MAIN CONTENT — deploying-org branding ─────────
     try:

@@ -125,6 +125,25 @@ def login_gate() -> Optional[dict[str, Any]]:
     the login form.
     """
     auth = get_authenticator()
+
+    # Landing-page branding so a first-time visitor immediately knows what
+    # this app is (the stock streamlit-authenticator form has no identity).
+    # Rendered into a slot we CLEAR once authenticated, so it only ever shows
+    # on the login screen — never pushing content down on the logged-in pages.
+    _brand_slot = st.empty()
+    _brand_slot.markdown(
+        "<div style='text-align:center; margin:1.25rem 0 0.75rem;'>"
+        "<div style='font-size:2.2rem; font-weight:800; color:#1e3a8a; "
+        "letter-spacing:0.05em;'>RFPIS</div>"
+        "<div style='font-size:1.05rem; font-weight:600; color:#00703C; "
+        "margin-top:-0.1rem;'>RFP Intelligence System</div>"
+        "<div style='color:#475569; font-size:0.9rem; margin-top:0.35rem;'>"
+        "Weekly opportunities discovery, eligibility screening and decision "
+        "support.</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
     try:
         auth.login(location="main")
     except TypeError:
@@ -154,6 +173,7 @@ def login_gate() -> Optional[dict[str, Any]]:
     # Successful auth — clear the cookie-settled flag so the next
     # logout-then-login cycle gets a fresh wait window.
     st.session_state.pop("_auth_cookie_settled", None)
+    _brand_slot.empty()  # login-screen branding only — remove once signed in
 
     email = st.session_state.get("username")
     name = st.session_state.get("name")
@@ -509,10 +529,9 @@ def _render_signup_and_reset_forms() -> None:
 
     with st.expander("🔐 Forgot password?", expanded=False):
         st.caption(
-            "Enter your email and an admin will issue you a temporary "
-            "password. They'll share it with you out-of-band (Signal / "
-            "verbal — not email). You'll be forced to set a new password "
-            "on your next login."
+            "Enter your email and request a reset. Once an admin approves "
+            "it, the app emails you a temporary password — sign in with it "
+            "and you'll be prompted to set a new password immediately."
         )
         with st.form("forgot_pw_form", clear_on_submit=True):
             fp_email = st.text_input("Email", key="fp_email")
@@ -530,10 +549,9 @@ def _render_signup_and_reset_forms() -> None:
                         "email": fp_email.strip(),
                     }).execute()
                     st.success(
-                        "✅ Request received. An admin will contact you "
-                        "with a temporary password. (No confirmation is "
-                        "sent by the app — please reach out to your "
-                        "team admin directly.)"
+                        "✅ Request received. After an admin approves it, "
+                        "the app will email you a temporary password. Sign "
+                        "in with it and set a new password right away."
                     )
                 except Exception as exc:
                     st.error(f"Could not record request: {exc}")
