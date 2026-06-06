@@ -209,11 +209,11 @@ for col, (label, val) in zip(r1c, [
         _kpi(label, val)
 
 # Row 2 — role mix (centered, slightly lower; 3 cards across the middle)
-role_lower = unique["chai_role"].fillna("").str.lower()
+role_lower = unique["applicant_role"].fillna("").str.lower()
 prime = int(role_lower.eq("prime").sum())
 sub = int(role_lower.eq("sub").sum())
 ta = int(role_lower.eq("technical").sum())
-proc_role_lower = proceed_df["chai_role"].fillna("").str.lower()
+proc_role_lower = proceed_df["applicant_role"].fillna("").str.lower()
 proc_prime = int(proc_role_lower.eq("prime").sum())
 proc_sub = int(proc_role_lower.eq("sub").sum())
 proc_ta = int(proc_role_lower.eq("technical").sum())

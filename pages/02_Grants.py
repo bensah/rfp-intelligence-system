@@ -175,7 +175,7 @@ def _placeholder(v) -> str:
     s = (v or "").strip()
     return "" if s.lower() in ("", "n/a", "na", "none", "—") else s
 
-_role = (r.get("chai_role") or "").strip()
+_role = (r.get("applicant_role") or "").strip()
 _role_lc = _role.lower()
 _raw_lead = _placeholder(r.get("lead_applicant"))
 _raw_sub = _placeholder(r.get("sub_applicant"))
@@ -218,7 +218,7 @@ def _fmt(v) -> str:
 
 
 # Donor Decision Date — actual award date if the donor has decided,
-# otherwise the expected award date. NOT decision_date (that's the BDT
+# otherwise the expected award date. NOT decision_date (that's the team
 # review date which is something different).
 _award = None
 if not grants.empty:

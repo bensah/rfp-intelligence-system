@@ -19,7 +19,7 @@ import streamlit_authenticator as stauth
 from db.supabase_client import get_client
 
 
-COOKIE_NAME = "chai_rfp_session"
+COOKIE_NAME = "rfpis_session"
 COOKIE_EXPIRY_DAYS = 1 / 3  # ~8 hours
 
 # Small in-process cache so a Home / page-switch render doesn't hit Supabase
@@ -164,7 +164,7 @@ def login_gate() -> Optional[dict[str, Any]]:
         return None
 
     _record_login(email)
-    st.session_state["chai_user"] = user
+    st.session_state["app_user"] = user
     st.session_state.setdefault("display_name", name or email)
 
     _render_sidebar_user(user, auth=auth)
@@ -212,10 +212,10 @@ def ensure_logged_in() -> Optional[dict[str, Any]]:
     """Use at the top of EVERY page (not just Home).
 
     Path:
-      1. If `st.session_state["chai_user"]` is already set (within this
+      1. If `st.session_state["app_user"]` is already set (within this
          server session), return it immediately — zero cost.
       2. Otherwise call `login_gate()`, which reads the
-         `chai_rfp_session` cookie. If the cookie is valid (within 8h),
+         `rfpis_session` cookie. If the cookie is valid (within 8h),
          streamlit-authenticator restores the session and we proceed.
       3. If no valid cookie, the login form is rendered IN PLACE on the
          current page. After login, the user lands back on this page —
@@ -227,12 +227,12 @@ def ensure_logged_in() -> Optional[dict[str, Any]]:
         if not user:
             st.stop()
     """
-    if "chai_user" in st.session_state:
+    if "app_user" in st.session_state:
         # Cached — short-circuit the login flow, but DO re-render the
         # sidebar user block (Signed in / Logout). Without this the
         # sidebar appears blank below the page nav on every page after
         # the user navigates away from Home.
-        user = st.session_state["chai_user"]
+        user = st.session_state["app_user"]
         _render_sidebar_user(user)
         _gate_must_change_password(user)
         return user
@@ -321,7 +321,7 @@ def _gate_must_change_password(user: dict[str, Any]) -> None:
                 # Update the session copy so the same render doesn't
                 # bounce back through the gate.
                 user["must_change_password"] = False
-                st.session_state["chai_user"] = user
+                st.session_state["app_user"] = user
                 st.success("Password updated. Loading the app…")
                 st.rerun()
             except Exception as exc:
