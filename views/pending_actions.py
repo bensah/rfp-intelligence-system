@@ -23,15 +23,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-# ── DEBUG MARKER ────────────────────────────────────────────────────────
-# Hard-coded literal that MUST render if exec() reaches the top of this
-# file. If you don't see this marker in the Pending Actions tab, the
-# view isn't being loaded at all (compile cache stale, file not
-# deployed, or render_view returning early). Remove once Pending
-# Actions is confirmed working end-to-end.
-st.caption(":wrench: pending_actions.py loaded — DEBUG MARKER v1")
-# ─────────────────────────────────────────────────────────────────────────
-
 from datetime import date, datetime, timedelta  # noqa: E402
 
 import pandas as pd  # noqa: E402
