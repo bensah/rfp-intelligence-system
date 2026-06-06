@@ -223,7 +223,7 @@ _, rc1, rc2, rc3, _ = st.columns([1, 2, 2, 2, 1])
 with rc1:
     _kpi("Prime Opportunities", f"{proc_prime} of {prime}", "Proceed as prime applicant")
 with rc2:
-    _kpi("Sub Opportunities", f"{proc_sub} of {sub}", "Proceed as sub")
+    _kpi("Sub Opportunities", f"{proc_sub} of {sub}", "Proceed, applying as Sub")
 with rc3:
     _kpi("TA Provider", f"{proc_ta} of {ta}", "Technical assistance only")
 

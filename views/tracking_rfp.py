@@ -37,9 +37,9 @@ sb = get_client()
 year = settings.get_year()
 today = date.today()
 
-st.title(f"Year-to-Date Pipeline - Proceed RFPs ({year})")
+st.title(f"YTD Proceed Pipeline ({year})")
 st.caption(
-    "Read-only pipeline of active **Proceed / Proceed as sub** RFPs for "
+    "Read-only pipeline of active **Proceed** RFPs for "
     f"**{year}** that haven't been submitted to a donor, aren't past deadline, "
     "and aren't marked Completed. Edits are made via the Data page."
 )
@@ -116,7 +116,7 @@ df = _fetch(year)
 if df.empty:
     st.info(
         f"No active Proceed RFPs in {year}. An RFP shows up here once its "
-        "decision is set to Proceed / Proceed as sub and the deadline hasn't passed."
+        "decision is set to Proceed and the deadline hasn't passed."
     )
     st.stop()
 
@@ -191,7 +191,10 @@ with st.container(border=True):
         unsafe_allow_html=True,
     )
     dtd = row.get("_dtd")
-    top3.metric("Days to deadline", f"{dtd:+d}" if dtd is not None else "—")
+    # _dtd rides in a pandas column that may hold NaN, so it arrives as a
+    # float (e.g. 5.0) or NaN — `:d` only accepts ints, so coerce + guard.
+    top3.metric("Days to deadline",
+                f"{int(dtd):+d}" if pd.notna(dtd) else "—")
     top4.metric("Value", format_money(row.get("estimated_value"), row.get("currency")))
     top4.caption(f"≈ ${row.get('_usd') or 0:,.0f} USD")
 

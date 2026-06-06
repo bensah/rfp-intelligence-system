@@ -27,7 +27,7 @@ from typing import Any, Callable
 import streamlit as st
 
 from core import dropdowns
-from core.review_week import upcoming_review_week_label
+from core.review_week import review_week_label
 from core.scorer import score_submission
 from core.uid_generator import generate_uid
 from db.supabase_client import get_client
@@ -318,7 +318,7 @@ def render_submit_form(
         "proposal_lead": resolved.get("prop_lead"),
         "contributors": resolved.get("contributors"),
         "reviewers": resolved.get("reviewers"),
-        "review_week": upcoming_review_week_label(),
+        "review_week": review_week_label(),
     }
 
     # NO duplicate check here per the new policy. Insert immediately so

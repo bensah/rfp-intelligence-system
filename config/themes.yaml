@@ -1,17 +1,25 @@
 # Search keywords applied across all scraped sources to maximise recall.
 # Tune these as the team gathers signal on noisy donors / themes.
 
+# Region-based (country-agnostic) so the product serves any Global-South
+# deployment — Africa, Asia, Latin America, etc. A deployment's SPECIFIC
+# eligible countries live in the scan policies (Admin > Settings), which
+# narrow these broad search terms at the eligibility gate.
 geographic:
-  - Cameroon
-  - Mali
-  - Nigeria
-  - Senegal
-  - Cote d'Ivoire
-  - West Africa
-  - Central Africa
-  - WCA
-  - sub-Saharan Africa
+  - Global South
+  - low- and middle-income
   - LMICs
+  - sub-Saharan Africa
+  - West Africa
+  - East Africa
+  - Southern Africa
+  - Central Africa
+  - Asia
+  - South Asia
+  - Southeast Asia
+  - Latin America
+  - Caribbean
+  - Middle East
 
 thematic:
   - malaria

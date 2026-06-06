@@ -21,7 +21,7 @@ from typing import Any
 from core.auto_scorer import auto_score, is_eligible
 from core.deduplicator import find_duplicates
 from core.policies import get_policies
-from core.review_week import upcoming_review_week_label
+from core.review_week import review_week_label
 from db.supabase_client import get_client
 
 log = logging.getLogger(__name__)
@@ -38,6 +38,32 @@ _SCRAPE_MANAGED_FIELDS = (
     "date_posted",
     "submission_deadline",
 )
+
+# Donor-extracted structured fields that auto_score does NOT emit. `_build_row`
+# used to drop these, leaving Value / Program area / Geography empty on every
+# scanned row even though the scraper had them (e.g. grants.gov estimatedFunding
+# = 60000000, fundingActivityCategories = ["Health"]). Carried into the insert
+# row and gap-filled on rescan. Mostly non-string (numeric / list), so they use
+# a blank-aware check rather than the string-only rule.
+_SCRAPE_STRUCTURED_FIELDS = (
+    "estimated_value",
+    "currency",
+    "program_area",
+    "geographic_scope",
+    "funding_window",
+    "funding_type",
+    "project_duration",
+    "submission_format",
+    "focus_theme",
+    "notes",
+)
+
+
+def _is_blank(v: Any) -> bool:
+    """True for None, empty string, or empty list — the 'no value yet' cases
+    across string, numeric and list columns."""
+    return v is None or v == "" or v == []
+
 
 # Auto-scoring outputs. Refreshed only when the existing row is still
 # "unreviewed" (alignment_score IS NULL). Once a human touches the Review
@@ -95,7 +121,7 @@ def _build_row(
         "submission_deadline": (
             deadline.isoformat() if hasattr(deadline, "isoformat") else None
         ),
-        "review_week": upcoming_review_week_label(),
+        "review_week": review_week_label(),
         # ---- Pipeline defaults for auto-scanned rows ---------------------
         # Every newly-inserted scan row enters the workflow with a known
         # starting state so reviewers see a coherent Decision & Pipeline
@@ -110,6 +136,18 @@ def _build_row(
         "assigned_to": "TBD",
     }
     row.update(auto_score(candidate, policies))
+    # Carry over the donor's OWN structured fields. auto_score only emits the
+    # criteria + a keyword-derived program_area/geography GUESS; the scraper's
+    # donor-provided values (grants.gov estimatedFunding / "Health" category /
+    # eligibility text) are richer and win. Without this, Value / Program area
+    # / Geography were always empty on scanned rows.
+    for col in _SCRAPE_STRUCTURED_FIELDS:
+        val = candidate.get(col)
+        if not _is_blank(val):
+            row[col] = val
+    ead = candidate.get("expected_award_date")
+    if hasattr(ead, "isoformat"):
+        row["expected_award_date"] = ead.isoformat()
     return row
 
 
@@ -138,13 +176,25 @@ def _build_merge_payload(
         "submission_deadline": (
             deadline.isoformat() if hasattr(deadline, "isoformat") else None
         ),
+        # Structured donor fields — gap-filled on rescan so EXISTING empty rows
+        # get backfilled (estimated_value / program_area / geography / …).
+        "estimated_value": candidate.get("estimated_value"),
+        "currency": candidate.get("currency"),
+        "program_area": candidate.get("program_area"),
+        "geographic_scope": candidate.get("geographic_scope"),
+        "funding_window": candidate.get("funding_window"),
+        "funding_type": candidate.get("funding_type"),
+        "project_duration": candidate.get("project_duration"),
+        "submission_format": candidate.get("submission_format"),
+        "focus_theme": candidate.get("focus_theme"),
+        "notes": candidate.get("notes"),
     }
-    for field in _SCRAPE_MANAGED_FIELDS:
+    for field in _SCRAPE_MANAGED_FIELDS + _SCRAPE_STRUCTURED_FIELDS:
         new_val = candidate_normalized.get(field)
         old_val = existing_row.get(field)
-        if new_val is None or new_val == "":
+        if _is_blank(new_val):
             continue
-        if old_val is None or old_val == "":
+        if _is_blank(old_val):
             payload[field] = new_val
 
     # Refresh auto-scoring only when the existing row has no alignment_score

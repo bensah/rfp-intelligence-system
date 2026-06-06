@@ -24,6 +24,11 @@ _drop.txt
 *.xlsx
 *.xlsm
 *.xls
+# ...except the public, example-only donor-intel template (NO real intel —
+# 3 public-knowledge donors + the field spec). This is the one workbook meant
+# to be published so forkers can populate their own intel. See
+# docs/DONOR_INTEL_MIGRATION.md.
+!docs/donor_intel_template.xlsx
 
 # Local debug / scratch outputs
 *.log

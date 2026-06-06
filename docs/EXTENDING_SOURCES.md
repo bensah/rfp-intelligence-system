@@ -145,7 +145,7 @@ If a donor:
 1. Go to https://www.google.com/alerts (sign in with the team Google account).
 2. Type a search query in the "Create an alert about..." box. Examples:
    - `"call for proposals" "global health"`
-   - `"request for proposals" "Cameroon" OR "Mali" health`
+   - `"request for proposals" "<your country>" health`
    - `"expression of interest" malaria OR TB OR HIV vaccine`
    - `site:foundation.org "open call" OR "RFP" 2026`
 3. Click "Show options":

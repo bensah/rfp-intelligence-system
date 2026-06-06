@@ -215,6 +215,17 @@ _DATE_RANGE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Trailing-label window — the trigger word comes AFTER the range, e.g. the
+# ODESS / Fondation Pierre Fabre calendar "9 october to 7 november 2025:
+# applications open". Capture the END (close) date of the window.
+_DATE_RANGE_TRAILING_RE = re.compile(
+    r"(?:[A-Za-z0-9.,/\- ]{4,40}?)"               # start date
+    r"\s+(?:to|until|through|–|—)\s+"
+    r"([A-Za-z0-9.,/\- ]{4,40}?)"                 # end date (captured)
+    r"\s*[:\-–—]?\s*applications?\b",
+    re.IGNORECASE,
+)
+
 
 def _extract_deadline_from_text(text: str) -> date | None:
     """Find ALL labelled deadlines in text. Returns the latest parseable
@@ -231,6 +242,11 @@ def _extract_deadline_from_text(text: str) -> date | None:
             candidates.append(d)
     # Unlabelled date ranges — "APPLICATIONS: FROM OCT 9TH TO NOV 7TH 2025"
     for m in _DATE_RANGE_RE.finditer(text):
+        d = _parse_freeform_date(m.group(1))
+        if d:
+            candidates.append(d)
+    # Trailing-label windows — "9 october to 7 november 2025: applications open"
+    for m in _DATE_RANGE_TRAILING_RE.finditer(text):
         d = _parse_freeform_date(m.group(1))
         if d:
             candidates.append(d)
@@ -1089,6 +1105,17 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
             a_labels = [x for x in a_labels if x]
             if a_labels:
                 notes_parts.append("Eligible applicants: " + "; ".join(a_labels))
+        # "Additional Information on Eligibility" — the DECISIVE geography
+        # signal (the "domestic" test; see docs/SCAN_CLASSIFICATION_ALGORITHM.md
+        # §6). Previously dropped on the floor, which is why US-domestic-only
+        # opportunities couldn't be auto-rejected. Capture it now; the hard
+        # geography gate that Declines US-only RFPs for an LMIC deployment is
+        # wired in the scoring step.
+        elig_text = _clean(syn.get("applicantEligibilityDesc") or "")
+        if elig_text:
+            elig_text = re.sub(r"<[^>]+>", " ", elig_text)
+            elig_text = re.sub(r"\s+", " ", elig_text).strip()
+            notes_parts.append("Eligibility detail: " + elig_text)
         cs = syn.get("costSharing")
         if cs is not None and str(cs).lower() not in ("none", ""):
             notes_parts.append(f"Cost sharing required: {cs}")
