@@ -29,7 +29,7 @@ from core.scan_runner import run_scan_now
 
 _title_col, _scan_col = st.columns([5, 1])
 with _title_col:
-    st.title("Weekly Screened RFPs")
+    st.title("Screening Pipeline — Weekly RFP dashboard")
 with _scan_col:
     st.write("")  # vertical spacer to align button with title
     if st.button(
