@@ -27,7 +27,11 @@ role = user.get("role", "collaborator")
 can_edit = role in ("super_user", "admin", "reviewer")
 sb = get_client()
 
-st.title("Review Pipeline — Weekly Team Triage")
+st.markdown(
+    "<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
+    "margin:0.15rem 0 0.5rem;'>Review Pipeline — Weekly Team Triage</h2>",
+    unsafe_allow_html=True,
+)
 
 
 # -----------------------------------------------------------------------------
