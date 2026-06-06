@@ -21,10 +21,6 @@ can_edit = role in ("super_user", "admin", "reviewer", "collaborator")  # any lo
 sb = get_client()
 
 st.title("Review Engagements with Donors")
-st.caption(
-    "Donor-facing interactions: calls, pitches, conferences, scoping conversations. "
-    "Link to an RFP only when the engagement is directly about that opportunity."
-)
 
 
 # -----------------------------------------------------------------------------

@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import dropdowns, settings
-from core.review_week import all_weeks_for_year, review_week_label
+from core.review_week import all_weeks_for_year, review_week_label, upcoming_review_week_label
 from core.scorer import CRITERIA, score_submission
 from db.supabase_client import get_client
 

@@ -19,7 +19,7 @@ python -m venv .venv
 . .venv/Scripts/activate              # PowerShell / Git Bash on Windows
 pip install -r requirements.txt
 cp .env.example .env                  # then fill in SUPABASE_URL, SUPABASE_KEY, ...
-streamlit run Home.py
+streamlit run App.py
 ```
 
 The app refuses to start until it can reach Supabase and find at least
@@ -89,7 +89,7 @@ installed, so this step is optional.
 
 ```
 rfp-intelligence-system/
-├── Home.py                       # Streamlit entry + login gate
+├── App.py                       # Streamlit entry + login gate
 ├── requirements.txt
 ├── .streamlit/config.toml        # green theme accent
 ├── .github/workflows/
@@ -141,7 +141,7 @@ gitignored — never commit it.
 
 1. Push the repo to GitHub (public — free tier requirement).
 2. `share.streamlit.io` → New app → pick the repo → main branch →
-   `Home.py` as the entry.
+   `App.py` as the entry.
 3. App settings → Secrets — paste the same `.env` values.
 4. Deploy. First boot will run `playwright install chromium` if you
    added the optional dependency.
