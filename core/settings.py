@@ -95,6 +95,14 @@ _ORG_DEFAULTS = {
     "org_short":           "Org",
     "org_country":         "",
     "org_team":            "Business Development Team",
+    # Geography hard-gate (scan): is the deploying org itself a US entity?
+    # When "false" (default — e.g. a non-US country office), US-domestic-only RFPs are
+    # rejected at scan time. Set "true" for a US-based deployment.
+    "org_is_us_entity":    "false",
+    # Donor-intel hard-gate: does the deploying org have a locally-constituted
+    # Board of Directors? "no" makes donors that REQUIRE a local board a hard
+    # MUST-4 disqualifier. Blank (default) = unknown — don't apply the gate.
+    "org_has_local_board": "",
     "org_contact_email":   "",
     "org_logo_url":        "",  # legacy — uploaded logo lives in org_logo_b64
     "org_website":         "",

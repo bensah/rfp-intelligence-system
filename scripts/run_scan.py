@@ -37,11 +37,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -58,6 +60,44 @@ SOURCES_YAML = Path(__file__).resolve().parent.parent / "config" / "sources.yaml
 # is rarely worth it because the slowest single source becomes the floor
 # and donor sites start rate-limiting around 10+ concurrent.
 DEFAULT_WORKERS = int(os.environ.get("SCAN_PARALLELISM", "8"))
+
+# Whether to fold the researched donor_source_seeds (from the donor matrix) into
+# the scan as extra HTML sources. On by default; set SCAN_INCLUDE_SEEDS=0 to
+# disable if it ever gets noisy.
+INCLUDE_SEEDS = os.environ.get("SCAN_INCLUDE_SEEDS", "1") != "0"
+
+# A seed URL is worth auto-scanning only if it looks like an opportunities /
+# calls page — not a homepage or a known dead-end. A positive signal (grant /
+# call / rfp / funding / apply ...) anywhere in the path wins; hard-negatives
+# below catch pages that contain a granty word but are still useless to scan
+# (past awards, FAQs, news, social profiles).
+_SEED_POS_RE = re.compile(
+    r"(grant|funding|fund-|/funds|call[-_ ]?for|/calls?\b|rfp|rfq|rfa"
+    r"|request[-_ ]for|propos|tender|procure|opportunit|solicit|/cfp|/eoi"
+    r"|expression[-_ ]of[-_ ]interest|/apply\b)", re.I)
+_SEED_HARD_NEG_RE = re.compile(
+    r"(awarded|awardees|grantees|/faq\b|applicant-faq|/news/|/news$|/blog/"
+    r"|facebook\.com|twitter\.com|x\.com|linkedin\.com|youtube\.com"
+    r"|instagram\.com)", re.I)
+
+
+def _norm_url(url: str) -> str:
+    """Lower-case, drop fragment + trailing slash for dedup comparisons."""
+    u = (url or "").strip().lower().split("#", 1)[0]
+    return u[:-1] if u.endswith("/") else u
+
+
+def _seed_is_scannable(url: str) -> bool:
+    """True only for opportunity/calls-style pages (skip homepages + dead-ends)."""
+    if not url:
+        return False
+    u = url.strip().lower()
+    if _SEED_HARD_NEG_RE.search(u):       # past awards / FAQ / news / social
+        return False
+    p = urlparse(u)
+    if len(p.path.strip("/")) < 2:        # bare domain / homepage
+        return False
+    return bool(_SEED_POS_RE.search(p.path + ("?" + p.query if p.query else "")))
 
 
 def _load_yaml_sources() -> list[dict[str, Any]]:
@@ -84,6 +124,33 @@ def _load_donor_sources(sb) -> list[dict[str, Any]]:
                 "origin": "donor_sources",
             }
         )
+    return out
+
+
+def _load_seed_sources(sb, existing_urls: set[str]) -> list[dict[str, Any]]:
+    """Fold researched donor_source_seeds (from the donor matrix) into the scan
+    as generic HTML sources — but only opportunity-style URLs not already
+    covered by sources.yaml / donor_sources. This bridges the donor-intel
+    research into discovery without a code change per donor."""
+    try:
+        res = sb.table("donor_source_seeds").select("donor,url,source_type").execute()
+    except Exception:
+        return []
+    seen = set(existing_urls)
+    out: list[dict[str, Any]] = []
+    for r in res.data or []:
+        url = (r.get("url") or "").strip()
+        norm = _norm_url(url)
+        if not url or norm in seen or not _seed_is_scannable(url):
+            continue
+        seen.add(norm)
+        donor = (r.get("donor") or "").strip() or "(unnamed donor)"
+        out.append({
+            "name": f"{donor} — seed",
+            "method": "html",
+            "url": url,
+            "origin": "donor_seeds",
+        })
     return out
 
 
@@ -137,7 +204,15 @@ def run(
     sb = None if dry_run else get_client()
     yaml_sources = _load_yaml_sources()
     donor_sources = [] if dry_run else _load_donor_sources(sb)
-    all_sources = yaml_sources + donor_sources
+    if dry_run or not INCLUDE_SEEDS:
+        seed_sources: list[dict[str, Any]] = []
+    else:
+        _existing = {_norm_url(s.get("url", "")) for s in (yaml_sources + donor_sources)
+                     if s.get("url")}
+        seed_sources = _load_seed_sources(sb, _existing)
+        if seed_sources:
+            print(f"Donor-matrix seeds added as sources: {len(seed_sources)}")
+    all_sources = yaml_sources + donor_sources + seed_sources
 
     if source_filter:
         all_sources = [s for s in all_sources if (s.get("name") or "") == source_filter]

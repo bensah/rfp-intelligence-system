@@ -18,7 +18,7 @@ import streamlit as st
 
 from core import dropdowns, settings
 from core.currency import format_money
-from core.review_week import all_weeks_for_year, review_week_label
+from core.review_week import all_weeks_for_year, review_week_label, upcoming_review_week_label
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -270,7 +270,7 @@ with c4:
     sub = int(proceed_df["applicant_role"].fillna("").str.lower().eq("sub").sum()) if not proceed_df.empty else 0
     st.caption("Sub Opportunities")
     st.markdown(f"### {sub} of {len(proceed_df)}")
-    st.caption("Proceed as sub")
+    st.caption("Proceed, applying as Sub")
 
 st.divider()
 

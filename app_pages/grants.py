@@ -20,33 +20,11 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-# Must be the FIRST Streamlit call so a direct refresh of this page lands
-# in wide layout instead of falling back to centered/portrait view.
-st.set_page_config(
-    page_title="Grants — RFPIS",
-    page_icon="🛈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-from auth.authenticator import ensure_logged_in
 from core.pipeline import usd_value
 from db.supabase_client import get_client
 
-if not ensure_logged_in():
-    st.stop()
-
-from core.app_header import render_app_header  # noqa: E402
-render_app_header()
-
 sb = get_client()
 st.title("Active Grants")
-st.caption(
-    "Grants currently under donor review or already approved. "
-    "**Not Approved** rows drop out automatically once their `donor_decision` "
-    "is updated. RFPs still in the screening or proposal-development phase "
-    "don't appear here."
-)
 
 
 # -----------------------------------------------------------------------------
