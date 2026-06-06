@@ -27,7 +27,7 @@ def _submit_rfp_modal():
 # Title + Submit-RFP button on the same row (button top-right).
 _title_col, _btn_col = st.columns([5, 1])
 with _title_col:
-    st.title("Found RFPs Pipeline")
+    st.title("Discovered RFP Pipelines")
 # with _btn_col:
 #     st.markdown("<div style='height: 0.8rem'></div>", unsafe_allow_html=True)
 #     if st.button("📝 Submit RFP", type="primary",

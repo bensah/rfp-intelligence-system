@@ -29,7 +29,11 @@ from core.scan_runner import run_scan_now
 
 _title_col, _scan_col = st.columns([5, 1])
 with _title_col:
-    st.title("Screening Pipeline — Weekly RFP dashboard")
+    st.markdown(
+        "<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
+        "margin:0.15rem 0 0.5rem;'>Screening Pipeline — Weekly RFP dashboard</h2>",
+        unsafe_allow_html=True,
+    )
 with _scan_col:
     st.write("")  # vertical spacer to align button with title
     if st.button(

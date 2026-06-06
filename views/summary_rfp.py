@@ -32,7 +32,11 @@ sb = get_client()
 
 year = settings.get_year()
 today = date.today()
-st.title(f"Summary RFP — {year} YTD")
+st.markdown(
+    f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
+    f"margin:0.15rem 0 0.5rem;'>Summary RFP — {year} YTD</h2>",
+    unsafe_allow_html=True,
+)
 st.caption(
     f"Review period: **1 Jan – {today.strftime('%d %b').lstrip('0')} {year}**. "
     f"Year sourced from app_settings (change in Admin > Settings)."
