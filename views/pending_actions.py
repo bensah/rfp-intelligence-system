@@ -1,4 +1,4 @@
-"""View — Pending Actions tab on the Activity page.
+"""View — Pending tab on the Actions page.
 
 Surfaces every open follow-up across two sources:
   * BDT Meetings    — meeting_logs.is_resolved = false
@@ -103,7 +103,7 @@ def _date_range_picker(label: str, df: pd.DataFrame, col: str,
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
-st.title("Pending Actions")
+st.title("Pending")
 st.caption(
     "Every open follow-up across BDT meetings + partner engagements. Use "
     "this screen to prep before the Monday BDT call: see counts, who owns "
