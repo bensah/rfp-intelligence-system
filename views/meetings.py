@@ -26,11 +26,6 @@ sb = get_client()
 _TITLE_COL, _BTN_COL = st.columns([5, 1])
 with _TITLE_COL:
     st.title("Review Weekly Check-in Logs")
-    st.caption(
-        "Monday team call notes. Pick a week, then click "
-        "**➕ Add a note** to capture new issues, actions, owner, and due date "
-        "for an RFP being discussed. Resolve past actions inline from the table."
-    )
 # Add-note button (rendered in the right column AFTER add_note_dialog is
 # defined further down — we reserve the slot here, fill it after definition).
 _ADD_NOTE_SLOT = _BTN_COL.empty()
@@ -156,7 +151,7 @@ def add_note_dialog() -> None:
     # Drop the "(none)" option — Linked RFP is required.
     rfp_choices = [k for k in rfp_options.keys() if k != "(none)"]
     rfp_pick = st.selectbox(
-        "Linked RFP (Proceed / Proceed as sub) *",
+        "Linked RFP (Proceed) *",
         rfp_choices,
         help="Only RFPs the team has agreed to pursue are shown.",
     )

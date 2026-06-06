@@ -75,28 +75,55 @@ DEFAULT_POLICIES: dict[str, Any] = {
             "negative": ["clinical trial", "high risk", "highly experimental"],
         },
         "must_1_govt_alignment": {
+            # MUST 1 = alignment with the TARGET COUNTRY's national health
+            # priorities (NOT "is government an eligible applicant"). Most
+            # LMIC global-health calls map to national strategies, so this
+            # DEFAULTS to Yes (see scoring_rules.criterion_defaults) and only
+            # drops to No when a research-only negative keyword hits.
             "rigor": 3,
             "positive": [
                 "government", "ministry of health", "country-led",
                 "national strategy", "national plan", "national priorit",
                 "policy", "health system", "public sector", "ministry",
+                "surveillance", "observatory", "digital health", "e-health",
             ],
-            "negative": ["independent academic", "researcher-led only"],
+            # Donor-country priorities (not the deploying country's): research-only calls.
+            # Flip MUST 1 to No unless the call clearly leads to scale-up.
+            "negative": [
+                "independent academic", "researcher-led only",
+                "clinical trial", "randomized controlled", "randomised controlled",
+                "drug development", "drug discovery", "vaccine development",
+                "basic research", "purely academic", "preclinical",
+            ],
         },
         "must_2_strategic_fit": {
-            "rigor": 3,
+            # Matches the deploying org's strategic program areas + health
+            # system strengthening / digital health. One hit → Yes (rigor 1).
+            "rigor": 1,
             "positive": [
-                "health systems strengthening", "implementation",
-                "scale up", "primary care", "service delivery",
-                "supply chain", "access to medicine",
+                "health systems strengthening", "health system",
+                "implementation", "scale up", "primary care", "primary health care",
+                "service delivery", "supply chain", "access to medicine",
+                "access to healthcare", "access to quality healthcare",
+                "digital health", "e-health", "ehealth", "mhealth",
+                "telemedicine", "telehealth", "health information",
+                "surveillance", "observatory",
+                "HIV", "AIDS", "tuberculosis", "malaria", "nutrition",
+                "maternal", "newborn", "child health", "non-communicable",
+                "NCD", "diagnostic", "treatment",
             ],
             "negative": [],
         },
         "must_3_implementable": {
-            "rigor": 2,
+            # An LMIC/Africa-targeted health call that cleared the country gate
+            # is implementable by default (see criterion_defaults). Geography +
+            # field-implementation keywords reinforce it; "pilot only" flips No.
+            "rigor": 1,
             "positive": [
                 "technical assistance", "deploy", "rollout", "scale",
-                "implementation", "operational",
+                "implementation", "operational", "in the field",
+                "field implementation", "africa", "sub-saharan", "asia",
+                "developing countr", "low- and middle-income", "lmic",
             ],
             "negative": ["pilot only", "feasibility study only"],
         },
@@ -132,9 +159,15 @@ DEFAULT_POLICIES: dict[str, Any] = {
             "negative": ["sole bidder", "single applicant"],
         },
         "prefer_9_scale": {
-            "rigor": 2,
+            # National / multi-district / regional reach = scale → Yes. A
+            # national observatory counts. Single-site work with no scale
+            # roadmap stays No (small pilot).
+            "rigor": 1,
             "positive": [
-                "scale", "national", "country-wide", "population", "system-wide",
+                "scale", "scale up", "scale-up", "national", "nationwide",
+                "country-wide", "system-wide", "population", "population-level",
+                "observatory", "multi-district", "multiple districts",
+                "regions", "regional", "national programme", "national program",
             ],
             "negative": ["small pilot only"],
         },
@@ -204,6 +237,42 @@ DEFAULT_POLICIES: dict[str, Any] = {
         # Used to encode "default-true unless explicit barrier" (Monitorable)
         # and "default-false unless reviewer confirms" (Partnership).
         "criterion_defaults": {
+            "must_1_govt_alignment": {
+                "enabled": True,
+                "default_value": "Yes",
+                # LMIC global-health calls map to national health priorities
+                # by default. Drops to "No" only when a research-only negative
+                # keyword hits (clinical trial / drug or vaccine development /
+                # basic research) — donor-country priorities, not the deploying country's.
+                "respect_negative_keywords": True,
+            },
+            "must_3_implementable": {
+                "enabled": True,
+                "default_value": "Yes",
+                # An LMIC-health call past the country gate is implementable
+                # by default; "pilot only" / "feasibility study only" → No.
+                "respect_negative_keywords": True,
+            },
+            "must_4_compliant": {
+                "enabled": True,
+                "default_value": "Partial",
+                # PLACEHOLDER until the donor_requirements matrix is wired.
+                # Default Partial (→ review) rather than No, so a missing
+                # compliance signal doesn't auto-Decline a valid RFP. The
+                # matrix will set this True/Partial/False per donor.
+                "respect_negative_keywords": True,
+            },
+            "must_5_resourcing": {
+                "enabled": True,
+                "default_value": "Yes",
+                # Default resourceable — timeline is usually fine for a
+                # freshly-posted call. Your MUST 5 = timeline + requirements:
+                # the resourcing_large_amount rule already nudges big budgets
+                # to Partial; the deadline<2-weeks + document-package-weight
+                # logic refines this once the donor matrix is wired.
+                # "matching funds required" / "self-funded only" → No.
+                "respect_negative_keywords": True,
+            },
             "prefer_7_monitorable": {
                 "enabled": True,
                 "default_value": "Yes",

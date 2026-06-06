@@ -104,11 +104,6 @@ def _date_range_picker(label: str, df: pd.DataFrame, col: str,
 # Page
 # ---------------------------------------------------------------------------
 st.title("Review and Resolve Pending Actions")
-st.caption(
-    "Every open follow-up across team meetings + partner engagements. Use "
-    "this screen to prep before the Monday team call: see counts, who owns "
-    "what, and resolve items inline."
-)
 
 
 # ===========================================================================

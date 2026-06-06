@@ -13,6 +13,8 @@ plotly>=5.22.0
 openpyxl>=3.1.0
 bcrypt>=4.1.0
 pypdf>=4.0.0
+# PDF generation for the Donors page "Share" export (pure-pip, no system deps).
+reportlab>=4.0.0
 # Optional — Playwright for JS-rendered SPA donor portals (method: html_js).
 # After pip install, also run: playwright install chromium
 # Falls back gracefully to plain HTML scan if not installed.
