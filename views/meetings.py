@@ -1,6 +1,6 @@
-"""Page 6 — Meetings (BDT call log).
+"""Page 6 — Meetings (team call log).
 
-Monday Business Development Team call notes. Per-week view: rota at top,
+Monday team call notes. Per-week view: rota at top,
 "Add a note" button opens a modal. Unresolved actions carry forward as a
 proper table with headers on top and a Status toggle (Not Resolved ↔
 Resolved). Notes for the selected week display below.
@@ -18,7 +18,7 @@ from core.review_week import all_weeks_for_year, week_bounds
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
-user = st.session_state["chai_user"]
+user = st.session_state["app_user"]
 role = user.get("role", "collaborator")
 can_edit = role in ("super_user", "admin", "reviewer")
 sb = get_client()
@@ -27,7 +27,7 @@ _TITLE_COL, _BTN_COL = st.columns([5, 1])
 with _TITLE_COL:
     st.title("Review Weekly Check-in Logs")
     st.caption(
-        "Monday Business Development Team call notes. Pick a week, then click "
+        "Monday team call notes. Pick a week, then click "
         "**➕ Add a note** to capture new issues, actions, owner, and due date "
         "for an RFP being discussed. Resolve past actions inline from the table."
     )

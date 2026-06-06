@@ -2,7 +2,7 @@
 
 Run once after the schema is applied so you can log into the deployed app.
 
-    python scripts/seed_admin.py --email you@chai.org --name "Your Name" --password "..."
+    python scripts/seed_admin.py --email you@example.org --name "Your Name" --password "..."
 
 You can re-run safely; it upserts on email.
 """

@@ -1,7 +1,7 @@
 """View — Pending tab on the Actions page.
 
 Surfaces every open follow-up across two sources:
-  * BDT Meetings    — meeting_logs.is_resolved = false
+  * Team Meetings   — meeting_logs.is_resolved = false
   * Partner Engagements — engagement_logs.is_resolved = false
                           (column added by migration 014; if absent we
                           fall back to "outcome non-empty" as the proxy
@@ -16,7 +16,7 @@ Each section gets:
 
 Why one consolidated tab rather than two scattered "show unresolved"
 expanders on the existing tabs: the user wants a single screen they
-can prep against before the Monday BDT call, with names and counts
+can prep against before the Monday team call, with names and counts
 visible at a glance.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ import pandas as pd  # noqa: E402
 from db.supabase_client import get_client  # noqa: E402
 
 # Wrapper page already gated auth; just pick up the user.
-user = st.session_state.get("chai_user") or {}
+user = st.session_state.get("app_user") or {}
 role = user.get("role", "collaborator")
 can_edit = role in ("super_user", "admin", "reviewer", "collaborator")
 sb = get_client()
@@ -103,18 +103,18 @@ def _date_range_picker(label: str, df: pd.DataFrame, col: str,
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
-st.title("Pending")
+st.title("Review and Resolve Pending Actions")
 st.caption(
-    "Every open follow-up across BDT meetings + partner engagements. Use "
-    "this screen to prep before the Monday BDT call: see counts, who owns "
+    "Every open follow-up across team meetings + partner engagements. Use "
+    "this screen to prep before the Monday team call: see counts, who owns "
     "what, and resolve items inline."
 )
 
 
 # ===========================================================================
-# Section 1 — BDT Meetings
+# Section 1 — Team Meetings
 # ===========================================================================
-st.markdown("### 🗓️ BDT Meetings")
+st.markdown("### 🗓️ Team Meetings")
 
 # NOTE: @st.cache_data was removed from this and the engagements fetch
 # below on 2026-06-06. When this view runs via render_view's exec(), the
@@ -244,7 +244,7 @@ def _fetch_engagements() -> tuple[pd.DataFrame, bool]:
     try:
         res = (
             cli.table("engagement_logs")
-            .select("id,engagement_date,donor,engagement_type,chai_lead,"
+            .select("id,engagement_date,donor,engagement_type,internal_lead,"
                     "purpose,outcome,is_resolved,linked_rfp_uid")
             .order("engagement_date", desc=True)
             .execute()
@@ -259,7 +259,7 @@ def _fetch_engagements() -> tuple[pd.DataFrame, bool]:
         # Migration 014 hasn't been applied — fall back without the column.
         res = (
             cli.table("engagement_logs")
-            .select("id,engagement_date,donor,engagement_type,chai_lead,"
+            .select("id,engagement_date,donor,engagement_type,internal_lead,"
                     "purpose,outcome,linked_rfp_uid")
             .order("engagement_date", desc=True)
             .execute()
@@ -307,12 +307,12 @@ else:
     else:
         st.markdown(
             "**By internal lead:** "
-            + _owner_summary(df_e_open["chai_lead"])
+            + _owner_summary(df_e_open["internal_lead"])
         )
 
         with st.expander("Filters", expanded=False):
             fc1, fc2 = st.columns([2, 3])
-            leads_all = sorted(df_e_open["chai_lead"]
+            leads_all = sorted(df_e_open["internal_lead"]
                                .dropna().unique().tolist())
             f_leads = fc1.multiselect("Internal lead", leads_all,
                                        key="pa_e_leads")
@@ -324,7 +324,7 @@ else:
 
         show_e = df_e_open.copy()
         if f_leads:
-            show_e = show_e[show_e["chai_lead"].isin(f_leads)]
+            show_e = show_e[show_e["internal_lead"].isin(f_leads)]
         if lo_e and hi_e:
             show_e = show_e[
                 (show_e["engagement_date"].dt.date >= lo_e)
@@ -358,8 +358,8 @@ else:
                                 if pd.notna(ed) else "—")
                 row[1].markdown((e.get("donor") or "—")[:60])
                 row[2].markdown(e.get("engagement_type") or "—")
-                row[3].markdown(_first_name(e.get("chai_lead"))
-                                if e.get("chai_lead") else "—")
+                row[3].markdown(_first_name(e.get("internal_lead"))
+                                if e.get("internal_lead") else "—")
                 row[4].markdown((e.get("outcome") or "—")[:240])
                 if has_resolved_col:
                     if row[5].button(

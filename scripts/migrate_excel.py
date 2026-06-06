@@ -157,12 +157,11 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
         "program_area": _multi(get("Program Area")),
         "focus_theme": _txt(get("Focus Theme")),
         "opportunity_link": _txt(get("Opportunity Link")),
-        # `chai_role` is the legacy column name from the original Excel
-        # screener; the Excel header just says "CHAI Role" so we still
-        # look for that header text in case a deploying org keeps the
-        # historical workbook column name. The DB column is renamed in
-        # spirit (applicant role) but kept under chai_role for back-compat.
-        "chai_role": _txt(get("CHAI Role", "Applicant Role", "Role")),
+        # applicant_role is recognised under several spreadsheet headers.
+        # Preferred headers are "Applicant Role" / "Role"; the original
+        # screener workbook labelled this column "CHAI Role", which we still
+        # accept last so a legacy workbook keeps importing without edits.
+        "applicant_role": _txt(get("Applicant Role", "Role", "CHAI Role")),
         "lead_applicant": _txt(get("Lead Applicant")),
         "sub_applicant": _txt(get("Sub Applicant")),
         "funding_window": _txt(get("Funding Window")),
@@ -342,14 +341,14 @@ def map_engagement_row(row: list[Any]) -> Optional[dict[str, Any]]:
     if not edate:
         return None
     donor = _txt(c(3))
-    chai_lead = _txt(c(6))
-    ext_key = f"{edate}|{(donor or '').strip().lower()}|{(chai_lead or '').strip().lower()}"
+    internal_lead = _txt(c(6))
+    ext_key = f"{edate}|{(donor or '').strip().lower()}|{(internal_lead or '').strip().lower()}"
     return {
         "engagement_date": edate,
         "donor": donor,
         "engagement_type": _txt(c(4)),
         "format": _txt(c(5)),
-        "chai_lead": chai_lead,
+        "internal_lead": internal_lead,
         "donor_contacts": _txt(c(7)),
         "purpose": _txt(c(8)),
         "outcome": _txt(c(9)),
@@ -613,7 +612,7 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
         e_rows,
         updatable_fields=[
             "engagement_date", "donor", "engagement_type", "format",
-            "chai_lead", "donor_contacts", "purpose", "outcome", "linked_rfp_uid",
+            "internal_lead", "donor_contacts", "purpose", "outcome", "linked_rfp_uid",
         ],
     )
 

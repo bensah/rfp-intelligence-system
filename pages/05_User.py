@@ -199,7 +199,7 @@ with tabs[0]:
                 # new name + email immediately (no re-login required).
                 user["name"] = (new_name or "").strip() or user.get("name")
                 user["email"] = new_email_clean
-                st.session_state["chai_user"] = user
+                st.session_state["app_user"] = user
                 # `st.toast` survives the `st.rerun` below — a plain
                 # `st.success` would be wiped before the user could see
                 # it because rerun re-executes the script from the top.
@@ -778,7 +778,7 @@ if permissions.is_admin(user):
                             user["name"] = payload.get("name") \
                                 or user.get("name")
                             user["email"] = new_email_clean
-                            st.session_state["chai_user"] = user
+                            st.session_state["app_user"] = user
                         # Fire the approval email if this save flipped
                         # is_active from false → true (admin approving
                         # a self-signed-up user). Silent on failure so
