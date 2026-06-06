@@ -57,7 +57,7 @@ ACCESS_MATRIX: dict[str, dict[str, str]] = {
     "Home":                       {"admin": "edit",    "user": "edit"},
     "Pipeline":                   {"admin": "edit",    "user": "edit"},
     "Grants":                     {"admin": "edit",    "user": "edit"},
-    "Activity":                   {"admin": "edit",    "user": "edit"},
+    "Actions":                    {"admin": "edit",    "user": "edit"},
     "Report":                     {"admin": "edit",    "user": "view"},
     "User → My Profile":          {"admin": "self",    "user": "self"},
     "User → Change Password":     {"admin": "self",    "user": "self"},
