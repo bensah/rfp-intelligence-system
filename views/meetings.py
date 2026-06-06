@@ -25,7 +25,7 @@ sb = get_client()
 
 _TITLE_COL, _BTN_COL = st.columns([5, 1])
 with _TITLE_COL:
-    st.title("BDT Check-in Call Logs")
+    st.title("Review Weekly Check-in Logs")
     st.caption(
         "Monday Business Development Team call notes. Pick a week, then click "
         "**➕ Add a note** to capture new issues, actions, owner, and due date "
