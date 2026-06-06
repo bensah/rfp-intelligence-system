@@ -218,7 +218,7 @@ def _fmt(v) -> str:
 
 
 # Donor Decision Date — actual award date if the donor has decided,
-# otherwise the expected award date. NOT decision_date (that's the BDT
+# otherwise the expected award date. NOT decision_date (that's the team
 # review date which is something different).
 _award = None
 if not grants.empty:
