@@ -22,7 +22,7 @@ from core.review_week import all_weeks_for_year, review_week_label
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
-user = st.session_state["chai_user"]
+user = st.session_state["app_user"]
 sb = get_client()
 
 from core.scan_runner import run_scan_now
@@ -261,13 +261,13 @@ with c2:
         st.markdown("**—**  \n_No deadlines on Proceed RFPs_")
 
 with c3:
-    prime = int(proceed_df["chai_role"].fillna("").str.lower().eq("prime").sum()) if not proceed_df.empty else 0
+    prime = int(proceed_df["applicant_role"].fillna("").str.lower().eq("prime").sum()) if not proceed_df.empty else 0
     st.caption("Prime Opportunities")
     st.markdown(f"### {prime} of {len(proceed_df)}")
     st.caption("Proceed as prime applicant")
 
 with c4:
-    sub = int(proceed_df["chai_role"].fillna("").str.lower().eq("sub").sum()) if not proceed_df.empty else 0
+    sub = int(proceed_df["applicant_role"].fillna("").str.lower().eq("sub").sum()) if not proceed_df.empty else 0
     st.caption("Sub Opportunities")
     st.markdown(f"### {sub} of {len(proceed_df)}")
     st.caption("Proceed as sub")
@@ -288,7 +288,7 @@ else:
         "UID": show["uid"],
         "Title": show["opportunity_title"].fillna("—"),
         "Funder": show["funding_agency"].fillna("—"),
-        "Role": show["chai_role"].fillna("—"),
+        "Role": show["applicant_role"].fillna("—"),
         "Deadline": pd.to_datetime(show["submission_deadline"], errors="coerce").dt.date,
         "Score": show["alignment_score"].fillna(0).round(0),
         "Decision": show["decision"].fillna("—"),

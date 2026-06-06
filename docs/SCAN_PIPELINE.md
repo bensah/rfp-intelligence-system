@@ -161,8 +161,8 @@ The count-based rule eliminates that: any failed MUST is final. Multiple Partial
 flowchart TD
     A["Recommendation = Proceed"] --> B["Scan candidate text"]
     B --> C{"Text contains any of:<br/>research institution<br/>university / universities<br/>us-based / u.s.-based<br/>based in the EU<br/>European institution<br/>Canadian institution<br/>domestic applicants only<br/>graduate-degree-granting"}
-    C -->|YES| D["chai_role = Sub<br/>auto_recommendation = Proceed as sub"]
-    C -->|NO| E["chai_role = Prime<br/>auto_recommendation = Proceed"]
+    C -->|YES| D["applicant_role = Sub<br/>auto_recommendation = Proceed as sub"]
+    C -->|NO| E["applicant_role = Prime<br/>auto_recommendation = Proceed"]
 ```
 
 ### Why Sub is a routing signal, not an exclusion
@@ -183,11 +183,11 @@ Same routing applies for other residency requirements:
 | "Research institution required" | Research-org partner leads (implementing NGO isn't research-focused) → country office is sub |
 | "University / academic only" | University partner leads → country office is sub |
 
-In every case the recommendation stays **Proceed** — only the `chai_role` field flips from `Prime` → `Sub`. The Cameroon team still pursues the opportunity; they just know upfront they're not leading the application.
+In every case the recommendation stays **Proceed** — only the `applicant_role` field flips from `Prime` → `Sub`. The Cameroon team still pursues the opportunity; they just know upfront they're not leading the application.
 
 ### Override path
 
-Human reviewers can change `chai_role` (and `decision`) on the Review tab. Their save replaces the auto-set value. The keyword list `_SUB_ROLE_SIGNALS` in [`core/auto_scorer.py`](../core/auto_scorer.py) is the authoritative source — extend it whenever a new sub-routing pattern appears in incoming RFPs.
+Human reviewers can change `applicant_role` (and `decision`) on the Review tab. Their save replaces the auto-set value. The keyword list `_SUB_ROLE_SIGNALS` in [`core/auto_scorer.py`](../core/auto_scorer.py) is the authoritative source — extend it whenever a new sub-routing pattern appears in incoming RFPs.
 
 ---
 
@@ -255,6 +255,6 @@ For any auto-scanned RFP on the Review tab, the criterion values + score + decis
 - Is `decision == "Decline"`? Look for a MUST with `value = No`. That's the cause.
 - `decision == "Park"`? Count MUSTs = Partial. If 1, that's why. If 0, check the 4 PREFERs.
 - `decision == "Proceed"`? Confirm all 5 MUSTs = Yes AND PREFER count Yes is 3 or 4.
-- `chai_role == "Sub"`? Search the brief description for one of the sub-signal phrases (`research institution`, `university`, etc.).
+- `applicant_role == "Sub"`? Search the brief description for one of the sub-signal phrases (`research institution`, `university`, etc.).
 
 If any classification feels wrong, fix the keyword bag for the offending criterion — don't override the decision repeatedly. Tune once, the policy applies to every future scan.

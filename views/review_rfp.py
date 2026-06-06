@@ -22,7 +22,7 @@ from core.scorer import CRITERIA, score_submission
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
-user = st.session_state["chai_user"]
+user = st.session_state["app_user"]
 role = user.get("role", "collaborator")
 can_edit = role in ("super_user", "admin", "reviewer")
 sb = get_client()
@@ -151,7 +151,7 @@ def _safe_str(v) -> str:
 det1, det2, det3 = st.columns(3)
 with det1:
     st.markdown("**Key details**")
-    st.write(f"Applicant role: {_fmt(row.get('chai_role'))}")
+    st.write(f"Applicant role: {_fmt(row.get('applicant_role'))}")
     st.write(f"Window: {_fmt(row.get('funding_window'))}")
     st.write(f"Deadline: {_fmt(row.get('submission_deadline'))}")
     st.write(f"Award date: {_fmt(row.get('expected_award_date'))}")

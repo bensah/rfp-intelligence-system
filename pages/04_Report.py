@@ -29,7 +29,7 @@ if not ensure_logged_in():
 from core.app_header import render_app_header  # noqa: E402
 render_app_header()
 
-st.title("BDT Activity Report")
+st.title("Team Activity Report")
 st.caption(
     "End-to-end activity dashboard — from scanner output through team "
     "decisions to secured grants. Use the period selector below to scope "

@@ -516,7 +516,7 @@ _SUB_ROLE_SIGNALS = (
 )
 
 
-def _detect_chai_role(text: str) -> str:
+def _detect_applicant_role(text: str) -> str:
     """Default the applicant role to **Prime**. Switch to **Sub** when
     the RFP text contains signals that route the deploying org
     downstream of another applicant — most commonly:
@@ -809,10 +809,10 @@ def auto_score(
     # Default applicant role = Prime unless RFP text demands a research /
     # region-specific institution (in which case the deploying org
     # applies as Sub).
-    chai_role = _detect_chai_role(text)
+    applicant_role = _detect_applicant_role(text)
     # Use "Proceed as sub" so the Tracking page can distinguish role-aware
     # rows from straight Proceed ones.
-    if rec == "Proceed" and chai_role == "Sub":
+    if rec == "Proceed" and applicant_role == "Sub":
         rec = "Proceed as sub"
 
     # Vocabulary translation at the DB boundary. The scoring logic above
@@ -837,7 +837,7 @@ def auto_score(
         "decision": rec,
         # Default the applicant role. Park / Decline rows still get a role
         # so the team has context if they choose to review.
-        "chai_role": chai_role,
+        "applicant_role": applicant_role,
     }
     # Auto-populated companion fields — only set if the candidate hasn't
     # already provided them, so explicit scraper-extracted values win.

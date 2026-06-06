@@ -31,7 +31,7 @@ from core.review_week import all_weeks_for_year, week_bounds
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
-user = st.session_state["chai_user"]
+user = st.session_state["app_user"]
 sb = get_client()
 
 year = settings.get_year()
@@ -181,7 +181,7 @@ with st.container(border=True):
     top1.markdown(
         f"### {row.get('opportunity_title')}\n"
         f"_{row.get('funding_agency') or '—'}_ · "
-        f"role: **{row.get('chai_role') or '—'}** · "
+        f"role: **{row.get('applicant_role') or '—'}** · "
         f"window: **{row.get('funding_window') or '—'}** · "
         f"decision: **{row.get('decision') or '—'}**"
     )
@@ -287,7 +287,7 @@ browse = pd.DataFrame({
     "UID": df["uid"],
     "Funder": df["funding_agency"].fillna("—"),
     "Title": df["opportunity_title"].fillna("—"),
-    "Role": df["chai_role"].fillna("—"),
+    "Role": df["applicant_role"].fillna("—"),
     "Deadline": df["_deadline_date"],
     "Days": df["_dtd"],
     "Stage": df["stage"].fillna("—"),

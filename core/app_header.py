@@ -270,7 +270,7 @@ def render_app_header() -> None:
     # for a user who's since been upgraded. The block rule overrides
     # any stale hide; the hide rule is fresh each render.
     from core import permissions as _perms  # local import — avoid cycle
-    _u = st.session_state.get("chai_user") or {}
+    _u = st.session_state.get("app_user") or {}
     _visibility = "block" if _perms.is_admin(_u) else "none"
     st.markdown(
         f"""
