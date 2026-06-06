@@ -37,7 +37,11 @@ sb = get_client()
 year = settings.get_year()
 today = date.today()
 
-st.title(f"Proceed Pipeline — {year} YTD")
+st.markdown(
+    f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
+    f"margin:0.15rem 0 0.5rem;'>Proceed Pipeline — {year} YTD</h2>",
+    unsafe_allow_html=True,
+)
 st.caption(
     "Read-only pipeline of active **Proceed** RFPs for "
     f"**{year}** that haven't been submitted to a donor, aren't past deadline, "
