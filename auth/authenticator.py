@@ -188,18 +188,26 @@ def login_gate() -> Optional[dict[str, Any]]:
         unsafe_allow_html=True,
     )
 
-    try:
-        auth.login(location="main")
-    except TypeError:
-        auth.login("Login", "main")  # back-compat with older API
+    # Render the login form into a CLEARABLE slot so we can hide it during the
+    # one-shot cookie-settle rerun — otherwise the form flashes for ~0.4s on a
+    # refresh before the cookie restores the session.
+    _form_slot = st.empty()
+    with _form_slot.container():
+        try:
+            auth.login(location="main")
+        except TypeError:
+            auth.login("Login", "main")  # back-compat with older API
 
     status = st.session_state.get("authentication_status")
 
     if status is None and not st.session_state.get("_auth_cookie_settled"):
-        # First post-refresh render — let the cookie manager finish its
-        # JS round-trip, then rerun once. The flag prevents an infinite
-        # loop when there genuinely is no cookie (anonymous visitor).
+        # First post-refresh render — the JS cookie manager hasn't returned the
+        # cookie yet (status None). Replace the form with a neutral 'restoring'
+        # placeholder + hide the sidebar, then rerun once to let the cookie
+        # settle. The flag prevents an infinite loop for anonymous visitors.
         st.session_state["_auth_cookie_settled"] = True
+        _hide_sidebar_on_login()
+        _form_slot.info("Restoring your session…")
         import time as _t
         _t.sleep(0.4)
         st.rerun()
