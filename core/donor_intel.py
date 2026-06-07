@@ -156,6 +156,29 @@ def partnership(row: dict) -> Optional[str]:
     return None
 
 
+# Health / program-area fit columns in the donor matrix.
+_HEALTH_FIT_FIELDS = (
+    "infectious_diseases_fit", "hiv_aids_fit", "tb_fit", "malaria_fit",
+    "immunization_vaccines_fit", "mnch_fit", "srhr_family_planning_fit",
+    "nutrition_fit", "ncds_fit", "hss_fit", "digital_health_data_ai_fit",
+)
+
+
+def program_alignment(row: dict) -> tuple[Optional[str], Optional[str]]:
+    """Derive (MUST-1 govt alignment, MUST-2 strategic fit) from the matched
+    donor's program-area fit + geographic focus. UPGRADE-ONLY: returns 'Yes' or
+    None (never 'No'), so a verified, on-mission donor lifts these criteria but
+    a thin keyword read is never penalised by the matrix. None = defer."""
+    health_fit = any(_yes(row, f) for f in _HEALTH_FIT_FIELDS)
+    lmic = _yes(row, "lmic_africa_focus") or _yes(row, "global_multi_country_scope")
+    must1 = must2 = None
+    if health_fit:
+        must2 = "Yes"             # donor funds in our health program areas
+        if lmic:
+            must1 = "Yes"         # LMIC/global health funding aligns w/ national priorities
+    return must1, must2
+
+
 def apply_to_values(values: dict, candidate: dict, policies: dict) -> Optional[dict]:
     """Override MUST 4 / PREFER 8 / (fallback) PREFER 6 from the matched
     donor record. Authoritative when present; silent no-op when the funder
@@ -179,6 +202,15 @@ def apply_to_values(values: dict, candidate: dict, policies: dict) -> Optional[d
     part = partnership(row)
     if part is not None:
         values["prefer_8_partnership"] = part
+
+    # MUST 1 / MUST 2 — upgrade from the donor's program-area fit (on-mission,
+    # LMIC/global health donor → aligned + strategically relevant). Only lifts
+    # to Yes; never downgrades a keyword-derived value.
+    m1, m2 = program_alignment(row)
+    if m1 == "Yes":
+        values["must_1_govt_alignment"] = m1
+    if m2 == "Yes":
+        values["must_2_strategic_fit"] = m2
 
     # PREFER 6 fallback ONLY when the RFP itself published no amount — a
     # donor that typically funds >$100k implies Funding Quality = Yes even
