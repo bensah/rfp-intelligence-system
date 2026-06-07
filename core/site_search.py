@@ -80,57 +80,73 @@ def search_nav(query: str, is_admin: bool) -> list[tuple[str, str]]:
     return [(label, path) for _, label, path in out]
 
 
-@st.cache_data(ttl=30, show_spinner=False)
-def search_data(query: str, limit: int = 6) -> list[tuple[str, str, str]]:
-    """Live content matches. Returns [(label, page_path, kind)].
+def _sanitize(query: str) -> str:
+    """Strip PostgREST `or_` delimiters (comma / parens) from the user value
+    so a typed comma can't break the filter — they act as ilike wildcards
+    once removed anyway."""
+    return (query or "").replace(",", " ").replace("(", " ").replace(")", " ").strip()
 
-    Searches opportunity titles + funders (→ Pipelines) and donor names
-    (→ Donors). Cached briefly so repeated keystrokes don't hammer the DB.
+
+@st.cache_data(ttl=30, show_spinner=False)
+def search_opportunities(query: str, limit: int = 30) -> list[dict]:
+    """Opportunity matches across title / funder / brief / focus theme.
+
+    Returns dicts: {title, funder, deadline, decision, source, page}.
     """
-    q = (query or "").strip()
-    if len(q) < 2:
-        return []
-    # Commas and parentheses are PostgREST `or_` syntax — strip them from the
-    # user's value so a typed comma can't break the filter (they act as
-    # wildcards in ilike anyway once removed).
-    qf = q.replace(",", " ").replace("(", " ").replace(")", " ").strip()
-    if not qf:
+    qf = _sanitize(query)
+    if len(qf) < 2:
         return []
     sb = get_client()
-    results: list[tuple[str, str, str]] = []
-
-    # Opportunities — title OR funder.
     try:
         rows = (safe_execute(
             sb.table("rfp_submissions")
-            .select("opportunity_title,funding_agency")
-            .or_(f"opportunity_title.ilike.%{qf}%,funding_agency.ilike.%{qf}%")
+            .select("opportunity_title,funding_agency,submission_deadline,"
+                    "decision,source")
+            .or_(f"opportunity_title.ilike.%{qf}%,"
+                 f"funding_agency.ilike.%{qf}%,"
+                 f"brief_description.ilike.%{qf}%,"
+                 f"focus_theme.ilike.%{qf}%")
             .limit(limit)).data or [])
     except Exception:
         rows = []
-    seen = set()
+    out, seen = [], set()
     for r in rows:
         title = (r.get("opportunity_title") or "").strip()
-        if not title or title.lower() in seen:
-            continue
-        seen.add(title.lower())
         funder = (r.get("funding_agency") or "").strip()
-        label = title[:60] + (f" — {funder}" if funder else "")
-        results.append((label, "app_pages/pipelines.py", "Opportunity"))
+        key = (title.lower(), funder.lower())
+        if not title or key in seen:
+            continue
+        seen.add(key)
+        dl = r.get("submission_deadline")
+        out.append({
+            "title": title,
+            "funder": funder,
+            "deadline": (str(dl)[:10] if dl else ""),
+            "decision": (r.get("decision") or "").strip(),
+            "source": (r.get("source") or "").strip(),
+            "page": "app_pages/pipelines.py",
+        })
+    return out
 
-    # Donors.
+
+@st.cache_data(ttl=30, show_spinner=False)
+def search_donors(query: str, limit: int = 30) -> list[dict]:
+    """Donor matches by name. Returns dicts: {name, page}."""
+    qf = _sanitize(query)
+    if len(qf) < 2:
+        return []
+    sb = get_client()
     try:
-        donors = (safe_execute(
+        rows = (safe_execute(
             sb.table("donor_sources").select("donor_name")
             .ilike("donor_name", f"%{qf}%").limit(limit)).data or [])
     except Exception:
-        donors = []
-    dseen = set()
-    for d in donors:
+        rows = []
+    out, seen = [], set()
+    for d in rows:
         name = (d.get("donor_name") or "").strip()
-        if not name or name.lower() in dseen:
+        if not name or name.lower() in seen:
             continue
-        dseen.add(name.lower())
-        results.append((name, "app_pages/donors.py", "Donor"))
-
-    return results
+        seen.add(name.lower())
+        out.append({"name": name, "page": "app_pages/donors.py"})
+    return out
