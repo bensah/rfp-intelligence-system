@@ -19,6 +19,45 @@ import streamlit_authenticator as stauth
 from db.supabase_client import get_client
 
 
+# ---------------------------------------------------------------------------
+# Streamlit Cloud cookie-restore fix
+# ---------------------------------------------------------------------------
+# streamlit-authenticator >= 0.4.1 reads the re-auth cookie from
+# `st.context.cookies` (the request-header snapshot). That works locally but is
+# unreliable behind Streamlit Cloud's proxy, so a refresh on *.streamlit.app
+# finds no cookie and bounces to the login form (works fine locally — exactly
+# the symptom we hit). Versions <= 0.3.x read it via the JS CookieManager
+# component, which survives the proxy. We restore that read here with a tiny
+# monkeypatch (cookie READ only — token decode + expiry stay the library's).
+# Wrapped in try/except: if the library's internals change, it silently no-ops
+# back to stock behaviour rather than breaking auth.
+def _patch_authenticator_cookie_read() -> None:
+    try:
+        from datetime import datetime as _dt
+        from streamlit_authenticator.models import cookie_model as _cm
+
+        def _get_cookie(self):  # noqa: ANN001
+            if st.session_state.get("logout"):
+                return False
+            try:
+                self.token = self.cookie_manager.get(self.cookie_name)
+            except Exception:
+                return None  # JS read failed → fall through to the login form
+            if self.token is not None:
+                self.token = self._token_decode()
+                if (self.token is not False and "username" in self.token
+                        and self.token["exp_date"] > _dt.now().timestamp()):
+                    return self.token
+            return None
+
+        _cm.CookieModel.get_cookie = _get_cookie
+    except Exception:
+        pass
+
+
+_patch_authenticator_cookie_read()
+
+
 COOKIE_NAME = "rfpis_session"
 COOKIE_EXPIRY_DAYS = 1 / 3  # ~8 hours
 
