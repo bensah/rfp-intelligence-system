@@ -390,16 +390,20 @@ def _render_user_menu() -> None:
         st.divider()
         if st.button("🚪 Sign Out", key="topbar_signout",
                      use_container_width=True):
-            # Plain button (not auth.logout) so we control ordering: delete
-            # the auth cookie (a refresh won't auto-restore the session),
-            # clear our own session cache + the library's auth keys, then
-            # st.rerun() straight into the login gate. auth.logout() does
-            # NOT rerun, so clearing app_user there would let the now-userless
-            # page body run and KeyError — this avoids that entirely.
+            # The cookie reader (CookieModel.get_cookie) restores a session
+            # from st.context.cookies UNLESS st.session_state['logout'] is
+            # True. That request-snapshot doesn't update mid-session, so the
+            # earlier "delete the cookie + clear keys" approach left the gate
+            # free to log us straight back in — which is the bug you saw.
+            # Run the library's unrendered logout (which sets logout=True,
+            # clears its auth keys, and deletes the browser cookie via JS),
+            # set the flag explicitly as belt-and-suspenders, clear our own
+            # session cache, then rerun into the login gate.
             try:
-                get_authenticator().cookie_controller.delete_cookie()
+                get_authenticator().logout(location="unrendered")
             except Exception:
                 pass
+            st.session_state["logout"] = True
             for k in ("app_user", "_post_login_nav_synced",
                       "_auth_cookie_settled", "authentication_status",
                       "name", "username"):
