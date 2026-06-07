@@ -33,8 +33,8 @@ if not permissions.is_admin(user):
 sb = get_client()
 st.title("Admin Panel")
 
-tab_settings, tab_data, tab_sources, tab_scan = st.tabs(
-    ["Settings", "Records", "Sources", "Manual Scan"]
+tab_settings, tab_data, tab_sources, tab_scan, tab_blacklist = st.tabs(
+    ["Settings", "Records", "Sources", "Manual Scan", "Blacklist"]
 )
 
 
@@ -1649,3 +1649,61 @@ with tab_scan:
                 "errors": st.column_config.TextColumn("Errors"),
             },
         )
+
+
+# -----------------------------------------------------------------------------
+# Tab 4 — Scan blacklist (hard-reject URL substrings)
+# -----------------------------------------------------------------------------
+with tab_blacklist:
+    from core import blacklist as _blmod
+
+    st.subheader("Scan blacklist")
+    st.caption(
+        "Each pattern is matched as a case-insensitive **substring of the "
+        "candidate URL** during scanning. Any match → the link is rejected "
+        "before scoring and never becomes a record. Use a bare domain "
+        "(`cdc.gov`) to block a whole site, or a path fragment "
+        "(`comicrelief.com/sportrelief`, `/donate`, `/careers`) to block a "
+        "section. Edit cells, add rows (＋), then **Save**."
+    )
+    try:
+        _bl_rows = (sb.table("scan_blacklist").select("pattern,reason")
+                    .order("pattern").execute().data or [])
+    except Exception as exc:
+        _bl_rows = []
+        st.warning(f"Couldn't load the blacklist — did you run migration 024? ({exc})")
+
+    if _bl_rows:
+        _bl_df = pd.DataFrame(_bl_rows)[["pattern", "reason"]]
+    else:
+        _bl_df = pd.DataFrame({"pattern": pd.Series(dtype="object"),
+                               "reason": pd.Series(dtype="object")})
+    _bl_edited = st.data_editor(
+        _bl_df, num_rows="dynamic", use_container_width=True, hide_index=True,
+        key="blacklist_editor",
+        column_config={
+            "pattern": st.column_config.TextColumn("Pattern (URL substring)", required=True),
+            "reason": st.column_config.TextColumn("Reason / note"),
+        },
+    )
+    if st.button("💾 Save blacklist", type="primary", key="save_blacklist"):
+        recs, seen = [], set()
+        for _, r in _bl_edited.iterrows():
+            p = str(r.get("pattern") or "").strip().lower()
+            if not p or p in seen:
+                continue
+            seen.add(p)
+            recs.append({
+                "pattern": p,
+                "reason": (str(r.get("reason") or "").strip() or None),
+                "created_by": user.get("email"),
+            })
+        try:
+            sb.table("scan_blacklist").delete().neq("id", -1).execute()  # replace-all
+            if recs:
+                sb.table("scan_blacklist").insert(recs).execute()
+            _blmod.clear_cache()
+            st.success(f"Saved {len(recs)} blacklist pattern(s).")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Save failed: {exc}")
