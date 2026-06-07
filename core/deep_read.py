@@ -138,9 +138,10 @@ def enrich(candidate: dict) -> bool:
     from core.scraper import (  # noqa: WPS433 (lazy — avoids import cycle)
         _extract_deadline_from_text, _extract_description_from_soup,
         _extract_eligibility_from_text, _find_application_pdf,
-        _try_pdf_guide_deadline,
+        _follow_companion_for_deadline, _try_pdf_guide_deadline,
     )
-    # Deadline — text, then a linked application-guide PDF.
+    # Deadline — rendered text, then a linked guide PDF, then a companion
+    # call/calendar page (Fondation Pierre Fabre -> odess.io).
     if not candidate.get("submission_deadline"):
         d = _extract_deadline_from_text(text)
         if not d:
@@ -148,6 +149,11 @@ def enrich(candidate: dict) -> bool:
                 pdf_url = _find_application_pdf(soup, link)
                 if pdf_url:
                     d, _brief = _try_pdf_guide_deadline(pdf_url)
+            except Exception:
+                d = None
+        if not d:
+            try:
+                d = _follow_companion_for_deadline(soup, link)
             except Exception:
                 d = None
         if d:
