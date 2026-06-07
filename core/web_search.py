@@ -44,6 +44,14 @@ _RFP_OR_GROUP = (
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
+# URL path fragments that mark academic/publication content (books, chapters,
+# DOIs, journal issues) — not funding calls. Dropped before crawling. This
+# generalises the "link.springer.com/book/…" case beyond a single domain.
+_URL_NOISE = (
+    "/book/", "/books/", "/chapter/", "/doi/", "/abstract", "/proceedings/",
+    "/issue/", "/article-abstract", "/citation/", "/fulltext", "/epdf/",
+)
+
 
 def _secret(name: str) -> str | None:
     val = os.environ.get(name)
@@ -92,8 +100,12 @@ def _relevant(title: str, snippet: str, link: str,
     settings read per result.
     """
     from core import auto_scorer as A
+    raw_link = (link or "").lower()
+    # Publication/book/journal URLs are never funding calls → drop.
+    if any(p in raw_link for p in _URL_NOISE):
+        return False
     t = (title or "").lower()
-    link_words = re.sub(r"[-_/]+", " ", (link or "").lower())
+    link_words = re.sub(r"[-_/]+", " ", raw_link)
     body = f"{t} {(snippet or '').lower()}"
     if any(p in f"{body} {link_words}" for p in A._ERROR_PAGE_PATTERNS):
         return False
@@ -151,13 +163,15 @@ def _safe_parse_date(s: str) -> date | None:
         return None
 
 
-_JSONLD_DATE_RE = re.compile(
-    r'"date(?:Published|Modified|Created)"\s*:\s*"([^"]{6,40})"', re.I)
-_META_DATE_KEYS = (
-    "article:published_time", "article:modified_time", "og:updated_time",
-    "datepublished", "datemodified", "dc.date", "dcterms.date",
-    "dcterms.created", "dcterms.modified", "date", "pubdate", "publishdate",
-    "lastmod",
+# FIRST-POSTED date fields ONLY. We deliberately exclude modified / updated /
+# lastmod / Last-Modified so a CMS re-touch can't make an old RFP look recent —
+# recency is judged by when the call was POSTED, not last edited.
+_JSONLD_PUB_RE = re.compile(
+    r'"date(?:Published|Created)"\s*:\s*"([^"]{6,40})"', re.I)
+_PUB_META_KEYS = (
+    "article:published_time", "datepublished", "dc.date", "dcterms.date",
+    "dcterms.created", "dcterms.issued", "date", "pubdate", "publishdate",
+    "publication_date", "sailthru.date", "parsely-pub-date",
 )
 _META_A_RE = re.compile(
     r'<meta[^>]+(?:property|name|itemprop)=["\']([^"\']+)["\'][^>]*?'
@@ -167,43 +181,99 @@ _META_B_RE = re.compile(
     r'(?:property|name|itemprop)=["\']([^"\']+)["\']', re.I)
 
 
-def _page_published_date(url: str, client) -> date | None:
-    """Best-effort page date from HTML metadata + Last-Modified header.
+_UA = "Mozilla/5.0 (compatible; RFPIS-discovery/1.0; +https://taadom.org)"
+_SCRIPT_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>")
+_TAGS_RE = re.compile(r"(?s)<[^>]+>")
+_WS_RE = re.compile(r"\s+")
 
-    Reads only KNOWN date fields (article:published_time, JSON-LD
-    datePublished/Modified, og:updated_time, dc.date, Last-Modified …) — not
-    arbitrary dates in the body — so we don't mistake a deadline for the page
-    date. Returns the LATEST such date (freshest signal), or None."""
-    try:
-        r = client.get(url, timeout=6.0, follow_redirects=True,
-                       headers={"User-Agent":
-                                "Mozilla/5.0 (RFPIS web-discovery bot)"})
-    except Exception:
-        return None
+
+def _strip_html(s: str) -> str:
+    s = _SCRIPT_RE.sub(" ", s or "")
+    s = _TAGS_RE.sub(" ", s)
+    return _WS_RE.sub(" ", s)
+
+
+def _page_date_from_html(headers, html_txt: str) -> date | None:
+    """FIRST-POSTED date — datePublished / article:published_time / dc.date /
+    JSON-LD datePublished. Ignores modified/updated/Last-Modified so a 2024 RFP
+    re-touched in 2026 is still judged by when it was POSTED. Returns the
+    EARLIEST such date (the original posting), or None."""
     found: list[date] = []
-    lm = r.headers.get("Last-Modified") or r.headers.get("last-modified")
-    if lm:
-        d = _safe_parse_date(lm)
-        if d:
-            found.append(d)
-    txt = (r.text or "")[:300000]
-    for m in _JSONLD_DATE_RE.finditer(txt):
+    for m in _JSONLD_PUB_RE.finditer(html_txt):
         d = _safe_parse_date(m.group(1))
         if d:
             found.append(d)
     for rx in (_META_A_RE, _META_B_RE):
-        for m in rx.finditer(txt):
+        for m in rx.finditer(html_txt):
             key = (m.group(1) if rx is _META_A_RE else m.group(2)).lower()
             val = (m.group(2) if rx is _META_A_RE else m.group(1))
-            if key in _META_DATE_KEYS:
+            if key in _PUB_META_KEYS:
                 d = _safe_parse_date(val)
                 if d:
                     found.append(d)
-    return max(found) if found else None
+    return min(found) if found else None
+
+
+_URL_DATE_RE = re.compile(r"/(20\d{2})[/-](\d{1,2})[/-](\d{1,2})(?:[/-]|$)")
+_URL_YM_RE = re.compile(r"/(20\d{2})[/-](\d{1,2})(?:/|$)")
+
+
+def _url_date(url: str) -> date | None:
+    """Date embedded in the URL path (e.g. /2024/08/09/slug → 2024-08-09, or
+    /2024/08/ → 2024-08-01). Common for WordPress/blog permalinks — a cheap
+    recency clue needing no fetch."""
+    if not url:
+        return None
+    m = _URL_DATE_RE.search(url)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    m = _URL_YM_RE.search(url)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), 1)
+        except ValueError:
+            pass
+    return None
+
+
+def _fetch_signals(url: str, client) -> dict:
+    """Crawl one result page ONCE and return validation signals:
+      * date    — FIRST-POSTED date (datePublished / article:published_time /
+                  dc.date), NOT last-modified;
+      * rfp_ok  — the PAGE BODY carries real call wording / an RFP acronym
+                  (validates it's actually a call, not just a snippet match).
+    `fetched` is False when the page couldn't be read (we then stay lenient).
+
+    We deliberately do NOT parse a deadline from the full body — pages are full
+    of unrelated dates (copyright, archives, events) that produced false
+    'expired' drops. The snippet deadline + the metadata date are the reliable
+    signals; rfp_ok confirms it's a real call."""
+    out = {"date": None, "rfp_ok": False, "fetched": False}
+    try:
+        r = client.get(url, timeout=7.0, follow_redirects=True,
+                       headers={"User-Agent": _UA})
+    except Exception:
+        return out
+    out["fetched"] = True
+    html_txt = (r.text or "")[:400000]
+    out["date"] = _page_date_from_html(r.headers, html_txt)
+
+    text = _strip_html(html_txt)[:60000]
+    try:
+        from core import auto_scorer as A
+        tl = text.lower()
+        out["rfp_ok"] = (any(p in tl for p in A._RFP_STRONG_PHRASES)
+                         or A._has_rfp_acronym(text))
+    except Exception:
+        out["rfp_ok"] = True  # fail-open: don't reject on validation error
+    return out
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def search(user_terms: str, num: int = 10, max_age_days: int = 180) -> dict:
+def search(user_terms: str, num: int = 10, max_age_days: int = 90) -> dict:
     """Run a filtered web search via Tavily.
 
     Returns: {ok, configured, query, raw_count, results:[{title,link,snippet,
@@ -257,11 +327,13 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 180) -> dict:
         return {"ok": False, "configured": True, "query": query,
                 "raw_count": 0, "results": [], "error": str(exc)[:200]}
 
-    from core.scraper import _extract_deadline_from_text  # reuse the parser
     today = date.today()
+    cutoff = (today - timedelta(days=max_age_days)) if max_age_days else None
     items = data.get("results") or []
-    results: list[dict] = []
-    dropped_expired = 0
+
+    # 1) Cheap pre-filter on Tavily snippets (health + RFP signal + blacklist)
+    #    to decide which pages are worth crawling.
+    candidates: list[dict] = []
     for it in items:
         link = it.get("url") or ""
         title = _clean(it.get("title") or "")
@@ -270,54 +342,62 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 180) -> dict:
             continue
         if not _relevant(title, snippet, link, required, excluded):
             continue
-        # Drop results whose detectable deadline is already PAST — this kills
-        # expired RFPs (Tavily can't filter by publish date for these pages).
-        # Results with no parseable deadline pass; a human vets those.
+        candidates.append({"title": title, "link": link, "snippet": snippet,
+                           "domain": urlparse(link).netloc})
+
+    # 2) Deep validation: crawl each candidate ONCE (concurrently) and read its
+    #    real signals — content date, whether the PAGE BODY carries call wording,
+    #    and any deadline in the body. This is what removes very old posts
+    #    (e.g. a 2012 'Request for Proposals') and pages that aren't real calls.
+    sigs: dict[str, dict] = {}
+    if candidates:
         try:
-            dl = _extract_deadline_from_text(f"{title}. {snippet}")
+            with httpx.Client() as client:
+                with _cf.ThreadPoolExecutor(max_workers=8) as ex:
+                    futs = {ex.submit(_fetch_signals, c["link"], client): c["link"]
+                            for c in candidates[:20]}
+                    for f in _cf.as_completed(futs):
+                        try:
+                            sigs[futs[f]] = f.result()
+                        except Exception:
+                            sigs[futs[f]] = {"fetched": False}
+        except Exception:
+            pass
+
+    from core.scraper import _extract_deadline_from_text
+    results: list[dict] = []
+    dropped_expired = dropped_old = dropped_notrfp = 0
+    for c in candidates:
+        sig = sigs.get(c["link"]) or {"fetched": False}
+        try:
+            dl = _extract_deadline_from_text(f"{c['title']}. {c['snippet']}")
         except Exception:
             dl = None
+        # Page date: metadata (latest of publish/modify) wins; fall back to a
+        # date embedded in the URL (e.g. /2024/08/09/) — no fetch needed.
+        pdate = sig.get("date") or _url_date(c["link"])
+        future_dl = bool(dl and dl >= today)
+
+        # Expired deadline → out.
         if dl and dl < today:
             dropped_expired += 1
             continue
-        results.append({"title": title, "link": link, "snippet": snippet,
-                        "domain": urlparse(link).netloc,
+        # Stale: old page (metadata date OR a date in the URL) with no future
+        # deadline → out. Applies even when the page couldn't be fetched.
+        if not future_dl and cutoff and pdate and pdate < cutoff:
+            dropped_old += 1
+            continue
+        # Page body isn't actually a call (and not open via a future deadline)
+        # → out — kills journals / overview pages. Only when we fetched it.
+        if sig.get("fetched") and not future_dl and not sig.get("rfp_ok"):
+            dropped_notrfp += 1
+            continue
+        results.append({"title": c["title"], "link": c["link"],
+                        "snippet": c["snippet"], "domain": c["domain"],
                         "deadline": dl.isoformat() if dl else "",
-                        "page_date": ""})
-
-    # Page-age filter: for survivors with NO future deadline in the snippet,
-    # fetch the page's published/modified date from its HTML and drop pages
-    # older than max_age_days (stale → almost certainly closed). A detected
-    # future deadline overrides this (the call is demonstrably still open).
-    dropped_old = 0
-    if max_age_days and results:
-        cutoff = today - timedelta(days=max_age_days)
-        need = [r for r in results if not r.get("deadline")][:15]
-        if need:
-            try:
-                with httpx.Client() as client:
-                    with _cf.ThreadPoolExecutor(max_workers=8) as ex:
-                        futs = {ex.submit(_page_published_date, r["link"], client): r
-                                for r in need}
-                        for f in _cf.as_completed(futs):
-                            try:
-                                futs[f]["_pdate"] = f.result()
-                            except Exception:
-                                futs[f]["_pdate"] = None
-            except Exception:
-                pass
-        kept = []
-        for r in results:
-            pdate = r.pop("_pdate", None)
-            if pdate is not None and pdate < cutoff:
-                dropped_old += 1
-                continue
-            if pdate:
-                r["page_date"] = pdate.isoformat()
-            kept.append(r)
-        results = kept
+                        "page_date": pdate.isoformat() if pdate else ""})
 
     return {"ok": True, "configured": True, "query": query,
             "raw_count": len(items), "results": results,
             "dropped_expired": dropped_expired, "dropped_old": dropped_old,
-            "error": None}
+            "dropped_notrfp": dropped_notrfp, "error": None}
