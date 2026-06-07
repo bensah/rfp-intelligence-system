@@ -160,8 +160,10 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
         "program_area": _multi(get("Program Area")),
         "focus_theme": _txt(get("Focus Theme")),
         "opportunity_link": _txt(get("Opportunity Link")),
-        # applicant_role is recognised under either spreadsheet header.
-        "applicant_role": _txt(get("Applicant Role", "Role")),
+        # applicant_role: the source workbook header is "the organisation Role" (col Q);
+        # "Applicant Role"/"Role" are accepted as de-branded aliases. Omitting
+        # "the organisation Role" silently dropped the role on every migration row.
+        "applicant_role": _txt(get("Applicant Role", "Role", "the organisation Role")),
         "lead_applicant": _txt(get("Lead Applicant")),
         "sub_applicant": _txt(get("Sub Applicant")),
         "funding_window": _txt(get("Funding Window")),

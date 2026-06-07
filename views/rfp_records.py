@@ -196,10 +196,16 @@ else:
 
 table = view_df.reindex(columns=visible_cols).copy()
 if "submission_deadline" in table:
-    table["submission_deadline"] = pd.to_datetime(table["submission_deadline"], errors="coerce").dt.date
+    table["submission_deadline"] = pd.to_datetime(
+        table["submission_deadline"], errors="coerce", format="ISO8601").dt.date
 if "search_date" in table:
     # Actual scan date + time (from search_date), not the "Week 23" label.
-    table["search_date"] = pd.to_datetime(table["search_date"], errors="coerce")
+    # format="ISO8601" is REQUIRED: auto/manual rows carry microseconds
+    # (…:44.627419+00:00) while migration rows don't (…:02+00:00). Without it,
+    # pandas≥2.0 infers ONE format from the first row and coerces the rest to
+    # NaT — which is why some rows showed a blank Search date.
+    table["search_date"] = pd.to_datetime(
+        table["search_date"], errors="coerce", format="ISO8601")
 if "alignment_score" in table and "_prob" in visible_cols:
     table["_prob"] = table["alignment_score"].apply(_prob_tier)
 
