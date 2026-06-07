@@ -30,8 +30,18 @@ where a.grant_id = b.grant_id
       );
 
 -- 2. Add the missing UNIQUE constraint so upsert(on_conflict='grant_id') works.
-alter table active_grants
-    add constraint active_grants_grant_id_key unique (grant_id);
+--    Idempotent guard via pg_constraint so re-runs don't error with
+--    "relation already exists" (original migration lacked this — re-running
+--    after the constraint was already added would crash mid-batch).
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'active_grants_grant_id_key'
+  ) then
+    alter table active_grants
+      add constraint active_grants_grant_id_key unique (grant_id);
+  end if;
+end $$;
 
 -- -------------------------------------------------------------------------
 -- 3. Wipe migration-origin rows from log tables. App-added rows (source='app')
