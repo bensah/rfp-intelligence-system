@@ -27,9 +27,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # scripts/ for migrate
 from migrate_excel import (  # noqa: E402
     DEFAULT_XLSX, build_col_map, map_form1_row_by_header,
 )
-from db.supabase_client import get_client  # noqa: E402
+from db.supabase_client import get_client, safe_execute  # noqa: E402
 
-_BACKFILL_FIELDS = ("search_date", "submitted_by", "submitted_by_email")
+# search_date + submitted_by come from Form1; submitted_by_email is derived from
+# the users table (the Excel 'Email' column is blank for almost every row).
+_FROM_FORM1 = ("search_date", "submitted_by")
 
 
 def _norm(t) -> str:
@@ -55,27 +57,51 @@ def main() -> None:
             continue
         key = _norm(rec.get("opportunity_title"))
         if key and key not in by_title:
-            by_title[key] = {f: rec.get(f) for f in _BACKFILL_FIELDS}
+            by_title[key] = {
+                "search_date": rec.get("search_date"),
+                "submitted_by": rec.get("submitted_by"),
+                "submitted_by_email": rec.get("submitted_by_email"),  # rarely set
+            }
     print(f"Form1: {len(by_title)} titles indexed")
 
     sb = get_client()
+    # Submitter name -> email, from the users table (Excel carries no per-row
+    # email, but submitters are team members with accounts).
+    users = safe_execute(sb.table("users").select("name,email")).data or []
+    email_by_name = {_norm(u.get("name")): u.get("email")
+                     for u in users if u.get("name") and u.get("email")}
+    print(f"users: {len(email_by_name)} name->email entries")
+
     db_rows = (
-        sb.table("rfp_submissions")
-        .select("uid,opportunity_title,search_date,submitted_by,submitted_by_email")
-        .eq("source", "migration").execute().data or []
+        safe_execute(
+            sb.table("rfp_submissions")
+            .select("uid,opportunity_title,search_date,submitted_by,submitted_by_email")
+            .eq("source", "migration")
+        ).data or []
     )
     fixed, unmatched = 0, []
     for r in db_rows:
         meta = by_title.get(_norm(r.get("opportunity_title")))
-        if not meta:
-            if not r.get("search_date"):
-                unmatched.append(r.get("uid"))
-            continue
-        patch = {f: meta[f] for f in _BACKFILL_FIELDS if not r.get(f) and meta.get(f)}
+        patch: dict = {}
+        if meta:
+            for f in _FROM_FORM1:
+                if not r.get(f) and meta.get(f):
+                    patch[f] = meta[f]
+        elif not r.get("search_date"):
+            unmatched.append(r.get("uid"))
+        # Derive submitted_by_email from the submitter name (users table),
+        # falling back to any email the Excel happened to carry.
+        if not r.get("submitted_by_email"):
+            name = patch.get("submitted_by") or r.get("submitted_by") or (meta or {}).get("submitted_by")
+            email = email_by_name.get(_norm(name)) if name else None
+            if not email and meta:
+                email = meta.get("submitted_by_email")
+            if email:
+                patch["submitted_by_email"] = email
         if patch:
             print(f"  {r.get('uid')}: {patch}")
             if not args.dry_run:
-                sb.table("rfp_submissions").update(patch).eq("uid", r["uid"]).execute()
+                safe_execute(sb.table("rfp_submissions").update(patch).eq("uid", r["uid"]))
             fixed += 1
     print(f"{'[dry-run] would backfill' if args.dry_run else 'backfilled'} {fixed} row(s).")
     if unmatched:
