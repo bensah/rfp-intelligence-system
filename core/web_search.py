@@ -88,7 +88,17 @@ def search(user_terms: str, num: int = 10) -> dict:
     }
     try:
         resp = httpx.get(_ENDPOINT, params=params, timeout=12.0)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            # Surface Google's actual reason (e.g. "This project does not have
+            # the access to Custom Search JSON API" → enable the API in the
+            # Cloud console) rather than a bare 'HTTP 403'.
+            msg = f"HTTP {resp.status_code}"
+            try:
+                msg = ((resp.json().get("error") or {}).get("message")) or msg
+            except Exception:
+                pass
+            return {"ok": False, "configured": True, "query": query,
+                    "raw_count": 0, "results": [], "error": msg}
         data = resp.json()
     except Exception as exc:  # noqa: BLE001 — surfaced to the UI
         return {"ok": False, "configured": True, "query": query,
