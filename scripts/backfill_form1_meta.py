@@ -79,33 +79,41 @@ def main() -> None:
             .eq("source", "migration")
         ).data or []
     )
-    fixed, unmatched = 0, []
+    print(f"\nmigration rows in rfp_submissions: {len(db_rows)}")
+    print("  per-row diagnostic (uid | search_date | title-match | patch | title):")
+    fixed, unmatched, write_fail = 0, [], []
     for r in db_rows:
-        meta = by_title.get(_norm(r.get("opportunity_title")))
+        uid = r.get("uid")
+        title = r.get("opportunity_title")
+        meta = by_title.get(_norm(title))
         patch: dict = {}
         if meta:
             for f in _FROM_FORM1:
                 if not r.get(f) and meta.get(f):
                     patch[f] = meta[f]
-        elif not r.get("search_date"):
-            unmatched.append(r.get("uid"))
-        # Derive submitted_by_email from the submitter name (users table),
-        # falling back to any email the Excel happened to carry.
         if not r.get("submitted_by_email"):
             name = patch.get("submitted_by") or r.get("submitted_by") or (meta or {}).get("submitted_by")
-            email = email_by_name.get(_norm(name)) if name else None
-            if not email and meta:
-                email = meta.get("submitted_by_email")
+            email = (email_by_name.get(_norm(name)) if name else None) or (meta or {}).get("submitted_by_email")
             if email:
                 patch["submitted_by_email"] = email
+        flag = "MATCH" if meta else "NO-FORM1-MATCH"
+        sd = "set" if r.get("search_date") else "NULL"
+        print(f"    {str(uid)[:22]:22} sd={sd:4} [{flag:13}] "
+              f"patch={patch or '-'}  :: {str(title)[:42]}")
+        if not meta and not r.get("search_date"):
+            unmatched.append(uid)
         if patch:
-            print(f"  {r.get('uid')}: {patch}")
             if not args.dry_run:
-                safe_execute(sb.table("rfp_submissions").update(patch).eq("uid", r["uid"]))
+                resp = safe_execute(sb.table("rfp_submissions").update(patch).eq("uid", uid))
+                if len(getattr(resp, "data", None) or []) == 0:
+                    write_fail.append(uid)
+                    print("        !! UPDATE wrote 0 rows — likely RLS or uid not found")
             fixed += 1
-    print(f"{'[dry-run] would backfill' if args.dry_run else 'backfilled'} {fixed} row(s).")
+    print(f"\n{'[dry-run] would update' if args.dry_run else 'updated'} {fixed} row(s).")
+    if write_fail:
+        print(f"WRITE FAILURES (0 rows affected): {write_fail}")
     if unmatched:
-        print(f"still-missing (no Form1 title match): {unmatched}")
+        print(f"unmatched (title not in Form1): {unmatched}")
 
 
 if __name__ == "__main__":
