@@ -415,7 +415,12 @@ def _render_search(user: dict) -> None:
     """Top-right 🔍 search box. Captures the query and navigates to the
     dedicated results page (app_pages/search.py) — a search-engine-style
     flow: type a keyword, land on a results list, click through. Rendered on
-    every page via render_app_header()."""
+    every page via render_app_header().
+
+    st.switch_page is called AFTER the `with st.popover()` block closes —
+    calling it inside the popover/form context didn't navigate reliably
+    (the click registered but the page never switched)."""
+    submitted_q = None
     with st.popover("🔍", use_container_width=True):
         with st.form("hdr_search_form", clear_on_submit=False, border=False):
             q = st.text_input(
@@ -424,10 +429,15 @@ def _render_search(user: dict) -> None:
                 label_visibility="collapsed")
             go = st.form_submit_button("Search", type="primary",
                                        use_container_width=True)
-        st.caption("Searches pages, tabs, opportunities and donors.")
         if go and (q or "").strip():
-            st.session_state["site_search_query"] = q.strip()
-            st.switch_page("app_pages/search.py")
+            submitted_q = q.strip()
+        st.caption("Searches pages, tabs, opportunities, donors + the web.")
+        # Always-available fallback link (carries no query; the results page
+        # has its own box) in case in-popover navigation is ever blocked.
+        st.page_link("app_pages/search.py", label="Open search page", icon="🔍")
+    if submitted_q:
+        st.session_state["site_search_query"] = submitted_q
+        st.switch_page("app_pages/search.py")
 
 
 def _render_notifications(user: dict) -> None:
