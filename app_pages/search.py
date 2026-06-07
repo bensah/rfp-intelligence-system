@@ -52,31 +52,33 @@ if total == 0:
                "donor name, a page like *blacklist* or *manage users*, or part "
                "of an opportunity title. You can also search the web below.")
 
+# In-app result groups are collapsible expanders (expanded by default) so you
+# can roll them up to get straight to the web results below.
 # ── Pages & tabs ────────────────────────────────────────────────────────────
 if nav:
-    st.subheader(f"Pages & tabs · {len(nav)}")
-    for label, path in nav:
-        st.page_link(path, label=label, icon="➡️")
+    with st.expander(f"📑 Pages & tabs · {len(nav)}", expanded=True):
+        for label, path in nav:
+            st.page_link(path, label=label, icon="➡️")
 
 # ── Opportunities ───────────────────────────────────────────────────────────
 if opps:
-    st.subheader(f"Opportunities · {len(opps)}")
-    for o in opps:
-        st.page_link(o["page"], label=o["title"], icon="📄")
-        meta = " · ".join(p for p in (
-            o.get("funder"),
-            (f"Deadline {o['deadline']}" if o.get("deadline") else ""),
-            (o.get("decision") or "").title(),
-            (o.get("source") or "").title(),
-        ) if p)
-        if meta:
-            st.caption(meta)
+    with st.expander(f"📄 Opportunities · {len(opps)}", expanded=True):
+        for o in opps:
+            st.page_link(o["page"], label=o["title"], icon="📄")
+            meta = " · ".join(p for p in (
+                o.get("funder"),
+                (f"Deadline {o['deadline']}" if o.get("deadline") else ""),
+                (o.get("decision") or "").title(),
+                (o.get("source") or "").title(),
+            ) if p)
+            if meta:
+                st.caption(meta)
 
 # ── Donors ──────────────────────────────────────────────────────────────────
 if donors:
-    st.subheader(f"Donors · {len(donors)}")
-    for d in donors:
-        st.page_link(d["page"], label=d["name"], icon="🗺️")
+    with st.expander(f"🗺️ Donors · {len(donors)}", expanded=True):
+        for d in donors:
+            st.page_link(d["page"], label=d["name"], icon="🗺️")
 
 # ── Web discovery (Google Programmable Search) ──────────────────────────────
 st.divider()
@@ -99,7 +101,7 @@ else:
         st.session_state["_web_search_for"] = q
     if st.session_state.get("_web_search_for") == q:
         with st.spinner("Searching the web…"):
-            res = web_search.search(q)
+            res = web_search.search(q, num=20)
         if not res.get("ok"):
             st.warning("Web search unavailable: "
                        f"{res.get('error') or 'unknown error'}")
