@@ -21,7 +21,7 @@ import streamlit as st
 
 from core import excel_sync, settings
 from core import permissions
-from db.supabase_client import get_client
+from db.supabase_client import get_client, safe_execute
 
 user = st.session_state["app_user"]
 # Defense in depth: the nav already omits this page for non-admins, but
@@ -1501,14 +1501,16 @@ with tab_scan:
         "page + PDF enrichment) typically takes **3-8 minutes**."
     )
 
-    last = (
-        sb.table("scan_logs")
-        .select("*")
-        .order("scan_date", desc=True)
-        .limit(1)
-        .execute()
-        .data
-    )
+    try:
+        last = (
+            safe_execute(
+                sb.table("scan_logs").select("*").order("scan_date", desc=True).limit(1)
+            ).data
+        )
+    except Exception as exc:
+        last = None
+        st.warning(f"Couldn't load scan history (transient connection issue) — "
+                   f"refresh to retry. ({type(exc).__name__})")
     def _pretty_trigger(raw: str | None) -> str:
         """Strip the audit prefix so the user-facing display reads as a name.
         DB still stores 'manual:<name>' for audit; we just hide the prefix
@@ -1525,12 +1527,12 @@ with tab_scan:
         from datetime import timedelta as _td
         latest_ts = pd.to_datetime(last[0]["scan_date"])
         recent = (
-            sb.table("scan_logs")
-            .select("*")
-            .gte("scan_date", (latest_ts - _td(minutes=5)).isoformat())
-            .order("scan_date", desc=True)
-            .execute()
-            .data
+            safe_execute(
+                sb.table("scan_logs")
+                .select("*")
+                .gte("scan_date", (latest_ts - _td(minutes=5)).isoformat())
+                .order("scan_date", desc=True)
+            ).data
             or []
         )
         # Filter to the same triggered_by as the latest row — protects
