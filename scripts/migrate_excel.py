@@ -530,6 +530,27 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
         print(f"  ⚠ {len(skipped)} row(s) skipped:")
         for r_num, uid, title, reason in skipped:
             print(f"    row {r_num}: uid={uid!r} title={title!r} → {reason}")
+    # Fill submitted_by_email from the users table — the Excel 'Email' column is
+    # blank for almost every row, but submitters are team members with accounts.
+    # Done before upsert so a re-migration never clobbers an email with a blank.
+    if not dry_run and sb is not None:
+        try:
+            _users = sb.table("users").select("name,email").execute().data or []
+            _email_by_name = {
+                (u.get("name") or "").strip().lower(): u.get("email")
+                for u in _users if u.get("name") and u.get("email")
+            }
+            filled = 0
+            for _r in rfp_rows:
+                if not _r.get("submitted_by_email"):
+                    _e = _email_by_name.get((_r.get("submitted_by") or "").strip().lower())
+                    if _e:
+                        _r["submitted_by_email"] = _e
+                        filled += 1
+            if filled:
+                print(f"  derived submitted_by_email for {filled} row(s) from users")
+        except Exception as exc:
+            print(f"  (skipped email derivation: {exc})")
     upsert("rfp_submissions", rfp_rows, conflict_key="uid")
 
     # --- meeting_logs (Meeting_Log) — header auto-detected
