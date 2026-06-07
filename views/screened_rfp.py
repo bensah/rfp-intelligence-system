@@ -293,7 +293,7 @@ else:
         "Title": show["opportunity_title"].fillna("—"),
         "Funder": show["funding_agency"].fillna("—"),
         "Role": show["applicant_role"].fillna("—"),
-        "Deadline": pd.to_datetime(show["submission_deadline"], errors="coerce").dt.date,
+        "Deadline": pd.to_datetime(show["submission_deadline"], errors="coerce", format="ISO8601").dt.date,
         "Score": show["alignment_score"].fillna(0).round(0),
         "Decision": show["decision"].fillna("—"),
         "Auto-rec": show["auto_recommendation"].fillna("—"),
