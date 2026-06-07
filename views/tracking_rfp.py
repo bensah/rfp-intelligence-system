@@ -67,7 +67,7 @@ def _fetch(year: int) -> pd.DataFrame:
         return df
 
     # YTD by submitted_at
-    df["_submitted_at"] = pd.to_datetime(df["submitted_at"], errors="coerce")
+    df["_submitted_at"] = pd.to_datetime(df["submitted_at"], errors="coerce", format="ISO8601")
     df = df[df["_submitted_at"].dt.year == year].copy()
 
     # Exclude submitted/approved/completed
@@ -81,7 +81,7 @@ def _fetch(year: int) -> pd.DataFrame:
                 .str.lower().isin({"completed"})].copy()
 
     # Not overdue (allow null deadlines)
-    df["_deadline_date"] = pd.to_datetime(df["submission_deadline"], errors="coerce").dt.date
+    df["_deadline_date"] = pd.to_datetime(df["submission_deadline"], errors="coerce", format="ISO8601").dt.date
     df = df[df["_deadline_date"].isna() | (df["_deadline_date"] >= today)].copy()
 
     if df.empty:
