@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from core import deep_read
 from core.auto_scorer import auto_score, is_eligible
 from core.deduplicator import find_duplicates
 from core.policies import get_policies
@@ -276,12 +277,26 @@ def ingest_candidates(
     for i, cand in enumerate(candidates):
         if not (cand.get("opportunity_title") or "").strip():
             continue
-        # Country + theme gate
+        # First-pass eligibility gate (cheap: URL/title/keyword/deadline/scope).
         ok, reason = is_eligible(cand, policies)
         if not ok:
             rejected += 1
             log.info("reject: %s — %s", cand.get("opportunity_title", "")[:60], reason)
             continue
+
+        # Deep-read survivors that still lack a deadline (JS-rendered portals,
+        # prose-only windows), then RE-GATE on the accurate data so a freshly
+        # found past deadline / excluded scope / non-call now rejects. No-ops
+        # where Chromium isn't available (Streamlit Cloud); active in the
+        # GitHub Actions weekly scan.
+        if not cand.get("submission_deadline") and deep_read.available():
+            if deep_read.enrich(cand):
+                ok, reason = is_eligible(cand, policies)
+                if not ok:
+                    rejected += 1
+                    log.info("reject (post deep-read): %s — %s",
+                             cand.get("opportunity_title", "")[:60], reason)
+                    continue
 
         # Find duplicates using a minimal projection (find_duplicates only
         # reads these keys).

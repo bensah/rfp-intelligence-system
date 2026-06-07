@@ -1,0 +1,48 @@
+name: Weekly RFP scan
+
+# Runs the donor-source scanner with the Playwright "deep read" enabled — which
+# can't run on Streamlit Community Cloud (no Chromium, memory-capped). This job
+# installs Chromium and writes new RFPs straight to the same Supabase the live
+# app reads, so accurate, deeply-read opportunities appear there.
+#
+# ONE-TIME SETUP: add two repository secrets under
+#   Settings -> Secrets and variables -> Actions -> New repository secret
+#     SUPABASE_URL   (same value the app uses)
+#     SUPABASE_KEY   (service-role key, or anon if RLS write policies are in place)
+# Then trigger manually via the "Run workflow" button, or wait for the weekly run.
+
+on:
+  schedule:
+    - cron: "0 6 * * 5"          # Fridays 06:00 UTC
+  workflow_dispatch: {}          # manual "Run workflow" button
+
+concurrency:
+  group: rfp-scan
+  cancel-in-progress: false      # never interrupt an in-flight scan mid-write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies + Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run scan (deep read enabled)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          RFPIS_DEEP_READ: "1"
+          SCAN_INCLUDE_SEEDS: "1"
+          SCAN_PARALLELISM: "6"
+        run: python scripts/run_scan.py --triggered-by cron
