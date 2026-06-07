@@ -357,6 +357,56 @@ _GLOBAL_CSS = f"""
 """
 
 
+def _render_user_menu() -> None:
+    """Top-right person-icon dropdown — Help, Profile, Settings (admins),
+    Sign Out. Introduced in the 2026-06-07 redesign; replaces the sidebar
+    Logout button. Rendered on every page via render_app_header().
+
+    Sign Out uses streamlit-authenticator's logout (deletes the auth cookie
+    + clears its auth state). A `callback` ALSO clears our own `app_user`
+    session cache — without it the cookie would be gone but ensure_logged_in()
+    would still short-circuit on the cached user and appear logged in.
+    """
+    from core import permissions as _perms  # local import — avoid cycle
+    from auth.authenticator import get_authenticator  # local — avoid cycle
+
+    u = st.session_state.get("app_user") or {}
+    if not u:
+        return
+
+    with st.popover("👤", use_container_width=True):
+        st.markdown(
+            f"<div style='font-weight:650;color:{THEME_NAVY};"
+            f"font-size:0.95rem;'>{u.get('name') or u.get('email')}</div>"
+            f"<div style='font-size:0.78rem;color:{THEME_SLATE};'>"
+            f"{u.get('email','')}</div>",
+            unsafe_allow_html=True,
+        )
+        st.divider()
+        st.page_link("app_pages/help.py", label="Help", icon="❓")
+        st.page_link("app_pages/profile.py", label="Profile", icon="👤")
+        if _perms.is_admin(u):
+            st.page_link("app_pages/admin.py", label="Settings", icon="⚙️")
+        st.divider()
+        if st.button("🚪 Sign Out", key="topbar_signout",
+                     use_container_width=True):
+            # Plain button (not auth.logout) so we control ordering: delete
+            # the auth cookie (a refresh won't auto-restore the session),
+            # clear our own session cache + the library's auth keys, then
+            # st.rerun() straight into the login gate. auth.logout() does
+            # NOT rerun, so clearing app_user there would let the now-userless
+            # page body run and KeyError — this avoids that entirely.
+            try:
+                get_authenticator().cookie_controller.delete_cookie()
+            except Exception:
+                pass
+            for k in ("app_user", "_post_login_nav_synced",
+                      "_auth_cookie_settled", "authentication_status",
+                      "name", "username"):
+                st.session_state.pop(k, None)
+            st.rerun()
+
+
 def render_app_header() -> None:
     """Top-of-page branding.
 
@@ -374,29 +424,27 @@ def render_app_header() -> None:
     # ────────────────── Global theme CSS ──────────────────────────────
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
 
-    # ────────────────── Role-gated nav hiding ─────────────────────────
-    # The Admin page is gated on entry by `permissions.is_admin()`, but
-    # the multi-page nav still SHOWS the link to everyone by default —
-    # creating a discoverable surface non-admin users can't actually
-    # use. Always inject an EXPLICIT visibility rule (block vs none)
-    # rather than conditionally injecting hide-only — a hide-only CSS
-    # from a prior rerun (when role was different / not yet loaded)
-    # can otherwise persist in the DOM and incorrectly hide the link
-    # for a user who's since been upgraded. The block rule overrides
-    # any stale hide; the hide rule is fresh each render.
-    from core import permissions as _perms  # local import — avoid cycle
-    _u = st.session_state.get("app_user") or {}
-    _visibility = "block" if _perms.is_admin(_u) else "none"
+    # ────────────────── Hide user-menu pages from the sidebar ─────────
+    # Profile / Help / Settings are registered with st.navigation (so they
+    # have stable URLs and are reachable via st.page_link), but as of the
+    # 2026-06-07 redesign they live in the top-right user menu, NOT the
+    # sidebar rail. Hide their sidebar nav links by URL-slug suffix. The
+    # `i` flag makes the match case-insensitive, so it works whether
+    # Streamlit derives the href from the url_path (lowercase) or the page
+    # title (capitalised). Settings is additionally omitted from the nav
+    # entirely for non-admins (App.py) and its own page guard rejects deep
+    # links — this CSS just keeps the rail clean for everyone.
     st.markdown(
-        f"""
+        """
         <style>
-          /* Match the Admin nav link by its href suffix. Streamlit
-             names sidebar links after the page-file basename. */
-          [data-testid="stSidebarNav"] a[href$="/Admin"],
-          [data-testid="stSidebarNavLink"][href$="/Admin"],
-          section[data-testid="stSidebar"] a[href$="/Admin"] {{
-            display: {_visibility} !important;
-          }}
+          [data-testid="stSidebarNav"] a[href$="/profile" i],
+          [data-testid="stSidebarNav"] a[href$="/help" i],
+          [data-testid="stSidebarNav"] a[href$="/settings" i],
+          section[data-testid="stSidebar"] a[href$="/profile" i],
+          section[data-testid="stSidebar"] a[href$="/help" i],
+          section[data-testid="stSidebar"] a[href$="/settings" i] {
+            display: none !important;
+          }
         </style>
         """,
         unsafe_allow_html=True,
@@ -414,7 +462,9 @@ def render_app_header() -> None:
     except Exception:
         org_bytes = None
 
-    left, _spacer = st.columns([4, 6], gap="small")
+    left, _spacer, right = st.columns([4, 5, 1], gap="small")
+    with right:
+        _render_user_menu()
     with left:
         l_icon, l_text = st.columns([1, 4], gap="small")
         with l_icon:

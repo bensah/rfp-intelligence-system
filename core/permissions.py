@@ -60,21 +60,21 @@ ACCESS_MATRIX: dict[str, dict[str, str]] = {
     "Actions":                    {"admin": "edit",    "user": "edit"},
     "Report":                     {"admin": "edit",    "user": "view"},
     "Donors":                     {"admin": "edit",    "user": "view"},
-    "User → My Profile":          {"admin": "self",    "user": "self"},
-    "User → Change Password":     {"admin": "self",    "user": "self"},
-    "User → My Access":           {"admin": "view",    "user": "view"},
+    "Profile → My Profile":       {"admin": "self",    "user": "self"},
+    "Profile → Change Password":  {"admin": "self",    "user": "self"},
+
+    # ── Settings page (top-right menu; admin / super_user only) ────────
     # Note: "Manage Users" capability differs WITHIN the admin column —
     # super_user can manage admins + other super_users; admin can
     # manage reviewers + collaborators only. The matrix column shows
     # "manage" for both since both see the tab; can_manage_user() is
     # the per-action gate.
-    "User → Manage Users":        {"admin": "all",     "user": "hidden"},
-
-    # ── Admin page (currently hidden from non-admin via CSS) ───────────
-    "Admin → Settings":           {"admin": "edit",    "user": "hidden"},
-    "Admin → Data":               {"admin": "edit",    "user": "hidden"},
-    "Admin → Sources":            {"admin": "edit",    "user": "view+add"},
-    "Admin → Manual Scan":        {"admin": "trigger", "user": "hidden"},
+    "Settings → Manage Users":    {"admin": "all",     "user": "hidden"},
+    "Settings → User Access":     {"admin": "view",    "user": "hidden"},
+    "Settings → Setup":           {"admin": "edit",    "user": "hidden"},
+    "Settings → Records":         {"admin": "edit",    "user": "hidden"},
+    "Settings → Sources":         {"admin": "edit",    "user": "view+add"},
+    "Settings → Manual Scan":     {"admin": "trigger", "user": "hidden"},
 }
 
 
@@ -99,6 +99,23 @@ def role_group(user: dict[str, Any] | None) -> str:
     """Map raw DB role → access-matrix column key. Super_user + admin
     collapse to 'admin'; reviewer + collaborator collapse to 'user'."""
     return "admin" if is_admin(user) else "user"
+
+
+# Friendly, audience-facing labels for the raw DB role values. "collaborator"
+# (the default for most teammates) reads as "Contributor" in the UI. Shown in
+# the sidebar identity block + the Help page.
+ROLE_LABELS: dict[str, str] = {
+    "collaborator": "Contributor",
+    "reviewer": "Reviewer",
+    "admin": "Admin",
+    "super_user": "Super User",
+}
+
+
+def role_label(user: dict[str, Any] | None) -> str:
+    """Human-friendly label for the user's role (e.g. 'Contributor')."""
+    raw = (user or {}).get("role")
+    return ROLE_LABELS.get(raw, (raw or "—").title())
 
 
 # ---------------------------------------------------------------------------
