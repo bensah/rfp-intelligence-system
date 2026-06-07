@@ -143,7 +143,7 @@ def _fetch(year: int):
     meetings = pd.DataFrame(sbc.table("meeting_logs").select("*").execute().data or [])
 
     if not rfps.empty:
-        rfps["_submitted_at"] = pd.to_datetime(rfps["submitted_at"], errors="coerce")
+        rfps["_submitted_at"] = pd.to_datetime(rfps["submitted_at"], errors="coerce", format="ISO8601")
         rfps = rfps[rfps["_submitted_at"].dt.year == year].copy()
         rfps["_dtd"] = rfps["submission_deadline"].apply(days_to_deadline)
         rfps["_dstat"] = rfps["submission_deadline"].apply(deadline_status)

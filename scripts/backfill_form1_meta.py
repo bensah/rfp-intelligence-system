@@ -29,9 +29,10 @@ from migrate_excel import (  # noqa: E402
 )
 from db.supabase_client import get_client, safe_execute  # noqa: E402
 
-# search_date + submitted_by come from Form1; submitted_by_email is derived from
-# the users table (the Excel 'Email' column is blank for almost every row).
-_FROM_FORM1 = ("search_date", "submitted_by")
+# search_date + submitted_by + applicant_role come from Form1; submitted_by_email
+# is derived from the users table (the Excel 'Email' column is blank for almost
+# every row). applicant_role lives under the "the organisation Role" header (col Q).
+_FROM_FORM1 = ("search_date", "submitted_by", "applicant_role")
 
 
 def _norm(t) -> str:
@@ -60,6 +61,7 @@ def main() -> None:
             by_title[key] = {
                 "search_date": rec.get("search_date"),
                 "submitted_by": rec.get("submitted_by"),
+                "applicant_role": rec.get("applicant_role"),
                 "submitted_by_email": rec.get("submitted_by_email"),  # rarely set
             }
     print(f"Form1: {len(by_title)} titles indexed")
@@ -75,7 +77,7 @@ def main() -> None:
     db_rows = (
         safe_execute(
             sb.table("rfp_submissions")
-            .select("uid,opportunity_title,search_date,submitted_by,submitted_by_email")
+            .select("uid,opportunity_title,search_date,submitted_by,applicant_role,submitted_by_email")
             .eq("source", "migration")
         ).data or []
     )
