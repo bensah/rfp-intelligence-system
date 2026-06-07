@@ -61,6 +61,7 @@ def _pages(include_admin: bool) -> list:
         # ── Top-right user-menu pages (sidebar links hidden via CSS) ──
         st.Page("app_pages/profile.py", title="Profile", icon="👤", url_path="profile"),
         st.Page("app_pages/help.py", title="Help", icon="❓", url_path="help"),
+        st.Page("app_pages/search.py", title="Search", icon="🔍", url_path="search"),
     ]
     if include_admin:
         pages.append(st.Page("app_pages/admin.py", title="Settings", icon="⚙️", url_path="settings"))
