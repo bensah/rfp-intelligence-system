@@ -221,7 +221,9 @@ with tab_settings:
         "never in the public repo. 'Other' is added automatically so a one-off "
         "name can still be typed in."
     )
-    _current_members = settings.get_team_members() or []
+    # Defensive: never let the optional team editor crash the whole Admin
+    # panel (e.g. during a hot-reload where core.settings is momentarily stale).
+    _current_members = (getattr(settings, "get_team_members", lambda: None)() or [])
     _members_text = st.text_area(
         "One team member per line",
         value="\n".join(_current_members),
