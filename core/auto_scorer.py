@@ -445,6 +445,41 @@ _SEARCH_URL_PATTERN_AS = re.compile(
     re.IGNORECASE,
 )
 
+# Listing / index pages that ENUMERATE calls (e.g. AFD
+# /en/calls-for-projects/list?status[ongoing]=... ). These must never be posted
+# as a record — they are crawl seeds; the scanner extracts the individual call
+# pages from them. A real call is a specific slug (/calls-for-projects/<title>),
+# not /list, /all, a status-filtered query, or a paginated/faceted index.
+_LISTING_URL_RE = re.compile(
+    r"(?:"
+    r"/list(?:/|\?|$)"                     # .../calls-for-projects/list ; /list?…
+    r"|/all(?:/|\?|$)"                     # .../grants/all
+    r"|/archive[sd]?(?:/|\?|$)"            # .../archive , /archived
+    r"|/explore(?:/|\?|$)"                 # opendata /explore
+    r"|[?&](?:status|statut)(?:%5b|\[)"    # ?status[ongoing]=…  (filtered list)
+    r"|[?&]page=\d"                        # paginated index
+    r"|[?&]disjunctive\."                  # faceted catalog listing
+    r")",
+    re.IGNORECASE,
+)
+
+# A TITLE that is ONLY a generic calls-section heading ("Calls for projects",
+# "Funding opportunities", "Open calls") is a listing index, not a single call.
+# Anchored ^...$ so a specific call ("Call for Proposals: <subject>", "...2026
+# call for project proposals") is NOT matched (it has a subject beyond the
+# heading).
+_LISTING_TITLE_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:calls?|requests?|notices?|invitations?)\s+for\s+"
+    r"(?:projects?|proposals?|applications?|tenders?|grants?"
+    r"|expressions?\s+of\s+interest|concept\s+notes?)"
+    r"|(?:funding|grant|grants|financing)\s+opportunit(?:y|ies)"
+    r"|open\s+calls?|current\s+(?:calls?|opportunit(?:y|ies))"
+    r"|all\s+(?:calls?|grants?|opportunit(?:y|ies))"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # RFP-signal gate — is this actually a funding CALL, or a process / info /
@@ -626,6 +661,11 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     link = candidate.get("opportunity_link") or ""
     if candidate.get("_is_search_page") or _SEARCH_URL_PATTERN_AS.search(link):
         return False, "URL is a search / filter results page, not a grant detail"
+    # Listing / index of calls (never a single opportunity) — crawl seed only.
+    if _LISTING_URL_RE.search(link):
+        return False, "URL lists / indexes calls, not a single call"
+    if _LISTING_TITLE_RE.match((candidate.get("opportunity_title") or "").strip()):
+        return False, "title is a generic calls-listing heading, not a single call"
     # DevelopmentAid past-tense grant (Awarded / Closed). Set by the
     # bespoke enricher in scraper._enrich_developmentaid — those listings
     # show on the catalog but aren't open opportunities.
