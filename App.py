@@ -42,18 +42,28 @@ from core.app_header import render_app_header  # noqa: E402
 def _pages(include_admin: bool) -> list:
     """Explicit url_path on each page gives every page a stable URL slug, so a
     browser refresh on (say) /pipelines reloads that page. Home is the default
-    page and lives at the app root."""
+    page and lives at the app root.
+
+    Two groups:
+      * SIDEBAR pages — the six everyday work surfaces, shown in the nav rail.
+      * MENU pages (Profile, Help, Settings) — registered with st.navigation so
+        they have stable URLs and are reachable via st.switch_page / st.page_link,
+        but their sidebar nav links are HIDDEN by CSS (core/app_header.py) so
+        they live only in the top-right user menu instead of cluttering the rail.
+    """
     pages = [
         st.Page("app_pages/home.py", title="Home", icon="🏠", default=True),
         st.Page("app_pages/pipelines.py", title="Pipelines", icon="📚", url_path="pipelines"),
         st.Page("app_pages/grants.py", title="Grants", icon="💼", url_path="grants"),
         st.Page("app_pages/actions.py", title="Actions", icon="🗒️", url_path="actions"),
         st.Page("app_pages/report.py", title="Report", icon="📊", url_path="report"),
-        st.Page("app_pages/user.py", title="User", icon="👤", url_path="user"),
         st.Page("app_pages/donors.py", title="Donors", icon="🗺️", url_path="donors"),
+        # ── Top-right user-menu pages (sidebar links hidden via CSS) ──
+        st.Page("app_pages/profile.py", title="Profile", icon="👤", url_path="profile"),
+        st.Page("app_pages/help.py", title="Help", icon="❓", url_path="help"),
     ]
     if include_admin:
-        pages.append(st.Page("app_pages/admin.py", title="Admin", icon="⚙️", url_path="admin"))
+        pages.append(st.Page("app_pages/admin.py", title="Settings", icon="⚙️", url_path="settings"))
     return pages
 
 
