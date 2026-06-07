@@ -659,6 +659,14 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     # Search/filter result URLs are not grant detail pages — they re-list
     # grants on click. Reject before any other check.
     link = candidate.get("opportunity_link") or ""
+    # User-managed blacklist (Admin → Blacklist / 🚫 on Records). Hardest reject.
+    try:
+        from core import blacklist as _bl
+        _hit = _bl.is_blacklisted(link)
+    except Exception:
+        _hit = None
+    if _hit:
+        return False, f"blacklisted source ({_hit})"
     if candidate.get("_is_search_page") or _SEARCH_URL_PATTERN_AS.search(link):
         return False, "URL is a search / filter results page, not a grant detail"
     # Listing / index of calls (never a single opportunity) — crawl seed only.
