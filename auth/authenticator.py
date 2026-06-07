@@ -197,24 +197,24 @@ def login_gate() -> Optional[dict[str, Any]]:
 
 
 def _render_sidebar_user(user: dict[str, Any], auth=None) -> None:
-    """Render 'Signed in as ... · Role: ... · Logout' in the sidebar.
+    """Render 'Signed in as ... · Role: ...' at the bottom of the sidebar.
+
+    The Sign Out control moved to the top-right user menu
+    (`core/app_header._render_user_menu`) in the 2026-06-07 redesign, so no
+    logout button is drawn here — just the identity + a friendly role badge
+    (e.g. collaborator → "Contributor"). The `auth` param is retained for
+    call-site compatibility but is now unused.
 
     Called from BOTH login_gate() (first login) AND ensure_logged_in()
-    (subsequent page loads where the session is already cached). Before
-    this split, ensure_logged_in() short-circuited on the session cache
-    and the user block only rendered on Home → it silently disappeared
-    on every other page after navigation.
+    (subsequent page loads where the session is already cached) so the
+    block persists on every page, not just Home.
     """
+    from core import permissions  # local import — avoid import cycle
     name = user.get("name") or user.get("email")
-    role = user.get("role")
-    if auth is None:
-        auth = get_authenticator()
     with st.sidebar:
-        st.caption(f"Signed in as **{name}**  \nRole: `{role}`")
-        try:
-            auth.logout(location="sidebar")
-        except TypeError:
-            auth.logout("Logout", "sidebar")
+        st.caption(
+            f"Signed in as **{name}**  \n"
+            f"Role: `{permissions.role_label(user)}`")
 
 
 def _fetch_user(email: str) -> Optional[dict[str, Any]]:

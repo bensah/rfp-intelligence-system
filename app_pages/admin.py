@@ -22,6 +22,7 @@ import streamlit as st
 from core import excel_sync, settings
 from core import permissions
 from db.supabase_client import get_client, safe_execute
+from views.account_sections import render_manage_users, render_user_access
 
 user = st.session_state["app_user"]
 # Defense in depth: the nav already omits this page for non-admins, but
@@ -31,11 +32,22 @@ if not permissions.is_admin(user):
     st.stop()
 
 sb = get_client()
-st.title("Admin Panel")
+st.title("Settings")
 
-tab_settings, tab_data, tab_sources, tab_scan, tab_blacklist = st.tabs(
-    ["Settings", "Records", "Sources", "Manual Scan", "Blacklist"]
+(tab_settings, tab_users, tab_access, tab_data, tab_sources,
+ tab_scan, tab_blacklist) = st.tabs(
+    ["Setup", "Manage Users", "User Access", "Records", "Sources",
+     "Manual Scan", "Blacklist"]
 )
+
+# User administration tabs — moved here from the old User page in the
+# 2026-06-07 nav redesign (admin / super_user only; the page is already
+# gated above). Logic lives in views/account_sections.py so the Profile
+# page and these tabs share one implementation.
+with tab_users:
+    render_manage_users(user, sb)
+with tab_access:
+    render_user_access(user)
 
 
 # -----------------------------------------------------------------------------
