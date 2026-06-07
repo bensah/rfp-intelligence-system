@@ -412,34 +412,22 @@ def _render_user_menu() -> None:
 
 
 def _render_search(user: dict) -> None:
-    """Top-right 🔍 site search — jump to any page/tab/feature or find an
-    opportunity or donor. Rendered on every page via render_app_header()."""
-    from core import permissions as _perms   # local import — avoid cycle
-    from core import site_search
-
-    is_admin = _perms.is_admin(user or {})
+    """Top-right 🔍 search box. Captures the query and navigates to the
+    dedicated results page (app_pages/search.py) — a search-engine-style
+    flow: type a keyword, land on a results list, click through. Rendered on
+    every page via render_app_header()."""
     with st.popover("🔍", use_container_width=True):
-        q = st.text_input(
-            "Search", key="site_search_q",
-            placeholder="Search pages, tabs, opportunities, donors…",
-            label_visibility="collapsed")
-        q = (q or "").strip()
-        if len(q) < 2:
-            st.caption("Type at least 2 characters to search the site.")
-            return
-        nav = site_search.search_nav(q, is_admin)
-        data = site_search.search_data(q)
-        if not nav and not data:
-            st.caption(f"No matches for “{q}”.")
-            return
-        if nav:
-            st.caption("PAGES & TABS")
-            for label, path in nav[:8]:
-                st.page_link(path, label=label, icon="➡️")
-        if data:
-            st.caption("IN YOUR DATA")
-            for label, path, kind in data[:8]:
-                st.page_link(path, label=label, icon="🔗", help=kind)
+        with st.form("hdr_search_form", clear_on_submit=False, border=False):
+            q = st.text_input(
+                "Search", key="hdr_search_q",
+                placeholder="Search the site…",
+                label_visibility="collapsed")
+            go = st.form_submit_button("Search", type="primary",
+                                       use_container_width=True)
+        st.caption("Searches pages, tabs, opportunities and donors.")
+        if go and (q or "").strip():
+            st.session_state["site_search_query"] = q.strip()
+            st.switch_page("app_pages/search.py")
 
 
 def _render_notifications(user: dict) -> None:
@@ -516,9 +504,11 @@ def render_app_header() -> None:
         <style>
           [data-testid="stSidebarNav"] a[href$="/profile" i],
           [data-testid="stSidebarNav"] a[href$="/help" i],
+          [data-testid="stSidebarNav"] a[href$="/search" i],
           [data-testid="stSidebarNav"] a[href$="/settings" i],
           section[data-testid="stSidebar"] a[href$="/profile" i],
           section[data-testid="stSidebar"] a[href$="/help" i],
+          section[data-testid="stSidebar"] a[href$="/search" i],
           section[data-testid="stSidebar"] a[href$="/settings" i] {
             display: none !important;
           }
