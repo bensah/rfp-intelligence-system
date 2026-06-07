@@ -45,6 +45,15 @@ st.markdown(
     "4. **Tracked** — anything you Proceed on moves into the active "
     "pipeline with owners + deadlines.")
 
+st.subheader("Top bar")
+st.markdown(
+    "- **🔍 Search** — jump anywhere: type a page, tab or feature name "
+    "(e.g. *blacklist*, *manage users*, *review*) or part of an opportunity "
+    "title or donor name to navigate straight to it.\n"
+    "- **🔔 Notifications** — an org-wide activity feed: when auto-scans run "
+    "(and when the next one is scheduled) plus newly added opportunities. The "
+    "badge counts items since you last hit *Mark all as read*.")
+
 st.subheader("Your account")
 st.markdown(
     "- Use the **person icon (top-right)** → **Profile** to update your "
