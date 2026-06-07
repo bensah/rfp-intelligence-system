@@ -446,6 +446,178 @@ _SEARCH_URL_PATTERN_AS = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# RFP-signal gate — is this actually a funding CALL, or a process / info /
+# error page that merely lives on a donor's site? This is the #1 false-positive
+# source: hub pages like "grant life cycle", "Annual Funding Decisions and
+# Disbursements", "TAIEX", "complementary financing" that carry no real call.
+#
+# A candidate PASSES this gate iff:
+#   • it has STRONG call wording (an RFP/EOI/NOFO-class phrase or acronym), OR
+#   • it has WEAK/generic call wording AND concrete request details
+#     (a submission deadline or an award amount), OR
+#   • it comes from a funding-specific source (NOT an open-web/Google search)
+#     AND carries concrete request details.
+# It is REJECTED for: error / unavailable pages; process/info/reporting pages
+# that lack strong call wording; or anything with no call signal at all.
+# The opportunity URL is folded in (hyphens/slashes -> spaces) so a path like
+# /grant-life-cycle/ or /…-complementary-financing trips the same patterns.
+# ---------------------------------------------------------------------------
+_RFP_STRONG_PHRASES = (
+    "request for proposal", "request for proposals",
+    "request for application", "request for applications",
+    "request for information",
+    "request for expression of interest", "request for expressions of interest",
+    "call for expression of interest", "call for expressions of interest",
+    "call for proposal", "call for proposals", "calls for proposals",
+    "call for application", "call for applications", "calls for applications",
+    "call for concept note", "call for concept notes",
+    "request for concept note", "request for concept notes",
+    "call for project", "call for projects", "calls for projects",
+    "call for nominations",
+    "notice of funding opportunity", "funding opportunity announcement",
+    "notice of funding availability", "annual program statement",
+    "broad agency announcement", "invitation to tender",
+    "call for tender", "call for tenders", "request for quotation",
+    "grand challenge",
+)
+# Whole UPPERCASE acronyms only (RFPs/NOFOs plural handled by the regex).
+_RFP_ACRONYMS = frozenset({
+    "RFP", "RFA", "RFI", "RFQ", "EOI", "REOI", "CEOI",
+    "CFP", "CFA", "NOFO", "NOFA", "FOA", "APS", "BAA", "ITT",
+})
+_ACRONYM_TOKEN_RE = re.compile(r"\b([A-Z]{2,6})s?\b")
+# Generic / ambiguous wording — a call MIGHT be here; accept only WITH details.
+_RFP_WEAK_PHRASES = (
+    "funding opportunity", "funding opportunities",
+    "grant opportunity", "grant opportunities",
+    "open call", "open for applications", "now accepting applications",
+    "accepting applications", "applications are open",
+    "apply now", "submit a proposal", "submit your proposal",
+    "submit a concept note", "application deadline", "deadline to apply",
+    "closing date",
+)
+# Process / informational / navigational PAGE-TYPE signals — NOT calls. These
+# are matched against the TITLE + URL only (the decisive page-type signal); a
+# real call would carry RFP/CFP/EOI wording in its title. Matched even when the
+# page BODY mentions FOAs/NOFOs (e.g. a CDC "grant life-cycle overview" that
+# merely describes the funding process — the title gives it away).
+_NON_RFP_PATTERNS = (
+    "grant life cycle", "grant lifecycle", "life cycle", "lifecycle",
+    "applying for funding", "grant cycle", "grant process", "grants process",
+    "annual funding decision", "decisions and disbursement", "disbursement",
+    "principal recipient", "recipient reporting", "recipients", "recipient",
+    " reporting", "grant implementation", "implementation toolkit", "toolkit",
+    "guideline", "guidance", "how to apply", "how we work", "welcome packet",
+    "prepare to apply", "eligibility information", "application package",
+    "resources for", "frequently asked", "results framework", "track record",
+    "complementary financing", "source of financing", "blended finance",
+    "technical assistance", "information exchange",
+    "past project", "completed project", "previously funded",
+    "overview of", "process overview", "our grantees", "grantee report",
+    "awarded grant", "annual report", "fact sheet", "factsheet",
+    "case study", "case studies", "agenda", "innovation agenda",
+    "strategic shift", "strategic plan", "our strategy",
+    "glossary", "terms and conditions", "privacy", "personal data",
+    "data protection", "press release", "newsletter", "blog",
+    "webinar", "who we are", "about us", "contact us", "careers",
+    "document library", "publication", "policy brief", "knowledge hub",
+    "matching fund", "investment case", "financial management",
+    "annual meeting",
+)
+_ERROR_PAGE_PATTERNS = (
+    "page not found", "404 not found", "error 404", "404 error",
+    "page doesn't exist", "page does not exist",
+    "page can't be found", "page cannot be found",
+    "page you are looking for", "page you requested",
+    "no longer available", "access denied", "403 forbidden",
+    "service unavailable", "temporarily unavailable",
+    "something went wrong", "this page is unavailable",
+    "bad gateway", "internal server error",
+)
+
+
+def _has_rfp_acronym(raw_text: str) -> bool:
+    """True if a whole UPPERCASE RFP-class acronym (RFP, EOI, NOFO, …) appears.
+    Case-sensitive on purpose — these are shouted in the wild; a lower-case
+    'foa'/'aps' inside an ordinary word must not trigger."""
+    return any(m.group(1) in _RFP_ACRONYMS
+               for m in _ACRONYM_TOKEN_RE.finditer(raw_text or ""))
+
+
+def _has_request_details(candidate: dict[str, Any]) -> bool:
+    """Concrete signs of an actual call: a submission deadline or an award
+    amount. (Description alone doesn't count — hub pages have descriptions.)"""
+    if candidate.get("submission_deadline"):
+        return True
+    ev = candidate.get("estimated_value")
+    try:
+        return ev not in (None, "", 0, "0") and float(ev) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_open_web_source(candidate: dict[str, Any]) -> bool:
+    """True for open-web search results (Google Alerts) — these need explicit
+    call wording, not just a deadline, because the web is full of donor pages
+    that aren't calls. Funding-specific feeds (grants.gov, NIH, ReliefWeb) and
+    curated donor listing pages are trusted to be funding-oriented."""
+    return "google alert" in (candidate.get("_source_origin") or "").lower()
+
+
+def rfp_signal_gate(candidate: dict[str, Any]) -> tuple[bool, str]:
+    """Composite verification that this is a real funding CALL. See header.
+
+    Order matters: error -> page-type (title/URL) -> title call-wording ->
+    body call-wording + details -> generic wording + details -> trusted
+    funding source + details -> reject. The page TYPE (from title + URL) is
+    decisive: a process/overview page that merely mentions 'FOA'/'NOFO' in its
+    body is still rejected."""
+    title = candidate.get("opportunity_title") or ""
+    desc = candidate.get("brief_description") or ""
+    notes = candidate.get("notes") or ""
+    link = candidate.get("opportunity_link") or ""
+    link_words = re.sub(r"[-_/]+", " ", link.lower())
+    title_url = f"{title.lower()} {link_words}"               # page-type signal
+    body = "\n".join([title.lower(), desc.lower(), notes.lower()])
+
+    # 1. Error / unavailable page.
+    if candidate.get("_error_page") or any(
+        p in body or p in link_words for p in _ERROR_PAGE_PATTERNS
+    ):
+        return False, "error / unavailable page (not a live RFP)"
+
+    # Does the TITLE/URL itself carry explicit call wording?
+    title_strong = (any(p in title_url for p in _RFP_STRONG_PHRASES)
+                    or _has_rfp_acronym(title))
+
+    # 2. Page-type screen: a process / informational / navigational page (from
+    #    its title or URL) with NO call wording in the title is rejected — even
+    #    if the body text mentions FOAs/NOFOs while describing the process.
+    if any(p in title_url for p in _NON_RFP_PATTERNS) and not title_strong:
+        return False, "process / informational page (title/URL is not a call)"
+
+    # 3. Explicit call wording in the title/URL → it's a call.
+    if title_strong:
+        return True, ""
+
+    details = _has_request_details(candidate)
+    open_web = _is_open_web_source(candidate)
+
+    # 4. Call wording in the body + concrete request details (deadline/amount).
+    body_strong = (any(p in body for p in _RFP_STRONG_PHRASES)
+                   or _has_rfp_acronym(f"{title} {desc}"))
+    if body_strong and details:
+        return True, ""
+    # 5. Generic/weak call wording + concrete details.
+    if any(p in body for p in _RFP_WEAK_PHRASES) and details:
+        return True, ""
+    # 6. Trusted funding-specific source (not open-web) + concrete details.
+    if details and not open_web:
+        return True, ""
+    return False, "no valid RFP signal (no call wording, deadline, or award amount)"
+
+
 def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
     """Combined gate: search-URL, language, feasibility, deadline, country,
     theme. Logged in scan output for transparency."""
@@ -459,6 +631,11 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     # show on the catalog but aren't open opportunities.
     if candidate.get("_past_tense_grant"):
         return False, "past-tense grant (DevelopmentAid status: Awarded / Closed)"
+    # Not-an-RFP gate — error pages + process/informational pages that live on
+    # donor sites but aren't funding calls (the #1 false-positive source).
+    ok, reason = rfp_signal_gate(candidate)
+    if not ok:
+        return False, f"not-an-rfp: {reason}"
     # Language — if it's Arabic/CJK/etc. nothing downstream can process
     # it usefully and a non-Latin description makes deadline / keyword
     # extraction unreliable. Cheap check, fail fast.

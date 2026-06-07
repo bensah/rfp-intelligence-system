@@ -149,7 +149,7 @@ DISPLAY = [
                         # form_id is the column name in the Excel workbook so
                         # Excel-round-trip stays consistent).
     "source",
-    "review_week",
+    "search_date",
     "opportunity_title",
     "opportunity_link",   # clickable on first view (no audit mode needed)
     "funding_agency",
@@ -197,6 +197,9 @@ else:
 table = view_df.reindex(columns=visible_cols).copy()
 if "submission_deadline" in table:
     table["submission_deadline"] = pd.to_datetime(table["submission_deadline"], errors="coerce").dt.date
+if "search_date" in table:
+    # Actual scan date + time (from search_date), not the "Week 23" label.
+    table["search_date"] = pd.to_datetime(table["search_date"], errors="coerce")
 if "alignment_score" in table and "_prob" in visible_cols:
     table["_prob"] = table["alignment_score"].apply(_prob_tier)
 
@@ -209,7 +212,8 @@ event = st.dataframe(
     column_config={
         "form_id": st.column_config.TextColumn("UID", width="small"),
         "source": st.column_config.TextColumn("Source", width="small"),
-        "review_week": st.column_config.TextColumn("Week"),
+        "search_date": st.column_config.DatetimeColumn(
+            "Search Date", format="YYYY-MM-DD HH:mm"),
         "opportunity_title": st.column_config.TextColumn("Title", width="large"),
         "opportunity_link": st.column_config.LinkColumn(
             "Link", display_text="Open ↗", width="small",
