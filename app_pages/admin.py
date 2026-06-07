@@ -1313,8 +1313,9 @@ with tab_sources:
     st.caption(
         "Curated per-donor RFP-publishing URLs. The Friday scan + manual scan "
         "iterate over every **active** row here, in addition to the keyword-"
-        "wide sources in `config/sources.yaml`. **Select** rows to edit, "
-        "delete or download as CSV; use **➕ Add donor source** to insert one."
+        "wide sources in `config/sources.yaml`. **Select** rows to edit or "
+        "delete; use **➕ Add donor source** to insert one. (Download the grid "
+        "as CSV via its built-in ⤓ icon, top-right of the table.)"
     )
 
     _METHODS = ["html", "rss", "rest_json", "manual"]
@@ -1461,8 +1462,8 @@ with tab_sources:
         bc2.button("Cancel", use_container_width=True, key="ds_del_cancel",
                    on_click=lambda: st.rerun())
 
-    # ----- Top action bar ---------------------------------------------------
-    t1, t2, t3, _tsp = st.columns([1.4, 1.5, 1, 4])
+    # ----- Top action bar (right-aligned) -----------------------------------
+    _tsp, t1, t2, t3 = st.columns([4, 1.4, 1.5, 1])
     if t1.button("➕ Add donor source", type="primary",
                  use_container_width=True, key="ds_add_top"):
         _add_source_dialog()
@@ -1508,12 +1509,10 @@ with tab_sources:
         sel_rows = [ddf.iloc[i].to_dict() for i in picked]
         sel_names = [r.get("donor_name") or "(unnamed)" for r in sel_rows]
 
-        st.caption(
-            f"**{len(picked)}** selected." if picked else
-            "Tick rows to edit, delete, or download. Download with nothing "
-            "selected exports all sources.")
+        st.caption(f"**{len(picked)}** selected." if picked else
+                   "Tick rows to edit or delete.")
 
-        a1, a2, a3, _asp = st.columns([1, 1, 1.3, 4])
+        a1, a2, _asp = st.columns([1, 1, 6])
         if a1.button("✏️ Edit", use_container_width=True, key="ds_edit_btn",
                      disabled=len(picked) != 1,
                      help="Select exactly one row to edit."):
@@ -1521,12 +1520,6 @@ with tab_sources:
         if a2.button("🗑 Delete", use_container_width=True, key="ds_delete_btn",
                      disabled=not picked):
             _delete_sources_dialog(sel_ids, sel_names)
-        export_df = ddf.iloc[picked] if picked else ddf
-        a3.download_button(
-            "⬇️ Download CSV", use_container_width=True, key="ds_csv_btn",
-            data=export_df.to_csv(index=False).encode("utf-8"),
-            file_name="donor_sources.csv", mime="text/csv",
-            help="Selected rows, or all sources if none selected.")
 
 
 # -----------------------------------------------------------------------------
