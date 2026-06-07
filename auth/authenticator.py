@@ -292,17 +292,18 @@ def _gate_must_change_password(user: dict[str, Any]) -> None:
         "Choose a new password before continuing."
     )
 
-    with st.form("force_change_pw", clear_on_submit=True):
-        current_pw = st.text_input(
-            "Current (temporary) password", type="password",
-            key="fcp_current")
-        new_pw = st.text_input(
-            "New password", type="password", key="fcp_new",
-            help="At least 8 characters, mix of letters and digits.")
-        confirm_pw = st.text_input(
-            "Confirm new password", type="password", key="fcp_confirm")
-        submit = st.form_submit_button(
-            "🔐 Save new password", type="primary")
+    # Plain widgets + a regular button (NOT st.form). A form-submit button
+    # rendered in the entry script — before st.navigation().run() in the MPA-v2
+    # flow — was not reliably registering its click, so the page sat static.
+    current_pw = st.text_input(
+        "Current (temporary) password", type="password", key="fcp_current")
+    new_pw = st.text_input(
+        "New password", type="password", key="fcp_new",
+        help="At least 8 characters, mix of letters and digits.")
+    confirm_pw = st.text_input(
+        "Confirm new password", type="password", key="fcp_confirm")
+    submit = st.button("🔐 Save new password", type="primary",
+                       key="fcp_submit", use_container_width=False)
 
     if submit:
         # Re-fetch the user's stored hash — session copy could be stale.
@@ -330,22 +331,33 @@ def _gate_must_change_password(user: dict[str, Any]) -> None:
         if errs:
             st.error("Please fix:\n\n- " + "\n- ".join(errs))
         else:
+            saved, err = False, None
             try:
-                get_client().table("users").update({
+                res = (get_client().table("users").update({
                     "password_hash": hash_password(new_pw),
                     "must_change_password": False,
                     "password_changed_at":
                         datetime.now(timezone.utc).isoformat(),
-                }).eq("email", user.get("email")).execute()
+                }).eq("email", user.get("email")).execute())
+                saved = bool(getattr(res, "data", None))
+            except Exception as exc:
+                err = str(exc)
+
+            if err:
+                st.error(f"Save failed: {err}")
+            elif not saved:
+                st.error(
+                    "Couldn't save the new password — no matching account row "
+                    "was updated (the database may have rejected the write). "
+                    "Contact an administrator.")
+            else:
                 clear_credentials_cache()
-                # Update the session copy so the same render doesn't
-                # bounce back through the gate.
+                # Flip the flag in the session copy so the next run skips this
+                # gate, then rerun OUTSIDE the try/except (never risk a
+                # control-flow signal being caught) to load the app.
                 user["must_change_password"] = False
                 st.session_state["app_user"] = user
-                st.success("Password updated. Loading the app…")
                 st.rerun()
-            except Exception as exc:
-                st.error(f"Save failed: {exc}")
 
     st.stop()
 
