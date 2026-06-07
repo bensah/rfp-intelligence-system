@@ -203,36 +203,70 @@ if "search_date" in table:
 if "alignment_score" in table and "_prob" in visible_cols:
     table["_prob"] = table["alignment_score"].apply(_prob_tier)
 
+# Backend columns are snake_case (consistent); the DISPLAY shows friendly,
+# underscore-free labels. Curated key columns keep concise custom labels; every
+# other column (incl. audit mode) is auto-labelled from its snake_case name so
+# nothing shows as raw "snake_case".
+_LABEL_ACRONYMS = {
+    "uid": "UID", "rfp": "RFP", "id": "ID", "url": "URL", "usd": "USD",
+    "ytd": "YTD", "hiv": "HIV", "tb": "TB", "mnch": "MNCH", "hss": "HSS",
+    "ngo": "NGO", "must": "MUST", "prefer": "PREFER", "fx": "FX",
+}
+
+
+def _friendly_label(col: str) -> str:
+    """snake_case -> 'Sentence case' label, acronyms upper, digits kept."""
+    words = str(col).strip("_").replace("_", " ").split()
+    out = []
+    for i, w in enumerate(words):
+        lw = w.lower()
+        if lw in _LABEL_ACRONYMS:
+            out.append(_LABEL_ACRONYMS[lw])
+        elif w.isdigit():
+            out.append(w)
+        elif i == 0:
+            out.append(w.capitalize())
+        else:
+            out.append(lw)
+    return " ".join(out) or col
+
+
+_explicit_cfg = {
+    "form_id": st.column_config.TextColumn("UID", width="small"),
+    "source": st.column_config.TextColumn("Source", width="small"),
+    "search_date": st.column_config.DatetimeColumn(
+        "Search date", format="YYYY-MM-DD HH:mm"),
+    "opportunity_title": st.column_config.TextColumn("Title", width="large"),
+    "opportunity_link": st.column_config.LinkColumn(
+        "Link", display_text="Open ↗", width="small",
+        help="Open the opportunity page in a new tab.",
+    ),
+    "funding_agency": st.column_config.TextColumn("Funder"),
+    "applicant_role": st.column_config.TextColumn("Role", width="small"),
+    "submission_deadline": st.column_config.DateColumn("Deadline"),
+    "estimated_value": st.column_config.NumberColumn("Value", format="%.0f"),
+    "currency": st.column_config.TextColumn("Currency", width="small"),
+    "alignment_score": st.column_config.NumberColumn("Score", format="%.1f"),
+    "_prob": st.column_config.TextColumn("Probability", width="small"),
+    "auto_recommendation": st.column_config.TextColumn("Auto recommendation"),
+    "decision": st.column_config.TextColumn("Decision"),
+    "stage": st.column_config.TextColumn("Stage"),
+    "progress_status": st.column_config.TextColumn("Progress status"),
+    "donor_decision": st.column_config.TextColumn("Donor decision"),
+    "is_duplicate": st.column_config.CheckboxColumn("Duplicate", width="small"),
+}
+_col_cfg = dict(_explicit_cfg)
+for _c in table.columns:
+    if _c not in _col_cfg:
+        _col_cfg[_c] = st.column_config.TextColumn(_friendly_label(_c))
+
 event = st.dataframe(
     table,
     use_container_width=True,
     hide_index=True,
     selection_mode="multi-row",
     on_select="rerun",
-    column_config={
-        "form_id": st.column_config.TextColumn("UID", width="small"),
-        "source": st.column_config.TextColumn("Source", width="small"),
-        "search_date": st.column_config.DatetimeColumn(
-            "Search Date", format="YYYY-MM-DD HH:mm"),
-        "opportunity_title": st.column_config.TextColumn("Title", width="large"),
-        "opportunity_link": st.column_config.LinkColumn(
-            "Link", display_text="Open ↗", width="small",
-            help="Open the opportunity page in a new tab.",
-        ),
-        "funding_agency": st.column_config.TextColumn("Funder"),
-        "applicant_role": st.column_config.TextColumn("Role", width="small"),
-        "submission_deadline": st.column_config.DateColumn("Deadline"),
-        "estimated_value": st.column_config.NumberColumn("Value", format="%.0f"),
-        "currency": st.column_config.TextColumn("Cur", width="small"),
-        "alignment_score": st.column_config.NumberColumn("Score", format="%.1f"),
-        "_prob": st.column_config.TextColumn("Prob", width="small"),
-        "auto_recommendation": st.column_config.TextColumn("Auto-rec"),
-        "decision": st.column_config.TextColumn("Decision"),
-        "stage": st.column_config.TextColumn("Stage"),
-        "progress_status": st.column_config.TextColumn("Progress"),
-        "donor_decision": st.column_config.TextColumn("Donor decision"),
-        "is_duplicate": st.column_config.CheckboxColumn("Dup", width="small"),
-    },
+    column_config=_col_cfg,
 )
 
 selected_rows = event.selection.rows if event and getattr(event, "selection", None) else []
@@ -477,23 +511,53 @@ def edit_dialog(row: dict) -> None:
         remarks_in = st.text_area("Remarks", value=_str(row.get("remarks")), height=70, key=f"e_rem_{row['uid']}")
 
     with tab_team:
-        team = dropdowns.get("team_members")
-        lead_col, _team_spacer = st.columns([1, 1])
-        with lead_col:
-            lead = _opt("Proposal lead", "lead", team, row.get("proposal_lead"))
-        contribs = st.multiselect(
-            "Contributors",
-            _multi_options(team, row.get("contributors")),
-            default=_multi_default(row.get("contributors")),
-            key=f"e_contrib_{row['uid']}",
-        )
-        reviewers = st.multiselect(
-            "Reviewers",
-            _multi_options(team, row.get("reviewers")),
-            default=_multi_default(row.get("reviewers")),
-            key=f"e_rev_{row['uid']}",
-        )
-        support = st.text_input("Support roles", value=_str(row.get("support_roles")), key=f"e_supp_{row['uid']}")
+        team = list(dropdowns.get("team_members"))
+        base_team = [m for m in team if m not in ("Other", "All")]
+        # Names typed via "Other" → added to the roster on Save.
+        _new_members: list[str] = []
+
+        def _team_single(label, key, current):
+            opts = ["—"] + base_team + ["Other"]
+            cur = None if _is_blank(current) else current
+            if cur and cur not in opts:
+                opts.insert(1, cur)        # preserve a stored name off the roster
+            sel = st.selectbox(label, opts,
+                               index=opts.index(cur) if cur in opts else 0,
+                               key=f"e_{key}_{row['uid']}")
+            if sel == "Other":
+                spec = (st.text_input(
+                    f"↳ If other member, please specify ({label.lower()})",
+                    key=f"e_{key}_oth_{row['uid']}") or "").strip()
+                if spec:
+                    _new_members.append(spec)
+                return spec or None
+            return None if sel in ("—", "") else sel
+
+        def _team_multi(label, key, current):
+            cur = (list(current) if isinstance(current, (list, tuple))
+                   else [v.strip() for v in str(current).split(",") if v.strip()]
+                   if current else [])
+            extras = [v for v in cur if v not in base_team and v not in ("All", "Other")]
+            opts = ["All"] + base_team + extras + ["Other"]
+            sel = st.multiselect(label, opts,
+                                 default=[d for d in cur if d in opts],
+                                 key=f"e_{key}_{row['uid']}")
+            chosen = [s for s in sel if s not in ("All", "Other")]
+            if "All" in sel:                # "All" = the whole roster
+                chosen = list(base_team)
+            if "Other" in sel:
+                raw = st.text_input(
+                    f"↳ If other, please specify additional {label.lower()} "
+                    f"(comma-separated)", key=f"e_{key}_oth_{row['uid']}") or ""
+                typed = [v.strip() for v in raw.split(",") if v.strip()]
+                _new_members.extend(typed)
+                chosen = chosen + typed
+            return chosen or None
+
+        lead = _team_single("Proposal lead", "lead", row.get("proposal_lead"))
+        contribs = _team_multi("Contributors", "contrib", row.get("contributors"))
+        reviewers = _team_multi("Reviewers", "rev", row.get("reviewers"))
+        support = _team_multi("Support roles", "supp", row.get("support_roles"))
 
     with tab_award:
         c1, c2 = st.columns(2)
@@ -531,6 +595,13 @@ def edit_dialog(row: dict) -> None:
         if not title_in.strip() or not funder_in.strip():
             st.error("Title and Funder are required.")
             return
+        # Grow the team roster with any names typed via "Other".
+        if _new_members:
+            try:
+                from core import settings as _set
+                _set.set_team_members((_set.get_team_members() or []) + _new_members)
+            except Exception:
+                pass
         # Eligibility values always come back as True / Partial / False (no "—")
         vals = {
             "must_1_govt_alignment": m1,
@@ -581,10 +652,10 @@ def edit_dialog(row: dict) -> None:
             "last_update": last_upd.isoformat() if isinstance(last_upd, date) else None,
             "next_action": _val(next_a),
             "remarks": _val(remarks_in),
-            "proposal_lead": _val(lead),
-            "contributors": contribs or None,
-            "reviewers": reviewers or None,
-            "support_roles": _val(support),
+            "proposal_lead": lead,
+            "contributors": contribs,
+            "reviewers": reviewers,
+            "support_roles": (", ".join(support) if support else None),
             "date_of_approval": doa.isoformat() if isinstance(doa, date) else None,
             "amount_secured": float(secured) if secured else None,
             "currency_secured": _val(cur_sec),
