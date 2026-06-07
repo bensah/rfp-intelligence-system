@@ -213,6 +213,28 @@ with tab_settings:
         st.rerun()
 
     st.markdown("---")
+    st.subheader("Team members")
+    st.caption(
+        "Your roster — one name per line. These replace the 'Team Member 1..N' "
+        "placeholders in the Proposal lead / Contributors / Reviewers dropdowns "
+        "(on both the Submit and Edit forms). Stored privately in app settings — "
+        "never in the public repo. 'Other' is added automatically so a one-off "
+        "name can still be typed in."
+    )
+    _current_members = settings.get_team_members() or []
+    _members_text = st.text_area(
+        "One team member per line",
+        value="\n".join(_current_members),
+        height=180, key="team_members_editor",
+        placeholder="Jane Doe\nJohn Smith\nAmina Bello",
+    )
+    if st.button("💾 Save team members", key="save_team_members"):
+        names = [ln.strip() for ln in _members_text.splitlines() if ln.strip()]
+        settings.set_team_members(names, updated_by=user.get("email"))
+        st.success(f"Saved {len(names)} team member(s).")
+        st.rerun()
+
+    st.markdown("---")
     st.subheader("Excel sync")
     st.caption(
         "Pulls the master workbook into Supabase. Path comes from "
