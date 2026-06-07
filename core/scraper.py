@@ -194,7 +194,16 @@ def _parse_freeform_date(s: str) -> date | None:
             return datetime.strptime(s[:len(fmt)+10].strip(", ."), fmt).date()
         except (ValueError, TypeError):
             continue
-    # dateutil fallback if available (and accurate)
+    # dateutil fallback — but ONLY when the string actually contains a real
+    # date anchor (a 4-digit 20xx year OR a month name). Without this guard,
+    # fuzzy parsing turns fragments like "grant term of up to 36 months" into
+    # 2036-<today>, which then wins max() over the real deadline. Require an
+    # anchor, then let fuzzy skip the surrounding words.
+    has_year = re.search(r"(?<!\d)20\d{2}(?!\d)", s)
+    has_month = re.search(
+        r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", s, re.IGNORECASE)
+    if not (has_year or has_month):
+        return None
     try:
         from dateutil import parser as _du  # type: ignore
         return _du.parse(s, fuzzy=True, dayfirst=False).date()
@@ -252,7 +261,15 @@ def _extract_deadline_from_text(text: str) -> date | None:
             candidates.append(d)
     if not candidates:
         return None
-    return max(candidates)
+    # Sanity window: drop absurd far-future dates (a stray year in a strategy
+    # PDF, or a "36 months" -> 2036 misparse). Real RFP deadlines are within a
+    # couple of years; keep the latest of the plausible ones (extended-deadline
+    # behaviour). If everything is implausibly far out, treat as no deadline.
+    cutoff = date.today().year + 2
+    plausible = [d for d in candidates if d.year <= cutoff]
+    if not plausible:
+        return None
+    return max(plausible)
 
 
 def _detect_url_year(url: str, title: str = "") -> int | None:
@@ -533,6 +550,14 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
             stream=is_pdf,  # stream PDFs so we can size-cap before reading
         )
         r.raise_for_status()
+    except requests.HTTPError as exc:
+        # Detail page returned 4xx/5xx — a dead/error link. Flag it so the
+        # eligibility gate rejects it instead of keeping the bare listing title.
+        sc = getattr(getattr(exc, "response", None), "status_code", None)
+        if isinstance(sc, int) and sc >= 400:
+            cand["_error_page"] = True
+        log.debug("enrich HTTP %s for %s: %s", sc, link, exc)
+        return cand
     except Exception as exc:
         log.debug("enrich fetch failed for %s: %s", link, exc)
         return cand
