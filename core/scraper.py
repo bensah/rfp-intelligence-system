@@ -408,6 +408,52 @@ def _try_pdf_guide_deadline(pdf_url: str) -> tuple[date | None, str | None]:
     return _extract_deadline_from_text(text), text[:600] if text else None
 
 
+# Companion call / calendar pages. Some donors announce a call on one page (no
+# dates) and host the application calendar elsewhere — e.g. Fondation Pierre
+# Fabre's call page links to odess.io, where "9 october to 7 november 2025:
+# applications open" gives the real (here, past) deadline. When the main page
+# yields no deadline, follow ONE such companion link and read its deadline.
+_COMPANION_HREF_RE = re.compile(
+    r"(odess|call[-_]for[-_]project|appel[-_]a[-_]projet|candidater"
+    r"|application[-_]form|/apply\b|/calendar|/timeline)",
+    re.IGNORECASE,
+)
+
+
+def _find_companion_call_link(soup: "BeautifulSoup | None", base_url: str) -> str | None:
+    if soup is None:
+        return None
+    base = base_url.rstrip("/")
+    for a in soup.find_all("a", href=True):
+        href = (a.get("href") or "").strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        full = urljoin(base_url, href)
+        if full.rstrip("/") == base:
+            continue
+        if _COMPANION_HREF_RE.search(full.lower()):
+            return full
+    return None
+
+
+def _follow_companion_for_deadline(soup: "BeautifulSoup | None", base_url: str) -> date | None:
+    """One-hop follow of a companion call/calendar page to read its deadline."""
+    link = _find_companion_call_link(soup, base_url)
+    if not link:
+        return None
+    try:
+        r = requests.get(
+            link, headers={"User-Agent": USER_AGENT, "Accept": "text/html"},
+            timeout=ENRICH_TIMEOUT,
+        )
+        r.raise_for_status()
+        ctext = BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)
+    except Exception as exc:
+        log.debug("companion fetch failed for %s: %s", link, exc)
+        return None
+    return _extract_deadline_from_text(ctext)
+
+
 # DevelopmentAid detail-page title pattern.
 # Their <title> element follows a STRICT pattern that packs four
 # high-value fields we'd otherwise miss (donor / countries / sectors /
@@ -606,6 +652,13 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
                     cand["_deadline_from_guide_pdf"] = pdf_url
                 if pdf_brief and not cand.get("brief_description"):
                     cand["brief_description"] = pdf_brief
+            # Still no deadline? Follow a companion call / calendar page (e.g.
+            # Fondation Pierre Fabre -> odess.io application calendar).
+            if not cand.get("submission_deadline"):
+                companion_deadline = _follow_companion_for_deadline(soup, link)
+                if companion_deadline:
+                    cand["submission_deadline"] = companion_deadline
+                    cand["_deadline_from_companion"] = True
         # Final fallback: year-in-URL heuristic.
         if not cand.get("submission_deadline"):
             yr = _detect_url_year(link, cand.get("opportunity_title", ""))
