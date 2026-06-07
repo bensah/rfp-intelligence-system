@@ -84,15 +84,14 @@ st.subheader("🌐 Opportunities on the web")
 if not web_search.available():
     st.info(
         "**Web search isn't configured yet.** An admin can enable it by adding "
-        "`BRAVE_SEARCH_API_KEY` to the app secrets — a free key from the "
-        "[Brave Search API dashboard](https://api-dashboard.search.brave.com/) "
-        "(\"Data for Search\" plan). Once set, this searches the web for live "
-        "calls matching your keyword and keeps only results that pass the same "
-        "RFP-signal rules and blacklist the scanner uses — filtering out the "
-        "noise.")
+        "`TAVILY_API_KEY` to the app secrets — a free, no-card key from "
+        "[app.tavily.com](https://app.tavily.com/). Once set, this searches the "
+        "web for live calls matching your keyword and keeps only results that "
+        "pass the same RFP-signal rules and blacklist the scanner uses — "
+        "filtering out the noise.")
 else:
     st.caption(
-        "Searches the web via Brave, then keeps only results that pass the "
+        "Searches the web via Tavily, then keeps only results that pass the "
         "scanner's RFP-signal rules + blacklist — so what's left fits your "
         "configuration, not generic web noise.")
     if st.button(f"🌐 Search the web for “{q}”", key="web_search_btn",
