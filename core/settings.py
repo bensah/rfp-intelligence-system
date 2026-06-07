@@ -200,3 +200,40 @@ def get_currency_overrides() -> Optional[list]:
 def set_currency_overrides(currencies: list, updated_by: Optional[str] = None) -> None:
     import json
     set_setting("currencies_json", json.dumps(currencies), updated_by=updated_by)
+
+
+# -----------------------------------------------------------------------------
+# Team members — real names live in app_settings (NOT in the public repo's
+# config/dropdowns.yaml, which only carries 'Team Member 1..N' placeholders).
+# Stored as a JSON list under `team_members_json`. dropdowns.load() folds this
+# in (+ an automatic 'Other') so the Submit + Edit forms show the real roster.
+# -----------------------------------------------------------------------------
+def get_team_members() -> Optional[list]:
+    import json
+    raw = get_setting("team_members_json")
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            members = [str(x).strip() for x in data if str(x).strip()]
+            return members or None
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+def set_team_members(members: list, updated_by: Optional[str] = None) -> None:
+    """Persist the team roster. De-duplicates (case-insensitive), preserves
+    order, drops blanks and any stray 'Other'/'All' tokens (added by the forms)."""
+    import json
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for m in members:
+        name = str(m).strip()
+        low = name.lower()
+        if not name or low in ("other", "all") or low in seen:
+            continue
+        seen.add(low)
+        cleaned.append(name)
+    set_setting("team_members_json", json.dumps(cleaned), updated_by=updated_by)
