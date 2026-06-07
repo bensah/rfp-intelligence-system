@@ -18,11 +18,18 @@ Degrades gracefully (available() == False) when unset.
 """
 from __future__ import annotations
 
+import concurrent.futures as _cf
 import os
 import re
+from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
 import streamlit as st
+from dotenv import load_dotenv
+
+# Load .env so the key resolves when running locally (`streamlit run App.py`),
+# independent of import order. No-op on Streamlit Cloud (uses st.secrets there).
+load_dotenv()
 
 _ENDPOINT = "https://api.tavily.com/search"
 
@@ -109,8 +116,94 @@ def _relevant(title: str, snippet: str, link: str,
     return False
 
 
+_HEALTH_PIVOTS = (
+    "global health funding", "infectious disease grant",
+    "maternal and child health RFP", "non-communicable disease funding",
+    "health systems strengthening grant", "vaccine research funding",
+)
+
+
+def suggest_terms(user_terms: str, limit: int = 6) -> list[str]:
+    """Related / alternative searches to widen discovery from the query."""
+    q = (user_terms or "").strip()
+    ql = q.lower()
+    out: list[str] = []
+    if q:
+        for m in ("grant", "call for proposals", "funding opportunity"):
+            if m not in ql:
+                out.append(f"{q} {m}")
+    out.extend(_HEALTH_PIVOTS)
+    seen, res = set(), []
+    for s in out:
+        k = s.lower()
+        if k != ql and k not in seen:
+            seen.add(k)
+            res.append(s)
+    return res[:limit]
+
+
+def _safe_parse_date(s: str) -> date | None:
+    try:
+        from dateutil import parser as _dp
+        return _dp.parse(s, default=datetime(2000, 1, 1),
+                         ignoretz=True).date()
+    except Exception:
+        return None
+
+
+_JSONLD_DATE_RE = re.compile(
+    r'"date(?:Published|Modified|Created)"\s*:\s*"([^"]{6,40})"', re.I)
+_META_DATE_KEYS = (
+    "article:published_time", "article:modified_time", "og:updated_time",
+    "datepublished", "datemodified", "dc.date", "dcterms.date",
+    "dcterms.created", "dcterms.modified", "date", "pubdate", "publishdate",
+    "lastmod",
+)
+_META_A_RE = re.compile(
+    r'<meta[^>]+(?:property|name|itemprop)=["\']([^"\']+)["\'][^>]*?'
+    r'content=["\']([^"\']+)["\']', re.I)
+_META_B_RE = re.compile(
+    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*?'
+    r'(?:property|name|itemprop)=["\']([^"\']+)["\']', re.I)
+
+
+def _page_published_date(url: str, client) -> date | None:
+    """Best-effort page date from HTML metadata + Last-Modified header.
+
+    Reads only KNOWN date fields (article:published_time, JSON-LD
+    datePublished/Modified, og:updated_time, dc.date, Last-Modified …) — not
+    arbitrary dates in the body — so we don't mistake a deadline for the page
+    date. Returns the LATEST such date (freshest signal), or None."""
+    try:
+        r = client.get(url, timeout=6.0, follow_redirects=True,
+                       headers={"User-Agent":
+                                "Mozilla/5.0 (RFPIS web-discovery bot)"})
+    except Exception:
+        return None
+    found: list[date] = []
+    lm = r.headers.get("Last-Modified") or r.headers.get("last-modified")
+    if lm:
+        d = _safe_parse_date(lm)
+        if d:
+            found.append(d)
+    txt = (r.text or "")[:300000]
+    for m in _JSONLD_DATE_RE.finditer(txt):
+        d = _safe_parse_date(m.group(1))
+        if d:
+            found.append(d)
+    for rx in (_META_A_RE, _META_B_RE):
+        for m in rx.finditer(txt):
+            key = (m.group(1) if rx is _META_A_RE else m.group(2)).lower()
+            val = (m.group(2) if rx is _META_A_RE else m.group(1))
+            if key in _META_DATE_KEYS:
+                d = _safe_parse_date(val)
+                if d:
+                    found.append(d)
+    return max(found) if found else None
+
+
 @st.cache_data(ttl=900, show_spinner=False)
-def search(user_terms: str, num: int = 10) -> dict:
+def search(user_terms: str, num: int = 10, max_age_days: int = 180) -> dict:
     """Run a filtered web search via Tavily.
 
     Returns: {ok, configured, query, raw_count, results:[{title,link,snippet,
@@ -164,8 +257,11 @@ def search(user_terms: str, num: int = 10) -> dict:
         return {"ok": False, "configured": True, "query": query,
                 "raw_count": 0, "results": [], "error": str(exc)[:200]}
 
+    from core.scraper import _extract_deadline_from_text  # reuse the parser
+    today = date.today()
     items = data.get("results") or []
     results: list[dict] = []
+    dropped_expired = 0
     for it in items:
         link = it.get("url") or ""
         title = _clean(it.get("title") or "")
@@ -174,7 +270,54 @@ def search(user_terms: str, num: int = 10) -> dict:
             continue
         if not _relevant(title, snippet, link, required, excluded):
             continue
+        # Drop results whose detectable deadline is already PAST — this kills
+        # expired RFPs (Tavily can't filter by publish date for these pages).
+        # Results with no parseable deadline pass; a human vets those.
+        try:
+            dl = _extract_deadline_from_text(f"{title}. {snippet}")
+        except Exception:
+            dl = None
+        if dl and dl < today:
+            dropped_expired += 1
+            continue
         results.append({"title": title, "link": link, "snippet": snippet,
-                        "domain": urlparse(link).netloc})
+                        "domain": urlparse(link).netloc,
+                        "deadline": dl.isoformat() if dl else "",
+                        "page_date": ""})
+
+    # Page-age filter: for survivors with NO future deadline in the snippet,
+    # fetch the page's published/modified date from its HTML and drop pages
+    # older than max_age_days (stale → almost certainly closed). A detected
+    # future deadline overrides this (the call is demonstrably still open).
+    dropped_old = 0
+    if max_age_days and results:
+        cutoff = today - timedelta(days=max_age_days)
+        need = [r for r in results if not r.get("deadline")][:15]
+        if need:
+            try:
+                with httpx.Client() as client:
+                    with _cf.ThreadPoolExecutor(max_workers=8) as ex:
+                        futs = {ex.submit(_page_published_date, r["link"], client): r
+                                for r in need}
+                        for f in _cf.as_completed(futs):
+                            try:
+                                futs[f]["_pdate"] = f.result()
+                            except Exception:
+                                futs[f]["_pdate"] = None
+            except Exception:
+                pass
+        kept = []
+        for r in results:
+            pdate = r.pop("_pdate", None)
+            if pdate is not None and pdate < cutoff:
+                dropped_old += 1
+                continue
+            if pdate:
+                r["page_date"] = pdate.isoformat()
+            kept.append(r)
+        results = kept
+
     return {"ok": True, "configured": True, "query": query,
-            "raw_count": len(items), "results": results, "error": None}
+            "raw_count": len(items), "results": results,
+            "dropped_expired": dropped_expired, "dropped_old": dropped_old,
+            "error": None}
