@@ -335,6 +335,13 @@ else:
 @st.dialog("Edit RFP", width="large")
 def edit_dialog(row: dict) -> None:
     st.markdown(f"**`{row['uid']}`** — {row.get('opportunity_title') if isinstance(row.get('opportunity_title'), str) else ''}")
+    # Provenance line — who submitted this and when, so an editor can reach out.
+    _sub_by = (row.get("submitted_by") or "").strip() or "—"
+    _sub_email = (row.get("submitted_by_email") or "").strip()
+    _sd = pd.to_datetime(row.get("search_date"), errors="coerce")
+    _sd_str = _sd.strftime("%d %b %Y, %H:%M") if pd.notna(_sd) else "date unknown"
+    _who = f"**{_sub_by}**" + (f" · {_sub_email}" if _sub_email else "")
+    st.caption(f"📥 Submitted by {_who} · on {_sd_str}")
     tab_opp, tab_elig, tab_dec, tab_team, tab_award = st.tabs(
         ["Opportunity", "Eligibility", "Decision & Pipeline", "Team", "Award"]
     )
