@@ -55,24 +55,34 @@ def available() -> bool:
     return bool(_secret("TAVILY_API_KEY"))
 
 
-def build_query(user_terms: str) -> str:
-    """User keyword + RFP-indicator OR-group."""
-    return (f"{(user_terms or '').strip()} {_RFP_OR_GROUP}").strip()
+def build_query(user_terms: str, geo_terms: list[str] | None = None) -> str:
+    """User keyword + RFP-indicator OR-group + (optional) geographic-scope
+    OR-group, so the web search is biased toward calls in our geography."""
+    q = f"{(user_terms or '').strip()} {_RFP_OR_GROUP}"
+    if geo_terms:
+        geo = " OR ".join(f'"{g}"' if " " in g else g for g in geo_terms[:6])
+        q += f" ({geo})"
+    return q.strip()
 
 
 def _clean(text: str) -> str:
     return _TAG_RE.sub("", text or "").strip()
 
 
-def _relevant(title: str, snippet: str, link: str) -> bool:
-    """Recall-tuned relevance filter for MANUAL web discovery.
+def _relevant(title: str, snippet: str, link: str,
+              required: list[str], excluded: list[str]) -> bool:
+    """Relevance filter for MANUAL web discovery — HEALTH-FIRST, then RFP.
 
-    Looser than the scanner's rfp_signal_gate (which is built for unattended
-    scanning and demands a deadline/amount the web rarely exposes in a snippet).
-    Here a human reviews the hits, so we keep anything that shows a call or
-    funding signal in the title OR snippet, and only drop error pages,
-    blacklisted domains (handled by the caller), and obvious non-call page
-    types. Reuses the scanner's vocabulary so it stays consistent with config.
+    Tuned for recall (a human reviews the hits) but enforces the deploying
+    org's configuration:
+      * must mention a configured health theme (themes.required_any) — drops
+        IT / logistics / energy / sports tenders that merely matched the query;
+      * dropped if it hits a configured exclusion (themes.excluded_any, e.g.
+        clinical-trial / basic-research);
+      * must then show a call/funding signal (strong phrase, RFP acronym, or
+        weaker application wording) and not be an obvious non-call page type.
+    `required`/`excluded` are passed in (fetched once per search) to avoid a
+    settings read per result.
     """
     from core import auto_scorer as A
     t = (title or "").lower()
@@ -80,12 +90,17 @@ def _relevant(title: str, snippet: str, link: str) -> bool:
     body = f"{t} {(snippet or '').lower()}"
     if any(p in f"{body} {link_words}" for p in A._ERROR_PAGE_PATTERNS):
         return False
+    # Config exclusions (clinical trial / basic research …) → drop.
+    if any(x in body for x in excluded):
+        return False
+    # HEALTH-FIRST: must mention a configured health theme.
+    if required and not any(h in body for h in required):
+        return False
     # Strong call wording or an RFP acronym anywhere in title/snippet → keep.
     if (any(p in body for p in A._RFP_STRONG_PHRASES)
             or A._has_rfp_acronym(f"{title} {snippet}")):
         return True
-    # Clear non-call page type (about / blog / privacy / report …) with no
-    # strong signal → drop.
+    # Clear non-call page type (about / blog / privacy / report …) → drop.
     if any(p in f"{t} {link_words}" for p in A._NON_RFP_PATTERNS):
         return False
     # Weaker funding / application wording → keep (a human will vet it).
@@ -107,10 +122,20 @@ def search(user_terms: str, num: int = 10) -> dict:
                 "raw_count": 0, "results": [], "error": None}
 
     import httpx  # local — keep page load light when web search isn't used
-    from core import blacklist
+    from core import blacklist, policies
+
+    # Pull config ONCE per search (not per result): geographic scope biases the
+    # query; health themes + exclusions drive the post-filter.
+    pol = policies.get_policies()
+    countries = pol.get("countries", {}) or {}
+    themes = pol.get("themes", {}) or {}
+    geo_terms = ((countries.get("broad_terms") or [])[:4]
+                 + (countries.get("eligible") or []))
+    required = [t.lower() for t in (themes.get("required_any") or [])]
+    excluded = [t.lower() for t in (themes.get("excluded_any") or [])]
 
     key = _secret("TAVILY_API_KEY")
-    query = build_query(user_terms)
+    query = build_query(user_terms, geo_terms)
     payload = {
         "api_key": key,                       # body auth (stable across versions)
         "query": query,
@@ -147,7 +172,7 @@ def search(user_terms: str, num: int = 10) -> dict:
         snippet = _clean(it.get("content") or "")
         if not link or blacklist.is_blacklisted(link):
             continue
-        if not _relevant(title, snippet, link):
+        if not _relevant(title, snippet, link, required, excluded):
             continue
         results.append({"title": title, "link": link, "snippet": snippet,
                         "domain": urlparse(link).netloc})
