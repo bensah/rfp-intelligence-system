@@ -64,6 +64,36 @@ def _clean(text: str) -> str:
     return _TAG_RE.sub("", text or "").strip()
 
 
+def _relevant(title: str, snippet: str, link: str) -> bool:
+    """Recall-tuned relevance filter for MANUAL web discovery.
+
+    Looser than the scanner's rfp_signal_gate (which is built for unattended
+    scanning and demands a deadline/amount the web rarely exposes in a snippet).
+    Here a human reviews the hits, so we keep anything that shows a call or
+    funding signal in the title OR snippet, and only drop error pages,
+    blacklisted domains (handled by the caller), and obvious non-call page
+    types. Reuses the scanner's vocabulary so it stays consistent with config.
+    """
+    from core import auto_scorer as A
+    t = (title or "").lower()
+    link_words = re.sub(r"[-_/]+", " ", (link or "").lower())
+    body = f"{t} {(snippet or '').lower()}"
+    if any(p in f"{body} {link_words}" for p in A._ERROR_PAGE_PATTERNS):
+        return False
+    # Strong call wording or an RFP acronym anywhere in title/snippet → keep.
+    if (any(p in body for p in A._RFP_STRONG_PHRASES)
+            or A._has_rfp_acronym(f"{title} {snippet}")):
+        return True
+    # Clear non-call page type (about / blog / privacy / report …) with no
+    # strong signal → drop.
+    if any(p in f"{t} {link_words}" for p in A._NON_RFP_PATTERNS):
+        return False
+    # Weaker funding / application wording → keep (a human will vet it).
+    if any(p in body for p in A._RFP_WEAK_PHRASES):
+        return True
+    return False
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def search(user_terms: str, num: int = 10) -> dict:
     """Run a filtered web search via Tavily.
@@ -77,7 +107,7 @@ def search(user_terms: str, num: int = 10) -> dict:
                 "raw_count": 0, "results": [], "error": None}
 
     import httpx  # local — keep page load light when web search isn't used
-    from core import auto_scorer, blacklist
+    from core import blacklist
 
     key = _secret("TAVILY_API_KEY")
     query = build_query(user_terms)
@@ -117,15 +147,7 @@ def search(user_terms: str, num: int = 10) -> dict:
         snippet = _clean(it.get("content") or "")
         if not link or blacklist.is_blacklisted(link):
             continue
-        candidate = {
-            "opportunity_title": title,
-            "brief_description": snippet,
-            "opportunity_link": link,
-            # Open-web source → gate demands explicit call wording.
-            "_source_origin": "google alert",
-        }
-        ok, _ = auto_scorer.rfp_signal_gate(candidate)
-        if not ok:
+        if not _relevant(title, snippet, link):
             continue
         results.append({"title": title, "link": link, "snippet": snippet,
                         "domain": urlparse(link).netloc})
