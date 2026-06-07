@@ -230,13 +230,13 @@ CARDS = [
      "Three tabs — weekly meeting notes, donor engagement touchpoints, and pending follow-ups."),
     ("Report", "app_pages/report.py", "📊", "KPI dashboard",
      "Activity dashboard tracing the full pipeline — search → triage → reviews → engagements → grants secured."),
-    ("User", "app_pages/user.py", "👤", "Profile · Password · Access",
-     "Manage your profile, change your password, see what you can access. Admins also get a Manage Users tab."),
+    ("Profile", "app_pages/profile.py", "👤", "Profile · Password",
+     "Manage your profile and change your password. Also reachable any time from the 👤 menu (top-right)."),
 ]
 if role in ("super_user", "admin"):
-    CARDS.append(("Admin", "app_pages/admin.py", "⚙️", "Settings · Data · Donor Sources · Scans",
-                  "Org profile, year setting, Excel sync, currency rates, the full Data backend "
-                  "(incl. RFP Records), donor sources, manual scans."))
+    CARDS.append(("Settings", "app_pages/admin.py", "⚙️", "Setup · Users · Data · Sources · Scans",
+                  "Org profile, year setting, Excel sync, currency rates, Manage Users + User Access, "
+                  "the full Records backend, donor sources, manual scans. Also in the 👤 menu (top-right)."))
 
 cols = st.columns(3)
 for i, (page, path, icon, headline, body) in enumerate(CARDS):
