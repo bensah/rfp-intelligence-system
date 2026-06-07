@@ -1313,192 +1313,220 @@ with tab_sources:
     st.caption(
         "Curated per-donor RFP-publishing URLs. The Friday scan + manual scan "
         "iterate over every **active** row here, in addition to the keyword-"
-        "wide sources in `config/sources.yaml`. Use **📥 Import from config** "
-        "below to copy the YAML entries into this table so you can edit them "
-        "via the UI."
+        "wide sources in `config/sources.yaml`. **Select** rows to edit, "
+        "delete or download as CSV; use **➕ Add donor source** to insert one."
     )
 
-    # ----- Import from config/sources.yaml ----------------------------------
-    # Copies every yaml entry into donor_sources, skipping any already
-    # present (matched by donor_name OR rfp_listing_url).
-    ic1, ic2 = st.columns([3, 1])
-    if ic2.button("📥 Import from config", use_container_width=True, key="import_sources_yaml"):
-        try:
-            from pathlib import Path as _P
-            import yaml as _yaml
-            _yaml_path = _P(__file__).resolve().parent.parent / "config" / "sources.yaml"
-            with _yaml_path.open(encoding="utf-8") as _f:
-                _cfg = _yaml.safe_load(_f) or {}
-            _yaml_sources = _cfg.get("sources", []) or []
-
-            existing = sb.table("donor_sources").select("donor_name,rfp_listing_url").execute().data or []
-            existing_names = {(r.get("donor_name") or "").strip().lower() for r in existing}
-            existing_urls = {(r.get("rfp_listing_url") or "").strip().lower() for r in existing}
-
-            to_insert: list[dict] = []
-            skipped: list[str] = []
-            for s in _yaml_sources:
-                name = (s.get("name") or "").strip()
-                url = (s.get("url") or "").strip()
-                method = (s.get("method") or "html").strip()
-                if not name or not url:
-                    continue
-                if name.lower() in existing_names or url.lower() in existing_urls:
-                    skipped.append(name)
-                    continue
-                # Derive a short donor_code from the name (first word, max 12 chars).
-                code = name.split("—")[0].split("(")[0].strip().split()[0][:12]
-                to_insert.append({
-                    "donor_name": name,
-                    "donor_code": code,
-                    "rfp_listing_url": url,
-                    "scrape_method": method if method in ("html", "rss", "rest_json", "manual") else "html",
-                    "notes": s.get("note") or f"Imported from sources.yaml on {date.today().isoformat()}",
-                    "is_active": True,
-                    "created_by": user.get("email"),
-                })
-
-            if to_insert:
-                sb.table("donor_sources").insert(to_insert).execute()
-            ic1.success(
-                f"Imported **{len(to_insert)}** new source(s). "
-                f"Skipped **{len(skipped)}** already present "
-                f"({', '.join(skipped[:6])}{'…' if len(skipped) > 6 else ''})."
-            )
-            st.cache_data.clear()
-            st.rerun()
-        except Exception as exc:
-            ic1.error(f"Import failed: {exc}")
-    st.info(
-        "💡 **Click any cell to edit it** (URL, donor name, notes, etc.), then "
-        "click **💾 Save changes** below to persist. Use **➕ Add a new donor "
-        "source** to insert, or **⚠ Delete a donor source** to remove."
-    )
+    _METHODS = ["html", "rss", "rest_json", "manual"]
 
     @st.cache_data(ttl=15)
     def _donors() -> pd.DataFrame:
-        res = (
-            get_client()
-            .table("donor_sources")
-            .select("*")
-            .order("donor_name")
-            .execute()
-        )
+        res = (get_client().table("donor_sources").select("*")
+               .order("donor_name").execute())
         return pd.DataFrame(res.data or [])
 
+    def _import_from_config() -> None:
+        """Copy config/sources.yaml entries into donor_sources, skipping any
+        already present (matched by donor_name OR rfp_listing_url)."""
+        from pathlib import Path as _P
+        import yaml as _yaml
+        _yaml_path = (_P(__file__).resolve().parent.parent
+                      / "config" / "sources.yaml")
+        with _yaml_path.open(encoding="utf-8") as _f:
+            _cfg = _yaml.safe_load(_f) or {}
+        existing = (sb.table("donor_sources")
+                    .select("donor_name,rfp_listing_url").execute().data or [])
+        existing_names = {(r.get("donor_name") or "").strip().lower() for r in existing}
+        existing_urls = {(r.get("rfp_listing_url") or "").strip().lower() for r in existing}
+        to_insert, skipped = [], []
+        for s in (_cfg.get("sources", []) or []):
+            name = (s.get("name") or "").strip()
+            url = (s.get("url") or "").strip()
+            method = (s.get("method") or "html").strip()
+            if not name or not url:
+                continue
+            if name.lower() in existing_names or url.lower() in existing_urls:
+                skipped.append(name)
+                continue
+            code = name.split("-")[0].split("(")[0].strip().split()[0][:12]
+            to_insert.append({
+                "donor_name": name, "donor_code": code, "rfp_listing_url": url,
+                "scrape_method": method if method in _METHODS else "html",
+                "notes": s.get("note") or
+                    f"Imported from sources.yaml on {date.today().isoformat()}",
+                "is_active": True, "created_by": user.get("email"),
+            })
+        if to_insert:
+            sb.table("donor_sources").insert(to_insert).execute()
+        st.cache_data.clear()
+        st.toast(f"Imported {len(to_insert)} new source(s); skipped "
+                 f"{len(skipped)} already present.", icon="📥")
+
+    # ----- Add / Edit / Delete dialogs --------------------------------------
+    @st.dialog("Add donor source", width="large")
+    def _add_source_dialog():
+        with st.form("add_donor_source_form", clear_on_submit=False):
+            c1, c2 = st.columns(2)
+            a_name = c1.text_input("Donor name *")
+            a_code = c2.text_input("Donor code (e.g. BMGF)")
+            c3, c4 = st.columns([3, 1])
+            a_url = c3.text_input("RFP listing URL *")
+            a_method = c4.selectbox("Method", _METHODS)
+            a_base = st.text_input("Base URL (optional)")
+            a_notes = st.text_area("Notes", height=80)
+            a_active = st.checkbox("Active", value=True)
+            bc1, bc2 = st.columns(2)
+            ok = bc1.form_submit_button("➕ Add", type="primary",
+                                        use_container_width=True)
+            cancel = bc2.form_submit_button("Cancel", use_container_width=True)
+        if cancel:
+            st.rerun()
+        if ok:
+            if not a_name.strip() or not a_url.strip():
+                st.error("Donor name and listing URL are required.")
+                return
+            try:
+                sb.table("donor_sources").insert({
+                    "donor_name": a_name.strip(),
+                    "donor_code": a_code.strip() or None,
+                    "base_url": a_base.strip() or None,
+                    "rfp_listing_url": a_url.strip(),
+                    "scrape_method": a_method,
+                    "notes": a_notes.strip() or None,
+                    "is_active": bool(a_active),
+                    "created_by": user.get("email"),
+                }).execute()
+                st.cache_data.clear()
+                st.toast(f"Added {a_name.strip()}", icon="✅")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not add: {exc}")
+
+    @st.dialog("Edit donor source", width="large")
+    def _edit_source_dialog(_row):
+        with st.form("edit_donor_source_form"):
+            c1, c2 = st.columns(2)
+            e_name = c1.text_input("Donor name *", value=_row.get("donor_name") or "")
+            e_code = c2.text_input("Donor code", value=_row.get("donor_code") or "")
+            c3, c4 = st.columns([3, 1])
+            e_url = c3.text_input("RFP listing URL *",
+                                  value=_row.get("rfp_listing_url") or "")
+            _m = _row.get("scrape_method") if _row.get("scrape_method") in _METHODS else "html"
+            e_method = c4.selectbox("Method", _METHODS, index=_METHODS.index(_m))
+            e_base = st.text_input("Base URL", value=_row.get("base_url") or "")
+            e_notes = st.text_area("Notes", value=_row.get("notes") or "", height=80)
+            e_active = st.checkbox("Active", value=bool(_row.get("is_active")))
+            bc1, bc2 = st.columns(2)
+            ok = bc1.form_submit_button("💾 Save", type="primary",
+                                        use_container_width=True)
+            cancel = bc2.form_submit_button("Cancel", use_container_width=True)
+        if cancel:
+            st.rerun()
+        if ok:
+            if not e_name.strip() or not e_url.strip():
+                st.error("Donor name and listing URL are required.")
+                return
+            try:
+                sb.table("donor_sources").update({
+                    "donor_name": e_name.strip(),
+                    "donor_code": e_code.strip() or None,
+                    "base_url": e_base.strip() or None,
+                    "rfp_listing_url": e_url.strip(),
+                    "scrape_method": e_method,
+                    "notes": e_notes.strip() or None,
+                    "is_active": bool(e_active),
+                }).eq("id", _row.get("id")).execute()
+                st.cache_data.clear()
+                st.toast(f"Updated {e_name.strip()}", icon="✅")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not save: {exc}")
+
+    @st.dialog("Delete donor sources", width="medium")
+    def _delete_sources_dialog(_ids, _names):
+        st.error(f"Permanently delete **{len(_ids)}** donor source(s)? "
+                 f"This cannot be undone.")
+        st.markdown("\n".join(f"- {n}" for n in _names[:12])
+                    + ("\n- …" if len(_names) > 12 else ""))
+        bc1, bc2 = st.columns(2)
+        if bc1.button("🗑 Delete", type="primary", use_container_width=True,
+                      key="ds_del_confirm"):
+            try:
+                sb.table("donor_sources").delete().in_("id", _ids).execute()
+                st.cache_data.clear()
+                st.toast(f"Deleted {len(_ids)} source(s)", icon="🗑️")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Delete failed: {exc}")
+        bc2.button("Cancel", use_container_width=True, key="ds_del_cancel",
+                   on_click=lambda: st.rerun())
+
+    # ----- Top action bar ---------------------------------------------------
+    t1, t2, t3, _tsp = st.columns([1.4, 1.5, 1, 4])
+    if t1.button("➕ Add donor source", type="primary",
+                 use_container_width=True, key="ds_add_top"):
+        _add_source_dialog()
+    if t2.button("📥 Import from config", use_container_width=True,
+                 key="ds_import_top"):
+        try:
+            _import_from_config()
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Import failed: {exc}")
+    if t3.button("🔄 Refresh", use_container_width=True, key="ds_refresh_top"):
+        st.cache_data.clear()
+        st.rerun()
+
+    # ----- Selectable table -------------------------------------------------
     ddf = _donors()
     if ddf.empty:
-        st.info("No donor sources yet — add one below to start scraping a specific donor.")
+        st.info("No donor sources yet — use **➕ Add donor source** to start "
+                "scraping a specific donor.")
     else:
-        editor_key = "donor_sources_editor"
-        view = ddf[
-            [
-                "id",
-                "donor_name",
-                "donor_code",
-                "rfp_listing_url",
-                "scrape_method",
-                "is_active",
-                "last_scraped_at",
-                "last_scrape_status",
-                "notes",
-            ]
-        ].copy()
-
-        edited = st.data_editor(
-            view,
-            hide_index=True,
-            use_container_width=True,
-            key=editor_key,
-            num_rows="fixed",
+        ids = ddf["id"].tolist()
+        disp = ddf[["donor_name", "donor_code", "rfp_listing_url",
+                    "scrape_method", "is_active", "last_scraped_at",
+                    "last_scrape_status", "notes"]].copy()
+        sel = st.dataframe(
+            disp, hide_index=True, use_container_width=True,
+            selection_mode="multi-row", on_select="rerun", key="ds_table",
             column_config={
-                "id": st.column_config.TextColumn("ID", disabled=True, width="small"),
-                "donor_name": st.column_config.TextColumn("Donor", required=True),
+                "donor_name": st.column_config.TextColumn("Donor"),
                 "donor_code": st.column_config.TextColumn("Code", width="small"),
-                "rfp_listing_url": st.column_config.LinkColumn("Listing URL", required=True),
-                "scrape_method": st.column_config.SelectboxColumn(
-                    "Method", options=["html", "rss", "rest_json", "manual"], required=True
-                ),
-                "is_active": st.column_config.CheckboxColumn("Active"),
+                "rfp_listing_url": st.column_config.LinkColumn("Listing URL"),
+                "scrape_method": st.column_config.TextColumn("Method", width="small"),
+                "is_active": st.column_config.CheckboxColumn("Active", width="small"),
                 "last_scraped_at": st.column_config.DatetimeColumn(
-                    "Last scan", disabled=True, format="YYYY-MM-DD HH:mm"
-                ),
-                "last_scrape_status": st.column_config.TextColumn("Last status", disabled=True),
+                    "Last scan", format="YYYY-MM-DD HH:mm"),
+                "last_scrape_status": st.column_config.TextColumn("Last status"),
                 "notes": st.column_config.TextColumn("Notes"),
             },
         )
+        picked = (getattr(sel, "selection", None) or {}).get("rows") or []
+        picked = [i for i in picked if 0 <= i < len(ids)]
+        sel_ids = [ids[i] for i in picked]
+        sel_rows = [ddf.iloc[i].to_dict() for i in picked]
+        sel_names = [r.get("donor_name") or "(unnamed)" for r in sel_rows]
 
-        cs1, cs2, cs3 = st.columns([1, 1, 4])
-        if cs1.button("💾 Save changes", type="primary"):
-            state = st.session_state.get(editor_key, {})
-            edits = state.get("edited_rows") or {}
-            wrote = 0
-            for row_idx, changes in edits.items():
-                payload = {
-                    k: (None if pd.isna(v) or v == "" else v)
-                    for k, v in changes.items()
-                    if k != "id"
-                }
-                if not payload:
-                    continue
-                src_id = view.iloc[row_idx]["id"]
-                sb.table("donor_sources").update(payload).eq("id", src_id).execute()
-                wrote += 1
-            if wrote:
-                st.cache_data.clear()
-                st.success(f"Saved {wrote} source(s).")
-                st.rerun()
-            else:
-                st.info("No changes detected.")
+        st.caption(
+            f"**{len(picked)}** selected." if picked else
+            "Tick rows to edit, delete, or download. Download with nothing "
+            "selected exports all sources.")
 
-        if cs2.button("🔄 Refresh"):
-            st.cache_data.clear()
-            st.rerun()
-
-    st.divider()
-    with st.expander("➕ Add a new donor source", expanded=False):
-        with st.form("add_donor_source", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            new_name = c1.text_input("Donor name *")
-            new_code = c2.text_input("Donor code (e.g. BMGF)")
-            c3, c4 = st.columns([3, 1])
-            new_url = c3.text_input("RFP listing URL *")
-            new_method = c4.selectbox("Method", ["html", "rss", "rest_json", "manual"])
-            new_base = st.text_input("Base URL (optional, e.g. https://wellcome.org)")
-            new_notes = st.text_area("Notes", height=80)
-            ok = st.form_submit_button("Add donor source", type="primary")
-        if ok:
-            if not new_name.strip() or not new_url.strip():
-                st.error("Donor name and listing URL are required.")
-            else:
-                try:
-                    sb.table("donor_sources").insert(
-                        {
-                            "donor_name": new_name.strip(),
-                            "donor_code": new_code.strip() or None,
-                            "base_url": new_base.strip() or None,
-                            "rfp_listing_url": new_url.strip(),
-                            "scrape_method": new_method,
-                            "notes": new_notes.strip() or None,
-                            "created_by": user.get("email"),
-                            "is_active": True,
-                        }
-                    ).execute()
-                    st.cache_data.clear()
-                    st.success(f"Added donor source: {new_name}")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Could not add: {exc}")
-
-    with st.expander("⚠ Delete a donor source", expanded=False):
-        if not ddf.empty:
-            options = {f"{r['donor_name']} — {r['rfp_listing_url']}": r["id"] for _, r in ddf.iterrows()}
-            pick = st.selectbox("Pick source to delete", list(options.keys()), key="ds_del_pick")
-            if st.button("Delete this donor source", type="secondary"):
-                sb.table("donor_sources").delete().eq("id", options[pick]).execute()
-                st.cache_data.clear()
-                st.success("Deleted.")
-                st.rerun()
+        a1, a2, a3, _asp = st.columns([1, 1, 1.3, 4])
+        if a1.button("✏️ Edit", use_container_width=True, key="ds_edit_btn",
+                     disabled=len(picked) != 1,
+                     help="Select exactly one row to edit."):
+            _edit_source_dialog(sel_rows[0])
+        if a2.button("🗑 Delete", use_container_width=True, key="ds_delete_btn",
+                     disabled=not picked):
+            _delete_sources_dialog(sel_ids, sel_names)
+        export_df = ddf.iloc[picked] if picked else ddf
+        a3.download_button(
+            "⬇️ Download CSV", use_container_width=True, key="ds_csv_btn",
+            data=export_df.to_csv(index=False).encode("utf-8"),
+            file_name="donor_sources.csv", mime="text/csv",
+            help="Selected rows, or all sources if none selected.")
 
 
 # -----------------------------------------------------------------------------
