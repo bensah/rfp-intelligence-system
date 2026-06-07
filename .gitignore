@@ -38,3 +38,6 @@ _drop.txt
 # Playwright browser binaries (heavy, downloaded by `playwright install`)
 .playwright/
 playwright/.local-browsers/
+
+# Local curl/debug dumps
+page.html
