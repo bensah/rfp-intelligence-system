@@ -22,6 +22,11 @@ from db.supabase_client import get_client
 COOKIE_NAME = "rfpis_session"
 COOKIE_EXPIRY_DAYS = 1 / 3  # ~8 hours
 
+# Self-service sign-up is OFF: a small, invite-only team where admins create
+# accounts directly (Admin -> Manage users). Keeps spammers out. The Sign Up
+# form code below is preserved — flip this to True to re-enable self-service.
+_SIGNUP_ENABLED = False
+
 # Small in-process cache so a Home / page-switch render doesn't hit Supabase
 # on every rerun. Auto-invalidates after 60s; admins can also force-refresh
 # via `clear_credentials_cache()` after editing users.
@@ -423,8 +428,9 @@ def _render_signup_and_reset_forms() -> None:
     # completed, so the user sees the confirmation block in place of
     # the form (the form is hidden once `_signup_done_for` is set).
     signup_done_for = st.session_state.get("_signup_done_for")
-    with st.expander("📝 Sign Up — new account",
-                     expanded=bool(signup_done_for)):
+    if _SIGNUP_ENABLED:  # deactivated — admins create accounts directly
+      with st.expander("📝 Sign Up — new account",
+                       expanded=bool(signup_done_for)):
         if signup_done_for:
             # ─── Post-success state: form HIDDEN, confirmation shown ──
             st.success(
