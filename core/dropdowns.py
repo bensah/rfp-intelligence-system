@@ -31,6 +31,21 @@ def load() -> dict[str, Any]:
             data = {**data, "currencies": overrides}
     except Exception:
         pass
+
+    # Team members from app_settings replace the YAML placeholders
+    # ("Team Member 1..N"). Real names are never committed to the public repo;
+    # they're configured per-deployment in Admin -> Settings -> Team members.
+    # Append "Other" so the forms keep their "Other -> specify" path.
+    try:
+        from core.settings import get_team_members
+        members = get_team_members()
+        if members:
+            roster = list(members)
+            if "Other" not in roster:
+                roster.append("Other")
+            data = {**data, "team_members": roster}
+    except Exception:
+        pass
     return data
 
 
