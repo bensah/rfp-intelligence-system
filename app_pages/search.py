@@ -145,6 +145,8 @@ else:
                 _msg.append(f"{res['dropped_expired']} expired")
             if res.get("dropped_old"):
                 _msg.append(f"{res['dropped_old']} stale")
+            if res.get("dropped_notrfp"):
+                _msg.append(f"{res['dropped_notrfp']} not a call")
             st.caption(
                 f"{len(res['results'])} of {res['raw_count']} web results "
                 "matched your RFP configuration"
@@ -166,7 +168,7 @@ else:
                     _lead = (f"<span style='color:#00703C;font-weight:600;'>"
                              f"Deadline {html.escape(_dl)}</span> · ")
                 elif _pdate:
-                    _lead = (f"<span style='color:#94a3b8;'>Updated "
+                    _lead = (f"<span style='color:#94a3b8;'>Posted "
                              f"{html.escape(_pdate)}</span> · ")
                 else:
                     _lead = ""
