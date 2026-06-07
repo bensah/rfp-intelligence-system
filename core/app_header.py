@@ -411,6 +411,79 @@ def _render_user_menu() -> None:
             st.rerun()
 
 
+def _render_search(user: dict) -> None:
+    """Top-right 🔍 site search — jump to any page/tab/feature or find an
+    opportunity or donor. Rendered on every page via render_app_header()."""
+    from core import permissions as _perms   # local import — avoid cycle
+    from core import site_search
+
+    is_admin = _perms.is_admin(user or {})
+    with st.popover("🔍", use_container_width=True):
+        q = st.text_input(
+            "Search", key="site_search_q",
+            placeholder="Search pages, tabs, opportunities, donors…",
+            label_visibility="collapsed")
+        q = (q or "").strip()
+        if len(q) < 2:
+            st.caption("Type at least 2 characters to search the site.")
+            return
+        nav = site_search.search_nav(q, is_admin)
+        data = site_search.search_data(q)
+        if not nav and not data:
+            st.caption(f"No matches for “{q}”.")
+            return
+        if nav:
+            st.caption("PAGES & TABS")
+            for label, path in nav[:8]:
+                st.page_link(path, label=label, icon="➡️")
+        if data:
+            st.caption("IN YOUR DATA")
+            for label, path, kind in data[:8]:
+                st.page_link(path, label=label, icon="🔗", help=kind)
+
+
+def _render_notifications(user: dict) -> None:
+    """Top-right 🔔 notification bell — org-wide activity feed (scans + new
+    opportunities) with a per-user unread badge. Rendered on every page."""
+    from core import notifications as _notif
+
+    email = (user or {}).get("email") or ""
+    try:
+        feed = _notif.recent_feed()
+    except Exception:
+        feed = []
+    seen = _notif.last_seen(email) if email else None
+    unread = _notif.unread_count(feed, seen) if email else 0
+    label = f"🔔 {unread}" if unread else "🔔"
+
+    with st.popover(label, use_container_width=True):
+        st.markdown("**Notifications**")
+        nxt = _notif.next_scheduled_scan()
+        st.caption(
+            f"⏰ Next auto-scan · {nxt.strftime('%a %d %b, %H:%M UTC')} "
+            f"({_notif.relative_time(nxt)})")
+        st.divider()
+        if not feed:
+            st.caption("No recent activity yet.")
+        else:
+            for it in feed[:15]:
+                is_new = (seen is None) or (it["ts"] and it["ts"] > seen)
+                dot = "🟢 " if is_new else ""
+                st.markdown(
+                    f"{dot}{it['icon']} **{it['title']}** "
+                    f"<span style='color:{THEME_SLATE_LIGHT};font-size:0.78rem'>"
+                    f"· {_notif.relative_time(it['ts'])}</span><br>"
+                    f"<span style='color:{THEME_SLATE};font-size:0.85rem'>"
+                    f"{it['detail']}</span>",
+                    unsafe_allow_html=True)
+        st.divider()
+        if email and unread:
+            if st.button("Mark all as read", key="notif_mark_read",
+                         use_container_width=True):
+                _notif.mark_all_read(email)
+                st.rerun()
+
+
 def render_app_header() -> None:
     """Top-of-page branding.
 
@@ -466,8 +539,14 @@ def render_app_header() -> None:
     except Exception:
         org_bytes = None
 
-    left, _spacer, right = st.columns([4, 5, 1], gap="small")
-    with right:
+    _u = st.session_state.get("app_user") or {}
+    left, _spacer, c_search, c_bell, c_user = st.columns(
+        [5, 3, 1, 1, 1], gap="small")
+    with c_search:
+        _render_search(_u)
+    with c_bell:
+        _render_notifications(_u)
+    with c_user:
         _render_user_menu()
     with left:
         l_icon, l_text = st.columns([1, 4], gap="small")
