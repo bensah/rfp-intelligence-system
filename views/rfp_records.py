@@ -270,6 +270,7 @@ else:
 if is_multi:
     ab2, ab3, _ = st.columns([1, 1, 6])
     edit_clicked = False
+    blacklist_clicked = False
     delete_clicked = ab2.button(
         f"🗑 Delete {len(selected_full_rows)} RFPs",
         use_container_width=True, disabled=not is_admin,
@@ -280,13 +281,18 @@ if is_multi:
         use_container_width=True,
     )
 else:
-    ab1, ab2, ab3, _ = st.columns([1, 1, 1, 5])
+    ab1, ab2, ab3, ab4, _ = st.columns([1, 1, 1, 1.3, 3.7])
     edit_clicked = ab1.button("✏ Edit", use_container_width=True, disabled=not can_edit)
     delete_clicked = ab2.button(
         "🗑 Delete", use_container_width=True, disabled=not is_admin,
         help=None if is_admin else "Admins only.",
     )
     share_clicked = ab3.button("📤 Share", use_container_width=True)
+    blacklist_clicked = ab4.button(
+        "🚫 Blacklist", use_container_width=True, disabled=not is_admin,
+        help="Block this source URL / section from future scans."
+             if is_admin else "Admins only.",
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -757,6 +763,61 @@ def share_dialog(rows: list[dict]) -> None:
 
 
 # -----------------------------------------------------------------------------
+# Modal: Blacklist source (one-click hard-reject for future scans)
+# -----------------------------------------------------------------------------
+from urllib.parse import urlparse as _urlparse
+
+
+def _suggest_blacklist_pattern(url: str) -> str:
+    p = _urlparse(url or "")
+    host = (p.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    segs = [s for s in (p.path or "").split("/") if s]
+    return f"{host}/{segs[0]}" if host and segs else host
+
+
+@st.dialog("Blacklist source")
+def blacklist_dialog(row: dict) -> None:
+    url = row.get("opportunity_link") or ""
+    st.caption(
+        "Future candidates whose URL contains this pattern are rejected before "
+        "scoring (never become records). Matched as a case-insensitive substring."
+    )
+    st.code(url or "(no URL on this record)")
+    pattern = st.text_input(
+        "Pattern (URL substring to block)",
+        value=_suggest_blacklist_pattern(url),
+        help="Broaden to a bare domain (e.g. cdc.gov) to block the whole site, "
+             "or keep a path (e.g. comicrelief.com/sportrelief) to block a section.",
+    )
+    reason = st.text_input("Reason / note", value="off-topic — not a call")
+    also_delete = st.checkbox("Also delete this record now", value=True)
+    if st.button("🚫 Add to blacklist", type="primary"):
+        p = (pattern or "").strip().lower()
+        if not p:
+            st.error("Enter a pattern.")
+            return
+        try:
+            sb.table("scan_blacklist").upsert(
+                {"pattern": p, "reason": (reason or None), "created_by": user.get("email")},
+                on_conflict="pattern",
+            ).execute()
+            try:
+                from core import blacklist as _blmod
+                _blmod.clear_cache()
+            except Exception:
+                pass
+            if also_delete:
+                sb.table("rfp_submissions").delete().eq("uid", row["uid"]).execute()
+            st.cache_data.clear()
+            st.toast(f"Blacklisted '{p}'", icon="🚫")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Add to blacklist failed: {exc}")
+
+
+# -----------------------------------------------------------------------------
 # Wire button clicks to modals
 # -----------------------------------------------------------------------------
 if edit_clicked and not is_multi:
@@ -765,3 +826,5 @@ if delete_clicked:
     delete_dialog(selected_full_rows)
 if share_clicked:
     share_dialog(selected_full_rows)
+if blacklist_clicked and not is_multi:
+    blacklist_dialog(selected_full_rows[0])
