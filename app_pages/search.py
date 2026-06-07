@@ -87,14 +87,15 @@ if not web_search.available():
         "`GOOGLE_CSE_API_KEY` and `GOOGLE_CSE_ID` to the app secrets — a Google "
         "[Programmable Search Engine](https://programmablesearchengine.google.com/) "
         "+ [Custom Search JSON API](https://developers.google.com/custom-search/v1/overview) "
-        "key. Once set, this searches the public web for live calls matching "
-        "your keyword and keeps only results that pass the same RFP-signal "
-        "rules and blacklist the scanner uses — filtering out the noise.")
+        "key. Once set, this searches the donor sites configured in your "
+        "engine's *Sites to search* for live calls matching your keyword and "
+        "keeps only results that pass the same RFP-signal rules and blacklist "
+        "the scanner uses — filtering out the noise.")
 else:
     st.caption(
-        "Searches the public web via Google, then keeps only results that pass "
-        "the scanner's RFP-signal rules + blacklist — so what's left fits your "
-        "configuration, not generic web noise.")
+        "Searches your configured donor sites via Google, then keeps only "
+        "results that pass the scanner's RFP-signal rules + blacklist — so "
+        "what's left fits your configuration, not generic web noise.")
     if st.button(f"🌐 Search the web for “{q}”", key="web_search_btn",
                  type="primary"):
         st.session_state["_web_search_for"] = q
