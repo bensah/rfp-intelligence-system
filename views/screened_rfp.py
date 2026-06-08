@@ -25,58 +25,24 @@ from db.supabase_client import get_client
 user = st.session_state["app_user"]
 sb = get_client()
 
-from core.scan_runner import run_scan_now
-
-_title_col, _scan_col = st.columns([5, 1])
-with _title_col:
-    st.markdown(
-        "<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
-        "margin:0.15rem 0 0.5rem;'>Screening Pipeline — Weekly RFP dashboard</h2>",
-        unsafe_allow_html=True,
-    )
-with _scan_col:
-    st.write("")  # vertical spacer to align button with title
-    if st.button(
-        "🔄 Scan now", type="primary", use_container_width=True,
-        key="screened_scan_now",
-        help="Run the donor-source scanner now. Any new RFPs found are inserted and will appear on this page after the run completes.",
-    ):
-        # Lock navigation during scan so the user can't switch tabs and
-        # see the duplicated/grayed-out render Streamlit produces while a
-        # long subprocess blocks the script.
-        st.markdown(
-            """
-            <style>
-              [data-testid="stTabs"] [role="tablist"],
-              [data-testid="stSidebarNav"] {
-                pointer-events: none !important;
-                opacity: 0.45 !important;
-              }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.info(
-            "⏳ Scan in progress — please stay on this tab. A full run "
-            "(~40 donor sources with detail-page + PDF enrichment) "
-            "typically takes **3-8 minutes**."
-        )
-        run_scan_now(
-            triggered_by=f"manual:{user.get('name') or user.get('email') or 'unknown'}"
-        )
-        st.rerun()
-
 # -----------------------------------------------------------------------------
-# Week selector (year sourced from app_settings — change in Admin > Settings)
+# Title + week selector. Year comes from app_settings (Admin → Settings).
+# The "Scan now" action lives on the page-title row in app_pages/pipelines.py
+# now (beside "Discovered RFP Pipelines"), so it's reachable from every tab.
 # -----------------------------------------------------------------------------
 year = settings.get_year()
+st.markdown(
+    f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
+    f"margin:0.15rem 0 0.5rem;'>Weekly Screening Pipeline ({year})</h2>",
+    unsafe_allow_html=True,
+)
 all_weeks = all_weeks_for_year(year)
 default_week = review_week_label()
 if default_week not in all_weeks:
     all_weeks = [default_week] + all_weeks
 
 selected_week = st.selectbox(
-    f"Review week ({year})", all_weeks, index=all_weeks.index(default_week),
+    f"Review week", all_weeks, index=all_weeks.index(default_week),
     key="screened_rfp_week",
 )
 

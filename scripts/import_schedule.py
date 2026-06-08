@@ -60,6 +60,8 @@ def main() -> None:
             for j, c in enumerate(cells):
                 if "call date" in c:
                     cols["date"] = j
+                elif c == "cid":          # new sequential id column (1,2,3…)
+                    cols["cid"] = j
                 elif "note" in c:
                     cols["note_taker"] = j
                 elif "present" in c:
@@ -79,7 +81,8 @@ def main() -> None:
             j = cols.get(key)
             return (str(row[j]).strip() if j is not None and j < len(row)
                     and row[j] is not None else "")
-        items.append({"date": d.isoformat(), "note_taker": cell("note_taker"),
+        items.append({"date": d.isoformat(), "cid": cell("cid"),
+                      "note_taker": cell("note_taker"),
                       "presenter": cell("presenter"), "chair": cell("chair")})
 
     print(f"parsed {len(items)} schedule rows")

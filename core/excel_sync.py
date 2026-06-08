@@ -124,12 +124,20 @@ def sync(timeout: int = 300, updated_by: Optional[str] = None) -> dict:
             "error": "No Excel file found. Set EXCEL_SOURCE_PATH in .env or place "
                      "the workbook at the repo root.",
         }
+    # Force UTF-8 on BOTH ends of the pipe. Without this the child defaults to
+    # cp1252 on Windows and crashes (exit 1) the first time it prints a glyph
+    # like "→" or "⚠"; and the parent would then fail to decode UTF-8 bytes.
+    # PYTHONIOENCODING + PYTHONUTF8 make the child write UTF-8; encoding/errors
+    # make the parent read it back losslessly.
+    _env = dict(os.environ)
+    _env["PYTHONIOENCODING"] = "utf-8"
+    _env["PYTHONUTF8"] = "1"
     try:
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "scripts" / "migrate_excel.py"),
              "--xlsx", str(path)],
-            capture_output=True, text=True, timeout=timeout,
-            cwd=str(REPO_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout, cwd=str(REPO_ROOT), env=_env,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"Sync timed out after {timeout}s"}

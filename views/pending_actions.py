@@ -103,7 +103,36 @@ def _date_range_picker(label: str, df: pd.DataFrame, col: str,
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
-st.title("Review and Resolve Pending Actions")
+st.subheader("Pending Actions")
+
+# Status-button colours — same scheme as the Team Calls tab. Buttons keyed
+# `status_no_*` render red (open) and `status_yes_*` green (resolved); Streamlit
+# >=1.36 tags each widget container with a `st-key-<key>` class we target here.
+st.markdown(
+    """
+    <style>
+      [class*="st-key-status_no_"] button, [class*="stKey-status_no_"] button {
+        background:#f8d7da !important; color:#842029 !important;
+        border-color:#f1aeb5 !important;
+      }
+      [class*="st-key-status_no_"] button:hover, [class*="stKey-status_no_"] button:hover {
+        background:#f5c2c7 !important; color:#58151c !important;
+        border-color:#ea868f !important;
+      }
+      [class*="st-key-status_no_"] button p, [class*="stKey-status_no_"] button p {
+        color:#842029 !important;
+      }
+      [class*="st-key-status_yes_"] button, [class*="stKey-status_yes_"] button {
+        background:#d1e7dd !important; color:#0f5132 !important;
+        border-color:#a3cfbb !important;
+      }
+      [class*="st-key-status_yes_"] button p, [class*="stKey-status_yes_"] button p {
+        color:#0f5132 !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 # ===========================================================================
@@ -173,10 +202,10 @@ else:
     if f_owners:
         show = show[show["owner"].isin(f_owners)]
     if lo and hi:
-        show = show[
-            (show["deadline"].dt.date >= lo)
-            & (show["deadline"].dt.date <= hi)
-        ]
+        # Keep items with NO deadline too — they're still open follow-ups and
+        # shouldn't be hidden by a date filter (this was the 20-vs-5 bug).
+        _dl = show["deadline"].dt.date
+        show = show[show["deadline"].isna() | ((_dl >= lo) & (_dl <= hi))]
     show = show.sort_values("deadline", na_position="last")
 
     st.caption(f"Showing **{len(show)}** of {len(df_m_open)} open items.")
@@ -208,7 +237,7 @@ else:
             row[4].markdown(dl.strftime("%Y-%m-%d") if pd.notna(dl) else "—")
             if row[5].button(
                 "Not Resolved",
-                key=f"pa_m_resolve_{n['id']}",
+                key=f"status_no_pa_m_{n['id']}",
                 use_container_width=True,
                 disabled=not can_edit,
             ):
@@ -321,10 +350,9 @@ else:
         if f_leads:
             show_e = show_e[show_e["internal_lead"].isin(f_leads)]
         if lo_e and hi_e:
-            show_e = show_e[
-                (show_e["engagement_date"].dt.date >= lo_e)
-                & (show_e["engagement_date"].dt.date <= hi_e)
-            ]
+            _ed = show_e["engagement_date"].dt.date
+            show_e = show_e[show_e["engagement_date"].isna()
+                            | ((_ed >= lo_e) & (_ed <= hi_e))]
         show_e = show_e.sort_values("engagement_date",
                                      ascending=False, na_position="last")
 
@@ -359,7 +387,7 @@ else:
                 if has_resolved_col:
                     if row[5].button(
                         "Not Resolved",
-                        key=f"pa_e_resolve_{e['id']}",
+                        key=f"status_no_pa_e_{e['id']}",
                         use_container_width=True,
                         disabled=not can_edit,
                     ):

@@ -222,6 +222,23 @@ _GLOBAL_CSS = f"""
   [data-testid="stHeading"] h2,
   [data-testid="stHeading"] h3 {{ color: {THEME_PRIMARY}; }}
 
+  /* ── Pinned top app bar ───────────────────────────────────────────
+     Keep the org logo/name + search/bell/user icons visible while the
+     page body scrolls. White backdrop + hairline + soft shadow so the
+     content scrolling beneath doesn't bleed through. This replaces the
+     old st.divider under the header (removed from render_app_header). */
+  [class*="st-key-rfpis_topbar"] {{
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: #ffffff;
+    padding-top: 0.2rem;
+    padding-bottom: 0.45rem;   /* keep the org name clear of the border line */
+    margin-bottom: 0.4rem;
+    border-bottom: 1px solid #e3e7e3;
+    box-shadow: 0 3px 6px -4px rgba(0, 0, 0, 0.25);
+  }}
+
   /* Metric tiles — give them card-like presence */
   [data-testid="stMetric"] {{
     background: {THEME_BG_CARD};
@@ -353,6 +370,166 @@ _GLOBAL_CSS = f"""
        come out grey on most browsers' default print settings). */
     body {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
   }}
+
+  /* ============================================================
+     MOBILE — responsive pass for narrow screens / phones.
+     Safe, additive rules (only apply <= 640px) so the desktop
+     layout is untouched. Targets the worst small-screen issues:
+     page padding, wide tables, overflowing tab bars, tap targets,
+     oversized titles, and stacking cramped column rows.
+     ============================================================ */
+  @media (max-width: 640px) {{
+    .block-container,
+    [data-testid="stMainBlockContainer"] {{
+      padding-left: 0.7rem !important;
+      padding-right: 0.7rem !important;
+      max-width: 100% !important;
+    }}
+    [data-testid="stAppViewContainer"] {{ overflow-x: hidden; }}
+
+    /* ── Sidebar: drop the desktop icon-rail on phones ──────────────────
+       The collapsed sidebar slides FULLY off-screen (Streamlit's native
+       mobile behaviour) so it never sits on top of the content; the ☰/»
+       control re-opens it as an overlay. Overrides the desktop rail rules
+       above (same selector, later + !important → wins at this width). */
+    section[data-testid="stSidebar"][aria-expanded="false"] {{
+      transform: translateX(-100%) !important;
+      width: 0 !important;
+      min-width: 0 !important;
+      margin-left: 0 !important;
+      visibility: hidden !important;
+    }}
+    [data-testid="stExpandSidebarButton"] {{
+      visibility: visible !important;
+      top: 0.4rem !important;
+      left: 0.4rem !important;
+    }}
+
+    /* Wide tables scroll inside their own box. */
+    [data-testid="stDataFrame"],
+    [data-testid="stDataFrameResizable"],
+    [data-testid="stTable"] {{ overflow-x: auto !important; }}
+
+    /* Tab bars scroll horizontally instead of clipping. */
+    [data-baseweb="tab-list"] {{
+      overflow-x: auto !important;
+      flex-wrap: nowrap !important;
+    }}
+
+    /* Stack cramped side-by-side columns into one readable column. */
+    [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; }}
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+    [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
+      min-width: 11rem !important;
+      flex: 1 1 11rem !important;
+    }}
+
+    /* ── Top bar stays horizontal + borderless icons ───────────────────
+       The generic column-stack above would wrap the 🔍🔔👤 icons into
+       full-width boxes; these rules (later → win) keep the top bar in one
+       row and strip the box around each popover trigger. */
+    [class*="st-key-rfpis_topbar"] [data-testid="stHorizontalBlock"] {{
+      flex-wrap: nowrap !important;
+      align-items: center !important;
+      gap: 0.1rem !important;
+    }}
+    [class*="st-key-rfpis_topbar"] [data-testid="stColumn"],
+    [class*="st-key-rfpis_topbar"] [data-testid="column"] {{
+      min-width: 0 !important;
+      flex: 0 1 auto !important;
+    }}
+    [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button {{
+      border: none !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      min-width: 0 !important;
+      padding: 0.25rem 0.35rem !important;
+      font-size: 1.3rem !important;
+      white-space: nowrap !important;   /* keep 🔔¹² on one line → icons align */
+    }}
+    [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button p {{
+      white-space: nowrap !important;
+    }}
+    /* Drop the popover dropdown carets in the top bar (declutter the icons). */
+    [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button [data-testid="stIconMaterial"] {{
+      display: none !important;
+    }}
+    /* Compact org name so it doesn't wrap to three lines next to the logo. */
+    [class*="st-key-rfpis_topbar"] [data-testid="stMarkdownContainer"] > div {{
+      font-size: 0.82rem !important;
+      line-height: 1.15 !important;
+      padding-top: 0 !important;
+    }}
+
+    /* ── Sidebar toggle shown as a hamburger (☰) on phones ─────────────
+       Streamlit renders the expand control as the <button
+       data-testid="stExpandSidebarButton"> ITSELF — there is no nested
+       <button>. Its »/chevron is a Material Symbols glyph in a child
+       [data-testid="stIconMaterial"] span. Earlier rules scoped to
+       "...Button button ..." matched nothing (no inner button), so the »
+       survived. Target the testid element directly: hide the glyph span,
+       zero its font, and draw ☰ via ::after. */
+    [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"],
+    [data-testid="stExpandSidebarButton"] span,
+    [data-testid="stExpandSidebarButton"] svg {{ display: none !important; }}
+    [data-testid="stExpandSidebarButton"] {{ font-size: 0 !important; }}
+    [data-testid="stExpandSidebarButton"]::after {{
+      content: "☰";
+      font-size: 1.6rem !important;
+      line-height: 1;
+      color: {THEME_NAVY};
+    }}
+
+    /* "Where to start" cards stack one per row (no lopsided 2+2+1 wrap). */
+    [data-testid="stColumn"]:has(.quickcard) {{
+      min-width: 100% !important;
+      flex: 1 1 100% !important;
+    }}
+
+    /* Comfortable tap targets. */
+    [data-testid="stBaseButton-primary"],
+    [data-testid="stBaseButton-secondary"] {{ min-height: 2.4rem; }}
+
+    /* ── Headings scale with the viewport ──────────────────────────────
+       h1 = page title, h3 = in-tab st.subheader, h4 = mini-labels.
+       Without the h3/h4 rules, rows like "Notes for Week 24 (8 Jun –
+       14 Jun) · 0 record(s)" rendered at desktop size and overflowed
+       the phone width. */
+    h1, [data-testid="stHeadingWithActionElements"] h1,
+    [data-testid="stHeading"] h1 {{
+      font-size: 1.25rem !important; line-height: 1.2 !important;
+    }}
+    h2, [data-testid="stHeading"] h2 {{
+      font-size: 1.1rem !important; line-height: 1.2 !important;
+    }}
+    h3, [data-testid="stHeading"] h3 {{
+      font-size: 1.0rem !important; line-height: 1.25 !important;
+    }}
+    h4, [data-testid="stHeading"] h4 {{ font-size: 0.92rem !important; }}
+
+    /* ── Metric tiles shrink to fit ─────────────────────────────────────
+       Values like "Mon 08 Jun" / "Pokam Ornella" were truncating to
+       "Mon 08 Ju…" / "Pokam Or…". Drop the value font, tighten padding,
+       and let the value wrap instead of clipping with an ellipsis. */
+    [data-testid="stMetric"] {{ padding: 8px 10px !important; }}
+    [data-testid="stMetricLabel"] {{ font-size: 0.72rem !important; }}
+    [data-testid="stMetricValue"] {{
+      font-size: 1.05rem !important;
+      line-height: 1.2 !important;
+      white-space: normal !important;
+      overflow-wrap: anywhere !important;
+    }}
+    [data-testid="stMetricValue"] > div {{
+      white-space: normal !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+    }}
+
+    /* Button label text scales too (the "+ Add a note" CTA shouldn't
+       dominate a narrow row). */
+    [data-testid="stBaseButton-primary"] p,
+    [data-testid="stBaseButton-secondary"] p {{ font-size: 0.9rem !important; }}
+  }}
 </style>
 """
 
@@ -417,26 +594,28 @@ def _render_search(user: dict) -> None:
     flow: type a keyword, land on a results list, click through. Rendered on
     every page via render_app_header().
 
-    st.switch_page is called AFTER the `with st.popover()` block closes —
-    calling it inside the popover/form context didn't navigate reliably
-    (the click registered but the page never switched)."""
+    Navigation (st.switch_page) is called AFTER the `with st.popover()` block —
+    calling it inside the popover/form didn't navigate reliably. A plain
+    text_input + button is used instead of st.form (forms inside popovers were
+    flaky). The query is also written to the URL (?q=) so the results page
+    reproduces it, and a page_link is kept as a guaranteed fallback."""
     submitted_q = None
     with st.popover("🔍", use_container_width=True):
-        with st.form("hdr_search_form", clear_on_submit=False, border=False):
-            q = st.text_input(
-                "Search", key="hdr_search_q",
-                placeholder="Search the site…",
-                label_visibility="collapsed")
-            go = st.form_submit_button("Search", type="primary",
-                                       use_container_width=True)
-        if go and (q or "").strip():
-            submitted_q = q.strip()
+        q = st.text_input(
+            "Search", key="hdr_search_q",
+            placeholder="Search the site…", label_visibility="collapsed")
+        go = st.button("Search", key="hdr_search_go", type="primary",
+                       use_container_width=True)
         st.caption("Searches pages, tabs, opportunities, donors + the web.")
-        # Always-available fallback link (carries no query; the results page
-        # has its own box) in case in-popover navigation is ever blocked.
-        st.page_link("app_pages/search.py", label="Open search page", icon="🔍")
+        # Guaranteed-working fallback (page_link always navigates; the results
+        # page has its own search box).
+        st.page_link("app_pages/search.py", label="Open full search page",
+                     icon="🔍")
+    if go and (q or "").strip():
+        submitted_q = q.strip()
     if submitted_q:
         st.session_state["site_search_query"] = submitted_q
+        st.query_params["q"] = submitted_q
         st.switch_page("app_pages/search.py")
 
 
@@ -452,7 +631,12 @@ def _render_notifications(user: dict) -> None:
         feed = []
     seen = _notif.last_seen(email) if email else None
     unread = _notif.unread_count(feed, seen) if email else 0
-    label = f"🔔 {unread}" if unread else "🔔"
+    # Render the count as small SUPERSCRIPT digits so it hangs on the bell like
+    # a badge and stays on ONE line — keeping the top-bar icons aligned (a
+    # plain " 12" wrapped to a 2nd line and pushed the bell out of line).
+    _cnt = str(unread) if unread < 100 else "99+"
+    _sup = _cnt.translate(str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹"))
+    label = f"🔔{_sup}" if unread else "🔔"
 
     with st.popover(label, use_container_width=True):
         st.markdown("**Notifications**")
@@ -554,37 +738,54 @@ def render_app_header() -> None:
         org_bytes = None
 
     _u = st.session_state.get("app_user") or {}
-    left, _spacer, c_search, c_bell, c_user = st.columns(
-        [5, 3, 1, 1, 1], gap="small")
-    with c_search:
-        _render_search(_u)
-    with c_bell:
-        _render_notifications(_u)
-    with c_user:
-        _render_user_menu()
-    with left:
-        l_icon, l_text = st.columns([1, 4], gap="small")
-        with l_icon:
-            if org_bytes:
-                try:
-                    st.image(org_bytes, width=45)
-                except Exception:
-                    pass
-        with l_text:
-            # Vertically centre the org name against the (smaller)
-            # logo. Padding-top was 0.65rem to push the text down
-            # to the logo's vertical centre; with width=45 the new
-            # offset is ~0.45rem. Margins zeroed so nothing pads
-            # away the gain from the block-container trim.
-            st.markdown(
-                f"<div style='padding-top:0.45rem; margin:0; "
-                f"font-weight:600; font-size:1rem; "
-                f"color:{THEME_NAVY}; line-height:1.2;'>"
-                f"{settings.get_org_name()}</div>",
-                unsafe_allow_html=True,
-            )
+    # Keyed container so the mobile CSS can target the top bar specifically
+    # (keep it horizontal + borderless icons) without affecting other columns.
+    with st.container(key="rfpis_topbar"):
+        left, _spacer, c_search, c_bell, c_user = st.columns(
+            [5, 3, 1, 1, 1], gap="small")
+        with c_search:
+            _render_search(_u)
+        with c_bell:
+            _render_notifications(_u)
+        with c_user:
+            _render_user_menu()
+        with left:
+            l_icon, l_text = st.columns([1, 4], gap="small")
+            with l_icon:
+                if org_bytes:
+                    try:
+                        st.image(org_bytes, width=45)
+                    except Exception:
+                        pass
+            with l_text:
+                # Org name on (up to) two tidy lines: the part before " — "
+                # on line 1, the rest on line 2. Each is a display:block span
+                # so "CHAI Cameroon" and "Business Development Team" never
+                # share a line (and never wrap mid-line into a stray "Team"
+                # that crosses the header border). Falls back to a single
+                # line when the name has no " — " separator.
+                _org_name_full = settings.get_org_name()
+                if " — " in _org_name_full:
+                    _org_primary, _org_secondary = _org_name_full.split(" — ", 1)
+                else:
+                    _org_primary, _org_secondary = _org_name_full, ""
+                _name_html = (
+                    f"<div style='padding-top:0.3rem; margin:0; "
+                    f"line-height:1.18; color:{THEME_NAVY};'>"
+                    f"<span style='display:block; font-weight:700; "
+                    f"font-size:0.98rem;'>{_org_primary}</span>"
+                )
+                if _org_secondary:
+                    _name_html += (
+                        f"<span style='display:block; font-weight:500; "
+                        f"font-size:0.8rem;'>{_org_secondary}</span>"
+                    )
+                _name_html += "</div>"
+                st.markdown(_name_html, unsafe_allow_html=True)
 
-    st.divider()
+    # No st.divider() here — the pinned top bar carries its own bottom
+    # border (see `.st-key-rfpis_topbar` in _GLOBAL_CSS). A separate
+    # divider would scroll away from the sticky header and leave a gap.
 
     # ────────────────── SIDEBAR FOOTER — RFPIS name + version ─────────
     # Rendered as part of render_app_header() because Streamlit places
