@@ -18,6 +18,18 @@ from typing import Any, Iterable, Optional
 
 from openpyxl import load_workbook
 
+# Force UTF-8 on our output streams. This script prints status with non-ASCII
+# glyphs (→, ⚠, ·, —, …). When run as a subprocess (Admin → Sync now), Windows
+# defaults stdout/stderr to cp1252, so printing e.g. "adopted→MID" raised
+# UnicodeEncodeError ('charmap' codec) and the migration died with exit 1 —
+# no success, banner never went green. reconfigure() is a no-op where the
+# stream is already UTF-8 or doesn't support it.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 # Allow running as `python scripts/migrate_excel.py` from repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -313,6 +325,15 @@ def map_meeting_row_by_header(row: list[Any], col_map: dict[str, int]) -> Option
     # NEW: RFPID column carries the Form_ID / uid (= rfp_submissions.uid).
     rfpid = _txt(get("RFPID", "RFP_ID", "Form_ID", "Form ID", "UID"))
     owner = _txt(get("Owner"))
+    # MID = explicit Meeting-log unique id (new Excel column). It's a STABLE
+    # key, so editing the date / donor / RFP no longer orphans the row (and
+    # its app-side is_resolved decision) — the row is UPDATED in place instead
+    # of re-inserted as a fresh unresolved duplicate. Falls back to the derived
+    # id for legacy rows that predate the MID column.
+    mid = _txt(get("MID", "Meeting Log ID", "Meeting_Log_ID", "MeetingID",
+                   "Meeting ID"))
+    ext = (mid.strip() if (mid and mid.strip())
+           else _meeting_external_id(mdate, donor, rfpid))
     return {
         "meeting_date": mdate,
         "donor_title": donor,
@@ -323,7 +344,11 @@ def map_meeting_row_by_header(row: list[Any], col_map: dict[str, int]) -> Option
         "owner": owner,
         "deadline": _date(get("Deadline", "Due Date", "Due")),
         "source": "migration",
-        "external_id": _meeting_external_id(mdate, donor, rfpid),
+        "external_id": ext,
+        # Old derived key — used ONLY to adopt a pre-MID row into its new MID
+        # key on the first MID sync (preserving is_resolved, no duplicate).
+        # Stripped before insert (not a DB column).
+        "_derived_id": _meeting_external_id(mdate, donor, rfpid),
     }
 
 
@@ -434,8 +459,30 @@ def _rows(ws, header_row: int) -> Iterable[list[Any]]:
             yield row
 
 
+def _load_workbook_retrying(xlsx_path: Path, attempts: int = 4):
+    """Open the workbook, retrying on PermissionError.
+
+    The source file often lives in OneDrive; when OneDrive is mid-sync it
+    holds a transient Windows file lock, so a startup auto-sync hits
+    PermissionError and only succeeds a few seconds later. Retry with a short
+    backoff so the auto-sync rides through the lock instead of failing.
+    """
+    import time as _time
+    last: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            return load_workbook(xlsx_path, data_only=True)
+        except PermissionError as exc:
+            last = exc
+            if i < attempts - 1:
+                print(f"  file locked (PermissionError) — retrying in "
+                      f"{1.5 * (i + 1):.1f}s ({i + 1}/{attempts})…")
+                _time.sleep(1.5 * (i + 1))
+    raise last if last else RuntimeError("could not open workbook")
+
+
 def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
-    wb = load_workbook(xlsx_path, data_only=True)
+    wb = _load_workbook_retrying(xlsx_path)
     sb = None if dry_run else get_client()
 
     def upsert(table: str, rows: list[dict[str, Any]], conflict_key: str | None = None) -> None:
@@ -604,13 +651,23 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
                 for r in existing if r.get("external_id")
             }
             inserts: list[dict[str, Any]] = []
-            updated = 0
+            updated = adopted = 0
             for r in m_rows:
                 ext = r["external_id"]
-                if ext in ext_to_id:
-                    # Update Excel-managed fields; is_resolved (app-managed) survives.
-                    # rfp_uid IS now Excel-managed (the new RFPID column).
+                target_id = ext_to_id.get(ext)
+                # Transition: a row that just gained a MID won't match by the
+                # new key yet — adopt the existing row that matches the OLD
+                # derived key, migrating it to the stable MID. Keeps
+                # is_resolved and avoids a duplicate.
+                if target_id is None:
+                    target_id = ext_to_id.get(r.get("_derived_id"))
+                    if target_id is not None:
+                        adopted += 1
+                if target_id is not None:
+                    # Update Excel-managed fields; is_resolved (app-managed)
+                    # survives. external_id is migrated to the MID key.
                     sb.table("meeting_logs").update({
+                        "external_id":  ext,
                         "meeting_date": r["meeting_date"],
                         "donor_title":  r["donor_title"],
                         "rfp_uid":      r["rfp_uid"],
@@ -618,13 +675,15 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
                         "actions":      r["actions"],
                         "owner":        r["owner"],
                         "deadline":     r["deadline"],
-                    }).eq("id", ext_to_id[ext]).execute()
+                    }).eq("id", target_id).execute()
                     updated += 1
                 else:
-                    inserts.append(r)
+                    inserts.append({k: v for k, v in r.items()
+                                    if k != "_derived_id"})
             if inserts:
                 sb.table("meeting_logs").insert(inserts).execute()
-            print(f"  meeting_logs: {updated} updated · {len(inserts)} inserted "
+            print(f"  meeting_logs: {updated} updated ({adopted} adopted→MID) "
+                  f"· {len(inserts)} inserted "
                   f"(is_resolved preserved across the {updated} updates)")
 
     # --- engagement_logs — merge by external_id (avoid duplicate accumulation)
