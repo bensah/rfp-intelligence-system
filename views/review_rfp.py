@@ -27,9 +27,10 @@ role = user.get("role", "collaborator")
 can_edit = role in ("super_user", "admin", "reviewer")
 sb = get_client()
 
+year = settings.get_year()
 st.markdown(
-    "<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
-    "margin:0.15rem 0 0.5rem;'>Review Pipeline — Weekly Team Triage</h2>",
+    f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
+    f"margin:0.15rem 0 0.5rem;'>Weekly Triage Pipeline ({year})</h2>",
     unsafe_allow_html=True,
 )
 
@@ -37,7 +38,6 @@ st.markdown(
 # -----------------------------------------------------------------------------
 # Week + data
 # -----------------------------------------------------------------------------
-year = settings.get_year()
 all_weeks = all_weeks_for_year(year)
 default_week = review_week_label()
 if default_week not in all_weeks:
@@ -61,7 +61,7 @@ def _fetch(week: str) -> pd.DataFrame:
 wc, rc = st.columns([1, 3])
 with wc:
     sel_week = st.selectbox(
-        f"Review week ({year})", all_weeks, index=all_weeks.index(default_week),
+        f"Review week", all_weeks, index=all_weeks.index(default_week),
         key="review_rfp_week",
     )
 

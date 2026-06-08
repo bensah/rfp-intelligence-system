@@ -31,7 +31,7 @@ sb = get_client()
 is_admin = role in ("super_user", "admin")
 can_edit = role in ("super_user", "admin", "reviewer")
 
-st.title("Records — All RFPs")
+st.subheader("Records — All RFPs")
 st.caption(
     "Every submission (auto-scanned + manually captured). "
     "Click a row to select, then use the Edit / Delete / Share buttons below the table. "

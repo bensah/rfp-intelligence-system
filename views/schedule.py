@@ -14,7 +14,7 @@ import streamlit as st
 from core import schedule as _sched
 from core import settings as _settings
 
-st.subheader("📅 Monday check-in schedule")
+st.subheader("📅 Check-in schedule")
 
 _user = st.session_state.get("app_user") or {}
 _today = date.today()
