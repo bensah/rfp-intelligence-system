@@ -460,6 +460,20 @@ def _render_notifications(user: dict) -> None:
         st.caption(
             f"⏰ Next auto-scan · {nxt.strftime('%a %d %b, %H:%M UTC')} "
             f"({_notif.relative_time(nxt)})")
+        # Next Monday check-in call (persistent, under the scan line).
+        try:
+            from datetime import date as _date
+            from core import schedule as _sched
+            _mtg = _sched.next_meeting()
+        except Exception:
+            _mtg = None
+        if _mtg:
+            _md = _date.fromisoformat(_mtg["date"])
+            _roles = "; ".join(
+                f"{lbl}: {(_mtg.get(k) or '—')}"
+                for lbl, k in (("Note-taker", "note_taker"),
+                               ("Presenter", "presenter"), ("Chair", "chair")))
+            st.caption(f"📅 Next call · {_md.strftime('%a %d %b')} · {_roles}")
         st.divider()
         if not feed:
             st.caption("No recent activity yet.")
