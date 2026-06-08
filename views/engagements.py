@@ -20,7 +20,7 @@ role = user.get("role", "collaborator")
 can_edit = role in ("super_user", "admin", "reviewer", "collaborator")  # any logged-in user can log engagements
 sb = get_client()
 
-st.title("Review Engagements with Donors")
+st.subheader("Partner Engagements")
 
 
 # -----------------------------------------------------------------------------

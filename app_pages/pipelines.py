@@ -9,6 +9,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core.render_view import render_view
+from core.scan_runner import run_scan_now
 from views.submit_form import render_submit_form
 
 user = st.session_state["app_user"]
@@ -24,16 +25,38 @@ def _submit_rfp_modal():
     )
 
 
-# Title + Submit-RFP button on the same row (button top-right).
-_title_col, _btn_col = st.columns([5, 1])
+# Title + "Scan now" button on the same row (button top-right). The scan
+# action used to live inside the Screen tab; it sits here now so it's
+# reachable from every tab and aligns with the page title.
+_title_col, _btn_col = st.columns([5, 1.5])
 with _title_col:
     st.title("Discovered RFP Pipelines")
-# with _btn_col:
-#     st.markdown("<div style='height: 0.8rem'></div>", unsafe_allow_html=True)
-#     if st.button("📝 Submit RFP", type="primary",
-#                  use_container_width=True, key="leads_submit_rfp_btn",
-#                  help="Capture an opportunity outside the Friday scan."):
-#         _submit_rfp_modal()
+with _btn_col:
+    st.write("")  # nudge the button down to the title baseline
+    if st.button("🔄 Scan now", type="primary", use_container_width=True,
+                 key="pipelines_scan_now",
+                 help="Run the donor-source scanner now. New RFPs are inserted "
+                      "and appear on the Screen tab after the run completes."):
+        # Lock nav while the long scan subprocess blocks the script, so the
+        # user can't switch tabs into a half-rendered/grayed-out view.
+        st.markdown(
+            """
+            <style>
+              [data-testid="stTabs"] [role="tablist"],
+              [data-testid="stSidebarNav"] {
+                pointer-events: none !important; opacity: 0.45 !important;
+              }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.info("⏳ Scan in progress — please stay on this page. A full run "
+                "(~40 donor sources with detail-page + PDF enrichment) "
+                "typically takes **3-8 minutes**.")
+        run_scan_now(
+            triggered_by=f"manual:{user.get('name') or user.get('email') or 'unknown'}"
+        )
+        st.rerun()
 
 tab_screen, tab_review, tab_tracking, tab_summary = st.tabs(
     ["Screen", "Review", "Tracking", "Summary"]
