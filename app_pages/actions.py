@@ -12,13 +12,13 @@ import streamlit as st
 
 from core.render_view import render_view
 
-st.title("Meetings and Engagement Activities")
+st.title("Meetings and Engagements")
 
 # Tab labels use generic team terms. "Pending" is the third tab so
 # unresolved items from both data sources are visible on a single
 # screen (no jumping per-week to find what's still open).
 tab_meetings, tab_engagements, tab_pending, tab_schedule = st.tabs(
-    ["Team Calls", "Engagements", "Pending", "Schedule"]
+    ["Meetings", "Engagements", "Pending", "Schedule"]
 )
 
 with tab_meetings:

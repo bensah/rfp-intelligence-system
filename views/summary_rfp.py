@@ -34,7 +34,7 @@ year = settings.get_year()
 today = date.today()
 st.markdown(
     f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
-    f"margin:0.15rem 0 0.5rem;'>Summary RFP — {year} YTD</h2>",
+    f"margin:0.15rem 0 0.5rem;'>YTD Summary ({year})</h2>",
     unsafe_allow_html=True,
 )
 st.caption(
@@ -223,7 +223,9 @@ proc_sub = int(proc_role_lower.eq("sub").sum())
 proc_ta = int(proc_role_lower.eq("technical").sum())
 
 st.write("")  # vertical spacer
-_, rc1, rc2, rc3, _ = st.columns([1, 2, 2, 2, 1])
+# Three even cards (was [1,2,2,2,1] with empty side cells, which wrapped into
+# a lopsided layout with blank gaps on mobile).
+rc1, rc2, rc3 = st.columns(3)
 with rc1:
     _kpi("Prime Opportunities", f"{proc_prime} of {prime}", "Proceed as prime applicant")
 with rc2:
@@ -280,7 +282,7 @@ st.divider()
 # =============================================================================
 # B. Pipeline Health  (was C. Pipeline health + D. Donor concentration)
 # =============================================================================
-st.subheader("B · Pipeline health (Proceed only)")
+st.subheader("B · Pipeline health")
 
 
 def _tier_of(score):
@@ -840,7 +842,7 @@ st.divider()
 # =============================================================================
 # E. Partner Engagement KRs  (was H. KR2.2 / KR2.3 / KR2.4)
 # =============================================================================
-st.subheader("E · Partner engagement KRs (KR2.2 / KR2.3 / KR2.4)")
+st.subheader("E · Partner engagement KRs")
 kr1, kr2 = st.columns(2)
 kr3, kr4 = st.columns(2)
 
