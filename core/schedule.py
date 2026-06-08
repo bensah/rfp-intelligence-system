@@ -40,6 +40,8 @@ def _clean(items) -> list[dict]:
         seen.add(d.isoformat())
         out.append({
             "date": d.isoformat(),
+            "cid": ("" if it.get("cid") in (None, "")
+                    else str(it.get("cid")).strip()),
             "note_taker": (it.get("note_taker") or "").strip(),
             "presenter": (it.get("presenter") or "").strip(),
             "chair": (it.get("chair") or "").strip(),

@@ -25,7 +25,7 @@ sb = get_client()
 
 _TITLE_COL, _BTN_COL = st.columns([5, 1])
 with _TITLE_COL:
-    st.title("Review Weekly Check-in Logs")
+    st.subheader("Weekly Meeting Logs")
 # Add-note button (rendered in the right column AFTER add_note_dialog is
 # defined further down — we reserve the slot here, fill it after definition).
 _ADD_NOTE_SLOT = _BTN_COL.empty()
