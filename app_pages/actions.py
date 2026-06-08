@@ -17,8 +17,8 @@ st.title("Meetings and Engagement Activities")
 # Tab labels use generic team terms. "Pending" is the third tab so
 # unresolved items from both data sources are visible on a single
 # screen (no jumping per-week to find what's still open).
-tab_meetings, tab_engagements, tab_pending = st.tabs(
-    ["Team Calls", "Engagements", "Pending"]
+tab_meetings, tab_engagements, tab_pending, tab_schedule = st.tabs(
+    ["Team Calls", "Engagements", "Pending", "Schedule"]
 )
 
 with tab_meetings:
@@ -29,3 +29,6 @@ with tab_engagements:
 
 with tab_pending:
     render_view("pending_actions")
+
+with tab_schedule:
+    render_view("schedule")
