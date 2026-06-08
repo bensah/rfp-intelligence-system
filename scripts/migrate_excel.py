@@ -640,32 +640,50 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
         if not dry_run and m_rows:
             existing = (
                 sb.table("meeting_logs")
-                .select("id,external_id")
+                .select("id,external_id,is_resolved")
                 .eq("source", "migration")
                 .execute()
                 .data
                 or []
             )
-            ext_to_id = {
-                r["external_id"]: r["id"]
-                for r in existing if r.get("external_id")
-            }
+            # external_id -> LIST of existing rows (a list, not one id) so we
+            # can COLLAPSE rows that share a key — leftovers from earlier
+            # duplicate-creating sync runs. is_resolved is fetched so the
+            # surviving copy is the resolved one when there's a choice.
+            ext_to_rows: dict[str, list[dict[str, Any]]] = {}
+            for e in existing:
+                if e.get("external_id"):
+                    ext_to_rows.setdefault(e["external_id"], []).append(e)
+
+            def _survivor(rows: list[dict[str, Any]]):
+                """(keep, [extras]) — keep a resolved copy if any so an in-app
+                Resolved decision is never lost; the extras are deleted."""
+                ordered = sorted(
+                    rows, key=lambda r: (0 if r.get("is_resolved") else 1, str(r["id"])))
+                return ordered[0], ordered[1:]
+
+            consumed: set[str] = set()   # existing ids already claimed this run
             inserts: list[dict[str, Any]] = []
-            updated = adopted = 0
+            dup_ids: list[str] = []
+            updated = adopted = collapsed = 0
             for r in m_rows:
                 ext = r["external_id"]
-                target_id = ext_to_id.get(ext)
+                cands = [c for c in ext_to_rows.get(ext, [])
+                         if str(c["id"]) not in consumed]
                 # Transition: a row that just gained a MID won't match by the
-                # new key yet — adopt the existing row that matches the OLD
-                # derived key, migrating it to the stable MID. Keeps
-                # is_resolved and avoids a duplicate.
-                if target_id is None:
-                    target_id = ext_to_id.get(r.get("_derived_id"))
-                    if target_id is not None:
+                # new key yet — adopt the existing row(s) under the OLD derived
+                # key, migrating to the stable MID (keeps is_resolved).
+                if not cands:
+                    cands = [c for c in ext_to_rows.get(r.get("_derived_id"), [])
+                             if str(c["id"]) not in consumed]
+                    if cands:
                         adopted += 1
-                if target_id is not None:
-                    # Update Excel-managed fields; is_resolved (app-managed)
-                    # survives. external_id is migrated to the MID key.
+                if cands:
+                    keep, extras = _survivor(cands)
+                    consumed.add(str(keep["id"]))
+                    consumed.update(str(x["id"]) for x in extras)
+                    # Update Excel-managed fields on the survivor; is_resolved
+                    # (app-managed) survives. external_id migrates to the MID.
                     sb.table("meeting_logs").update({
                         "external_id":  ext,
                         "meeting_date": r["meeting_date"],
@@ -675,16 +693,22 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
                         "actions":      r["actions"],
                         "owner":        r["owner"],
                         "deadline":     r["deadline"],
-                    }).eq("id", target_id).execute()
+                    }).eq("id", keep["id"]).execute()
                     updated += 1
+                    dup_ids.extend(str(x["id"]) for x in extras)  # same-meeting dupes
+                    collapsed += len(extras)
                 else:
                     inserts.append({k: v for k, v in r.items()
                                     if k != "_derived_id"})
             if inserts:
                 sb.table("meeting_logs").insert(inserts).execute()
-            print(f"  meeting_logs: {updated} updated ({adopted} adopted→MID) "
-                  f"· {len(inserts)} inserted "
-                  f"(is_resolved preserved across the {updated} updates)")
+            # Remove the collapsed duplicate rows (in chunks).
+            for _i in range(0, len(dup_ids), 100):
+                sb.table("meeting_logs").delete().in_(
+                    "id", dup_ids[_i:_i + 100]).execute()
+            print(f"  meeting_logs: {updated} updated ({adopted} adopted->MID, "
+                  f"{collapsed} duplicate(s) removed) · {len(inserts)} inserted "
+                  f"(is_resolved preserved)")
 
     # --- engagement_logs — merge by external_id (avoid duplicate accumulation)
     print("[Engagement_Log -> engagement_logs]")
