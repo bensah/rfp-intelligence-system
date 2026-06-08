@@ -776,6 +776,9 @@ def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
             # apply tighter noise filters.
             if "google.com/alerts/feeds" in url:
                 return _scan_google_alerts(name, url)
+            # ResearchNet (CIHR) feed carries real deadlines + funder per item.
+            if "researchnet-recherchenet.ca" in url:
+                return _scan_researchnet(name, url)
             return _scan_rss(name, url)
         if method == "rest_json":
             return _scan_rest_json(name, url)
@@ -838,6 +841,80 @@ def _scan_rss(name: str, url: str) -> list[dict[str, Any]]:
             "brief_description": summary[:1500] or None,
             "date_posted": published,
             "submission_deadline": None,
+            "_source_origin": f"{name} (RSS)",
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# ResearchNet (CIHR) — special-case RSS handler
+#
+# The Canadian Institutes of Health Research funding portal publishes every
+# current opportunity in one RSS feed (fodRss.do). Unlike a generic feed, each
+# <item> description carries the REAL Application Deadline (ISO date, or "TBD"
+# for rolling awards) plus the Registration/LOI deadline and the funder — so we
+# populate submission_deadline straight from the feed. The detail pages
+# (viewOpportunityDetails.do) render their Important-Dates table via AJAX, so
+# the feed is the reliable static source and no Playwright is needed (works on
+# Cloud Manual Scan too). Mapping → our extraction template:
+#   <title>        -> opportunity_title   (keeps the "Team Grant: …" type prefix)
+#   <guid>/<link>  -> opportunity_link     (the opportunity detail page)
+#   "Application Deadline <date>" -> submission_deadline (skip "TBD")
+#   <pubDate>      -> date_posted
+#   funder tail    -> funding_agency (CIHR)
+# ---------------------------------------------------------------------------
+_RNET_APP_DEADLINE_RE = re.compile(
+    r"Application\s*Deadline\s*([0-9]{4}-[0-9]{2}-[0-9]{2})", re.I)
+_RNET_DEADLINE_NOISE_RE = re.compile(
+    r"(?:LOI|Outline|Registration|Application)\s*Deadline\s*(?:TBD|[0-9-]+)", re.I)
+
+
+def _scan_researchnet(name: str, url: str) -> list[dict[str, Any]]:
+    try:
+        r = requests.get(
+            url,
+            headers={"User-Agent": USER_AGENT,
+                     "Accept": "application/rss+xml, application/xml, text/xml"},
+            timeout=HTTP_TIMEOUT,
+        )
+        r.raise_for_status()
+        feed = feedparser.parse(r.content)
+    except Exception:
+        feed = feedparser.parse(
+            url, agent=USER_AGENT, request_headers={"User-Agent": USER_AGENT})
+    if not feed.entries:
+        log.info("ResearchNet RSS %s returned 0 entries (bozo=%s)",
+                 name, getattr(feed, "bozo", False))
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in feed.entries[:100]:
+        title = _clean(getattr(entry, "title", "") or "")
+        # guid is a permalink to the opportunity detail page.
+        link = _clean(getattr(entry, "link", "")
+                      or getattr(entry, "id", "") or "")
+        if not title or not link:
+            continue
+        summary_html = getattr(entry, "summary", "") or ""
+        # Real Application Deadline only; "TBD" rolling awards stay None so the
+        # eligibility gate parks them rather than treating them as expired.
+        m = _RNET_APP_DEADLINE_RE.search(summary_html)
+        deadline = _parse_iso_date(m.group(1)) if m else None
+        # Brief = description text with the deadline boilerplate + funder tail
+        # stripped, so it reads as a real summary for the policy/theme gate.
+        text = BeautifulSoup(summary_html, "html.parser").get_text(" ")
+        text = _RNET_DEADLINE_NOISE_RE.sub("", text)
+        text = re.sub(
+            r"Canadian Institutes of Health Research\s*\|\s*Government of Canada",
+            "", text, flags=re.I)
+        brief = _clean(text)
+        published = _parse_struct_time(getattr(entry, "published_parsed", None))
+        out.append({
+            "opportunity_title": title,
+            "opportunity_link": link,
+            "funding_agency": "Canadian Institutes of Health Research",
+            "brief_description": brief[:1500] or None,
+            "date_posted": published,
+            "submission_deadline": deadline,
             "_source_origin": f"{name} (RSS)",
         })
     return out
