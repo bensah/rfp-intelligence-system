@@ -14,6 +14,14 @@ sources:
     method: rss
     url: https://reliefweb.int/jobs/funding/rss.xml
     priority: 2
+  - name: ResearchNet (CIHR)
+    # Canadian Institutes of Health Research funding portal. The "All Current
+    # Opportunities" RSS carries each item's real Application Deadline + funder,
+    # parsed by the dedicated _scan_researchnet handler (detail pages are
+    # JS-rendered, so the feed is the reliable static source).
+    method: rss
+    url: "https://www.researchnet-recherchenet.ca/rnr16/fodRss.do?type=ALL&chanTyp=ALL&lang=E"
+    priority: 1
   - name: Grants.gov
     method: rest_json
     url: https://api.grants.gov/v1/api/search2
