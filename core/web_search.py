@@ -461,8 +461,14 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
         by_url.setdefault(nu, it)
     items = list(by_url.values())
 
-    # 1) Cheap pre-filter on snippets (health + RFP signal + blacklist).
+    # 1) Cheap pre-filter on snippets: blacklist + health/RFP signal, then the
+    #    SAME geo + scholarship gates the scanner uses — drop calls whose scope
+    #    clearly excludes us (Ukraine / UK-Indonesia / Canada-Fund-style country
+    #    lists) and individual scholarships. Undefined-geo calls still pass
+    #    (slip in for review).
+    from core import auto_scorer as A
     candidates: list[dict] = []
+    dropped_geo = dropped_scholarship = dropped_offtopic = dropped_lang = 0
     for it in items:
         link = it.get("url") or ""
         title = _clean(it.get("title") or "")
@@ -470,6 +476,23 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
         if not link or blacklist.is_blacklisted(link):
             continue
         if not _relevant(title, snippet, link, required, excluded):
+            continue
+        cand = {"opportunity_title": title, "brief_description": snippet,
+                "opportunity_link": link}
+        if A.individual_award_reject(cand)[0]:
+            dropped_scholarship += 1
+            continue
+        # Jobs / vacancies / clearly non-funding pages (course / policy).
+        if A.non_funding_reject(cand)[0]:
+            dropped_offtopic += 1
+            continue
+        # Non-Latin (Arabic / CJK / Cyrillic) — English/French only.
+        if not A.language_eligible(cand)[0]:
+            dropped_lang += 1
+            continue
+        # Defined scope that excludes our region/countries → drop.
+        if A._geo_strength(cand, pol) == "foreign":
+            dropped_geo += 1
             continue
         candidates.append({"title": title, "link": link, "snippet": snippet,
                            "domain": urlparse(link).netloc})
@@ -530,4 +553,7 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
             "queries": queries, "providers": providers,
             "raw_count": len(items), "results": results[:30],
             "dropped_expired": dropped_expired, "dropped_old": dropped_old,
-            "dropped_notrfp": dropped_notrfp, "error": None}
+            "dropped_notrfp": dropped_notrfp, "dropped_geo": dropped_geo,
+            "dropped_scholarship": dropped_scholarship,
+            "dropped_offtopic": dropped_offtopic, "dropped_lang": dropped_lang,
+            "error": None}
