@@ -12,11 +12,17 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from openpyxl import load_workbook
+
+# One timestamp per sync run. Stamped onto every synced rfp row's created_at so
+# the Records list (ordered by created_at DESC) re-floats the whole Excel-synced
+# set to the top on each sync — above the auto-scanned rows, which keep their own
+# created_at. (created_at isn't used for RFP analytics, only this ordering.)
+_SYNC_TS = datetime.now(timezone.utc).isoformat()
 
 # Force UTF-8 on our output streams. This script prints status with non-ASCII
 # glyphs (→, ⚠, ·, —, …). When run as a subprocess (Admin → Sync now), Windows
@@ -159,6 +165,8 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
         "uid": uid,
         "form_id": uid,
         "source": "migration",
+        # Re-float to the top of the Records list on each sync (see _SYNC_TS).
+        "created_at": _SYNC_TS,
         "search_date": _ts(get("Search Date", "Search_Date", "SearchDate",
                                 "Date Searched", "Date of Search", "Scan Date")),
         "submitted_by": _txt(get("Submitted By")),
