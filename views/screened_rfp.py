@@ -200,6 +200,12 @@ if not proceed_df.empty:
         axis=1,
     )
 
+# End-of-page review queue = Proceed AND Parked. Parked calls were surfaced
+# this week and still need a visible review slot (they're not auto-Declined);
+# the KPI cards above stay Proceed-only ("what we'll pursue").
+_actionable_mask = (dec_lower.str.startswith("proceed") | dec_lower.eq("park")).to_numpy()
+actionable_df = unique[_actionable_mask].copy()
+
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
@@ -246,14 +252,25 @@ st.divider()
 
 
 # -----------------------------------------------------------------------------
-# Proceed RFPs — rationale & risks (matches Excel layout)
+# Proceed & Parked RFPs — rationale & risks (weekly review queue)
 # -----------------------------------------------------------------------------
-st.subheader(f"Proceed RFPs ({len(proceed_df)}) — Rationale & Risks")
-if proceed_df.empty:
-    st.info("No Proceed RFPs in this period.")
+st.subheader(f"Proceed & Parked RFPs ({len(actionable_df)}) — Rationale & Risks")
+if actionable_df.empty:
+    st.info("No Proceed or Parked RFPs in this period.")
 else:
-    # Read-only tabular view — edits happen on Review or Data pages
-    show = proceed_df.sort_values("alignment_score", ascending=False).copy()
+    # Read-only tabular view — edits happen on Review or Data pages.
+    show = actionable_df.copy()
+    # Effective decision (human override, else auto-recommendation) drives both
+    # the displayed Decision and the ordering: Proceed first, then Park; within
+    # each, highest score first.
+    _eff_dec = (
+        show["decision"]
+        .fillna(show.get("auto_recommendation", pd.Series([], dtype=str)))
+        .fillna("").astype(str).str.strip()
+    )
+    show["_ord"] = _eff_dec.str.lower().apply(lambda d: 0 if d.startswith("proceed") else 1)
+    show = show.sort_values(["_ord", "alignment_score"], ascending=[True, False])
+    _eff_dec = _eff_dec.reindex(show.index)
     show_df = pd.DataFrame({
         "UID": show["uid"],
         "Title": show["opportunity_title"].fillna("—"),
@@ -261,7 +278,7 @@ else:
         "Role": show["applicant_role"].fillna("—"),
         "Deadline": pd.to_datetime(show["submission_deadline"], errors="coerce", format="ISO8601").dt.date,
         "Score": show["alignment_score"].fillna(0).round(0),
-        "Decision": show["decision"].fillna("—"),
+        "Decision": _eff_dec.replace("", "—").str.title(),
         "Auto-rec": show["auto_recommendation"].fillna("—"),
         "Key risks": show["key_risks"].fillna(""),
     })
@@ -272,4 +289,5 @@ else:
             "Key risks": st.column_config.TextColumn("Key risks", width="large"),
         },
     )
-    st.caption("Edits are made on the **Review** page (eligibility + decision) or **Data** page (any field).")
+    st.caption("Proceed rows first, then Parked. Edits are made on the "
+               "**Review** page (eligibility + decision) or **Data** page (any field).")
