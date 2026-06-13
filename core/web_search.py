@@ -105,7 +105,43 @@ def _is_broad(term: str) -> bool:
     return (term or "").strip().lower() in _BROAD_TERMS
 
 
-def build_queries(user_terms: str, max_queries: int = 14) -> list[str]:
+# Admin-managed extra search terms (the "MeSH / keyword library"). Stored as a
+# JSON list in app_settings under SEARCH_PIVOTS_KEY and merged with the built-in
+# _HEALTH_PIVOTS, so a broad search fans out across these too. Editable in
+# Admin → Settings → Search terms.
+SEARCH_PIVOTS_KEY = "search_pivots_custom"
+
+
+def custom_pivots() -> list[str]:
+    """Admin-added search terms from app_settings (JSON list or newline text)."""
+    try:
+        from core.settings import get_setting
+        raw = (get_setting(SEARCH_PIVOTS_KEY) or "").strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            import json
+            vals = json.loads(raw)
+        else:
+            vals = raw.replace(",", "\n").split("\n")
+        return [str(t).strip() for t in vals if str(t).strip()]
+    except Exception:
+        return []
+
+
+def all_pivots() -> list[str]:
+    """Built-in health pivots + admin custom terms, de-duplicated (case-insensitive).
+    This is the full list a broad search fans out across."""
+    seen, out = set(), []
+    for t in list(_HEALTH_PIVOTS) + custom_pivots():
+        k = t.lower()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(t)
+    return out
+
+
+def build_queries(user_terms: str, max_queries: int = 20) -> list[str]:
     """Expand ONE keyword into the RFP queries our philosophy implies.
 
     * Broad term ("health") → fan out across `_HEALTH_PIVOTS`, each wrapped in
@@ -117,7 +153,7 @@ def build_queries(user_terms: str, max_queries: int = 14) -> list[str]:
     """
     term = (user_terms or "").strip()
     if _is_broad(term):
-        topics = list(_HEALTH_PIVOTS)
+        topics = all_pivots()           # built-in + admin custom terms
         out = [f"{t} {_RFP_OR_GROUP}" for t in topics]
     else:
         out = [
@@ -144,6 +180,36 @@ def build_query(user_terms: str, geo_terms: list[str] | None = None) -> str:
 
 def _clean(text: str) -> str:
     return _TAG_RE.sub("", text or "").strip()
+
+
+_RFP_TITLE_SIGNALS = (
+    "call for proposal", "call for application", "request for proposal",
+    "request for application", "request for expression", "expression of interest",
+    "funding opportunity", "request for information", "notice of funding",
+    "grant", "rfp", "rfa", "eoi", "tender",
+)
+
+
+def _relevance_score(r: dict, user_terms: str) -> float:
+    """Best-match score for ranking web results (higher = better). Rewards the
+    query terms in the TITLE most, then the snippet; a clear RFP signal in the
+    title; and a known future deadline (then a recent page date). Used to order
+    results best→worst before pagination."""
+    title = (r.get("title") or "").lower()
+    snippet = (r.get("snippet") or "").lower()
+    score = 0.0
+    for t in {w for w in re.findall(r"[a-z]{3,}", (user_terms or "").lower())}:
+        if t in title:
+            score += 3.0
+        elif t in snippet:
+            score += 1.0
+    if any(p in title for p in _RFP_TITLE_SIGNALS):
+        score += 4.0
+    if r.get("deadline"):
+        score += 3.0
+    elif r.get("page_date"):
+        score += 1.0
+    return score
 
 
 def _relevant(title: str, snippet: str, link: str,
@@ -199,7 +265,7 @@ def suggest_terms(user_terms: str, limit: int = 6) -> list[str]:
         for m in ("grant", "call for proposals", "funding opportunity"):
             if m not in ql:
                 out.append(f"{q} {m}")
-    out.extend(_HEALTH_PIVOTS)
+    out.extend(all_pivots())
     seen, res = set(), []
     for s in out:
         k = s.lower()
@@ -558,6 +624,8 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
                         "deadline": dl.isoformat() if dl else "",
                         "page_date": pdate.isoformat() if pdate else ""})
 
+    # Rank best→worst so the strongest matches lead (and paginate cleanly).
+    results.sort(key=lambda r: _relevance_score(r, user_terms), reverse=True)
     return {"ok": True, "configured": True,
             "query": queries[0] if queries else "",
             "queries": queries, "providers": providers,
