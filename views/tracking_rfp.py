@@ -305,7 +305,7 @@ browse = pd.DataFrame({
 
 event = st.dataframe(
     browse,
-    use_container_width=True,
+    width='stretch',
     hide_index=True,
     selection_mode="single-row",
     on_select="rerun",

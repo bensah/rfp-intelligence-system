@@ -331,7 +331,7 @@ with gauge_col:
         )
     )
     fig.update_layout(height=280, margin=dict(t=20, b=20, l=20, r=20))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     st.markdown(
         f"<div style='text-align:center;color:#555;font-size:0.88rem'>"
         f"<b>Live auto-rec: {live_rec}</b>  ·  "
@@ -371,7 +371,7 @@ new_rationale = dc2.text_area(
 )
 
 bsave, _bspace = st.columns([1, 4])
-if bsave.button("💾 Save changes", type="primary", disabled=not can_edit, use_container_width=True):
+if bsave.button("💾 Save changes", type="primary", disabled=not can_edit, width='stretch'):
     update = {
         **edited_values,
         "decline_flags_present": decline_in == "Yes",
@@ -417,4 +417,4 @@ with st.expander("🔍 Stored values (raw, from database)", expanded=False):
          for k, v in raw.items()],
         columns=["Field", "Stored value"],
     )
-    st.dataframe(diag_df, use_container_width=True, hide_index=True)
+    st.dataframe(diag_df, width='stretch', hide_index=True)
