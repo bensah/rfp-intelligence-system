@@ -30,7 +30,7 @@ def _submit_rfp_modal():
 # reachable from every tab and aligns with the page title.
 _title_col, _btn_col = st.columns([5, 1.5])
 with _title_col:
-    st.title("Discovered RFP Pipelines")
+    st.title("Discovered Opportunities Pipeline")
 with _btn_col:
     st.write("")  # nudge the button down to the title baseline
     if st.button("🔄 Scan now", type="primary", width='stretch',
