@@ -54,16 +54,26 @@ def get(key: str, default: list | None = None) -> list:
 
 
 def usd_rate(currency: str | None) -> float:
-    """Look up FX rate; missing/unknown currency returns 1.0 (no conversion).
+    """USD per 1 unit of `currency`. 1.0 for empty/USD/unknown (no conversion).
 
-    Resolution order matches core.currency._resolve_currency:
-    code → label → aliases → first whitespace token.
+    Resolution order: LIVE rate (open.er-api.com via core.fx, cached 6h) first —
+    so currencies missing from the static table (DKK, CHF, XAF, NGN, …) convert
+    correctly instead of silently defaulting to 1.0 (the old "$nan / treated as
+    USD" bug) — then the static table (code → label → aliases → first token).
     """
     if not currency:
         return 1.0
     cur = str(currency).strip()
-    if not cur:
+    if not cur or cur.upper() == "USD":
         return 1.0
+    # Live rate first, keyed on the ISO code (first token, upper-cased).
+    try:
+        from core.fx import _erapi_rate
+        _live, _ = _erapi_rate(cur.split()[0].upper())
+        if _live:
+            return float(_live)
+    except Exception:
+        pass
     currencies = load().get("currencies", []) or []
 
     def _rate(entry):

@@ -163,6 +163,7 @@ DISPLAY = [
     "submission_deadline",
     "estimated_value",
     "currency",
+    "_value_usd",       # derived: live USD conversion "≈ $X (CUR Y @ date)"
     "alignment_score",
     "_prob",            # derived from alignment_score
     "auto_recommendation",
@@ -180,6 +181,31 @@ from core.pipeline import prob_tier as _prob_tier_full
 def _prob_tier(score):
     """Short label ("High" / "Medium" / "Low") — shared thresholds from core.pipeline."""
     return _prob_tier_full(score, short=True)
+
+
+def _usd_display(amount, currency) -> str:
+    """'≈ $X (CUR Y @ rate-date)' using a LIVE FX rate (core.fx, cached). Plain
+    '$X' for USD; '' when there's no amount or the currency is unknown."""
+    try:
+        amt = float(amount)
+    except (TypeError, ValueError):
+        return ""
+    if not amt:
+        return ""
+    cur = (str(currency).strip().split()[0].upper() if currency else "")
+    if not cur or cur == "USD":
+        return f"${amt:,.0f}"
+    try:
+        from core import fx
+        r = fx.to_usd(amt, cur)
+    except Exception:
+        return ""
+    usd = r.get("usd")
+    if usd is None:
+        return ""
+    from datetime import date as _date
+    rd = _date.today().isoformat()   # live rate = as of today
+    return f"≈ ${usd:,.0f} ({cur} {amt:,.0f} @ {rd})"
 
 
 # Column visibility toggle — when on, show every DB column for direct
@@ -214,6 +240,12 @@ if "search_date" in table:
         table["search_date"], errors="coerce", format="ISO8601")
 if "alignment_score" in table and "_prob" in visible_cols:
     table["_prob"] = table["alignment_score"].apply(_prob_tier)
+if "_value_usd" in table.columns:
+    _ev = (view_df["estimated_value"] if "estimated_value" in view_df.columns
+           else [None] * len(table))
+    _cc = (view_df["currency"] if "currency" in view_df.columns
+           else [None] * len(table))
+    table["_value_usd"] = [_usd_display(a, c) for a, c in zip(list(_ev), list(_cc))]
 
 # Backend columns are snake_case (consistent); the DISPLAY shows friendly,
 # underscore-free labels. Curated key columns keep concise custom labels; every
@@ -258,6 +290,7 @@ _explicit_cfg = {
     "submission_deadline": st.column_config.DateColumn("Deadline"),
     "estimated_value": st.column_config.NumberColumn("Value", format="%.0f"),
     "currency": st.column_config.TextColumn("Currency", width="small"),
+    "_value_usd": st.column_config.TextColumn("Value (USD)", width="medium"),
     "alignment_score": st.column_config.NumberColumn("Score", format="%.1f"),
     "_prob": st.column_config.TextColumn("Probability", width="small"),
     "auto_recommendation": st.column_config.TextColumn("Auto recommendation"),
