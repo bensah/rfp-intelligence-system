@@ -107,16 +107,19 @@ st.subheader("🌐 Opportunities on the web")
 if not web_search.available():
     st.info(
         "**Web search isn't configured yet.** An admin can enable it by adding "
-        "`TAVILY_API_KEY` to the app secrets — a free, no-card key from "
-        "[app.tavily.com](https://app.tavily.com/). Once set, this searches the "
-        "web for live calls matching your keyword and keeps only results that "
-        "pass the same RFP-signal rules and blacklist the scanner uses — "
-        "filtering out the noise.")
+        "`SERPER_API_KEY` (real Google results, 2,500 free queries from "
+        "[serper.dev](https://serper.dev)) and/or `TAVILY_API_KEY` "
+        "([app.tavily.com](https://app.tavily.com/)) to the app secrets. Once "
+        "set, one keyword fans out into several RFP-framed searches and keeps "
+        "only results that pass your health-theme + RFP-signal rules and "
+        "blacklist — filtering out the noise.")
 else:
     st.caption(
-        "Searches the web via Tavily, then keeps only results that pass the "
-        "scanner's RFP-signal rules + blacklist — so what's left fits your "
-        "configuration, not generic web noise.")
+        "Type one keyword (e.g. *health* or *malaria*) — it auto-expands into "
+        "RFP-framed searches across every configured engine (Google/Serper, "
+        "Tavily, Exa), then keeps only results that pass your health-theme + "
+        "RFP-signal rules and blacklist. Broad terms sweep the whole portfolio; "
+        "specific terms stay focused.")
     wb1, wb2, _wsp = st.columns([1.7, 1.2, 4])
     if wb1.button(f"🌐 Search the web for “{q}”", key="web_search_btn",
                   type="primary", use_container_width=True):
