@@ -197,18 +197,74 @@ def _geo_strength(candidate: dict[str, Any], policies: dict[str, Any]) -> str:
     return "silent"
 
 
+# Individual-oriented awards — scholarships, studentships, bursaries, student
+# travel/dissertation awards. These fund a NAMED PERSON, not an organization,
+# so the deploying org can't apply as an entity. Checked against the TITLE
+# (strongest signal) so an org grant that merely mentions "scholarships" as an
+# activity isn't nuked. Kept narrow on purpose ("fellowship" alone is NOT here
+# — many org/research fellowships are valid).
+_INDIVIDUAL_AWARD_RE = re.compile(
+    r"\b(scholarships?|studentships?|bursar(?:y|ies)|tuition|"
+    r"doctoral student|ph\.?d\.? student|master'?s student|"
+    r"student research award|dissertation award|undergraduate award)\b", re.I)
+
+
+def individual_award_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
+    """(True, reason) when the call is an individual scholarship / student
+    award rather than an organizational grant — drop it."""
+    title = candidate.get("opportunity_title") or ""
+    if _INDIVIDUAL_AWARD_RE.search(title):
+        return True, "individual scholarship / student award (not an org grant)"
+    return False, ""
+
+
+# Employment postings (we're RFP-focused, not a job board) — detected on the
+# TITLE or URL, never the body, so a real call that merely mentions "jobs" (a
+# youth-livelihoods RFP) isn't caught. NOTE: "consultancy / consultant /
+# recruitment of a firm" is deliberately NOT here — those are valid procurement
+# opportunities the team pursues.
+_JOB_TITLE_RE = re.compile(
+    r"\b(jobs?|vacanc(?:y|ies)|we are hiring|now hiring|join our team|"
+    r"job (?:opening|posting|search)|\d+\s+job position)\b", re.I)
+_JOB_URL_RE = re.compile(
+    r"(?:\.jobs(?:/|$)|/jobs?(?:/|\b|-)|/vacanc|/careers?\b|//jobs\.)", re.I)
+# Clearly non-funding page types (NOT blog/news — real calls live there).
+_NON_FUNDING_RE = re.compile(
+    r"\b(standardized testing|report card|course catalog|academic calendar|"
+    r"school district|cookie policy|privacy policy|terms of use|log ?in)\b", re.I)
+
+
+def non_funding_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
+    """(True, reason) for job/vacancy postings and other clearly non-funding
+    pages (course/policy/login). Job detection is guarded by an RFP signal in
+    the title so a genuine call about jobs/livelihoods survives."""
+    title = candidate.get("opportunity_title") or ""
+    link = candidate.get("opportunity_link") or ""
+    has_rfp = (any(p in title.lower() for p in _RFP_STRONG_PHRASES)
+               or _has_rfp_acronym(title))
+    if (_JOB_TITLE_RE.search(title) or _JOB_URL_RE.search(link)) and not has_rfp:
+        return True, "job / vacancy posting (not a funding call)"
+    # Normalise URL separators (-, _, /) → spaces so "standardized-testing" in a
+    # path matches the same as the words in a title.
+    norm = f"{title} {re.sub(r'[-_/]+', ' ', link)}"
+    if _NON_FUNDING_RE.search(norm):
+        return True, "non-funding page (course / policy / login)"
+    return False, ""
+
+
 def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
-    """Geo gate — REJECT→PARK model.
+    """Geo gate — PARK the ambiguous, REJECT the clearly-out-of-scope.
 
-    Geography NO LONGER drops a candidate here. A call that doesn't clearly
-    match an eligible country (region-wide, LMIC-framed, geo-silent, or even
-    naming a non-eligible country) stays eligible so it ENTERS the pipeline,
-    and auto_score() PARKS it for human confirmation instead of auto-Proceeding
-    (see _geo_strength + the geo guard in auto_score). The only geo-shaped hard
-    drop is the separate us_domestic_only_reject() for clearly US-only calls.
-
-    Honors `permissive_when_silent=False` (strict deployments still drop
-    geo-silent calls). Returns (eligible, reason) for the scan log.
+    Per the geo rule:
+      * No geography defined (silent) → ENTER, parked for review (slip in).
+      * Defined scope that includes our eligible countries OR a region/tier
+        that contains them (sub-Saharan Africa, LMIC, Africa, …) → ENTER.
+      * Defined scope that EXCLUDES us — specific non-eligible countries with
+        no containing region (e.g. a Ukraine/China-only call, the Canada Fund
+        per-country list) → REJECT (drop).
+    Ambiguity (regional / silent) lands in Park via the auto_score geo guard;
+    a clearly-eligible match can Proceed. Honors permissive_when_silent.
+    Returns (eligible, reason) for the scan log.
     """
     countries = policies.get("countries", {}) or {}
     permissive = bool(countries.get("permissive_when_silent", True))
@@ -221,9 +277,13 @@ def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tup
         if permissive:
             return True, "geo: none mentioned (permissive)"
         return False, "geo: none mentioned (strict)"
-    # strength == "foreign": names a non-eligible country with no regional
-    # framing. REJECT→PARK — keep it (parked), don't drop.
-    return True, "geo: names non-eligible country, no regional framing (parked)"
+    # strength == "foreign": geography IS defined and excludes our scope —
+    # specific non-eligible countries, no region/tier (SSA / LMIC / Africa)
+    # that contains Cameroon or Mali, no eligible country named. A clearly-
+    # defined scope that leaves us out (e.g. a Ukraine/China-only call, or the
+    # Canada Fund's per-country list) is REJECTED. Undefined geo still slips in
+    # via the 'silent' branch above.
+    return False, "geo: defined scope excludes eligible countries / region"
 
 
 def theme_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
@@ -696,6 +756,14 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     ok, reason = rfp_signal_gate(candidate)
     if not ok:
         return False, f"not-an-rfp: {reason}"
+    # Individual scholarships / student awards aren't org grants → drop.
+    rejected, reason = individual_award_reject(candidate)
+    if rejected:
+        return False, f"type: {reason}"
+    # Job/vacancy postings + clearly non-funding pages → drop (RFP-focused).
+    rejected, reason = non_funding_reject(candidate)
+    if rejected:
+        return False, f"type: {reason}"
     # Language — if it's Arabic/CJK/etc. nothing downstream can process
     # it usefully and a non-Latin description makes deadline / keyword
     # extraction unreliable. Cheap check, fail fast.
