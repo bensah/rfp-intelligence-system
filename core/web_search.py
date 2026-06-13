@@ -294,19 +294,22 @@ def _url_date(url: str) -> date | None:
     return None
 
 
-def _fetch_signals(url: str, client) -> dict:
+def _fetch_signals(url: str, client, pol: dict | None = None) -> dict:
     """Crawl one result page ONCE and return validation signals:
       * date    — FIRST-POSTED date (datePublished / article:published_time /
                   dc.date), NOT last-modified;
       * rfp_ok  — the PAGE BODY carries real call wording / an RFP acronym
-                  (validates it's actually a call, not just a snippet match).
+                  (validates it's actually a call, not just a snippet match);
+      * geo     — _geo_strength run on the PAGE BODY, so a call whose snippet
+                  looked clean but whose body is e.g. Afghanistan/US-only is
+                  caught ('foreign'). The 'better read on page contents'.
     `fetched` is False when the page couldn't be read (we then stay lenient).
 
-    We deliberately do NOT parse a deadline from the full body — pages are full
-    of unrelated dates (copyright, archives, events) that produced false
-    'expired' drops. The snippet deadline + the metadata date are the reliable
-    signals; rfp_ok confirms it's a real call."""
-    out = {"date": None, "rfp_ok": False, "fetched": False}
+    We deliberately do NOT parse a deadline / theme from the full body — pages
+    are full of unrelated dates, and a malaria call needn't repeat the word
+    'health'. The snippet deadline + metadata date + rfp_ok + body-geo are the
+    reliable signals."""
+    out = {"date": None, "rfp_ok": False, "fetched": False, "geo": None}
     try:
         r = client.get(url, timeout=7.0, follow_redirects=True,
                        headers={"User-Agent": _UA})
@@ -322,6 +325,8 @@ def _fetch_signals(url: str, client) -> dict:
         tl = text.lower()
         out["rfp_ok"] = (any(p in tl for p in A._RFP_STRONG_PHRASES)
                          or A._has_rfp_acronym(text))
+        if pol is not None:
+            out["geo"] = A._geo_strength({"brief_description": text}, pol)
     except Exception:
         out["rfp_ok"] = True  # fail-open: don't reject on validation error
     return out
@@ -506,7 +511,7 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
         try:
             with httpx.Client() as client:
                 with _cf.ThreadPoolExecutor(max_workers=8) as ex:
-                    futs = {ex.submit(_fetch_signals, c["link"], client): c["link"]
+                    futs = {ex.submit(_fetch_signals, c["link"], client, pol): c["link"]
                             for c in fetch_list}
                     for f in _cf.as_completed(futs):
                         try:
@@ -542,6 +547,11 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
         # when we actually fetched and validated the page.
         if sig.get("fetched") and not future_dl and not sig.get("rfp_ok"):
             dropped_notrfp += 1
+            continue
+        # Body geography clearly excludes us (the 'better read' — catches an
+        # Afghanistan/US-only call whose snippet looked clean).
+        if sig.get("fetched") and sig.get("geo") == "foreign":
+            dropped_geo += 1
             continue
         results.append({"title": c["title"], "link": c["link"],
                         "snippet": c["snippet"], "domain": c["domain"],
