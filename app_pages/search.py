@@ -124,16 +124,18 @@ else:
     if wb1.button(f"🌐 Search the web for “{q}”", key="web_search_btn",
                   type="primary", use_container_width=True):
         st.session_state["_web_search_for"] = q
+        st.query_params.pop("p", None)  # fresh search → back to page 1
         st.rerun()  # restart so the in-app groups collapse before web results
     if wb2.button("🔄 Refresh results", key="web_search_refresh",
                   use_container_width=True,
                   help="Re-run the web search, bypassing the 15-min cache."):
         web_search.search.clear()       # drop cached results → re-query Tavily
         st.session_state["_web_search_for"] = q
+        st.query_params.pop("p", None)
         st.rerun()
     if st.session_state.get("_web_search_for") == q:
         with st.spinner("Searching the web…"):
-            res = web_search.search(q, num=20)
+            res = web_search.search(q, num=30)
         if not res.get("ok"):
             st.warning("Web search unavailable: "
                        f"{res.get('error') or 'unknown error'}")
@@ -158,14 +160,52 @@ else:
                 _msg.append(f"{res['dropped_offtopic']} job/off-topic")
             if res.get("dropped_lang"):
                 _msg.append(f"{res['dropped_lang']} non-EN/FR")
+            # ── Pagination (15/page, ranked best→worst) ──────────────────
+            _all = res["results"]            # already sorted best-match first
+            _PER = 15
+            _pages = max(1, (len(_all) + _PER - 1) // _PER)
+            try:
+                _pg = int(st.query_params.get("p", "1"))
+            except (TypeError, ValueError):
+                _pg = 1
+            _pg = max(1, min(_pg, _pages))
+            _start = (_pg - 1) * _PER
+            _page_results = _all[_start:_start + _PER]
             st.caption(
-                f"{len(res['results'])} of {res['raw_count']} web results "
-                "matched your RFP configuration"
-                + (f" · dropped {', '.join(_msg)}" if _msg else "") + ".")
+                f"{len(_all)} of {res['raw_count']} web results matched your "
+                "RFP configuration"
+                + (f" · dropped {', '.join(_msg)}" if _msg else "")
+                + f" · showing {_start + 1}–{_start + len(_page_results)} "
+                f"(page {_pg} of {_pages}), best matches first.")
+
+            def _page_nav() -> None:
+                """Google-style hyperlinked page numbers (?q=…&p=N)."""
+                if _pages <= 1:
+                    return
+                _qq = _urlparse.quote(q)
+                bits: list[str] = []
+                if _pg > 1:
+                    bits.append(f"<a href='?q={_qq}&p={_pg-1}' "
+                                "style='text-decoration:none;'>‹ Prev</a>")
+                for n in range(1, _pages + 1):
+                    if n == _pg:
+                        bits.append(f"<b style='color:#00703C;'>{n}</b>")
+                    else:
+                        bits.append(f"<a href='?q={_qq}&p={n}' "
+                                    "style='text-decoration:none;color:#1e3a8a;'>"
+                                    f"{n}</a>")
+                if _pg < _pages:
+                    bits.append(f"<a href='?q={_qq}&p={_pg+1}' "
+                                "style='text-decoration:none;'>Next ›</a>")
+                st.markdown(
+                    "<div style='margin:0.4rem 0 0.2rem;font-size:0.95rem;"
+                    "letter-spacing:0.04em;'>" + "&nbsp;&nbsp;".join(bits)
+                    + "</div>", unsafe_allow_html=True)
+
             # Uniform cards: title clamped to 1 line, summary to exactly 2
             # lines (CSS line-clamp + a hard char cap) so every result is the
             # same height — no long paragraphs.
-            for wr in res["results"]:
+            for wr in _page_results:
                 _title = html.escape((wr["title"] or "")[:140])
                 _dom = html.escape(wr["domain"] or "")
                 _snip = (wr["snippet"] or "")
@@ -196,6 +236,7 @@ else:
                     f"{_lead}<span style='color:#94a3b8;'>{_dom}</span> — "
                     f"{_snip}</div></div>",
                     unsafe_allow_html=True)
+            _page_nav()   # hyperlinked page numbers at the tail (Google-style)
 
 # ── Related searches ────────────────────────────────────────────────────────
 # Alternative queries (clickable) to widen discovery. Each links to ?q=… so it
