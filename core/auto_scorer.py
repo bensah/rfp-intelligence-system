@@ -211,6 +211,32 @@ def grants_gov_domestic_only(elig_text: str | None) -> bool:
     return bool(_US_DOMESTIC_ONLY_PATTERN.search(elig_text))
 
 
+# Grants.gov applicant-type tiers that are structurally US-domestic government /
+# public entities. If EVERY listed applicant type is one of these (and none is
+# an open type below), the opp is US-government-only — not applicable to an LMIC
+# NGO. Conservative: the presence of any open type keeps the opp.
+_GOV_TIER_RE = re.compile(
+    r"(government|school district|housing authorit|state controlled institution"
+    r"|public.*institution.*higher\s+education)", re.I)
+_OPEN_APPLICANT_RE = re.compile(
+    r"(nonprofit|non-profit|private institution|individual|for.?profit"
+    r"|small business|unrestricted|\bother)", re.I)
+
+
+def grants_gov_government_only(applicant_types: list[str] | None) -> bool:
+    """True when EVERY Grants.gov applicant type is a US-domestic government /
+    public tier (state/county/city/tribal governments, school districts,
+    housing authorities, public universities) and none is an open type
+    (nonprofit, individual, for-profit, unrestricted, 'other'). A hard
+    US-domestic fact — safe to drop for an LMIC deployment."""
+    labels = [str(a).strip() for a in (applicant_types or []) if str(a).strip()]
+    if not labels:
+        return False
+    if any(_OPEN_APPLICANT_RE.search(a) for a in labels):
+        return False
+    return all(_GOV_TIER_RE.search(a) for a in labels)
+
+
 # The pure worldwide tier — applied AFTER the named-foreign check so a vague
 # "global" can't rescue a call that names a specific non-eligible country
 # ("Global Afghanistan Tenders" → Afghanistan, foreign). All other broad terms
@@ -534,20 +560,63 @@ def language_eligible(candidate: dict[str, Any]) -> tuple[bool, str]:
     return True, ""
 
 
+# A non-rolling call with NO parseable deadline whose page was POSTED more than
+# this many days ago is almost certainly closed — real application windows run
+# weeks to a few months, not years. Rolling / open-ended calls are exempt (they
+# say so in the text). Conservative end of the user's 3-6 month guidance.
+_STALE_POSTING_DAYS = 183  # ~6 months
+_ROLLING_RE = re.compile(
+    r"(rolling\s+basis|on\s+a\s+rolling|no\s+(?:fixed\s+|set\s+)?deadline"
+    r"|deadline\s*:?\s*(?:none|n/?a|ongoing|rolling|continuous)"
+    r"|accepted\s+(?:on\s+an?\s+)?(?:ongoing|continuous|year[- ]?round|rolling)"
+    r"|year[- ]round|continuous(?:ly)?\s+(?:open|accept|intake)"
+    r"|always\s+open|at\s+any\s+time|ongoing\s+(?:basis|intake)"
+    r"|applications?\s+(?:are\s+)?accepted\s+(?:at\s+any\s+time|on\s+a\s+rolling|continuous))",
+    re.IGNORECASE)
+
+
+def _is_rolling_call(candidate: dict[str, Any]) -> bool:
+    """True if the text states the call is rolling / open-ended (no fixed
+    deadline). Such calls are EXEMPT from the stale-posting rule."""
+    blob = " ".join([
+        candidate.get("opportunity_title") or "",
+        candidate.get("brief_description") or "",
+        candidate.get("notes") or "",
+    ])
+    return bool(_ROLLING_RE.search(blob))
+
+
 def deadline_in_future(candidate: dict[str, Any]) -> tuple[bool, str]:
     """Reject candidates whose submission deadline has already passed.
 
-    Three sources of truth, in priority order:
+    Sources of truth, in priority order:
       1. Explicit `submission_deadline` set by the enrichment pipeline.
-      2. Latest year in the opportunity_link (or title) — fallback when
-         the deadline phrase couldn't be parsed (e.g. the body text is
-         in Arabic so our regex missed it, or enrichment was skipped).
-      3. No signal at all → keep (rolling RFP).
+      2. Stale-posting rule — no deadline, NOT rolling, and the page was posted
+         more than _STALE_POSTING_DAYS ago → expired (FPF 'Seven Winners' 2017).
+      3. Latest year in link/title/body — fallback when nothing else parsed.
+      4. No signal at all → keep (rolling / undated RFP).
     """
     from datetime import date as _date, datetime as _dt
     today = _date.today()
     deadline = candidate.get("submission_deadline")
     if not deadline:
+        # Stale-posting rule: a non-rolling call with no deadline whose page was
+        # POSTED long ago is almost certainly closed (e.g. the FPF 'Seven
+        # Winners' page — published 2017, no deadline text, no 'closed' clue).
+        posted = candidate.get("date_posted")
+        if isinstance(posted, str):
+            try:
+                posted = _dt.fromisoformat(posted.split("T")[0]).date()
+            except (ValueError, TypeError):
+                posted = None
+        elif isinstance(posted, _dt):
+            posted = posted.date()
+        if (isinstance(posted, _date) and posted < today
+                and (today - posted).days > _STALE_POSTING_DAYS
+                and not _is_rolling_call(candidate)):
+            return False, (
+                f"posted {posted.isoformat()} ({(today - posted).days}d ago), "
+                "no deadline + not a rolling call — treating as expired")
         # Fallback: look for a year in the URL or title.
         # Scan URL + title AND the body text / notes. Donors like Fondation
         # Pierre Fabre put the application window only in prose ("accepting

@@ -313,7 +313,7 @@ def _hbar(values: list[float], labels: list[str], height: int = 220, fmt: str | 
             )
         else:
             fig.update_traces(texttemplate=fmt, textposition="outside")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 cc1, cc2, cc3 = st.columns(3)
@@ -355,7 +355,7 @@ with cc2:
                 "alignment_score": "Score",
                 "_tier": "Tier",
             })
-            st.dataframe(tier_df, hide_index=True, use_container_width=True)
+            st.dataframe(tier_df, hide_index=True, width='stretch')
     else:
         st.caption("_No Proceed RFPs._")
 
@@ -415,7 +415,7 @@ if not proceed_df.empty:
     start = (cur_page - 1) * page_size
     page_df = by_funder.iloc[start:start + page_size]
     st.dataframe(
-        page_df, use_container_width=True, hide_index=True,
+        page_df, width='stretch', hide_index=True,
         column_config={
             "Pipeline Value (USD)": st.column_config.NumberColumn(
                 "Pipeline Value (USD)", format="$%,.0f"
@@ -492,7 +492,7 @@ with ec1:
             .reset_index()
         )
         ps.columns = ["Status", "Count"]
-        st.dataframe(ps, hide_index=True, use_container_width=True)
+        st.dataframe(ps, hide_index=True, width='stretch')
     else:
         st.caption("—")
 
@@ -529,7 +529,7 @@ with ec2:
             fill_value=0,
         ).reset_index()
         urg.columns = ["Urgency", "Count"]
-        st.dataframe(urg, hide_index=True, use_container_width=True)
+        st.dataframe(urg, hide_index=True, width='stretch')
     else:
         st.caption("—")
 
@@ -554,7 +554,7 @@ with ec3:
         .reset_index()
     )
     dd_counts.columns = ["Decision", "Count"]
-    st.dataframe(dd_counts, hide_index=True, use_container_width=True)
+    st.dataframe(dd_counts, hide_index=True, width='stretch')
 
 st.divider()
 

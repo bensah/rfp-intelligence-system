@@ -238,7 +238,7 @@ else:
             if row[5].button(
                 "Not Resolved",
                 key=f"status_no_pa_m_{n['id']}",
-                use_container_width=True,
+                width='stretch',
                 disabled=not can_edit,
             ):
                 sb.table("meeting_logs").update({"is_resolved": True}) \
@@ -388,7 +388,7 @@ else:
                     if row[5].button(
                         "Not Resolved",
                         key=f"status_no_pa_e_{e['id']}",
-                        use_container_width=True,
+                        width='stretch',
                         disabled=not can_edit,
                     ):
                         sb.table("engagement_logs") \

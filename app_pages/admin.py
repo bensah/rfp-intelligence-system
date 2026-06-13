@@ -288,7 +288,7 @@ with tab_settings:
             st.error(resolved["error"])
 
     if sc2.button("🔄 Sync now", type="primary", disabled=xls_path is None,
-                  use_container_width=True):
+                  width='stretch'):
         with st.spinner("Running migrate_excel.py..."):
             result = excel_sync.sync(updated_by=user.get("email"))
         if result.get("ok"):
@@ -376,7 +376,7 @@ with tab_settings:
         cur_df,
         num_rows="dynamic",
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
         column_config={
             "Code":   st.column_config.TextColumn("Code", required=True, help="3-letter ISO code (USD, GBP, EUR, XAF, CAD, ...)"),
             "Label":  st.column_config.TextColumn("Label"),
@@ -457,10 +457,15 @@ with tab_settings:
 
     with pol_tabs[0]:
         from core import geographies as _geo
+        # BROAD_GEOGRAPHIES is newer than UN_REGIONS/INCOME_TIERS; fall back to
+        # composing it so a stale cached module (Streamlit Cloud before a reboot)
+        # can't hard-crash the Settings page.
+        _broad_opts = getattr(_geo, "BROAD_GEOGRAPHIES", None) or (
+            list(getattr(_geo, "UN_REGIONS", [])) + list(getattr(_geo, "INCOME_TIERS", [])))
         _tag_input(
             "Eligible countries",
             list(_live["countries"]["eligible"]),
-            options=list(_geo.COUNTRIES),
+            options=list(getattr(_geo, "COUNTRIES", [])),
             key="pol_countries_eligible",
             help="Exact countries the org works in — an RFP naming any of these "
                  "is admitted.",
@@ -468,7 +473,7 @@ with tab_settings:
         _tag_input(
             "Broad-geography terms",
             list(_live["countries"]["broad_terms"]),
-            options=list(_geo.BROAD_GEOGRAPHIES),
+            options=list(_broad_opts),
             key="pol_countries_broad",
             help="High-level UN regions / income tiers. Each also admits its "
                  "member countries + synonyms (e.g. Sub-Saharan Africa admits a "
@@ -645,7 +650,7 @@ with tab_settings:
         "they represent real donor submission events."
     )
     dc1, dc2 = st.columns([3, 1])
-    if dc2.button("🔁 Reset & re-dedup", use_container_width=True):
+    if dc2.button("🔁 Reset & re-dedup", width='stretch'):
         from scripts.dedup_existing import run as run_dedup
         try:
             with st.spinner("Re-running dedup..."):
@@ -672,7 +677,7 @@ with tab_settings:
         "wipe, so prefer the **Other Records** tab to delete specific rows."
     )
     rc1, rc2 = st.columns([3, 1])
-    if rc2.button("🧹 Wipe meeting_logs", use_container_width=True):
+    if rc2.button("🧹 Wipe meeting_logs", width='stretch'):
         try:
             res = sb.table("meeting_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
             deleted = len(res.data or [])
@@ -693,7 +698,7 @@ with tab_settings:
         "Grants are NOT touched."
     )
     agc1, agc2 = st.columns([3, 1])
-    if agc2.button("🧹 Wipe migration grants", use_container_width=True, key="wipe_ag_migration"):
+    if agc2.button("🧹 Wipe migration grants", width='stretch', key="wipe_ag_migration"):
         try:
             res = (
                 sb.table("active_grants")
@@ -719,7 +724,7 @@ with tab_settings:
         "of incremental merges. Click **🔄 Scan now** afterwards to repopulate."
     )
     arc1, arc2 = st.columns([3, 1])
-    if arc2.button("🧹 Wipe auto-scan rows", use_container_width=True, key="wipe_auto_rfps"):
+    if arc2.button("🧹 Wipe auto-scan rows", width='stretch', key="wipe_auto_rfps"):
         try:
             res = sb.table("rfp_submissions").delete().eq("source", "auto").execute()
             deleted = len(res.data or [])
@@ -739,7 +744,7 @@ with tab_settings:
         "you want a totally clean slate for a fresh test scan."
     )
     sh1, sh2 = st.columns([3, 1])
-    if sh2.button("🧹 Clear scan history", use_container_width=True, key="wipe_scan_logs"):
+    if sh2.button("🧹 Clear scan history", width='stretch', key="wipe_scan_logs"):
         try:
             res = (
                 sb.table("scan_logs")
@@ -766,7 +771,7 @@ with tab_settings:
     )
     ft1, ft2 = st.columns([3, 1])
     if ft2.button("🔁 Reset for fresh test", type="secondary",
-                   use_container_width=True, key="fresh_test_reset"):
+                   width='stretch', key="fresh_test_reset"):
         try:
             r1 = sb.table("rfp_submissions").delete().eq("source", "auto").execute()
             r2 = (
@@ -1043,7 +1048,7 @@ with tab_data:
                 f"<b>{len(fdf)}</b> matching row{'s' if len(fdf)!=1 else ''} (of {len(df)} total)</div>",
                 unsafe_allow_html=True,
             )
-            if pc4.button("🔄 Refresh", use_container_width=True, key=f"refresh_{spec['table']}"):
+            if pc4.button("🔄 Refresh", width='stretch', key=f"refresh_{spec['table']}"):
                 st.cache_data.clear()
                 st.rerun()
 
@@ -1067,7 +1072,7 @@ with tab_data:
 
             event = st.dataframe(
                 display,
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
                 selection_mode="multi-row",
                 on_select="rerun",
@@ -1089,7 +1094,7 @@ with tab_data:
             if not sel_rows:
                 ab1, _ = st.columns([1, 5])
                 add_clicked = ab1.button(
-                    "➕ Add new", use_container_width=True, key=f"add_{spec['table']}",
+                    "➕ Add new", width='stretch', key=f"add_{spec['table']}",
                 )
                 st.info(
                     "👆 Click one or more rows. Single select → Edit / Delete / "
@@ -1102,14 +1107,14 @@ with tab_data:
                     "multi-select. Use Delete or Share to act on all of them."
                 )
                 ab1, ab3, ab4, _ = st.columns([1, 1, 1, 5])
-                add_clicked = ab1.button("➕ Add", use_container_width=True, key=f"add_{spec['table']}")
+                add_clicked = ab1.button("➕ Add", width='stretch', key=f"add_{spec['table']}")
                 edit_clicked = False
                 del_clicked = ab3.button(
-                    f"🗑 Delete {len(sel_rows)}", use_container_width=True,
+                    f"🗑 Delete {len(sel_rows)}", width='stretch',
                     key=f"del_{spec['table']}",
                 )
                 share_clicked = ab4.button(
-                    f"📤 Share {len(sel_rows)}", use_container_width=True,
+                    f"📤 Share {len(sel_rows)}", width='stretch',
                     key=f"share_{spec['table']}",
                 )
             else:
@@ -1119,10 +1124,10 @@ with tab_data:
                 )
                 st.success(f"Selected: **{pretty}** · id `{sel_row.get('id')}`")
                 ab1, ab2, ab3, ab4, _ = st.columns([1, 1, 1, 1, 4])
-                add_clicked = ab1.button("➕ Add", use_container_width=True, key=f"add_{spec['table']}")
-                edit_clicked = ab2.button("✏ Edit", use_container_width=True, key=f"edit_{spec['table']}")
-                del_clicked = ab3.button("🗑 Delete", use_container_width=True, key=f"del_{spec['table']}")
-                share_clicked = ab4.button("📤 Share", use_container_width=True, key=f"share_{spec['table']}")
+                add_clicked = ab1.button("➕ Add", width='stretch', key=f"add_{spec['table']}")
+                edit_clicked = ab2.button("✏ Edit", width='stretch', key=f"edit_{spec['table']}")
+                del_clicked = ab3.button("🗑 Delete", width='stretch', key=f"del_{spec['table']}")
+                share_clicked = ab4.button("📤 Share", width='stretch', key=f"share_{spec['table']}")
 
             # ----- Modal helpers ---------------------------------------------
             def _to_date(v):
@@ -1165,9 +1170,9 @@ with tab_data:
                         payload_widgets[col] = st.text_input(label, value=_to_str(cur), key=key)
 
                 sc, cc = st.columns([1, 1])
-                save = sc.button("💾 Save", type="primary", use_container_width=True,
+                save = sc.button("💾 Save", type="primary", width='stretch',
                                   key=f"savebtn_{table}_{'edit' if current else 'add'}")
-                cancel = cc.button("Cancel", use_container_width=True,
+                cancel = cc.button("Cancel", width='stretch',
                                     key=f"cancelbtn_{table}_{'edit' if current else 'add'}")
                 if cancel:
                     st.rerun()
@@ -1251,7 +1256,7 @@ with tab_data:
                 dc1, dc2 = st.columns([1, 1])
                 if dc1.button(
                     f"🗑 Yes, delete {n}" if n > 1 else "🗑 Yes, delete",
-                    type="primary", use_container_width=True,
+                    type="primary", width='stretch',
                     key=f"confirmdel_{spec['table']}",
                 ):
                     try:
@@ -1262,7 +1267,7 @@ with tab_data:
                         st.rerun()
                     except Exception as exc:
                         st.error(f"Delete failed: {exc}")
-                if dc2.button("Cancel", use_container_width=True,
+                if dc2.button("Cancel", width='stretch',
                                key=f"canceldel_{spec['table']}"):
                     st.rerun()
 
@@ -1295,7 +1300,7 @@ with tab_data:
                     data=buf.getvalue(),
                     file_name=f"{spec['table']}_{n}_selected_{date.today().isoformat()}.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width='stretch',
                     key=f"dl_sel_{spec['table']}",
                 )
                 # Secondary download: the full filtered view, in case the user
@@ -1307,7 +1312,7 @@ with tab_data:
                     data=buf2.getvalue(),
                     file_name=f"{spec['table']}_filtered_{date.today().isoformat()}.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width='stretch',
                     key=f"dl_full_{spec['table']}",
                 )
 
@@ -1405,8 +1410,8 @@ with tab_sources:
             a_active = st.checkbox("Active", value=True)
             bc1, bc2 = st.columns(2)
             ok = bc1.form_submit_button("➕ Add", type="primary",
-                                        use_container_width=True)
-            cancel = bc2.form_submit_button("Cancel", use_container_width=True)
+                                        width='stretch')
+            cancel = bc2.form_submit_button("Cancel", width='stretch')
         if cancel:
             st.rerun()
         if ok:
@@ -1446,8 +1451,8 @@ with tab_sources:
             e_active = st.checkbox("Active", value=bool(_row.get("is_active")))
             bc1, bc2 = st.columns(2)
             ok = bc1.form_submit_button("💾 Save", type="primary",
-                                        use_container_width=True)
-            cancel = bc2.form_submit_button("Cancel", use_container_width=True)
+                                        width='stretch')
+            cancel = bc2.form_submit_button("Cancel", width='stretch')
         if cancel:
             st.rerun()
         if ok:
@@ -1477,7 +1482,7 @@ with tab_sources:
         st.markdown("\n".join(f"- {n}" for n in _names[:12])
                     + ("\n- …" if len(_names) > 12 else ""))
         bc1, bc2 = st.columns(2)
-        if bc1.button("🗑 Delete", type="primary", use_container_width=True,
+        if bc1.button("🗑 Delete", type="primary", width='stretch',
                       key="ds_del_confirm"):
             try:
                 sb.table("donor_sources").delete().in_("id", _ids).execute()
@@ -1486,22 +1491,22 @@ with tab_sources:
                 st.rerun()
             except Exception as exc:
                 st.error(f"Delete failed: {exc}")
-        if bc2.button("Cancel", use_container_width=True, key="ds_del_cancel"):
+        if bc2.button("Cancel", width='stretch', key="ds_del_cancel"):
             st.rerun()
 
     # ----- Top action bar (right-aligned) -----------------------------------
     _tsp, t1, t2, t3 = st.columns([4, 1.4, 1.5, 1])
     if t1.button("➕ Add donor source", type="primary",
-                 use_container_width=True, key="ds_add_top"):
+                 width='stretch', key="ds_add_top"):
         _add_source_dialog()
-    if t2.button("📥 Import from config", use_container_width=True,
+    if t2.button("📥 Import from config", width='stretch',
                  key="ds_import_top"):
         try:
             _import_from_config()
             st.rerun()
         except Exception as exc:
             st.error(f"Import failed: {exc}")
-    if t3.button("🔄 Refresh", use_container_width=True, key="ds_refresh_top"):
+    if t3.button("🔄 Refresh", width='stretch', key="ds_refresh_top"):
         st.cache_data.clear()
         st.rerun()
 
@@ -1516,7 +1521,7 @@ with tab_sources:
                     "scrape_method", "is_active", "last_scraped_at",
                     "last_scrape_status", "notes"]].copy()
         sel = st.dataframe(
-            disp, hide_index=True, use_container_width=True,
+            disp, hide_index=True, width='stretch',
             selection_mode="multi-row", on_select="rerun", key="ds_table",
             column_config={
                 "donor_name": st.column_config.TextColumn("Donor"),
@@ -1540,11 +1545,11 @@ with tab_sources:
                    "Tick rows to edit or delete.")
 
         a1, a2, _asp = st.columns([1, 1, 6])
-        if a1.button("✏️ Edit", use_container_width=True, key="ds_edit_btn",
+        if a1.button("✏️ Edit", width='stretch', key="ds_edit_btn",
                      disabled=len(picked) != 1,
                      help="Select exactly one row to edit."):
             _edit_source_dialog(sel_rows[0])
-        if a2.button("🗑 Delete", use_container_width=True, key="ds_delete_btn",
+        if a2.button("🗑 Delete", width='stretch', key="ds_delete_btn",
                      disabled=not picked):
             _delete_sources_dialog(sel_ids, sel_names)
 
@@ -1715,7 +1720,7 @@ with tab_scan:
         hist_cols += ["duration_sec", "errors"]
         st.dataframe(
             logs[hist_cols],
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             column_config={
                 "scan_date": st.column_config.TextColumn("Scan time"),
@@ -1763,7 +1768,7 @@ with tab_blacklist:
         _bl_df = pd.DataFrame({"pattern": pd.Series(dtype="object"),
                                "reason": pd.Series(dtype="object")})
     _bl_edited = st.data_editor(
-        _bl_df, num_rows="dynamic", use_container_width=True, hide_index=True,
+        _bl_df, num_rows="dynamic", width='stretch', hide_index=True,
         key="blacklist_editor",
         column_config={
             "pattern": st.column_config.TextColumn("Pattern (URL substring)", required=True),

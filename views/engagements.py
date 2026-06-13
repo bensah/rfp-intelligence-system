@@ -184,7 +184,7 @@ st.dataframe(
         ["engagement_date", "donor", "engagement_type", "format", "internal_lead",
          "donor_contacts", "purpose", "outcome", "linked_rfp_uid"]
     ],
-    use_container_width=True,
+    width='stretch',
     hide_index=True,
     column_config={
         "engagement_date": st.column_config.DateColumn("Date"),

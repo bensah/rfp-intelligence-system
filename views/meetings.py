@@ -168,9 +168,9 @@ def add_note_dialog() -> None:
     )
 
     bs, bc = st.columns([1, 1])
-    save_clicked = bs.button("💾 Save note", type="primary", use_container_width=True,
+    save_clicked = bs.button("💾 Save note", type="primary", width='stretch',
                               disabled=not can_edit)
-    cancel_clicked = bc.button("Cancel", use_container_width=True)
+    cancel_clicked = bc.button("Cancel", width='stretch')
 
     if cancel_clicked:
         st.rerun()
@@ -211,7 +211,7 @@ def add_note_dialog() -> None:
 if _ADD_NOTE_SLOT.button(
     "➕ Add a note",
     type="primary",
-    use_container_width=True,
+    width='stretch',
     disabled=not can_edit,
     key="add_note_top",
 ):
@@ -283,7 +283,7 @@ else:
         # button's wrapper (.stKey-status_yes_<id>) for tint colors.
         key_prefix = "status_yes_" if resolved else "status_no_"
         if row[5].button(label, key=f"{key_prefix}{n['id']}",
-                          use_container_width=True,
+                          width='stretch',
                           disabled=not can_edit):
             sb.table("meeting_logs").update(
                 {"is_resolved": not resolved}
