@@ -551,7 +551,7 @@ def _render_user_menu() -> None:
     if not u:
         return
 
-    with st.popover("👤", use_container_width=True):
+    with st.popover("👤", width='stretch'):
         st.markdown(
             f"<div style='font-weight:650;color:{THEME_NAVY};"
             f"font-size:0.95rem;'>{u.get('name') or u.get('email')}</div>"
@@ -566,7 +566,7 @@ def _render_user_menu() -> None:
             st.page_link("app_pages/admin.py", label="Settings", icon="⚙️")
         st.divider()
         if st.button("🚪 Sign Out", key="topbar_signout",
-                     use_container_width=True):
+                     width='stretch'):
             # The cookie reader (CookieModel.get_cookie) restores a session
             # from st.context.cookies UNLESS st.session_state['logout'] is
             # True. That request-snapshot doesn't update mid-session, so the
@@ -600,12 +600,12 @@ def _render_search(user: dict) -> None:
     flaky). The query is also written to the URL (?q=) so the results page
     reproduces it, and a page_link is kept as a guaranteed fallback."""
     submitted_q = None
-    with st.popover("🔍", use_container_width=True):
+    with st.popover("🔍", width='stretch'):
         q = st.text_input(
             "Search", key="hdr_search_q",
             placeholder="Search the site…", label_visibility="collapsed")
         go = st.button("Search", key="hdr_search_go", type="primary",
-                       use_container_width=True)
+                       width='stretch')
         st.caption("Searches pages, tabs, opportunities, donors + the web.")
         # Guaranteed-working fallback (page_link always navigates; the results
         # page has its own search box).
@@ -638,7 +638,7 @@ def _render_notifications(user: dict) -> None:
     _sup = _cnt.translate(str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹"))
     label = f"🔔{_sup}" if unread else "🔔"
 
-    with st.popover(label, use_container_width=True):
+    with st.popover(label, width='stretch'):
         st.markdown("**Notifications**")
         nxt = _notif.next_scheduled_scan()
         st.caption(
@@ -675,7 +675,7 @@ def _render_notifications(user: dict) -> None:
         st.divider()
         if email and unread:
             if st.button("Mark all as read", key="notif_mark_read",
-                         use_container_width=True):
+                         width='stretch'):
                 _notif.mark_all_read(email)
                 st.rerun()
 

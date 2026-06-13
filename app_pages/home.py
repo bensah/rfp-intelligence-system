@@ -93,7 +93,7 @@ with _btn_col:
     # Vertical spacer aligns the button roughly with the title baseline.
     st.markdown("<div style='height: 0.8rem'></div>", unsafe_allow_html=True)
     if st.button("📝 Submit Discovered RFP", type="primary",
-                 use_container_width=True, key="home_submit_rfp_btn",
+                 width='stretch', key="home_submit_rfp_btn",
                  help="Capture an opportunity you found outside the Friday scan. "
                       "Opens a modal; no duplicate-check gate — submitted "
                       "immediately, dedup happens at display time."):
@@ -245,7 +245,7 @@ for i, (page, path, icon, headline, body) in enumerate(CARDS):
             f"<div class='quickcard'><h4>{icon} &nbsp; {headline}</h4><p>{body}</p></div>",
             unsafe_allow_html=True,
         )
-        if st.button(f"Open {page}", key=f"qs_{page}", use_container_width=True):
+        if st.button(f"Open {page}", key=f"qs_{page}", width='stretch'):
             st.switch_page(path)
 
 

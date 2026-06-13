@@ -33,7 +33,7 @@ with _title_col:
     st.title("Discovered RFP Pipelines")
 with _btn_col:
     st.write("")  # nudge the button down to the title baseline
-    if st.button("🔄 Scan now", type="primary", use_container_width=True,
+    if st.button("🔄 Scan now", type="primary", width='stretch',
                  key="pipelines_scan_now",
                  help="Run the donor-source scanner now. New RFPs are inserted "
                       "and appear on the Screen tab after the run completes."):

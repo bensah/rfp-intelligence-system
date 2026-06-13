@@ -677,7 +677,7 @@ def _edit_dialog(row: dict) -> None:
         for _tc in ("title", "currency", "year", "country"):
             _proj_base[_tc] = _proj_base[_tc].astype("string")
         _proj_edited = st.data_editor(
-            _proj_base, num_rows="dynamic", hide_index=True, use_container_width=True,
+            _proj_base, num_rows="dynamic", hide_index=True, width='stretch',
             key=f"proj_ed_{row['canonical_key']}",
             column_config={
                 "title": st.column_config.TextColumn("Project title", width="large"),
@@ -780,7 +780,7 @@ def _edit_dialog(row: dict) -> None:
         _base = _existing.reindex(columns=_CONTACT_COLS)
         _base["is_official"] = _base["is_official"].fillna(False).astype(bool)
     contacts_edited = st.data_editor(
-        _base, num_rows="dynamic", use_container_width=True, hide_index=True,
+        _base, num_rows="dynamic", width='stretch', hide_index=True,
         key=f"contacts_ed_{row['canonical_key']}",
         column_config={
             "contact_name": st.column_config.TextColumn("Name"),
@@ -794,7 +794,7 @@ def _edit_dialog(row: dict) -> None:
         },
     )
 
-    if st.button("💾 Save changes", type="primary", use_container_width=True):
+    if st.button("💾 Save changes", type="primary", width='stretch'):
         payload = {k: (v.strip() if isinstance(v, str) else v) or None
                    for k, v in edited.items()}
         key = row["canonical_key"]
@@ -877,6 +877,50 @@ def _delete_dialog(row: dict) -> None:
         sb.table("donor_intel").delete().eq("canonical_key", row["canonical_key"]).execute()
         st.cache_data.clear()
         st.session_state["_donor_flash"] = f"Deleted {row.get('donor')}."
+        st.rerun()
+
+
+@st.dialog("Add a new donor")
+def _add_donor_dialog() -> None:
+    """Create a donor record from a name (+ a few basics), then the user fills
+    in the full intelligence via ✏️ Edit. canonical_key is slugged from the name
+    and de-duplicated so it never collides with an existing donor."""
+    st.caption("Create the record now; open it and click **✏️ Edit** to add the "
+               "full profile (scope, awards, contacts, …).")
+    name = st.text_input("Donor name *", key="add_donor_name")
+    c1, c2 = st.columns(2)
+    short = c1.text_input("Short code / acronym", key="add_donor_short")
+    cat = c2.selectbox("Category", _CATEGORIES, key="add_donor_cat")
+    website = st.text_input("Website", key="add_donor_web",
+                            placeholder="https://…")
+    b1, b2 = st.columns(2)
+    if b1.button("➕ Create donor", type="primary", width="stretch",
+                 disabled=not name.strip()):
+        _slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_") or "donor"
+        _existing = set(df["canonical_key"]) if "canonical_key" in df.columns else set()
+        _key, _i = _slug, 2
+        while _key in _existing:
+            _key, _i = f"{_slug}_{_i}", _i + 1
+        payload = {"canonical_key": _key, "donor": name.strip(),
+                   "donor_short": (short.strip() or None),
+                   "donor_category": _normalize_category(cat),
+                   "website": (website.strip() or None)}
+        try:
+            resp = sb.table("donor_intel").upsert(
+                payload, on_conflict="canonical_key").execute()
+        except Exception as e:  # noqa: BLE001
+            st.error(f"❌ Create failed — {e}")
+            return
+        if not getattr(resp, "data", None):
+            st.error("❌ Create returned no row — the write was blocked "
+                     "(RLS / columns). Nothing was added.")
+            return
+        st.cache_data.clear()
+        st.session_state["_donor_flash"] = (
+            f"✓ Added {name.strip()} — find it in the table and click ✏️ Edit "
+            "to complete the profile.")
+        st.rerun()
+    if b2.button("Cancel", width="stretch"):
         st.rerun()
 
 
@@ -1123,7 +1167,7 @@ def _view_dialog(row: dict) -> None:
             _pdf[_show].rename(columns={
                 "title": "Project", "amount": "Award", "currency": "Cur.",
                 "year": "Year", "country": "Country"}),
-            hide_index=True, use_container_width=True)
+            hide_index=True, width='stretch')
 
     # ── Contacts — only when populated ───────────────────────────────────────
     _render_contacts(row)
@@ -1197,7 +1241,7 @@ if "category_clean" in df:
         ).properties(height=340)
     )
     with st.expander("Donors by category", expanded=False):
-        st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart, width='stretch')
 
 
 # ---------------------------------------------------------------------------
@@ -1213,7 +1257,14 @@ if "category_clean" in df:
 # when none, until added via Edit).
 # ---------------------------------------------------------------------------
 st.divider()
-st.subheader("All donors")
+_hdr, _addcol = st.columns([4, 1.2])
+_hdr.subheader("All donors")
+if _addcol.button("➕ Add donor", width="stretch", disabled=not can_edit,
+                  key="donor_add_btn",
+                  help=None if can_edit else "Admins only."):
+    for _k in ("add_donor_name", "add_donor_short", "add_donor_web"):
+        st.session_state.pop(_k, None)   # fresh form each open
+    _add_donor_dialog()
 with st.expander("🔎 Filter & search", expanded=False):
     fc1, fc2 = st.columns([3, 2])
     q = fc1.text_input("Search name / acronym / alias", key="donor_q")
@@ -1327,7 +1378,7 @@ _grid = pd.DataFrame({
     "Website": (page_df["website"].map(_weburl) if "website" in page_df.columns else None),
 })
 _event = st.dataframe(
-    _grid, hide_index=True, use_container_width=True,
+    _grid, hide_index=True, width='stretch',
     on_select="rerun", selection_mode="multi-row",
     key=f"donor_table_p{pg}",
     column_config={
@@ -1348,18 +1399,18 @@ with _actions_slot.container():
     elif len(_sel_keys) == 1:
         _row = page_df[page_df["canonical_key"] == _sel_keys[0]].iloc[0].to_dict()
         _ab = st.columns(4)
-        if _ab[0].button("👁 View", use_container_width=True, key="act_view"):
+        if _ab[0].button("👁 View", width='stretch', key="act_view"):
             _view_dialog(_row)
-        if _ab[1].button("✏️ Edit", use_container_width=True, disabled=not can_edit, key="act_edit"):
+        if _ab[1].button("✏️ Edit", width='stretch', disabled=not can_edit, key="act_edit"):
             _edit_dialog(_row)
-        if _ab[2].button("🔗 Share", use_container_width=True, key="act_share"):
+        if _ab[2].button("🔗 Share", width='stretch', key="act_share"):
             _share_dialog(_row)
-        if _ab[3].button("🗑 Delete", use_container_width=True, disabled=not can_edit, key="act_del"):
+        if _ab[3].button("🗑 Delete", width='stretch', disabled=not can_edit, key="act_del"):
             _delete_dialog(_row)
     else:
         _ab = st.columns([1, 1, 1.4])
-        if _ab[0].button(f"🔗 Share {len(_sel_keys)}", use_container_width=True, key="act_share_many"):
+        if _ab[0].button(f"🔗 Share {len(_sel_keys)}", width='stretch', key="act_share_many"):
             _share_many_dialog(_sel_keys)
-        if _ab[1].button(f"🗑 Delete {len(_sel_keys)}", use_container_width=True,
+        if _ab[1].button(f"🗑 Delete {len(_sel_keys)}", width='stretch',
                          disabled=not can_edit, key="act_del_many"):
             _delete_many_dialog(_sel_keys)
