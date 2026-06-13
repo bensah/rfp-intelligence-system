@@ -166,34 +166,48 @@ def _has_inclusive_eligibility(text: str) -> bool:
 _DEFAULT_REGIONAL = (
     "sub-saharan africa", "sub saharan africa", "subsaharan", "africa",
     "west africa", "central africa", "east africa", "southern africa",
-    "lmic", "lmics", "low- and middle-income", "low and middle income",
+    "sahel", "lmic", "lmics", "low- and middle-income", "low and middle income",
     "low-income", "middle-income", "global south", "developing countr",
-    "multi-country", "multicountry", "transnational", "global health",
+    "multi-country", "multicountry", "transnational",
 )
+# Vague worldwide-inclusive words. A truly global call DOES include Cameroon, so
+# these keep it — but ONLY when no specific non-eligible country is named, so
+# "Global Afghanistan Tenders" resolves to Afghanistan (foreign), not saved by
+# the marketing word "global".
+_VAGUE_GLOBAL_TERMS = ("globally", "global ", "international", "worldwide",
+                       "any country", "all countries", "around the world")
 
 
 def _geo_strength(candidate: dict[str, Any], policies: dict[str, Any]) -> str:
     """How well the candidate's geography matches our scope:
        'strong'   — names an eligible country, or opens to international applicants
-       'regional' — region/income-tier scope (sub-Saharan Africa, LMIC, …)
-       'foreign'  — names a specific non-eligible country, no regional framing
+       'regional' — a region/tier that CONTAINS us (SSA, LMIC, …) or vague-global
+       'foreign'  — names a specific non-eligible country, no containing region
        'silent'   — no geography mentioned at all
-    Single source of truth shared by country_eligible() (gate) and auto_score()
-    (decision cap), so the two never disagree."""
+    Priority matters: a REAL region keeps the call; otherwise a named non-eligible
+    country DROPS it (beating a vague 'global' marketing word); only then does a
+    vague worldwide word keep it. Shared by country_eligible() + auto_score()."""
     countries = policies.get("countries", {}) or {}
     eligible_lower = {c.lower() for c in (countries.get("eligible") or []) if c}
-    regional = {b.lower() for b in (countries.get("broad_terms") or []) if b}
-    regional |= set(_DEFAULT_REGIONAL)
+    # Real regions/tiers that contain our eligible countries. Config broad_terms
+    # merge in EXCEPT vague worldwide words (handled separately below so they
+    # can't override a named foreign country).
+    real_regional = set(_DEFAULT_REGIONAL) | {
+        b.lower() for b in (countries.get("broad_terms") or [])
+        if b and b.lower().strip() not in {"global", "international", "worldwide"}
+    }
     text = _full_text(candidate)
     if _has_inclusive_eligibility(text):
         return "strong"
     mentioned = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
     if mentioned & eligible_lower:
         return "strong"
-    if any(r in text for r in regional):
+    if any(r in text for r in real_regional):
         return "regional"
-    if mentioned:
+    if mentioned:                         # named non-eligible country → drop
         return "foreign"
+    if any(g in text for g in _VAGUE_GLOBAL_TERMS):
+        return "regional"                 # worldwide-inclusive, no excluding country
     return "silent"
 
 
@@ -231,7 +245,13 @@ _JOB_URL_RE = re.compile(
 # Clearly non-funding page types (NOT blog/news — real calls live there).
 _NON_FUNDING_RE = re.compile(
     r"\b(standardized testing|report card|course catalog|academic calendar|"
-    r"school district|cookie policy|privacy policy|terms of use|log ?in)\b", re.I)
+    r"school district|cookie policy|privacy policy|terms of use|log ?in|"
+    r"frequently asked|faqs?)\b", re.I)
+# Press-release / news-wire aggregators re-publish announcements — they aren't
+# the call's own page (e.g. miragenews' NYC-bathrooms story). High noise → drop.
+_NEWSWIRE_RE = re.compile(
+    r"(miragenews|prnewswire|businesswire|globenewswire|einnews|openpr|"
+    r"prweb|newswire\.|/press-release)", re.I)
 
 
 def non_funding_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
@@ -244,11 +264,13 @@ def non_funding_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
                or _has_rfp_acronym(title))
     if (_JOB_TITLE_RE.search(title) or _JOB_URL_RE.search(link)) and not has_rfp:
         return True, "job / vacancy posting (not a funding call)"
-    # Normalise URL separators (-, _, /) → spaces so "standardized-testing" in a
-    # path matches the same as the words in a title.
+    if _NEWSWIRE_RE.search(link):
+        return True, "press-release / news-wire aggregator (not the call source)"
+    # Normalise URL separators (-, _, /) → spaces so "standardized-testing" or
+    # "/faqs" in a path matches the same as the words in a title.
     norm = f"{title} {re.sub(r'[-_/]+', ' ', link)}"
     if _NON_FUNDING_RE.search(norm):
-        return True, "non-funding page (course / policy / login)"
+        return True, "non-funding page (FAQ / course / policy / login)"
     return False, ""
 
 
