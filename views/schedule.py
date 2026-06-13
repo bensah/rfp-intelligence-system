@@ -92,13 +92,13 @@ def _shift(d: date, direction: int) -> date:
 
 
 _n1, _n2, _n3 = st.columns(3)
-if _n1.button("◀ Prev", use_container_width=True):
+if _n1.button("◀ Prev", width='stretch'):
     st.session_state[_ANCHOR] = _shift(_anchor, -1).isoformat()
     st.rerun()
-if _n2.button("● Today", use_container_width=True):
+if _n2.button("● Today", width='stretch'):
     st.session_state[_ANCHOR] = _today.isoformat()
     st.rerun()
-if _n3.button("Next ▶", use_container_width=True):
+if _n3.button("Next ▶", width='stretch'):
     st.session_state[_ANCHOR] = _shift(_anchor, 1).isoformat()
     st.rerun()
 

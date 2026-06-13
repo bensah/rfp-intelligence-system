@@ -800,7 +800,7 @@ _snap_sig = ((_sel("period"), int(_sel("year", 0)), _sel("month"), _sel("view"),
 
 _gen_col, _gen_spacer = st.columns([1.4, 5])
 if _gen_col.button("▶ Generate report", type="primary",
-                   use_container_width=True,
+                   width='stretch',
                    help="Build the report and save it under a short, shareable "
                         "link that survives a refresh or dropped connection. A "
                         "new Generate saves a fresh report."):
@@ -1073,7 +1073,7 @@ ac_excel.download_button(
     ).replace(" ", "_"),
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     help="Multi-sheet workbook: Summary KPIs + raw data for every section.",
-    use_container_width=True,
+    width='stretch',
 )
 
 # Print button — rendered via st.components.v1.html so the inline
@@ -1193,7 +1193,7 @@ if _show_sec("1"):
                         legend=dict(orientation="h", yanchor="top", y=-0.18,
                                     xanchor="center", x=0.5, font=dict(size=11)),
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
 
                     # ─── Submission leaderboard ─────────────────────────────
                     # Moved here from Section 4 (Team & Partnership Activity)
@@ -1207,7 +1207,7 @@ if _show_sec("1"):
                     leader_series.columns = ["Member", "RFPs discovered"]
                     with st.expander("Submission leaderboard", expanded=False):
                         st.dataframe(leader_series,
-                                      use_container_width=True, hide_index=True)
+                                      width='stretch', hide_index=True)
                 else:
                     # No submitter data — fall back to a plain bucket count
                     disc_df = _bucketed_count(disc["search_date"].dropna(), "RFPs discovered")
@@ -1218,7 +1218,7 @@ if _show_sec("1"):
                     )
                     fig.update_layout(height=320, margin=dict(t=40, b=10),
                                       xaxis=_fmt_bucket_ticks(bucket_mode))
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
             elif _show("s1_discovery"):
                 st.info(f"No RFPs discovered in this {period_mode.lower()} period yet.")
 
@@ -1244,7 +1244,7 @@ if _show_sec("1"):
                         margin=dict(t=40, b=10),
                         yaxis={"categoryorder": "total ascending"},
                     )
-                    st.plotly_chart(fig_dn, use_container_width=True)
+                    st.plotly_chart(fig_dn, width='stretch')
 
             # ───── Keyword cloud — niche-vocabulary, frequency-sized ────────
             # Replaces the old "by program area" bar chart. Source is the
@@ -1298,7 +1298,7 @@ if _show_sec("1"):
                         ax.imshow(wc, interpolation="bilinear")
                         ax.axis("off")
                         fig_wc.tight_layout(pad=0)
-                        st.pyplot(fig_wc, use_container_width=True)
+                        st.pyplot(fig_wc, width='stretch')
                         plt.close(fig_wc)
                     except ImportError:
                         # Graceful fallback when WordCloud / matplotlib not
@@ -1315,7 +1315,7 @@ if _show_sec("1"):
                                 columns=["Keyword", "Hits"],
                             ).head(40)
                         )
-                        st.dataframe(_kw_top, use_container_width=True,
+                        st.dataframe(_kw_top, width='stretch',
                                      hide_index=True)
 
             # ───── Keyword cloud + success table ─────────────────────────────
@@ -1395,7 +1395,7 @@ if _show_sec("1"):
                         )
                         st.dataframe(
                             kw_agg.rename(columns={"keyword": "Keyword"}),
-                            use_container_width=True, hide_index=True,
+                            width='stretch', hide_index=True,
                         )
 
         # Top sources by yield
@@ -1420,7 +1420,7 @@ if _show_sec("1"):
                         "new": "New", "rejected": "Rejected",
                         "avg_dur": "Avg duration (s)", "yield_pct": "Yield %",
                     }),
-                    use_container_width=True, hide_index=True,
+                    width='stretch', hide_index=True,
                 )
 
         # ───────────── Search → Submission cycle time (relocated from §4) ─────
@@ -1450,7 +1450,7 @@ if _show_sec("1"):
                     labels={"days": "Days", "count": "RFPs"},
                 )
                 fig_cyc.update_layout(height=280, margin=dict(t=40, b=10))
-                st.plotly_chart(fig_cyc, use_container_width=True)
+                st.plotly_chart(fig_cyc, width='stretch')
             else:
                 st.info("No RFPs with both search_date and date_completed yet — "
                         "cycle time chart will populate as proposals get submitted.")
@@ -1522,7 +1522,7 @@ if _show_sec("2"):
         fig_funnel.update_layout(height=320, margin=dict(t=20, b=10),
                                  title="Conversion funnel — all stored RFPs")
         if _show("s2_funnel"):
-            st.plotly_chart(fig_funnel, use_container_width=True)
+            st.plotly_chart(fig_funnel, width='stretch')
         # Decision-distribution chart used to live here; moved to Section 3
         # since "where decisions land" belongs with the Reviews & Decisions
         # narrative, not the funnel.
@@ -1542,7 +1542,7 @@ if _show_sec("2"):
                             title="Progress status — all RFPs", color="Status")
             fig_ps.update_layout(height=300, showlegend=False,
                                  margin=dict(t=40, b=10), xaxis_title=None)
-            st.plotly_chart(fig_ps, use_container_width=True)
+            st.plotly_chart(fig_ps, width='stretch')
 
     st.divider()
 
@@ -1620,7 +1620,7 @@ if _show_sec("3"):
                                   margin=dict(t=40, b=10),
                                   xaxis_title="RFPs", yaxis_title=None,
                                   yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(fig_dec, use_container_width=True)
+            st.plotly_chart(fig_dec, width='stretch')
 
         if _show("s3_dectime") and not decided.empty:
             dec_dates = pd.to_datetime(decided["decision_date"], errors="coerce").dropna()
@@ -1631,7 +1631,7 @@ if _show_sec("3"):
                              labels={"bucket": _bucket_label(bucket_mode)})
                 fig.update_layout(height=280, margin=dict(t=40, b=10),
                                   xaxis=_fmt_bucket_ticks(bucket_mode))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
         if _show("s3_autorec") and not decided.empty:
             comp = (
@@ -1645,7 +1645,7 @@ if _show_sec("3"):
             with st.expander("Auto-recommendation vs final decision", expanded=False):
                 st.dataframe(
                     comp.rename(columns={"ar": "Auto-recommendation", "dec": "Final decision"}),
-                    use_container_width=True, hide_index=True,
+                    width='stretch', hide_index=True,
                 )
 
     st.divider()
@@ -1717,7 +1717,7 @@ if _show_sec("4"):
                      labels={"bucket": _bucket_label(bucket_mode)})
         fig.update_layout(height=280, margin=dict(t=40, b=10),
                           xaxis=_fmt_bucket_ticks(bucket_mode))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     if _show("s4_topdonors") and not engagements.empty and "donor" in engagements.columns:
         top_donors = (
@@ -1735,7 +1735,7 @@ if _show_sec("4"):
                     "donor": "Donor", "touchpoints": "Touchpoints",
                     "types": "Engagement types",
                 }),
-                use_container_width=True, hide_index=True,
+                width='stretch', hide_index=True,
             )
 
     # ─── Team activity, partners, financial mix, conversion (consolidated) ────
@@ -1838,7 +1838,7 @@ if _show_sec("4"):
                                 "y": 1.02, "xanchor": "right", "x": 1,
                                 "font": dict(size=11)},
                     )
-                    st.plotly_chart(fig_pl, use_container_width=True)
+                    st.plotly_chart(fig_pl, width='stretch')
                 else:
                     st.info("No proposal_lead values recorded yet.")
             else:
@@ -1883,7 +1883,7 @@ if _show_sec("4"):
                                 "y": 1.02, "xanchor": "right", "x": 1,
                                 "font": dict(size=11)},
                     )
-                    st.plotly_chart(fig_ct, use_container_width=True)
+                    st.plotly_chart(fig_ct, width='stretch')
                 else:
                     st.info("No contributors recorded yet.")
             else:
@@ -1916,7 +1916,7 @@ if _show_sec("4"):
                             margin=dict(t=40, b=10),
                             yaxis={"categoryorder": "total ascending"},
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width='stretch')
                     else:
                         st.info(f"No {col_label.lower()} values recorded yet.")
 
@@ -2039,7 +2039,7 @@ if _show_sec("5"):
                                       "cumulative": "USD (cumulative)"})
                 fig.update_layout(height=280, margin=dict(t=40, b=10),
                                   xaxis=_fmt_bucket_ticks(bucket_mode))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
         if _show("s5_grants") and not grants.empty:
             with st.expander("Active grants pipeline (all-time)", expanded=False):
@@ -2054,7 +2054,7 @@ if _show_sec("5"):
                         "end_date": "Ends", "report_due_date": "Next report",
                         "owner": "Owner",
                     }),
-                    use_container_width=True, hide_index=True,
+                    width='stretch', hide_index=True,
                 )
 
         st.markdown(
@@ -2098,7 +2098,7 @@ if _show_sec("5"):
                 fig_amt.add_shape(type="line", line=dict(dash="dash", color="#94a3b8"),
                                   x0=0, y0=0, x1=mx, y1=mx)
                 fig_amt.update_layout(height=400, margin=dict(t=40, b=10))
-                st.plotly_chart(fig_amt, use_container_width=True)
+                st.plotly_chart(fig_amt, width='stretch')
 
                 t1, t2, t3 = st.columns(3)
                 t1.metric("Total Requested (USD)", f"${scatter_df['req_usd'].sum():,.0f}")

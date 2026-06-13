@@ -342,7 +342,7 @@ start = (cur_page - 1) * PAGE_SIZE
 page_df = by_funder.iloc[start:start + PAGE_SIZE]
 st.dataframe(
     page_df,
-    use_container_width=True,
+    width='stretch',
     hide_index=True,
     column_config={
         "RFPs":        st.column_config.NumberColumn(
@@ -365,7 +365,7 @@ with st.expander("🔍 Diagnostic — per-row submissions values", expanded=Fals
                     "donor_decision", "submissions", "_submissions_int"]].copy()
     diag.columns = ["UID", "Title", "Funder", "Donor Decision",
                     "submissions (raw)", "submissions (used for sum)"]
-    st.dataframe(diag, use_container_width=True, hide_index=True)
+    st.dataframe(diag, width='stretch', hide_index=True)
     st.caption(
         f"Sum check: total submissions across all active rows = "
         f"**{int(active['_submissions_int'].sum())}**"
