@@ -45,10 +45,16 @@ st.caption(
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=30)
 def _fetch_all() -> pd.DataFrame:
+    # Order by created_at (true INSERTION time, DB-defaulted now() on insert and
+    # never touched by Excel sync or updates) so the list reads newest-added →
+    # oldest. A freshly-synced, non-duplicate RFP gets the latest created_at and
+    # lands on top; re-synced existing rows keep their place. submitted_at is a
+    # secondary tiebreaker for same-batch inserts.
     res = (
         get_client()
         .table("rfp_submissions")
         .select("*")
+        .order("created_at", desc=True)
         .order("submitted_at", desc=True)
         .execute()
     )
@@ -260,6 +266,9 @@ _explicit_cfg = {
     "progress_status": st.column_config.TextColumn("Progress status"),
     "donor_decision": st.column_config.TextColumn("Donor decision"),
     "is_duplicate": st.column_config.CheckboxColumn("Duplicate", width="small"),
+    # DB column is `support_roles` (holds tech/finance/compliance roles); the
+    # Excel header was renamed to just "Support", so show it that way too.
+    "support_roles": st.column_config.TextColumn("Support"),
 }
 _col_cfg = dict(_explicit_cfg)
 for _c in table.columns:
@@ -546,7 +555,7 @@ def edit_dialog(row: dict) -> None:
                 return spec or None
             return None if sel in ("—", "") else sel
 
-        def _team_multi(label, key, current):
+        def _team_multi(label, key, current, help=None):
             cur = (list(current) if isinstance(current, (list, tuple))
                    else [v.strip() for v in str(current).split(",") if v.strip()]
                    if current else [])
@@ -554,7 +563,7 @@ def edit_dialog(row: dict) -> None:
             opts = ["All"] + base_team + extras + ["Other"]
             sel = st.multiselect(label, opts,
                                  default=[d for d in cur if d in opts],
-                                 key=f"e_{key}_{row['uid']}")
+                                 key=f"e_{key}_{row['uid']}", help=help)
             chosen = [s for s in sel if s not in ("All", "Other")]
             if "All" in sel:                # "All" = the whole roster
                 chosen = list(base_team)
@@ -570,7 +579,9 @@ def edit_dialog(row: dict) -> None:
         lead = _team_single("Proposal lead", "lead", row.get("proposal_lead"))
         contribs = _team_multi("Contributors", "contrib", row.get("contributors"))
         reviewers = _team_multi("Reviewers", "rev", row.get("reviewers"))
-        support = _team_multi("Support roles", "supp", row.get("support_roles"))
+        support = _team_multi(
+            "Support", "supp", row.get("support_roles"),
+            help="e.g. tech / finance / compliance")
 
     with tab_award:
         c1, c2 = st.columns(2)
