@@ -158,60 +158,72 @@ def _has_inclusive_eligibility(text: str) -> bool:
     return bool(_INCLUSIVE_ELIGIBILITY_PATTERN.search(text or ""))
 
 
-def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
-    """Return (eligible, reason).
+# Region / income-tier terms that count as eligible geography even when no
+# eligible COUNTRY is named explicitly. Merged with the admin-configured
+# countries.broad_terms. This is the heart of the "geo REJECT→PARK" fix: a call
+# scoped to "sub-Saharan Africa" or "LMICs" (the IDRC / CGD pattern) is in-scope
+# even though it never says "Cameroon".
+_DEFAULT_REGIONAL = (
+    "sub-saharan africa", "sub saharan africa", "subsaharan", "africa",
+    "west africa", "central africa", "east africa", "southern africa",
+    "lmic", "lmics", "low- and middle-income", "low and middle income",
+    "low-income", "middle-income", "global south", "developing countr",
+    "multi-country", "multicountry", "transnational", "global health",
+)
 
-    Decision tree:
-      1. If the text contains an INCLUSIVE eligibility statement
-         ("foreign organizations are eligible", "open to any country",
-         etc.) → eligible regardless of which specific countries appear.
-      2. Find every KNOWN_COUNTRIES mention in the candidate text.
-      3. If ANY mentioned country is in our eligible list → ELIGIBLE.
-      4. If a specific country was mentioned but NONE are eligible
-         → REJECT (the Somalia case — RFP targets a country that
-         isn't ours).
-      5. If no specific country was mentioned, fall back to broad-term
-         matching ("LMIC", "Africa", etc.) and permissive_when_silent.
+
+def _geo_strength(candidate: dict[str, Any], policies: dict[str, Any]) -> str:
+    """How well the candidate's geography matches our scope:
+       'strong'   — names an eligible country, or opens to international applicants
+       'regional' — region/income-tier scope (sub-Saharan Africa, LMIC, …)
+       'foreign'  — names a specific non-eligible country, no regional framing
+       'silent'   — no geography mentioned at all
+    Single source of truth shared by country_eligible() (gate) and auto_score()
+    (decision cap), so the two never disagree."""
+    countries = policies.get("countries", {}) or {}
+    eligible_lower = {c.lower() for c in (countries.get("eligible") or []) if c}
+    regional = {b.lower() for b in (countries.get("broad_terms") or []) if b}
+    regional |= set(_DEFAULT_REGIONAL)
+    text = _full_text(candidate)
+    if _has_inclusive_eligibility(text):
+        return "strong"
+    mentioned = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
+    if mentioned & eligible_lower:
+        return "strong"
+    if any(r in text for r in regional):
+        return "regional"
+    if mentioned:
+        return "foreign"
+    return "silent"
+
+
+def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
+    """Geo gate — REJECT→PARK model.
+
+    Geography NO LONGER drops a candidate here. A call that doesn't clearly
+    match an eligible country (region-wide, LMIC-framed, geo-silent, or even
+    naming a non-eligible country) stays eligible so it ENTERS the pipeline,
+    and auto_score() PARKS it for human confirmation instead of auto-Proceeding
+    (see _geo_strength + the geo guard in auto_score). The only geo-shaped hard
+    drop is the separate us_domestic_only_reject() for clearly US-only calls.
+
+    Honors `permissive_when_silent=False` (strict deployments still drop
+    geo-silent calls). Returns (eligible, reason) for the scan log.
     """
     countries = policies.get("countries", {}) or {}
-    eligible = countries.get("eligible") or []
-    broad = countries.get("broad_terms") or []
     permissive = bool(countries.get("permissive_when_silent", True))
-    text = _full_text(candidate)
-    eligible_lower = {c.lower() for c in eligible if c}
-
-    # Step 1: inclusive eligibility statement short-circuits everything.
-    # Prevents false rejects like "non-U.S. entities are eligible" being
-    # treated as "U.S. only".
-    if _has_inclusive_eligibility(text):
-        return True, "RFP explicitly opens to foreign / international applicants"
-
-    # Step 2: find every known country name in the text.
-    mentioned = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
-
-    if mentioned:
-        overlap = mentioned & eligible_lower
-        if overlap:
-            return True, f"mentions eligible country: {sorted(overlap)[0]}"
-        # A specific non-eligible country is named → reject.
-        sample = sorted(mentioned)[0]
-        return False, f"mentions non-eligible country ({sample}); eligible: {sorted(eligible_lower)}"
-
-    # Step 3: no specific country named → check broad geographic terms.
-    if any(b.lower() in text for b in broad if b):
-        return True, "matches broad-geography term"
-
-    # Step 4: no geography at all?
-    geo_signal = re.search(
-        r"\b(countr|region|continent|world|global|local|africa|asia|europe|america)\b",
-        text,
-    )
-    if not geo_signal:
+    strength = _geo_strength(candidate, policies)
+    if strength == "strong":
+        return True, "geo: eligible country / open to international applicants"
+    if strength == "regional":
+        return True, "geo: regional / LMIC scope (parked for review)"
+    if strength == "silent":
         if permissive:
-            return True, "no geography mentioned (permissive)"
-        return False, "no geography mentioned (strict)"
-
-    return False, "geography mentioned but no overlap with eligible countries"
+            return True, "geo: none mentioned (permissive)"
+        return False, "geo: none mentioned (strict)"
+    # strength == "foreign": names a non-eligible country with no regional
+    # framing. REJECT→PARK — keep it (parked), don't drop.
+    return True, "geo: names non-eligible country, no regional framing (parked)"
 
 
 def theme_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
@@ -1102,6 +1114,17 @@ def auto_score(
     # negative cost (current): expired calls land in Proceed (expensive
     # to clean up + risks the team chasing dead RFPs).
     if rec == "Proceed" and not candidate.get("submission_deadline"):
+        rec = "Park"
+
+    # GEO GUARD (REJECT→PARK): geography no longer drops a candidate (see
+    # country_eligible). Instead, a call that doesn't clearly match an eligible
+    # country — region-wide ("sub-Saharan Africa"), LMIC-framed, geo-silent, or
+    # naming a non-eligible country — is PARKED for human confirmation rather
+    # than auto-Proceeded. Clearly-eligible-country (or open-to-international)
+    # calls still Proceed. Cheap false-positive (a regional fit lands in Park,
+    # one click to promote) vs the costly false-negative we had (valid regional
+    # calls dropped entirely).
+    if rec == "Proceed" and _geo_strength(candidate, policies) != "strong":
         rec = "Park"
 
     # Default applicant role = Prime unless RFP text demands a research /
