@@ -25,14 +25,17 @@ POLICIES_KEY = "scan_policies"
 # deployment. Admin can tune from the UI per deploying org.
 DEFAULT_POLICIES: dict[str, Any] = {
     "countries": {
-        # Primary countries the deploying org works in. RFPs explicitly
-        # mentioning these are eligible. Edit in Admin > Settings.
+        # Exact countries the deploying org works in. RFPs naming one of these
+        # are eligible. Pick from the country list in Admin > Settings.
         "eligible": ["Cameroon", "Mali"],
-        # Broad-geography terms that imply our countries are in scope.
+        # Broad geographies (high-level UN regions / income tiers) that ALSO
+        # admit a call — each matches via synonyms + member countries
+        # (core.geographies). Leave EMPTY for strict country-only matching.
+        # Canonical labels (see geographies.BROAD_GEOGRAPHIES); free text still
+        # works but the dropdown keeps these consistent with donor scope.
         "broad_terms": [
-            "LMIC", "low- and middle-income", "low and middle income",
-            "developing countr", "Africa", "Sub-Saharan", "sub-Saharan",
-            "global", "worldwide", "international", "low-income",
+            "Sub-Saharan Africa",
+            "Low- and middle-income countries (LMICs)",
         ],
         # If True: when the RFP says nothing about geography, treat as
         # eligible (permissive). If False: reject geography-silent RFPs.
