@@ -7,8 +7,15 @@ reviewer sees the donor's true coverage instead of a single placeholder country.
 
 `expand(selection)` widens a chosen region/tier into the countries it contains,
 so a filter for "Sub-Saharan Africa" also matches a donor tagged with "Kenya".
+
+`text_matches_term(text, term)` (with SYNONYMS) lets the scanner/search match an
+RFP body to a high-level "broad geography" via its spelling/acronym variants AND
+its member countries — e.g. selecting "Sub-Saharan Africa" matches a call that
+says "SSA" or merely names "Kenya".
 """
 from __future__ import annotations
+
+import re
 
 # ── UN M49 regions & sub-regions ────────────────────────────────────────────
 UN_REGIONS = [
@@ -138,3 +145,76 @@ def expand(selection) -> set[str]:
         out.add(s.lower())
         out.update(c.lower() for c in _REGION_MEMBERS.get(s.lower(), []))
     return out
+
+
+# ── Broad geographies + synonyms (Scan Preferences "Broad-geography terms") ──
+# The high-level options offered as broad terms: UN regions + income/dev tiers
+# (NOT individual countries — those go in "Eligible Countries"). Each term has
+# spelling/acronym variants matched in RFP text, plus its member countries via
+# expand(). Selecting a broad term is what relaxes the gate beyond exact
+# countries; with NONE selected, only exact eligible-country matches admit.
+BROAD_GEOGRAPHIES = UN_REGIONS + INCOME_TIERS
+
+# Conservative variant lists — word-boundary matched, so short acronyms (SSA,
+# LMIC, LDC) won't fire inside other words. Terms not listed fall back to just
+# their own label + member countries.
+SYNONYMS: dict[str, list[str]] = {
+    "Africa": ["africa", "african continent", "pan-african", "pan african"],
+    "Sub-Saharan Africa": ["sub-saharan africa", "sub saharan africa",
+                           "subsaharan africa", "sub-saharan", "ssa"],
+    "Northern Africa": ["north africa", "northern africa", "maghreb"],
+    "Eastern Africa": ["east africa", "eastern africa", "horn of africa"],
+    "Western Africa": ["west africa", "western africa", "sahel"],
+    "Middle Africa": ["central africa", "middle africa"],
+    "Southern Africa": ["southern africa"],
+    "Latin America and the Caribbean": ["latin america", "the caribbean"],
+    "South America": ["south america", "south american"],
+    "Central America": ["central america"],
+    "Southern Asia": ["south asia", "southern asia"],
+    "South-eastern Asia": ["southeast asia", "south-east asia",
+                           "south-eastern asia", "asean"],
+    "Eastern Asia": ["east asia", "eastern asia"],
+    "Western Asia": ["west asia", "western asia", "middle east"],
+    "Central Asia": ["central asia"],
+    "Global / worldwide": ["global", "globally", "worldwide", "world wide",
+                           "international", "any country", "all countries",
+                           "around the world"],
+    "Global South": ["global south", "developing world"],
+    "Low- and middle-income countries (LMICs)": [
+        "lmic", "lmics", "low- and middle-income", "low and middle income",
+        "low and middle-income", "developing country", "developing countries",
+        "developing nation", "developing nations"],
+    "Low-income countries": ["low-income country", "low-income countries",
+                             "low income countries"],
+    "Lower-middle-income countries": ["lower-middle-income", "lower middle income"],
+    "Upper-middle-income countries": ["upper-middle-income", "upper middle income"],
+    "Least Developed Countries (LDCs)": ["least developed countries",
+                                         "least developed country", "ldc", "ldcs"],
+    "Fragile & conflict-affected states": ["fragile state", "fragile states",
+                                           "conflict-affected", "conflict affected"],
+    "Small Island Developing States (SIDS)": ["small island developing states",
+                                              "sids", "small island states"],
+}
+
+
+def variants(term: str) -> list[str]:
+    """All lowercased text variants for a broad-geography term: its label, its
+    declared SYNONYMS, and its member countries (from expand). Deduped."""
+    t = str(term or "").strip()
+    if not t:
+        return []
+    out = {t.lower()}
+    out.update(s.lower() for s in SYNONYMS.get(t, []))
+    out.update(c.lower() for c in _REGION_MEMBERS.get(t.lower(), []))
+    return sorted(v for v in out if v)
+
+
+def text_matches_term(text_lower: str, term: str) -> bool:
+    """True if any variant of `term` appears as a whole word/phrase in the
+    (already lowercased) text. Word-boundary matched so e.g. "africa" fires on
+    "in Africa" but not "African Development Bank", and "ssa" doesn't fire
+    inside another word."""
+    if not text_lower or not term:
+        return False
+    return any(re.search(r"\b" + re.escape(v) + r"\b", text_lower)
+               for v in variants(term))
