@@ -452,30 +452,27 @@ with tab_settings:
                 label, options=opts, default=list(values), key=key, help=help,
             )
 
-    pol_tabs = st.tabs(["Countries", "Themes", "Criteria", "JSON (advanced)"])
+    pol_tabs = st.tabs(["Countries", "Themes", "Criteria", "Search terms",
+                        "JSON (advanced)"])
 
     with pol_tabs[0]:
-        from core.auto_scorer import KNOWN_COUNTRIES as _ALL_COUNTRIES
-        st.markdown(
-            "**Eligible countries** — RFPs mentioning any of these are admitted. "
-            "Pick from the dropdown or type to add a new country."
-        )
+        from core import geographies as _geo
         _tag_input(
             "Eligible countries",
             list(_live["countries"]["eligible"]),
-            options=list(_ALL_COUNTRIES),
+            options=list(_geo.COUNTRIES),
             key="pol_countries_eligible",
-            help="Selected countries appear as removable tags below the dropdown.",
-        )
-        st.markdown(
-            "**Broad-geography terms** — terms that imply the above are in-scope "
-            "(LMIC, Africa, Sub-Saharan, etc.). Type each and press Enter."
+            help="Exact countries the org works in — an RFP naming any of these "
+                 "is admitted.",
         )
         _tag_input(
-            "Broad terms",
+            "Broad-geography terms",
             list(_live["countries"]["broad_terms"]),
+            options=list(_geo.BROAD_GEOGRAPHIES),
             key="pol_countries_broad",
-            help="Free-text — type a phrase and press Enter to add as a tag.",
+            help="High-level UN regions / income tiers. Each also admits its "
+                 "member countries + synonyms (e.g. Sub-Saharan Africa admits a "
+                 "call naming Kenya). Leave EMPTY for strict country-only matching.",
         )
         permissive = st.checkbox(
             "Permissive when geography unmentioned (recommended ON)",
@@ -559,6 +556,36 @@ with tab_settings:
                 criteria_inputs[ckey] = {"rigor": rigor}
 
     with pol_tabs[3]:
+        from core import web_search as _ws
+        from core.settings import set_setting as _set_setting
+        st.markdown(
+            "**Search terms (MeSH / keyword library)** — when you run a *broad* "
+            "web search (e.g. *health*) on the Search page, it fans out into one "
+            "RFP-framed query per topic below. The built-in list is fixed; add "
+            "your own to widen discovery."
+        )
+        st.caption("Built-in (" + str(len(_ws._HEALTH_PIVOTS)) + "): "
+                   + " · ".join(_ws._HEALTH_PIVOTS))
+        _custom = _tag_input(
+            "Your custom search terms", _ws.custom_pivots(),
+            key="pol_search_pivots",
+            help="Each becomes its own RFP-framed query in a broad search. "
+                 "Type a term (e.g. a MeSH heading) and press Enter.")
+        if st.button("💾 Save search terms", key="save_search_pivots_btn"):
+            import json as _json
+            try:
+                _vals = [str(t).strip() for t in (_custom or []) if str(t).strip()]
+                _set_setting(_ws.SEARCH_PIVOTS_KEY, _json.dumps(_vals),
+                             updated_by=user.get("email"))
+                _clr = getattr(_ws.search, "clear", None)
+                if _clr:
+                    _clr()  # drop cached searches so new terms apply immediately
+                st.success(f"✓ Saved {len(_vals)} custom search term(s) — "
+                           "applied to the next broad web search.")
+            except Exception as exc:
+                st.error(f"Couldn't save search terms: {exc}")
+
+    with pol_tabs[4]:
         st.markdown(
             "**Raw JSON** — read-only preview. Use the other tabs to edit; "
             "this is here for export/debugging only."
@@ -1459,8 +1486,8 @@ with tab_sources:
                 st.rerun()
             except Exception as exc:
                 st.error(f"Delete failed: {exc}")
-        bc2.button("Cancel", use_container_width=True, key="ds_del_cancel",
-                   on_click=lambda: st.rerun())
+        if bc2.button("Cancel", use_container_width=True, key="ds_del_cancel"):
+            st.rerun()
 
     # ----- Top action bar (right-aligned) -----------------------------------
     _tsp, t1, t2, t3 = st.columns([4, 1.4, 1.5, 1])
@@ -1527,11 +1554,12 @@ with tab_sources:
 # -----------------------------------------------------------------------------
 with tab_scan:
     st.subheader("Trigger a manual scan")
+    from core.scan_runner import scannable_source_count as _src_count
     st.caption(
         "Scan every configured donor source for new RFPs that match this "
         "organisation's eligibility policies (Settings → Scan eligibility & "
-        "auto-scoring policies). A full run (~40 donor sources with detail-"
-        "page + PDF enrichment) typically takes **3-8 minutes**."
+        f"auto-scoring policies). A full run ({_src_count()} catalogued sources "
+        "with detail-page + PDF enrichment) typically takes **3-8 minutes**."
     )
 
     try:
@@ -1628,12 +1656,9 @@ with tab_scan:
         _status = st.empty()
         _status.info("⏳ Initialising scan…")
         try:
-            from core.scan_runner import run_scan_now
+            from core.scan_runner import run_scan_now, scan_banner
             _who = user.get("name") or user.get("email") or "admin"
-            _status.info(
-                f"⏳ Scan running as **{_who}** — with ~35 sources + "
-                "detail-page enrichment, expect 3-8 minutes. Please stay on this tab."
-            )
+            _status.info(scan_banner(_who))
             ok = run_scan_now(triggered_by=f"manual:{_who}")
         except Exception as exc:
             # Surface ANY exception so a scan that 'does nothing' becomes

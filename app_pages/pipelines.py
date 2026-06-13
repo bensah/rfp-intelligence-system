@@ -9,7 +9,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core.render_view import render_view
-from core.scan_runner import run_scan_now
+from core.scan_runner import run_scan_now, scan_banner
 from views.submit_form import render_submit_form
 
 user = st.session_state["app_user"]
@@ -50,12 +50,9 @@ with _btn_col:
             """,
             unsafe_allow_html=True,
         )
-        st.info("⏳ Scan in progress — please stay on this page. A full run "
-                "(~40 donor sources with detail-page + PDF enrichment) "
-                "typically takes **3-8 minutes**.")
-        run_scan_now(
-            triggered_by=f"manual:{user.get('name') or user.get('email') or 'unknown'}"
-        )
+        _who = user.get("name") or user.get("email") or "unknown"
+        st.info(scan_banner(_who))
+        run_scan_now(triggered_by=f"manual:{_who}")
         st.rerun()
 
 tab_screen, tab_review, tab_tracking, tab_summary = st.tabs(
