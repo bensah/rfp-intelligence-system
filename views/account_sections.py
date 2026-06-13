@@ -585,8 +585,8 @@ def render_manage_users(user: dict, sb) -> None:
         rc1, rc2 = st.columns([1, 1])
         confirm = rc1.button("🔄 Reset + email", type="primary",
                              use_container_width=True, key="reset_confirm_btn")
-        rc2.button("Cancel", use_container_width=True, key="reset_cancel_btn",
-                   on_click=lambda: st.rerun())
+        if rc2.button("Cancel", use_container_width=True, key="reset_cancel_btn"):
+            st.rerun()
         if confirm:
             try:
                 temp = _gen_temp_password(12)
@@ -647,8 +647,8 @@ def render_manage_users(user: dict, sb) -> None:
             "🗑 Permanently delete", type="primary", use_container_width=True,
             disabled=(typed.strip().lower() != _target_email.lower()),
             key="del_confirm_btn")
-        dc2.button("Cancel", use_container_width=True, key="del_cancel_btn",
-                   on_click=lambda: st.rerun())
+        if dc2.button("Cancel", use_container_width=True, key="del_cancel_btn"):
+            st.rerun()
         if confirm:
             try:
                 sb.table("users").delete().eq("email", _target_email).execute()
@@ -671,4 +671,7 @@ def render_manage_users(user: dict, sb) -> None:
                   disabled=is_self or not can_manage,
                   help="You can't delete yourself." if is_self
                   else (None if can_manage else "You can't delete this user.")):
+        # Clear any confirmation text left over from a previous open so the
+        # field always starts empty (and the button starts disabled).
+        st.session_state.pop("del_confirm_text", None)
         _delete_dialog()
