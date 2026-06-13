@@ -284,12 +284,14 @@ def ingest_candidates(
             log.info("reject: %s — %s", cand.get("opportunity_title", "")[:60], reason)
             continue
 
-        # Deep-read survivors that still lack a deadline (JS-rendered portals,
-        # prose-only windows), then RE-GATE on the accurate data so a freshly
-        # found past deadline / excluded scope / non-call now rejects. No-ops
-        # where Chromium isn't available (Streamlit Cloud); active in the
-        # GitHub Actions weekly scan.
-        if not cand.get("submission_deadline") and deep_read.available():
+        # Deep-read survivors that lack a deadline OR are too thin to judge
+        # eligibility (no description) — render the page in Chromium to recover
+        # the deadline / eligibility / geography, then RE-GATE on the accurate
+        # data so a freshly found past deadline / excluded scope / non-call now
+        # rejects. No-ops where Chromium isn't available (Streamlit Cloud);
+        # active in the GitHub Actions scan (bounded by RFPIS_DEEP_READ_MAX).
+        _thin = not (cand.get("brief_description") or "").strip()
+        if (not cand.get("submission_deadline") or _thin) and deep_read.available():
             if deep_read.enrich(cand):
                 ok, reason = is_eligible(cand, policies)
                 if not ok:

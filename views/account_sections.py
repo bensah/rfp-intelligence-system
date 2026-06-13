@@ -219,7 +219,7 @@ def render_user_access(user: dict) -> None:
             "Admin access": permissions.capability_label(
                 role_caps.get("admin", "hidden")),
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 
 # ===========================================================================
@@ -248,8 +248,8 @@ def render_manage_users(user: dict, sb) -> None:
                 key="adu_program")
             bc1, bc2 = st.columns([1, 1])
             save = bc1.form_submit_button(
-                "➕ Create user", type="primary", use_container_width=True)
-            cancel = bc2.form_submit_button("Cancel", use_container_width=True)
+                "➕ Create user", type="primary", width='stretch')
+            cancel = bc2.form_submit_button("Cancel", width='stretch')
 
         if cancel:
             st.rerun()
@@ -319,7 +319,7 @@ def render_manage_users(user: dict, sb) -> None:
     with _hcol_btn:
         st.markdown("<div style='padding-top:1.6rem'></div>",
                     unsafe_allow_html=True)
-        if st.button("➕ Add User", type="primary", use_container_width=True,
+        if st.button("➕ Add User", type="primary", width='stretch',
                      key="mu_add_user_top"):
             _add_user_dialog()
 
@@ -378,7 +378,7 @@ def render_manage_users(user: dict, sb) -> None:
     disp_cols = ["email", "name", "role", "Active", "department", "program",
                  "last_login_at", "password_changed_at", "Force PW reset"]
     sel = st.dataframe(
-        disp[disp_cols], use_container_width=True, hide_index=True,
+        disp[disp_cols], width='stretch', hide_index=True,
         selection_mode="single-row", on_select="rerun", key="mu_table_sel",
         column_config={
             "last_login_at": "Last login",
@@ -492,9 +492,9 @@ def render_manage_users(user: dict, sb) -> None:
 
             bc1, bc2 = st.columns([1, 1])
             save = bc1.form_submit_button(
-                "💾 Save changes", type="primary", use_container_width=True,
+                "💾 Save changes", type="primary", width='stretch',
                 disabled=not profile_editable)
-            cancel = bc2.form_submit_button("Cancel", use_container_width=True)
+            cancel = bc2.form_submit_button("Cancel", width='stretch')
 
         if cancel:
             st.rerun()
@@ -584,8 +584,8 @@ def render_manage_users(user: dict, sb) -> None:
             f"forced to pick a new one on next login.")
         rc1, rc2 = st.columns([1, 1])
         confirm = rc1.button("🔄 Reset + email", type="primary",
-                             use_container_width=True, key="reset_confirm_btn")
-        if rc2.button("Cancel", use_container_width=True, key="reset_cancel_btn"):
+                             width='stretch', key="reset_confirm_btn")
+        if rc2.button("Cancel", width='stretch', key="reset_cancel_btn"):
             st.rerun()
         if confirm:
             try:
@@ -644,10 +644,10 @@ def render_manage_users(user: dict, sb) -> None:
             key="del_confirm_text")
         dc1, dc2 = st.columns([1, 1])
         confirm = dc1.button(
-            "🗑 Permanently delete", type="primary", use_container_width=True,
+            "🗑 Permanently delete", type="primary", width='stretch',
             disabled=(typed.strip().lower() != _target_email.lower()),
             key="del_confirm_btn")
-        if dc2.button("Cancel", use_container_width=True, key="del_cancel_btn"):
+        if dc2.button("Cancel", width='stretch', key="del_cancel_btn"):
             st.rerun()
         if confirm:
             try:
@@ -660,14 +660,14 @@ def render_manage_users(user: dict, sb) -> None:
 
     # ─── Action buttons row ─────────────────────────────────────────────
     ab1, ab2, ab3, _spacer = st.columns([1, 1.4, 1, 4])
-    if ab1.button("✏️ Edit", use_container_width=True, key="mu_btn_edit"):
+    if ab1.button("✏️ Edit", width='stretch', key="mu_btn_edit"):
         _edit_dialog()
-    if ab2.button("🔄 Reset password", use_container_width=True,
+    if ab2.button("🔄 Reset password", width='stretch',
                   key="mu_btn_reset", disabled=not can_manage,
                   help=None if can_manage
                   else "You can't reset this user's password."):
         _reset_dialog()
-    if ab3.button("🗑 Delete", use_container_width=True, key="mu_btn_delete",
+    if ab3.button("🗑 Delete", width='stretch', key="mu_btn_delete",
                   disabled=is_self or not can_manage,
                   help="You can't delete yourself." if is_self
                   else (None if can_manage else "You can't delete this user.")):
