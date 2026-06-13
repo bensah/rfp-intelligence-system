@@ -22,6 +22,7 @@ Scrapers themselves stay pure — they don't touch the DB.
 """
 from __future__ import annotations
 
+import html
 import logging
 import os
 import re
@@ -236,29 +237,58 @@ _DATE_RANGE_TRAILING_RE = re.compile(
 )
 
 
+# A single date token anywhere inside a captured deadline blob. We scan the
+# blob for ALL of these rather than parsing only its prefix, because a label
+# capture is greedy and can hold several dates (e.g. a year-less "16 December"
+# next to an explicit "Date Closed Dec 16, 2025").
+_DATE_IN_TEXT_RE = re.compile(
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+20\d{2})?"
+    r"|\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:,?\s+20\d{2})?"
+    r"|20\d{2}-\d{1,2}-\d{1,2}"
+    r"|\d{1,2}/\d{1,2}/20\d{2}",
+    re.IGNORECASE,
+)
+
+
 def _extract_deadline_from_text(text: str) -> date | None:
     """Find ALL labelled deadlines in text. Returns the latest parseable
     one — this naturally handles extended deadlines (donors typically
     say 'Deadline: Mar 23' then 'Extended deadline: Mar 30' and we want
     Mar 30). Also catches unlabelled date ranges ("from X to Y" → Y)."""
-    candidates: list[date] = []
+    explicit: list[date] = []   # the date token carried a 20xx year
+    yearless: list[date] = []   # no year in the token → parser defaulted it
     if not text:
         return None
+
+    def _add(raw: str | None) -> None:
+        # Scan the captured blob for every date token, not just its prefix —
+        # the prefix may be unparseable noise ("Tuesday, 16 December 1700HRS")
+        # while the real, year-bearing date sits later in the same capture.
+        for tok in _DATE_IN_TEXT_RE.findall(raw or ""):
+            d = _parse_freeform_date(tok)
+            if not d:
+                continue
+            if re.search(r"(?<!\d)20\d{2}(?!\d)", tok):
+                explicit.append(d)
+            else:
+                yearless.append(d)
+
     # Labelled patterns (Deadline:, Closing Date:, etc.)
     for m in _DEADLINE_LABEL_RE.finditer(text):
-        d = _parse_freeform_date(m.group(1))
-        if d:
-            candidates.append(d)
+        _add(m.group(1))
     # Unlabelled date ranges — "APPLICATIONS: FROM OCT 9TH TO NOV 7TH 2025"
     for m in _DATE_RANGE_RE.finditer(text):
-        d = _parse_freeform_date(m.group(1))
-        if d:
-            candidates.append(d)
+        _add(m.group(1))
     # Trailing-label windows — "9 october to 7 november 2025: applications open"
     for m in _DATE_RANGE_TRAILING_RE.finditer(text):
-        d = _parse_freeform_date(m.group(1))
-        if d:
-            candidates.append(d)
+        _add(m.group(1))
+
+    # Prefer dates that carried an EXPLICIT year. A year-less phrase like
+    # "Deadline: 16 December" gets defaulted to the current year by the parser,
+    # which can turn a PAST deadline (the page's "Date Closed Dec 16, 2025")
+    # into a spurious FUTURE one (2026) and leak an expired call through. Only
+    # fall back to year-less dates when the text names no explicit-year date.
+    candidates = explicit or yearless
     if not candidates:
         return None
     # Sanity window: drop absurd far-future dates (a stray year in a strategy
@@ -420,38 +450,78 @@ _COMPANION_HREF_RE = re.compile(
 )
 
 
-def _find_companion_call_link(soup: "BeautifulSoup | None", base_url: str) -> str | None:
+# Strong companion signals — dedicated application / calendar pages. Ranked
+# ABOVE the generic "call-for-project" match, which frequently hits a site's
+# OWN nav/listing link (the Fondation Pierre Fabre bug: its call page links to
+# odess.io for the calendar AND has an internal "current-initiatives/
+# call-for-projects/" nav link that matched first and carried no date).
+_COMPANION_STRONG_RE = re.compile(
+    r"(odess|/calendar|/timeline|candidater|appel[-_]a[-_]projet"
+    r"|application[-_]form|/apply\b)", re.I)
+# Social / share links often embed the page URL (so they match the companion
+# pattern) but are never a calendar page — never follow them.
+_SOCIAL_SHARE_RE = re.compile(
+    r"(linkedin\.com|facebook\.com|twitter\.com|//x\.com|sharer|sharearticle"
+    r"|/share[?/]|wa\.me|whatsapp|t\.me|pinterest|reddit\.com|mailto:)", re.I)
+
+
+def _find_companion_call_links(soup: "BeautifulSoup | None", base_url: str) -> list[str]:
+    """Companion links worth following for a deadline, BEST FIRST. Prefers an
+    EXTERNAL dedicated calendar/application page (e.g. a call that links out to
+    odess.io) over a same-site 'call-for-projects' nav link, which usually
+    carries no dates."""
     if soup is None:
-        return None
+        return []
     base = base_url.rstrip("/")
+    base_host = urlsplit(base_url).netloc.lower()
+    scored: list[tuple[int, str]] = []
+    seen: set[str] = set()
     for a in soup.find_all("a", href=True):
         href = (a.get("href") or "").strip()
         if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
         full = urljoin(base_url, href)
-        if full.rstrip("/") == base:
+        nf = full.rstrip("/")
+        if nf == base or nf in seen:
             continue
-        if _COMPANION_HREF_RE.search(full.lower()):
-            return full
-    return None
+        low = full.lower()
+        if _SOCIAL_SHARE_RE.search(low):
+            continue
+        if not _COMPANION_HREF_RE.search(low):
+            continue
+        seen.add(nf)
+        external = bool(urlsplit(full).netloc.lower()) and urlsplit(full).netloc.lower() != base_host
+        strong = bool(_COMPANION_STRONG_RE.search(low))
+        scored.append(((2 if external else 0) + (1 if strong else 0), full))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [u for _, u in scored]
+
+
+def _find_companion_call_link(soup: "BeautifulSoup | None", base_url: str) -> str | None:
+    """Best single companion link (back-compat shim)."""
+    links = _find_companion_call_links(soup, base_url)
+    return links[0] if links else None
 
 
 def _follow_companion_for_deadline(soup: "BeautifulSoup | None", base_url: str) -> date | None:
-    """One-hop follow of a companion call/calendar page to read its deadline."""
-    link = _find_companion_call_link(soup, base_url)
-    if not link:
-        return None
-    try:
-        r = requests.get(
-            link, headers={"User-Agent": USER_AGENT, "Accept": "text/html"},
-            timeout=ENRICH_TIMEOUT,
-        )
-        r.raise_for_status()
-        ctext = BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)
-    except Exception as exc:
-        log.debug("companion fetch failed for %s: %s", link, exc)
-        return None
-    return _extract_deadline_from_text(ctext)
+    """One-hop follow of a companion call/calendar page to read its deadline.
+    Tries the best-ranked candidates in turn until one yields a date, so an
+    early-but-dateless nav link can't shadow the real external calendar."""
+    for link in _find_companion_call_links(soup, base_url)[:3]:
+        try:
+            r = requests.get(
+                link, headers={"User-Agent": USER_AGENT, "Accept": "text/html"},
+                timeout=ENRICH_TIMEOUT,
+            )
+            r.raise_for_status()
+            ctext = BeautifulSoup(r.text, "html.parser").get_text(" ", strip=True)
+        except Exception as exc:
+            log.debug("companion fetch failed for %s: %s", link, exc)
+            continue
+        dl = _extract_deadline_from_text(ctext)
+        if dl:
+            return dl
+    return None
 
 
 # DevelopmentAid detail-page title pattern.
@@ -500,6 +570,23 @@ def _enrich_developmentaid(cand: dict[str, Any]) -> dict[str, Any] | None:
         soup = BeautifulSoup(r.text, "html.parser")
     except Exception:
         return cand
+
+    # Robust status gate FIRST. DevelopmentAid renders "Status: Closed" (or
+    # Awarded / Expired) in the detail body. The <title> pattern below is
+    # brittle and frequently doesn't match (the funder then shows as the
+    # aggregator) — which used to let CLOSED grants slip into the pipeline
+    # (e.g. the Velux Stiftung "Daylight Research Grant", closed + CHF). Read
+    # the status straight from the body so past-tense grants are dropped
+    # regardless of the title format.
+    body_text = soup.get_text(" ", strip=True)
+    _st = re.search(
+        r"\bstatus\b\s*[:\-]?\s*"
+        r"(closed|awarded|expired|cancell?ed|completed|finished)",
+        body_text, re.I)
+    if _st:
+        log.info("DevelopmentAid skip (status=%s): %s", _st.group(1).lower(), link)
+        return None
+
     full_title = soup.title.get_text() if soup.title else ""
     m = _DEVELOPMENTAID_TITLE_RE.match(full_title)
     if not m:
@@ -1271,6 +1358,17 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
             elig_text = re.sub(r"<[^>]+>", " ", elig_text)
             elig_text = re.sub(r"\s+", " ", elig_text).strip()
             notes_parts.append("Eligibility detail: " + elig_text)
+            # SAFE US-only drop: only when the eligibility text EXPLICITLY
+            # restricts to US/domestic applicants (and doesn't also welcome
+            # foreign/international ones). Cuts the HRSA/CDC-domestic noise
+            # without risking valid USAID/CDC-global calls. (Reuses the same
+            # detector everywhere; local import avoids an import cycle.)
+            try:
+                from core.auto_scorer import grants_gov_domestic_only as _us_only
+                if _us_only(elig_text):
+                    cand["_drop_us_only"] = True
+            except Exception:
+                pass
         cs = syn.get("costSharing")
         if cs is not None and str(cs).lower() not in ("none", ""):
             notes_parts.append(f"Cost sharing required: {cs}")
@@ -1287,10 +1385,19 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
         if notes_parts:
             cand["notes"] = " | ".join(notes_parts)[:1800]
 
-    # Drop the temporary id helper before returning.
+    # Drop explicitly-US-only opportunities (flagged during enrichment) + the
+    # temporary id helper before returning.
+    _kept = []
+    _dropped_us = 0
     for cand in deduped:
         cand.pop("_grants_gov_id", None)
-    return deduped
+        if cand.pop("_drop_us_only", False):
+            _dropped_us += 1
+            continue
+        _kept.append(cand)
+    if _dropped_us:
+        log.info("Grants.gov: dropped %d explicitly US-only opportunities", _dropped_us)
+    return _kept
 
 
 def _coerce_money(raw: Any) -> float | None:
@@ -1494,7 +1601,12 @@ def _scan_html_js(name: str, url: str) -> list[dict[str, Any]]:
 def _clean(s: Any) -> str:
     if s is None:
         return ""
-    return re.sub(r"\s+", " ", str(s)).strip()
+    # Decode HTML entities (feeds/portals emit "&amp;", "&#8203;", "&#39;" …)
+    # then strip the now-decoded zero-width / BOM code points, which otherwise
+    # survive as literal "&#8203;" noise in titles (e.g. the HRSA MCH LEAP grant).
+    s = html.unescape(str(s))
+    s = re.sub(r"[​‌‍⁠﻿]", "", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _parse_struct_time(t) -> date | None:
