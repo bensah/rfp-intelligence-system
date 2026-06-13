@@ -22,6 +22,19 @@ sources:
     method: rss
     url: "https://www.researchnet-recherchenet.ca/rnr16/fodRss.do?type=ALL&chanTyp=ALL&lang=E"
     priority: 1
+  - name: Global South Opportunities
+    # Aggregator of Global-South-focused calls (blog; WordPress RSS). Surfaces
+    # opportunities like the "Being Initiative" youth-mental-health RFP. Good
+    # source even when a single call's country list excludes us — the parent
+    # feed is worth crawling.
+    method: rss
+    url: https://globalsouthopportunities.com/feed/
+    priority: 1
+  - name: Grand Challenges Canada
+    # Grand Challenges Canada funding opportunities (WordPress RSS).
+    method: rss
+    url: https://www.grandchallenges.ca/feed/
+    priority: 1
   - name: Grants.gov
     method: rest_json
     url: https://api.grants.gov/v1/api/search2
