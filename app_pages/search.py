@@ -150,6 +150,14 @@ else:
                 _msg.append(f"{res['dropped_old']} stale")
             if res.get("dropped_notrfp"):
                 _msg.append(f"{res['dropped_notrfp']} not a call")
+            if res.get("dropped_geo"):
+                _msg.append(f"{res['dropped_geo']} out-of-geo")
+            if res.get("dropped_scholarship"):
+                _msg.append(f"{res['dropped_scholarship']} scholarship")
+            if res.get("dropped_offtopic"):
+                _msg.append(f"{res['dropped_offtopic']} job/off-topic")
+            if res.get("dropped_lang"):
+                _msg.append(f"{res['dropped_lang']} non-EN/FR")
             st.caption(
                 f"{len(res['results'])} of {res['raw_count']} web results "
                 "matched your RFP configuration"
