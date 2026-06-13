@@ -29,8 +29,14 @@ import math
 import re
 from typing import Any
 
+from core import geographies as geo
 from core.policies import CRITERION_KEYS
 from core.scorer import score_submission
+
+# Region/tier labels from the shared geography vocabulary — used so an admin's
+# eligible-geographies selection that is a REGION (not a country) is recognised
+# as a containing region in the geo gate, matching how donors tag scope.
+_GEO_REGION_TIER = {s.lower() for s in (geo.UN_REGIONS + geo.INCOME_TIERS)}
 
 
 # A reasonable list of LMICs and other countries that often appear in donor
@@ -123,6 +129,21 @@ def _full_text(candidate: dict[str, Any]) -> str:
     )
 
 
+def _geo_text(candidate: dict[str, Any]) -> str:
+    """Text used for GEOGRAPHY detection only — title + description + extracted
+    scope + theme, but NOT the funder name. A funder like 'African Development
+    Bank' must not make an Ethiopia-specific call look Africa-wide, and a funder
+    headquartered in 'United States' must not tag a global call as US-only."""
+    return _normalize(
+        " ".join([
+            candidate.get("opportunity_title") or "",
+            candidate.get("brief_description") or "",
+            " ".join(candidate.get("geographic_scope") or []),
+            candidate.get("focus_theme") or "",
+        ])
+    )
+
+
 def _matches(text: str, keywords: list[str]) -> int:
     """Count substring matches (case-insensitive). Doesn't double-count one
     keyword appearing multiple times — each keyword is 0 or 1."""
@@ -158,56 +179,87 @@ def _has_inclusive_eligibility(text: str) -> bool:
     return bool(_INCLUSIVE_ELIGIBILITY_PATTERN.search(text or ""))
 
 
-# Region / income-tier terms that count as eligible geography even when no
-# eligible COUNTRY is named explicitly. Merged with the admin-configured
-# countries.broad_terms. This is the heart of the "geo REJECT→PARK" fix: a call
-# scoped to "sub-Saharan Africa" or "LMICs" (the IDRC / CGD pattern) is in-scope
-# even though it never says "Cameroon".
-_DEFAULT_REGIONAL = (
-    "sub-saharan africa", "sub saharan africa", "subsaharan", "africa",
-    "west africa", "central africa", "east africa", "southern africa",
-    "sahel", "lmic", "lmics", "low- and middle-income", "low and middle income",
-    "low-income", "middle-income", "global south", "developing countr",
-    "multi-country", "multicountry", "transnational",
+# Explicit US-domestic-only eligibility statements (Grants.gov
+# applicantEligibilityDesc). High precision on purpose: we only drop when the
+# text plainly restricts to US/domestic applicants — never on a guess — so a
+# valid USAID/CDC global-health call is never auto-dropped.
+_US_DOMESTIC_ONLY_PATTERN = re.compile(
+    r"(?:"
+    r"\bonly\s+domestic\b"
+    r"|\bdomestic\s+(?:public\s+)?(?:and\s+)?(?:private\s+)?(?:non-?profit\s+)?"
+    r"(?:entit|organi[sz]|applicant|institution)"
+    r"|\blimited\s+to\s+(?:[^.]{0,60}?)(?:domestic|united\s+states|u\.?s\.?\b)"
+    r"|\bmust\s+be\s+(?:[^.]{0,40}?)(?:located|based|incorporated|organized|"
+    r"domiciled)\s+(?:in|within)\s+the\s+(?:united\s+states|u\.?s\.?)"
+    r"|\bu\.?s\.?\s*[-.]?\s*based\s+(?:organi|entit|applicant|institution|non)"
+    r"|\bwithin\s+the\s+united\s+states\b"
+    r"|\bdomestic\s+applicants\s+only\b"
+    r")",
+    re.IGNORECASE,
 )
-# Vague worldwide-inclusive words. A truly global call DOES include Cameroon, so
-# these keep it — but ONLY when no specific non-eligible country is named, so
-# "Global Afghanistan Tenders" resolves to Afghanistan (foreign), not saved by
-# the marketing word "global".
-_VAGUE_GLOBAL_TERMS = ("globally", "global ", "international", "worldwide",
-                       "any country", "all countries", "around the world")
+
+
+def grants_gov_domestic_only(elig_text: str | None) -> bool:
+    """True when a Grants.gov eligibility description EXPLICITLY restricts to
+    US/domestic applicants AND carries no foreign/international-eligible
+    statement. Used to drop clearly-US-only opps for an LMIC deployment without
+    risking valid international calls (which fail this test)."""
+    if not elig_text:
+        return False
+    if _has_inclusive_eligibility(elig_text):
+        return False
+    return bool(_US_DOMESTIC_ONLY_PATTERN.search(elig_text))
+
+
+# The pure worldwide tier — applied AFTER the named-foreign check so a vague
+# "global" can't rescue a call that names a specific non-eligible country
+# ("Global Afghanistan Tenders" → Afghanistan, foreign). All other broad terms
+# carry their own member countries and are checked before the foreign verdict.
+# Includes bare legacy free-text variants so an old config that stored "global"
+# / "worldwide" as separate broad terms still gets the after-foreign treatment.
+_GLOBAL_TIER_LOWER = {"global / worldwide", "global", "globally", "worldwide",
+                      "world wide", "international"}
 
 
 def _geo_strength(candidate: dict[str, Any], policies: dict[str, Any]) -> str:
     """How well the candidate's geography matches our scope:
-       'strong'   — names an eligible country, or opens to international applicants
-       'regional' — a region/tier that CONTAINS us (SSA, LMIC, …) or vague-global
-       'foreign'  — names a specific non-eligible country, no containing region
+       'strong'   — names an eligible COUNTRY, or opens to international applicants
+       'regional' — matches an admin-selected BROAD geography (region/tier) via
+                    its synonyms or member countries
+       'foreign'  — names a specific non-eligible country not covered by any
+                    selected broad geography
        'silent'   — no geography mentioned at all
-    Priority matters: a REAL region keeps the call; otherwise a named non-eligible
-    country DROPS it (beating a vague 'global' marketing word); only then does a
-    vague worldwide word keep it. Shared by country_eligible() + auto_score()."""
+
+    Eligible Countries are matched EXACTLY (no region expansion). Broad
+    geographies are opt-in: with none selected the gate is strict country-only.
+    Each selected broad term matches via core.geographies synonyms + member
+    countries. The pure worldwide tier is applied last so a vague 'global'
+    can't override a named foreign country. Shared by country_eligible() +
+    auto_score(). Geography is read WITHOUT the funder name (see _geo_text)."""
     countries = policies.get("countries", {}) or {}
-    eligible_lower = {c.lower() for c in (countries.get("eligible") or []) if c}
-    # Real regions/tiers that contain our eligible countries. Config broad_terms
-    # merge in EXCEPT vague worldwide words (handled separately below so they
-    # can't override a named foreign country).
-    real_regional = set(_DEFAULT_REGIONAL) | {
-        b.lower() for b in (countries.get("broad_terms") or [])
-        if b and b.lower().strip() not in {"global", "international", "worldwide"}
-    }
-    text = _full_text(candidate)
+    eligible_raw = [c for c in (countries.get("eligible") or []) if c]
+    broad_raw = [b for b in (countries.get("broad_terms") or []) if b]
+    # Split: region/tier labels behave as broad terms even if they were stored
+    # under "eligible" by a legacy config; everything else is an exact country.
+    eligible_countries = {c.lower() for c in eligible_raw
+                          if c.lower() not in _GEO_REGION_TIER}
+    broad_terms = broad_raw + [c for c in eligible_raw
+                               if c.lower() in _GEO_REGION_TIER]
+    real_broad = [b for b in broad_terms if b.strip().lower() not in _GLOBAL_TIER_LOWER]
+    global_broad = [b for b in broad_terms if b.strip().lower() in _GLOBAL_TIER_LOWER]
+
+    text = _geo_text(candidate)
     if _has_inclusive_eligibility(text):
         return "strong"
     mentioned = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
-    if mentioned & eligible_lower:
+    if mentioned & eligible_countries:        # names one of our exact countries
         return "strong"
-    if any(r in text for r in real_regional):
+    if any(geo.text_matches_term(text, b) for b in real_broad):
         return "regional"
-    if mentioned:                         # named non-eligible country → drop
+    if mentioned:                             # named non-eligible country → drop
         return "foreign"
-    if any(g in text for g in _VAGUE_GLOBAL_TERMS):
-        return "regional"                 # worldwide-inclusive, no excluding country
+    if any(geo.text_matches_term(text, b) for b in global_broad):
+        return "regional"                     # worldwide tier selected + no excluding country
     return "silent"
 
 
@@ -953,11 +1005,10 @@ def _extract_geographic_scope(text: str, policies: dict[str, Any]) -> list[str]:
     Decline / out-of-scope rows don't get spurious geography tags."""
     if not text:
         return []
-    eligible = {
-        c.lower()
-        for c in (policies.get("countries") or {}).get("eligible", []) or []
-        if c
-    }
+    # Prioritise exact eligible countries + the member countries of any selected
+    # broad geography (same shared vocabulary as the donor scope + the geo gate).
+    _c = policies.get("countries") or {}
+    eligible = geo.expand((_c.get("eligible") or []) + (_c.get("broad_terms") or []))
     found: list[str] = []
     seen: set[str] = set()
     for m in _COUNTRY_PATTERN.findall(text):
