@@ -131,6 +131,57 @@ sources:
     method: html
     url: https://cepi.net/calls-for-proposals
     priority: 1
+  - name: CEPI calls portal (Salesforce)
+    # Some CEPI calls live on their Salesforce community portal
+    # (cepi.my.site.com/call-for-proposal?id=...), which is JS-rendered +
+    # login-walled — same class as WHO ETDR. The cepi.net source above is the
+    # scrapable hub; watch this portal manually for calls not mirrored there.
+    method: manual
+    url: https://cepi.my.site.com/
+    priority: 1
+  - name: IDRC (International Development Research Centre)
+    # Verified via WebFetch 2026-06-13: static HTML with explicit "Open calls"
+    # / "Closed calls" sections; each opportunity links out with its deadline
+    # (e.g. the sub-Saharan Africa SRHR call "ANeSA", LoI due 2026-08-23).
+    # Canadian funder, strong Global-South / SSA focus — high fit.
+    method: html
+    url: https://idrc-crdi.ca/en/funding
+    priority: 1
+  - name: Center for Global Development (CGD)
+    # CGD is a think tank; its funding calls surface sporadically as blog /
+    # news posts (e.g. the 2026 global lead-poisoning RFP with Coefficient
+    # Giving, EOI due 2026-08-02) rather than on a stable "calls" listing, so
+    # there's no reliable scrape target. Monitor cgdev.org/blog + the Google
+    # Alert (.org RFPs) and submit manually when a call appears.
+    method: manual
+    url: https://www.cgdev.org/section/publications
+    priority: 2
+  - name: Biswas Family Foundation — Fast Grants
+    # Verified via WebFetch 2026-06-13: static HTML program page, OPEN, two
+    # cycles/yr (deadlines Jun 15 & Dec 15, 2026), $25K–$100K grants for AI +
+    # health research, worldwide-eligible institutions. Single-call page rather
+    # than a listing — if the generic extractor returns 0, switch to `manual`
+    # and submit the open call via the Submit page.
+    method: html
+    url: https://www.biswasfamilyfoundation.org/science/fast-grants
+    priority: 1
+  - name: WHO AHPSR — Funding Opportunities
+    # Verified via WebFetch 2026-06-13: static HTML listing that links out to
+    # individual calls (+ PDFs). Explicitly LMIC-targeted ("institutions from
+    # low- and middle-income countries"). Companion to the AHPSR
+    # /call-for-proposals entry below — both are scanned + de-duped.
+    method: html
+    url: https://ahpsr.who.int/funding-opportunities
+    priority: 1
+  - name: Health Research Inc. (HRI)
+    # Verified via WebFetch 2026-06-13: static HTML listing of RFAs/RFPs that
+    # links to individual opportunity pages. HEAVILY US-DOMESTIC (NY State DoH
+    # health-equity / local-health-department contracts), so most rows fail the
+    # geo gate / score Decline — that's intended; the few internationally-open
+    # calls still surface. Relies on Scan Preferences to filter the US-only ones.
+    method: html
+    url: https://www.healthresearch.org/funding-opportunities/
+    priority: 2
   - name: Mastercard Foundation
     # Mastercard Foundation does not publish public RFPs — their model is
     # invitation-based partnerships (their partners page errors out for
