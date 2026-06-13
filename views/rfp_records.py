@@ -132,7 +132,7 @@ pc3.markdown(
     f"<b>{len(fdf)}</b> matching row{'s' if len(fdf)!=1 else ''} (of {len(df)} total)</div>",
     unsafe_allow_html=True,
 )
-if pc4.button("🔄 Refresh", use_container_width=True):
+if pc4.button("🔄 Refresh", width='stretch'):
     st.cache_data.clear()
     st.rerun()
 
@@ -268,7 +268,7 @@ for _c in table.columns:
 
 event = st.dataframe(
     table,
-    use_container_width=True,
+    width='stretch',
     hide_index=True,
     selection_mode="multi-row",
     on_select="rerun",
@@ -313,23 +313,23 @@ if is_multi:
     blacklist_clicked = False
     delete_clicked = ab2.button(
         f"🗑 Delete {len(selected_full_rows)} RFPs",
-        use_container_width=True, disabled=not is_admin,
+        width='stretch', disabled=not is_admin,
         help=None if is_admin else "Admins only.",
     )
     share_clicked = ab3.button(
         f"📤 Share {len(selected_full_rows)} RFPs",
-        use_container_width=True,
+        width='stretch',
     )
 else:
     ab1, ab2, ab3, ab4, _ = st.columns([1, 1, 1, 1.3, 3.7])
-    edit_clicked = ab1.button("✏ Edit", use_container_width=True, disabled=not can_edit)
+    edit_clicked = ab1.button("✏ Edit", width='stretch', disabled=not can_edit)
     delete_clicked = ab2.button(
-        "🗑 Delete", use_container_width=True, disabled=not is_admin,
+        "🗑 Delete", width='stretch', disabled=not is_admin,
         help=None if is_admin else "Admins only.",
     )
-    share_clicked = ab3.button("📤 Share", use_container_width=True)
+    share_clicked = ab3.button("📤 Share", width='stretch')
     blacklist_clicked = ab4.button(
-        "🚫 Blacklist", use_container_width=True, disabled=not is_admin,
+        "🚫 Blacklist", width='stretch', disabled=not is_admin,
         help="Block this source URL / section from future scans."
              if is_admin else "Admins only.",
     )
@@ -591,9 +591,9 @@ def edit_dialog(row: dict) -> None:
 
     st.divider()
     bs, bd, bc = st.columns([1, 1, 1])
-    save_pressed = bs.button("💾 Save changes", type="primary", use_container_width=True)
-    delete_pressed = bd.button("🗑 Delete this RFP", use_container_width=True, disabled=not is_admin)
-    cancel_pressed = bc.button("Cancel", use_container_width=True)
+    save_pressed = bs.button("💾 Save changes", type="primary", width='stretch')
+    delete_pressed = bd.button("🗑 Delete this RFP", width='stretch', disabled=not is_admin)
+    cancel_pressed = bc.button("Cancel", width='stretch')
 
     if cancel_pressed:
         st.rerun()
@@ -710,14 +710,14 @@ def delete_dialog(rows: list[dict]) -> None:
     c1, c2 = st.columns(2)
     if c1.button(
         f"Confirm delete ({n})" if n > 1 else "Confirm delete",
-        type="primary", use_container_width=True,
+        type="primary", width='stretch',
     ):
         uids = [r["uid"] for r in rows]
         sb.table("rfp_submissions").delete().in_("uid", uids).execute()
         st.cache_data.clear()
         st.toast(f"Deleted {n} record(s)", icon="🗑")
         st.rerun()
-    if c2.button("Cancel", use_container_width=True):
+    if c2.button("Cancel", width='stretch'):
         st.rerun()
 
 
@@ -795,7 +795,7 @@ def share_dialog(rows: list[dict]) -> None:
             data=buf.getvalue(),
             file_name=fname,
             mime="text/csv",
-            use_container_width=True,
+            width='stretch',
         )
 
     with tab_send:
@@ -812,7 +812,7 @@ def share_dialog(rows: list[dict]) -> None:
         )
         subject = st.text_input("Subject", value=default_subject, key="share_subj_field")
         note = st.text_area("Optional note", height=80, key="share_note_field")
-        if st.button("📤 Send", type="primary", use_container_width=True, key="share_send_btn"):
+        if st.button("📤 Send", type="primary", width='stretch', key="share_send_btn"):
             if not to.strip():
                 st.error("Recipient email is required.")
             else:

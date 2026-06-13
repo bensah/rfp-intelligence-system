@@ -106,7 +106,7 @@ if canonical_df.empty:
         latest = max(recent, key=_num)
         cta1, cta2 = st.columns([3, 1])
         cta1.markdown(f"Most recent week with activity: **{latest}**")
-        if cta2.button(f"Jump to {latest}", use_container_width=True):
+        if cta2.button(f"Jump to {latest}", width='stretch'):
             st.session_state["screenings_jump"] = latest
             st.rerun()
     st.stop()
@@ -266,7 +266,7 @@ else:
         "Key risks": show["key_risks"].fillna(""),
     })
     st.dataframe(
-        show_df, use_container_width=True, hide_index=True,
+        show_df, width='stretch', hide_index=True,
         column_config={
             "Score": st.column_config.NumberColumn("Score", format="%.0f"),
             "Key risks": st.column_config.TextColumn("Key risks", width="large"),

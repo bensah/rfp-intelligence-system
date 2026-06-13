@@ -38,7 +38,7 @@ with st.form("site_search_form", clear_on_submit=False):
         placeholder="Search pages, tabs, opportunities, donors…",
         label_visibility="collapsed")
     submitted = c2.form_submit_button("Search", type="primary",
-                                      use_container_width=True)
+                                      width='stretch')
 if submitted:
     current_q = (q_in or "").strip()
 
@@ -122,12 +122,12 @@ else:
         "specific terms stay focused.")
     wb1, wb2, _wsp = st.columns([1.7, 1.2, 4])
     if wb1.button(f"🌐 Search the web for “{q}”", key="web_search_btn",
-                  type="primary", use_container_width=True):
+                  type="primary", width='stretch'):
         st.session_state["_web_search_for"] = q
         st.query_params.pop("p", None)  # fresh search → back to page 1
         st.rerun()  # restart so the in-app groups collapse before web results
     if wb2.button("🔄 Refresh results", key="web_search_refresh",
-                  use_container_width=True,
+                  width='stretch',
                   help="Re-run the web search, bypassing the 15-min cache."):
         web_search.search.clear()       # drop cached results → re-query Tavily
         st.session_state["_web_search_for"] = q

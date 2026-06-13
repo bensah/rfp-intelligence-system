@@ -318,6 +318,49 @@ def _extract_eligibility_from_text(text: str) -> str | None:
     return _clean(m.group(1))[:500]
 
 
+# FIRST-POSTED date meta keys (exclude modified/updated so a CMS re-touch can't
+# make an old call look recent — recency is judged by when it was POSTED).
+_PUB_META_KEYS = {
+    "article:published_time", "datepublished", "dc.date", "dcterms.date",
+    "dcterms.created", "dcterms.issued", "date", "pubdate", "publishdate",
+    "publication_date", "sailthru.date", "parsely-pub-date",
+}
+
+
+def _extract_page_date(soup: "BeautifulSoup | None") -> date | None:
+    """Earliest first-posted date from <meta> publish keys + JSON-LD
+    datePublished / dateCreated. Used as a recency signal for the deadline gate
+    when no deadline parses (a non-rolling call posted long ago is expired —
+    e.g. the Fondation Pierre Fabre 'Seven Winners' page, published 2017)."""
+    if soup is None:
+        return None
+    import json as _json
+    found: list[date] = []
+    for tag in soup.find_all("meta"):
+        key = (tag.get("property") or tag.get("name")
+               or tag.get("itemprop") or "").strip().lower()
+        if key in _PUB_META_KEYS:
+            raw = tag.get("content") or ""
+            d = _parse_iso_date(raw) or _parse_freeform_date(raw)
+            if d:
+                found.append(d)
+    for sc in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        try:
+            data = _json.loads(sc.string or sc.get_text() or "")
+        except Exception:
+            continue
+        for obj in (data if isinstance(data, list) else [data]):
+            if not isinstance(obj, dict):
+                continue
+            for k in ("datePublished", "dateCreated"):
+                v = obj.get(k)
+                if v:
+                    d = _parse_iso_date(str(v)) or _parse_freeform_date(str(v))
+                    if d:
+                        found.append(d)
+    return min(found) if found else None
+
+
 def _extract_description_from_soup(soup: BeautifulSoup) -> str | None:
     """Prefer og:description / meta description, fall back to first long <p>."""
     for sel in (
@@ -717,6 +760,12 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
             text = soup.get_text(" ", strip=True)
         except Exception:
             return cand
+        # Publication date — recency signal for the deadline gate when no
+        # deadline parses (a non-rolling call posted long ago is expired).
+        if not cand.get("date_posted"):
+            _pd = _extract_page_date(soup)
+            if _pd:
+                cand["date_posted"] = _pd
 
     # Deadline detection — four sources, in priority order:
     #   1. Explicit deadline phrase in body text (most reliable).
@@ -1347,6 +1396,15 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
             a_labels = [x for x in a_labels if x]
             if a_labels:
                 notes_parts.append("Eligible applicants: " + "; ".join(a_labels))
+                # SAFE US-only drop #2: applicant types are PURELY US government /
+                # public tiers (state/county/city/tribal govts, school districts,
+                # public universities) with no open type — structurally domestic.
+                try:
+                    from core.auto_scorer import grants_gov_government_only as _gov_only
+                    if _gov_only(a_labels):
+                        cand["_drop_us_only"] = True
+                except Exception:
+                    pass
         # "Additional Information on Eligibility" — the DECISIVE geography
         # signal (the "domestic" test; see docs/SCAN_CLASSIFICATION_ALGORITHM.md
         # §6). Previously dropped on the floor, which is why US-domestic-only
