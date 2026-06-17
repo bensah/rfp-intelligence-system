@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from datetime import date
 
 import altair as alt
 import pandas as pd
@@ -306,7 +307,7 @@ _CHOICE = {
 # Qualitative donor-intelligence profile (added to the edit form, migration 025).
 # Listed here so these columns are treated as free text — NOT flags — once they
 # exist in the table, and so the View / Share / PDF summaries include them.
-_PROFILE = ["summary_description", "mission", "vision", "donor_values",
+_PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values",
             "strategy_url", "total_awards", "total_funding_to_date",
             "current_awards", "past_awards", "projected_budget",
             "projected_budget_period", "funding_cycle", "recent_activity",
@@ -375,6 +376,13 @@ REPORTING_REQUIREMENTS = [
     "Independent audit required", "Unknown",
 ]
 _OTHER = "Other (specify)"
+
+# Founded-year + HQ-country dropdowns (avoid free-text typos). Years run from the
+# current year back to 1800; "" is the unset option. HQ country reuses the shared
+# country vocabulary. Callers append any legacy value not in the list so editing
+# an existing donor never silently drops it.
+_YEAR_OPTIONS = [""] + [str(_y) for _y in range(date.today().year, 1799, -1)]
+_HQ_COUNTRY_OPTIONS = [""] + list(_geo.COUNTRIES)
 
 
 def _to_list(v) -> list[str]:
@@ -590,10 +598,46 @@ def _edit_dialog(row: dict) -> None:
             key=f"cat_{row['canonical_key']}")
         edited["website"] = c4.text_input("Website", row.get("website") or "",
                                           key=f"website_{row['canonical_key']}")
+        # Founded — year dropdown (append a legacy value not in the list so an
+        # existing donor's value is never dropped on save).
+        _cur_founded = str(row.get("founded") or "").strip()
+        _yr_opts = (_YEAR_OPTIONS if _cur_founded in _YEAR_OPTIONS
+                    else _YEAR_OPTIONS + [_cur_founded])
+        c5, _c6 = st.columns(2)
+        edited["founded"] = c5.selectbox(
+            "Founded (year)", _yr_opts, index=_yr_opts.index(_cur_founded),
+            key=f"founded_{row['canonical_key']}",
+            help="Year the organisation was established.")
 
-        # About this donor — summary / mission / vision / values / strategy.
-        # Placeholders to fill in during donor research; persisted once the
-        # matching columns exist (see the migration note in the page summary).
+        # Official / institutional contact (HQ country is a dropdown to avoid
+        # typos). Sits right after the identity fields, before 'About'.
+        st.markdown("**Official / institutional contact**")
+        ic1, ic2 = st.columns(2)
+        edited["general_email"] = ic1.text_input(
+            "General email", row.get("general_email") or "",
+            key=f"general_email_{row['canonical_key']}")
+        edited["main_phone"] = ic2.text_input(
+            "Main phone", row.get("main_phone") or "",
+            key=f"main_phone_{row['canonical_key']}")
+        ic3, ic4 = st.columns(2)
+        _cur_hq = str(row.get("hq_country") or "").strip()
+        _hq_opts = (_HQ_COUNTRY_OPTIONS if _cur_hq in _HQ_COUNTRY_OPTIONS
+                    else _HQ_COUNTRY_OPTIONS + [_cur_hq])
+        edited["hq_country"] = ic3.selectbox(
+            "HQ country", _hq_opts, index=_hq_opts.index(_cur_hq),
+            key=f"hq_country_{row['canonical_key']}")
+        edited["donor_linkedin_url"] = ic4.text_input(
+            "Donor LinkedIn", row.get("donor_linkedin_url") or "",
+            key=f"donor_linkedin_url_{row['canonical_key']}")
+        edited["hq_address"] = st.text_area(
+            "HQ address", row.get("hq_address") or "", height=60,
+            key=f"hq_address_{row['canonical_key']}")
+        edited["other_profile_urls"] = st.text_area(
+            "Other profile URLs", row.get("other_profile_urls") or "", height=60,
+            key=f"other_profile_urls_{row['canonical_key']}")
+
+        # About this donor — summary / mission / vision / values / strategy
+        # (follows the institutional contact, before Funding footprint).
         st.markdown("**About this donor**")
         edited["summary_description"] = st.text_area(
             "Summary / description", row.get("summary_description") or "", height=80,
@@ -753,22 +797,6 @@ def _edit_dialog(row: dict) -> None:
                                    key=f"{col}_{row['canonical_key']}")
 
     st.divider()
-    st.markdown("**Official / institutional contact**")
-    ic1, ic2 = st.columns(2)
-    edited["general_email"] = ic1.text_input("General email", row.get("general_email") or "",
-                                             key=f"general_email_{row['canonical_key']}")
-    edited["main_phone"] = ic2.text_input("Main phone", row.get("main_phone") or "",
-                                          key=f"main_phone_{row['canonical_key']}")
-    ic3, ic4 = st.columns(2)
-    edited["hq_country"] = ic3.text_input("HQ country", row.get("hq_country") or "",
-                                          key=f"hq_country_{row['canonical_key']}")
-    edited["donor_linkedin_url"] = ic4.text_input("Donor LinkedIn", row.get("donor_linkedin_url") or "",
-                                                  key=f"donor_linkedin_url_{row['canonical_key']}")
-    edited["hq_address"] = st.text_area("HQ address", row.get("hq_address") or "", height=60,
-                                        key=f"hq_address_{row['canonical_key']}")
-    edited["other_profile_urls"] = st.text_area("Other profile URLs", row.get("other_profile_urls") or "", height=60,
-                                                key=f"other_profile_urls_{row['canonical_key']}")
-
     st.markdown("**Contacts — focal persons & additional (private)**")
     st.caption("Add as many as you like (＋ row). Official channels or people the "
                "team has engaged. Sourced from public pages or first-party — never guessed.")
@@ -1077,13 +1105,30 @@ def _view_dialog(row: dict) -> None:
     sub = []
     if _disp(row.get("donor_category")):
         sub.append(_normalize_category(row.get("donor_category")))
+    if _disp(row.get("founded")):
+        sub.append(f"Founded {_disp(row.get('founded'))}")
     if _disp(row.get("website")):
         w = _disp(row.get("website"))
         sub.append(f"[{w}]({w})")
     if sub:
         st.caption(" · ".join(sub))
 
-    # ── Key facts — only the populated ones (no "— — —" filler) ──────────────
+    # ── Contacts (institutional + focal) — right after identity ──────────────
+    _render_contacts(row)
+
+    # ── About — summary / mission / vision / values / strategy ───────────────
+    _about = [(lbl, _disp(row.get(col))) for col, lbl in (
+        ("summary_description", "Summary"), ("mission", "Mission"),
+        ("vision", "Vision"), ("donor_values", "Values")) if _disp(row.get(col))]
+    _su = _disp(row.get("strategy_url"))
+    if _about or _su:
+        st.markdown("**About**")
+        for _lbl, _v in _about:
+            st.markdown(f"- **{_lbl}:** {_v}")
+        if _su:
+            st.markdown(f"- **Strategy:** [{_su}]({_su})")
+
+    # ── Key facts — funding footprint (only the populated ones) ──────────────
     facts: list[tuple[str, str]] = []
     lo, hi = _md(row.get("award_low_usd")), _md(row.get("award_high_usd"))
     if lo or hi:
@@ -1109,18 +1154,6 @@ def _view_dialog(row: dict) -> None:
         _fcols = st.columns(min(len(facts), 4))
         for _i, (_lbl, _v) in enumerate(facts):
             _fcols[_i % len(_fcols)].markdown(f"**{_lbl}**  \n{_v}")
-
-    # ── About — only populated ───────────────────────────────────────────────
-    _about = [(lbl, _disp(row.get(col))) for col, lbl in (
-        ("summary_description", "Summary"), ("mission", "Mission"),
-        ("vision", "Vision"), ("donor_values", "Values")) if _disp(row.get(col))]
-    _su = _disp(row.get("strategy_url"))
-    if _about or _su:
-        st.markdown("**About**")
-        for _lbl, _v in _about:
-            st.markdown(f"- **{_lbl}:** {_v}")
-        if _su:
-            st.markdown(f"- **Strategy:** [{_su}]({_su})")
 
     # ── Funding scope / program areas / mechanism (chips) + routes ───────────
     _scope = _to_list(row.get("funding_scope_geographic"))
@@ -1168,9 +1201,6 @@ def _view_dialog(row: dict) -> None:
                 "title": "Project", "amount": "Award", "currency": "Cur.",
                 "year": "Year", "country": "Country"}),
             hide_index=True, width='stretch')
-
-    # ── Contacts — only when populated ───────────────────────────────────────
-    _render_contacts(row)
 
     # ── Flags as clean chips (only "yes"); Program-area drops the "…fit" tail ─
 
