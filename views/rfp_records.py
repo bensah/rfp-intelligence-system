@@ -363,7 +363,7 @@ if is_multi:
         width='stretch',
     )
 else:
-    ab1, ab2, ab3, ab4, _ = st.columns([1, 1, 1, 1.3, 3.7])
+    ab1, ab2, ab3, ab4, ab5, ab6, _ = st.columns([1, 1, 1, 1.3, 0.7, 0.7, 2.3])
     edit_clicked = ab1.button("✏ Edit", width='stretch', disabled=not can_edit)
     delete_clicked = ab2.button(
         "🗑 Delete", width='stretch', disabled=not is_admin,
@@ -375,6 +375,21 @@ else:
         help="Block this source URL / section from future scans."
              if is_admin else "Admins only.",
     )
+    # 👍 / 👎 — label this RFP good/bad as a training signal (ML Phase 1).
+    good_clicked = ab5.button("👍", width='stretch',
+                              help="Mark this a GOOD match (training signal).")
+    bad_clicked = ab6.button("👎", width='stretch',
+                             help="Mark this a BAD match (training signal).")
+    if good_clicked or bad_clicked:
+        try:
+            from core import decision_log
+            decision_log.log_feedback(
+                selected_full_rows[0], "good" if good_clicked else "bad",
+                by=user.get("email"))
+            st.toast(("👍 Marked good" if good_clicked else "👎 Marked bad")
+                     + " — thanks, this trains the scorer.", icon="🧠")
+        except Exception as exc:
+            st.warning(f"Couldn't record feedback: {exc}")
 
 
 # -----------------------------------------------------------------------------
@@ -723,6 +738,16 @@ def edit_dialog(row: dict) -> None:
             "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
         }
         sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
+        # ML Phase 1 — log the human decision as a labeled signal when it changes.
+        _new_dec = _val(dec_in)
+        if (_new_dec and str(_new_dec).strip().lower()
+                != str(row.get("decision") or "").strip().lower()):
+            try:
+                from core import decision_log
+                decision_log.log_decision({**row, **update}, _new_dec,
+                                          by=user.get("email"))
+            except Exception:
+                pass
         st.cache_data.clear()
         st.toast(f"Saved {row['uid']} · score {align:.1f} → {rec}", icon="✅")
         st.rerun()
