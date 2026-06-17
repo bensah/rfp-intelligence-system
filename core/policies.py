@@ -72,6 +72,8 @@ DEFAULT_POLICIES: dict[str, Any] = {
     "exclusions": {
         "reject_training_only": True,   # "X Training Center / Education Program"
         "reject_loans": True,           # loans / concessional debt (not grants)
+        "reject_consultancies": True,   # individual consultant / contractor RFPs
+                                        # (org seeks project grants, not gigs)
     },
     # Per-criterion rigor (0-5) + keyword bags. Rigor controls how strict
     # the keyword match must be to score the criterion as Yes / Partial / No.
