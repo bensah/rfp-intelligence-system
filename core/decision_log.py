@@ -44,6 +44,20 @@ def _scope_text(v: Any) -> str | None:
     return str(v)
 
 
+def _features(cand: dict) -> dict | None:
+    """Capture the decision-model feature vector inline (ML Phase 3). Best-effort
+    — telemetry must never break a scan or a save. System-reject candidates are
+    pre-scoring, so their criteria features come back None; that's fine (they're
+    negatives, judged on geo/deadline/channel)."""
+    try:
+        from core import features as _f
+        feats = _f.extract(cand)
+        return feats or None
+    except Exception as exc:
+        log.debug("decision_log._features failed: %s", exc)
+        return None
+
+
 def _base_record(cand: dict, *, event_type: str, label: str | None,
                  reason: str | None, by: str | None) -> dict:
     return {
@@ -58,6 +72,7 @@ def _base_record(cand: dict, *, event_type: str, label: str | None,
         "geographic_scope": _scope_text(cand.get("geographic_scope")),
         "submission_deadline": _date_or_none(cand.get("submission_deadline")),
         "alignment_score": cand.get("alignment_score"),
+        "features": _features(cand),
         "decided_by": by,
     }
 
