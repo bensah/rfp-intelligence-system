@@ -272,6 +272,7 @@ def ingest_candidates(
     updated = 0
     duplicate_unchanged = 0
     rejected = 0
+    _reject_records: list[dict] = []   # ML Phase 1 — labeled rejects for learning
     ts = datetime.now()
 
     for i, cand in enumerate(candidates):
@@ -282,6 +283,7 @@ def ingest_candidates(
         if not ok:
             rejected += 1
             log.info("reject: %s — %s", cand.get("opportunity_title", "")[:60], reason)
+            _reject_records.append({**cand, "_reject_reason": reason})
             continue
 
         # Deep-read survivors that lack a deadline OR are too thin to judge
@@ -298,6 +300,7 @@ def ingest_candidates(
                     rejected += 1
                     log.info("reject (post deep-read): %s — %s",
                              cand.get("opportunity_title", "")[:60], reason)
+                    _reject_records.append({**cand, "_reject_reason": reason})
                     continue
 
         # Find duplicates using a minimal projection (find_duplicates only
@@ -383,6 +386,15 @@ def ingest_candidates(
                 log.error("insert failed for %s: %s", row["opportunity_title"][:60], exc)
         else:
             inserted += 1
+
+    # ML Phase 1 — persist the rejects as labeled training data (best-effort,
+    # deduped by link; never breaks the scan if the table/DB is unavailable).
+    if _reject_records and not dry_run:
+        try:
+            from core import decision_log
+            decision_log.log_rejects(_reject_records)
+        except Exception as exc:
+            log.debug("decision_log unavailable: %s", exc)
 
     # Return the rejected count up the stack so it lands in scan_logs.
     log.info(
