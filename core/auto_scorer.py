@@ -486,6 +486,14 @@ _CLOSURE_PHRASE_RE = re.compile(
     r"|check back (?:later|in)"
     r"|on (?:hold|pause)"
     r"|closed for (?:new\s+)?applications?"
+    # Past-tense "this round is over" language (Global Affairs Canada case:
+    # "the assessment of the proposals … has concluded and applicants have
+    # been informed of their results").
+    r"|(?:assessment|review|evaluation|adjudication) of (?:the )?"
+    r"(?:proposals?|applications?|submissions?)[^.]{0,60}?has (?:concluded|ended|been completed)"
+    r"|applicants? have been (?:informed|notified) of (?:their|the)\s+results?"
+    r"|this (?:call|competition|round|process)\b[^.]{0,30}?(?:has|is) (?:now )?(?:concluded|ended)"
+    r"|(?:call|competition) (?:for proposals? )?(?:has|is) (?:now )?(?:concluded|closed|ended)"
     r")",
     re.IGNORECASE,
 )
@@ -755,6 +763,11 @@ _LISTING_TITLE_RE = re.compile(
     r"|(?:funding|grant|grants|financing)\s+opportunit(?:y|ies)"
     r"|open\s+calls?|current\s+(?:calls?|opportunit(?:y|ies))"
     r"|all\s+(?:calls?|grants?|opportunit(?:y|ies))"
+    # Verb-led index headings: "Find a funding opportunity", "Search grants",
+    # "Browse opportunities", "View / explore funding opportunities".
+    r"|(?:find|search|browse|explore|view|see|discover)\s+"
+    r"(?:a|an|all|our|the|for|your)?\s*(?:funding\s+|grant\s+|open\s+)?"
+    r"(?:opportunit(?:y|ies)|calls?|grants?|projects?|tenders?|fund(?:ing|s)?)"
     r")\s*$",
     re.IGNORECASE,
 )
