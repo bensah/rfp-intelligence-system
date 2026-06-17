@@ -24,9 +24,12 @@ from urllib.parse import urlsplit
 log = logging.getLogger(__name__)
 
 # Hosts whose detail pages should be resolved to the original source.
+# NB: grants.gov/search… is a LISTING/search page (an aggregator-style index),
+# but grants.gov/search-results-DETAIL/<id> is the canonical opportunity page —
+# the source itself — so the negative lookahead keeps detail pages out.
 _AGGREGATOR_RE = re.compile(
     r"(developmentaid\.org|fundsforngos\.org|grantforward|grantstation|"
-    r"opengrants\.io|instrumentl\.com|grants\.gov/search)", re.I)
+    r"opengrants\.io|instrumentl\.com|grants\.gov/search(?!-results-detail))", re.I)
 
 # Never accept these as the "source": the aggregator itself, social shares,
 # login/paywall walls, job boards, and generic search/listing endpoints.
