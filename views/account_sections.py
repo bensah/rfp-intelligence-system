@@ -324,10 +324,20 @@ def render_manage_users(user: dict, sb) -> None:
             _add_user_dialog()
 
     # ─── Pending approvals banner ───────────────────────────────────────
-    pending_signups = (
-        sb.table("users").select("email,name,created_at")
-        .eq("is_active", False).order("created_at", desc=True)
-        .execute().data or [])
+    # The whole page needs the DB; if the first query can't reach Supabase
+    # (transient httpx.ConnectError / network blip), degrade with a clear
+    # message instead of crashing the entire app with a raw traceback.
+    try:
+        pending_signups = (
+            sb.table("users").select("email,name,created_at")
+            .eq("is_active", False).order("created_at", desc=True)
+            .execute().data or [])
+    except Exception as exc:
+        st.error(
+            "⚠ Couldn't reach the database (connection error). Check your "
+            "network / Supabase status, then refresh this page.")
+        st.caption(f"Details: {type(exc).__name__}")
+        return
     try:
         pending_resets = (
             sb.table("password_reset_requests")
@@ -356,12 +366,19 @@ def render_manage_users(user: dict, sb) -> None:
                     + (" …" if len(pending_resets) > 5 else ""))
 
     # ─── Existing users table ───────────────────────────────────────────
-    all_users = (
-        sb.table("users")
-        .select("id,email,name,role,department,job_title,phone,program,"
-                "is_active,last_login_at,password_changed_at,"
-                "must_change_password,created_at")
-        .order("created_at").execute().data or [])
+    try:
+        all_users = (
+            sb.table("users")
+            .select("id,email,name,role,department,job_title,phone,program,"
+                    "is_active,last_login_at,password_changed_at,"
+                    "must_change_password,created_at")
+            .order("created_at").execute().data or [])
+    except Exception as exc:
+        st.error(
+            "⚠ Couldn't reach the database (connection error). Check your "
+            "network / Supabase status, then refresh this page.")
+        st.caption(f"Details: {type(exc).__name__}")
+        return
     df_u = pd.DataFrame(all_users)
 
     if df_u.empty:
