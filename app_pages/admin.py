@@ -529,6 +529,47 @@ with tab_settings:
             help="Drops 'X Consultants' / 'X Contractor' procurement — hiring a "
                  "person/firm to deliver a service, not an org project grant. "
                  "Turn off if your org pursues consultancies.")
+        st.checkbox(
+            "Reject reimbursement programs",
+            value=bool(_excl.get("reject_reimbursement", True)),
+            key="pol_excl_reimburse",
+            help="Drops 'X Reimbursement Program' (e.g. Ryan White Part F Dental "
+                 "Reimbursement) — repays a closed set of named existing "
+                 "providers for incurred costs, not an open competitive grant.")
+
+        st.markdown("---")
+        st.markdown("**Who you are (applicant type)** — match the call's "
+                    "published eligibility against your org type. A call open "
+                    "*only* to types you're not (and with no open/unrestricted "
+                    "type) is rejected as out of scope.")
+        _elig = _live.get("eligibility") or {}
+        _bucket_labels = {
+            "nonprofit": "Nonprofit / NGO / civil society",
+            "government": "Government / public sector",
+            "school_district": "School district",
+            "higher_ed": "University / college (higher education)",
+            "for_profit": "For-profit / business",
+            "individual": "Individual",
+            "tribal": "Tribal organization",
+        }
+        _bucket_keys = list(_bucket_labels.keys())
+        _cur = [b for b in (_elig.get("org_applicant_types") or ["nonprofit"])
+                if b in _bucket_labels]
+        st.multiselect(
+            "Your organization's applicant type(s)",
+            options=_bucket_keys,
+            default=_cur or ["nonprofit"],
+            format_func=lambda b: _bucket_labels.get(b, b),
+            key="pol_org_applicant_types",
+            help="Most implementing orgs are Nonprofit / NGO. Pick all that apply.")
+        st.checkbox(
+            "Reject calls that don't admit your applicant type",
+            value=bool(_elig.get("reject_applicant_type_mismatch", True)),
+            key="pol_excl_applicant_mismatch",
+            help="Conservative: only fires when a call publishes an explicit "
+                 "eligible-applicant list that has no open type and none of "
+                 "yours, or says it's invitation-only / current-grantees-only. "
+                 "Calls with no published list are left alone.")
 
     with pol_tabs[2]:
         st.markdown(
@@ -643,6 +684,13 @@ with tab_settings:
                 "reject_training_only": bool(st.session_state.get("pol_excl_training", True)),
                 "reject_loans": bool(st.session_state.get("pol_excl_loans", True)),
                 "reject_consultancies": bool(st.session_state.get("pol_excl_consult", True)),
+                "reject_reimbursement": bool(st.session_state.get("pol_excl_reimburse", True)),
+            },
+            "eligibility": {
+                "org_applicant_types": list(
+                    st.session_state.get("pol_org_applicant_types") or ["nonprofit"]),
+                "reject_applicant_type_mismatch": bool(
+                    st.session_state.get("pol_excl_applicant_mismatch", True)),
             },
             "criteria": {
                 ckey: {

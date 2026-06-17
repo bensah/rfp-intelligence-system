@@ -141,7 +141,11 @@ _DEADLINE_LABEL_RE = re.compile(
     r"|submit\s+(?:by|before|no\s+later\s+than)"
     r"|submission\s+(?:deadline|due\s+date|date)"
     r"|closing\s+date"
-    r"|close[sd]?\s*(?:date|on)?"
+    # "Closes: …", "Closed on …", "Close date …", "Closes 10 May / May 10" —
+    # but NOT a bare "closed calls" / "closed competitions" (a non-deadline use
+    # that used to false-trigger and let its capture window swallow the REAL
+    # "Submission deadline: <date>" that followed). Require a date context.
+    r"|close[sd]?(?:\s*[:\-–]|\s+(?:on|date|by)\b|(?=\s+\d)|(?=\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)))"
     r"|date\s+closed"
     r"|due\s+(?:date|by|on)"
     r"|apply\s+(?:by|before|no\s+later\s+than|until)"
@@ -1396,6 +1400,9 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
             a_labels = [x for x in a_labels if x]
             if a_labels:
                 notes_parts.append("Eligible applicants: " + "; ".join(a_labels))
+                # Structured copy for the applicant-type match gate (avoids
+                # re-parsing the notes string downstream).
+                cand["_applicant_types"] = a_labels
                 # SAFE US-only drop #2: applicant types are PURELY US government /
                 # public tiers (state/county/city/tribal govts, school districts,
                 # public universities) with no open type — structurally domestic.
