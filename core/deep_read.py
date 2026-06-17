@@ -223,9 +223,13 @@ def _follow_for_deadline(candidate: dict, soup, base_url: str) -> None:
     try:
         pdf_url = _find_application_pdf(soup, base_url)
         if pdf_url:
-            d, _brief = _try_pdf_guide_deadline(pdf_url)
+            d, brief = _try_pdf_guide_deadline(pdf_url)
             if d:
                 candidate["submission_deadline"] = d
+            # Re-extract eligibility/geo from the PDF too: fold its text into
+            # the description (which the country gate reads) when we're thin.
+            if brief and not (candidate.get("brief_description") or "").strip():
+                candidate["brief_description"] = brief[:1800]
     except Exception:
         pass
     if not candidate.get("submission_deadline"):
