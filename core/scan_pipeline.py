@@ -18,8 +18,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from core import deep_read
-from core.auto_scorer import auto_score, is_eligible
+from core import deep_read, source_resolver
+from core.auto_scorer import auto_score, is_eligible, theme_eligible
 from core.deduplicator import find_duplicates
 from core.policies import get_policies
 from core.review_week import review_week_label
@@ -278,6 +278,17 @@ def ingest_candidates(
     for i, cand in enumerate(candidates):
         if not (cand.get("opportunity_title") or "").strip():
             continue
+        # Aggregator hits (DevelopmentAid) hide the real call behind a paywalled
+        # listing. For theme-relevant ones, resolve to the donor's OWN source
+        # page (Google/Serper) and fetch THAT, so the gate below sees the real
+        # deadline / eligibility. Bounded to relevant hits to limit API spend.
+        if (not dry_run and source_resolver.available()
+                and source_resolver.is_aggregator(cand.get("opportunity_link"))):
+            try:
+                if theme_eligible(cand, policies)[0]:
+                    source_resolver.resolve_and_enrich(cand)
+            except Exception as exc:
+                log.debug("source resolve skipped: %s", exc)
         # First-pass eligibility gate (cheap: URL/title/keyword/deadline/scope).
         ok, reason = is_eligible(cand, policies)
         if not ok:

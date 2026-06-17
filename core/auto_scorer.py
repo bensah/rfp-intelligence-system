@@ -770,7 +770,10 @@ _LISTING_TITLE_RE = re.compile(
     r"(?:calls?|requests?|notices?|invitations?)\s+for\s+"
     r"(?:projects?|proposals?|applications?|tenders?|grants?"
     r"|expressions?\s+of\s+interest|concept\s+notes?)"
-    r"|(?:funding|grant|grants|financing)\s+opportunit(?:y|ies)"
+    # Optional leading modifier (current/latest/open/…) + funding-opportunities,
+    # so 'Current funding opportunities' / 'Latest grants' are caught.
+    r"|(?:current|latest|open|available|new|active|upcoming|recent|all|explore)?\s*"
+    r"(?:funding|grant|grants|financing)\s+opportunit(?:y|ies)"
     r"|open\s+calls?|current\s+(?:calls?|opportunit(?:y|ies))"
     r"|all\s+(?:calls?|grants?|opportunit(?:y|ies))"
     # Verb-led index headings: "Find a funding opportunity", "Search grants",
