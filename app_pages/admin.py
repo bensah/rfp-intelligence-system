@@ -35,9 +35,9 @@ sb = get_client()
 st.title("Settings")
 
 (tab_settings, tab_users, tab_access, tab_data, tab_sources,
- tab_scan, tab_blacklist) = st.tabs(
+ tab_scan, tab_blacklist, tab_learning) = st.tabs(
     ["Setup", "Manage Users", "User Access", "Records", "Sources",
-     "Manual Scan", "Blacklist"]
+     "Manual Scan", "Blacklist", "Learning data"]
 )
 
 # User administration tabs — moved here from the old User page in the
@@ -1815,3 +1815,53 @@ with tab_blacklist:
             st.rerun()
         except Exception as exc:
             st.error(f"Save failed: {exc}")
+
+
+# -----------------------------------------------------------------------------
+# Tab 8 — Learning data (ML Phase 1: captured rejects / decisions / feedback)
+# -----------------------------------------------------------------------------
+with tab_learning:
+    st.subheader("Learning data — captured signals")
+    st.caption(
+        "Every scan **reject**, human **decision** (Proceed/Park/Decline) and "
+        "👍/👎 **feedback** is logged to `scan_decisions` — the labeled training "
+        "set for the scoring model (ML Phase 2/3). Read-only here.")
+    try:
+        _ld = (sb.table("scan_decisions").select("*")
+               .order("created_at", desc=True).limit(2000).execute().data or [])
+    except Exception as exc:
+        st.warning(f"Couldn't load scan_decisions — did you run migration 027? ({exc})")
+        _ld = []
+    if not _ld:
+        st.info("No signals captured yet. Run a scan, set a decision, or hit 👍/👎 "
+                "on a record — they'll appear here.")
+    else:
+        _ldf = pd.DataFrame(_ld)
+        m1, m2, m3, m4 = st.columns(4)
+        _ev = _ldf.get("event_type", pd.Series(dtype=str))
+        m1.metric("Total signals", len(_ldf))
+        m2.metric("System rejects", int((_ev == "system_reject").sum()))
+        m3.metric("Human decisions", int((_ev == "human_decision").sum()))
+        m4.metric("👍/👎 feedback", int((_ev == "feedback").sum()))
+        with st.expander("Rejects by reason category", expanded=False):
+            _rej = _ldf[_ev == "system_reject"]
+            if not _rej.empty:
+                _by = (_rej["label"].fillna("—").value_counts()
+                       .rename_axis("reason").reset_index(name="count"))
+                st.dataframe(_by, hide_index=True, width='stretch')
+            else:
+                st.caption("No rejects logged yet.")
+        _cols = [c for c in ["created_at", "event_type", "label", "reason",
+                             "opportunity_title", "funding_agency", "source",
+                             "submission_deadline", "alignment_score",
+                             "opportunity_link", "decided_by"]
+                 if c in _ldf.columns]
+        st.dataframe(
+            _ldf[_cols], hide_index=True, width='stretch',
+            column_config={
+                "opportunity_link": st.column_config.LinkColumn(
+                    "Link", display_text="Open ↗"),
+            })
+        st.download_button(
+            "⬇ Download CSV", _ldf[_cols].to_csv(index=False).encode("utf-8"),
+            file_name="scan_decisions.csv", mime="text/csv")
