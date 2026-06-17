@@ -42,6 +42,10 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # Serper (real Google) powers the aggregator→source resolver. Optional:
+          # without it the resolver simply no-ops and DevelopmentAid hits stay as
+          # listings. Add SERPER_API_KEY as a repo Actions secret to enable it.
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           RFPIS_DEEP_READ: "1"
           SCAN_INCLUDE_SEEDS: "1"
           SCAN_PARALLELISM: "6"
