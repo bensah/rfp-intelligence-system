@@ -158,7 +158,11 @@ def _matches(text: str, keywords: list[str]) -> int:
 # ---------------------------------------------------------------------------
 _INCLUSIVE_ELIGIBILITY_PATTERN = re.compile(
     r"(?:"
-    r"foreign\s+(?:organizations?|entities|applicants?|institutions?)\s+(?:are\s+)?eligible"
+    # Explicitly pairs foreign/international WITH domestic — both welcome, so
+    # never a US-only restriction ("Foreign and domestic organizations …").
+    r"(?:foreign|international|non[\-\s]*u\.?s\.?)\s+and\s+domestic"
+    r"|domestic\s+and\s+(?:foreign|international|non[\-\s]*u\.?s\.?)"
+    r"|foreign\s+(?:organizations?|entities|applicants?|institutions?)\s+(?:are\s+)?eligible"
     r"|non[\-\s]*domestic\s+(?:entities|organizations?|applicants?)?\s*(?:are\s+)?eligible"
     r"|non[\-\s]*u\.?s\.?\s+(?:entities|organizations?|applicants?)\s+(?:are\s+)?eligible"
     r"|international\s+(?:applicants?|organizations?|entities)\s+(?:are\s+)?(?:welcomed?|eligible|accepted)"
@@ -185,15 +189,38 @@ def _has_inclusive_eligibility(text: str) -> bool:
 # valid USAID/CDC global-health call is never auto-dropped.
 _US_DOMESTIC_ONLY_PATTERN = re.compile(
     r"(?:"
-    r"\bonly\s+domestic\b"
+    r"\b(?:all|only)\s+domestic\b"
     r"|\bdomestic\s+(?:public\s+)?(?:and\s+)?(?:private\s+)?(?:non-?profit\s+)?"
-    r"(?:entit|organi[sz]|applicant|institution)"
+    r"(?:for-?profit\s+)?(?:entit|organi[sz]|applicant|institution|"
+    r"faith-?based|community-?based)"
+    r"|\bdomestic\s+applicants\s+only\b"
     r"|\blimited\s+to\s+(?:[^.]{0,60}?)(?:domestic|united\s+states|u\.?s\.?\b)"
     r"|\bmust\s+be\s+(?:[^.]{0,40}?)(?:located|based|incorporated|organized|"
     r"domiciled)\s+(?:in|within)\s+the\s+(?:united\s+states|u\.?s\.?)"
+    r"|\b(?:located|based)\s+(?:in|within)\s+the\s+united\s+states\b"
+    r"|\bmust\s+be\s+(?:a\s+|an\s+)?u\.?s\.?\b"
     r"|\bu\.?s\.?\s*[-.]?\s*based\s+(?:organi|entit|applicant|institution|non)"
     r"|\bwithin\s+the\s+united\s+states\b"
-    r"|\bdomestic\s+applicants\s+only\b"
+    r"|(?:u\.?s\.?|united\s+states)\s+(?:entit|organi|applicant)[a-z]*\s+only"
+    # Grants.gov boilerplate that DEFINES the scope as US states + territories —
+    # e.g. '"Domestic" means the 50 states, the District of Columbia, …, Guam,
+    # …, Palau.' (HRSA HHT-26 case.) Unambiguously US-only; an LMIC/global call
+    # never says this.
+    r"|[\"“”']?domestic[\"“”']?\s+means\b"
+    r"|\b(?:the\s+)?(?:fifty|50)\s+states\b"
+    r"|\bdistrict\s+of\s+columbia\b"
+    # US-STATUTORY eligibility markers — when a call ties eligibility to a US
+    # federal statute or US-only entity class, it's domestic even without the
+    # word "domestic" (e.g. the CCBHC / SAMHSA case: "Indian Health Service …
+    # Urban Indian Organization … Title V of the Indian Health Care Improvement
+    # Act (25 U.S.C. 1601)"). India-safe by construction: a Cameroon/LMIC/global
+    # call never cites the U.S. Code or these US-only Native-American bodies.
+    r"|\b\d{1,3}\s+u\.?\s*s\.?\s*c\.?\s*\d"          # USC citation, "25 U.S.C. 1601"
+    r"|\bunited\s+states\s+code\b"
+    r"|\bindian\s+health\s+service\b"               # the US agency (singular)
+    r"|\burban\s+indian\s+organization"
+    r"|\bindian\s+health\s+care\s+improvement\s+act"
+    r"|\bfederally\s+recognized\s+(?:indian\s+)?trib"
     r")",
     re.IGNORECASE,
 )
@@ -235,6 +262,106 @@ def grants_gov_government_only(applicant_types: list[str] | None) -> bool:
     if any(_OPEN_APPLICANT_RE.search(a) for a in labels):
         return False
     return all(_GOV_TIER_RE.search(a) for a in labels)
+
+
+# ---------------------------------------------------------------------------
+# Applicant-type match — does the call actually admit the deploying org's type?
+# A call that publishes an explicit eligible-applicant list with NO open type
+# and none of the org's types is structurally out of scope (e.g. a grant only
+# for state governments, or for-profit small businesses, when we're an NGO).
+# Canonical buckets collapse the Grants.gov enumerated types + free-text into a
+# few comparable groups. "open" = unrestricted / open to any / "Others".
+# ---------------------------------------------------------------------------
+_APPLICANT_BUCKET_RES: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("open", re.compile(
+        r"unrestricted|open\s+to\s+(?:any|all)|any\s+type\s+of\s+entit"
+        # the literal "Others" applicant type — but NOT the "…, other than …"
+        # exclusion clause baked into the Grants.gov nonprofit/higher-ed labels.
+        r"|\bothers?\b(?!\s+than\b)|see\s+(?:the\s+)?text\s+field"
+        r"|no\s+restrictions?", re.I)),
+    ("nonprofit", re.compile(
+        r"non-?profits?|not-for-?profits?|\bn\.?g\.?o\.?s?\b|\bcbos?\b"
+        r"|501\s*\(?c\)?\s*\(?3\)?|charit(?:y|ies|able)|civil\s+society", re.I)),
+    ("government", re.compile(
+        r"\bgovernments?\b|public\s+(?:agenc|sector|bod|entit)"
+        r"|municipal|special\s+district\s+government|housing\s+authorit"
+        r"|state\s+controlled", re.I)),
+    ("school_district", re.compile(r"school\s+district", re.I)),
+    ("higher_ed", re.compile(
+        r"institutions?\s+of\s+higher\s+education|universit|college|academic\s+institut", re.I)),
+    ("for_profit", re.compile(
+        r"for-?profit|small\s+business|private\s+sector|\bcompan(?:y|ies)|\bfirms?\b", re.I)),
+    ("individual", re.compile(r"\bindividuals?\b", re.I)),
+    ("tribal", re.compile(r"\btribal\b", re.I)),
+)
+
+# Eligibility-text phrasing that means "closed to a named/existing set" — even
+# when the applicant-type list looks open. High precision on purpose.
+_CLOSED_TO_NAMED_RE = re.compile(
+    r"\b(?:by\s+invitation\s+only"
+    r"|invitation[\-\s]only"
+    r"|limited\s+to\s+(?:current|existing|previously|prior)\s+"
+    r"(?:grantees|recipients|awardees|partners|members)"
+    r"|only\s+(?:current|existing)\s+(?:grantees|recipients|awardees)\s+"
+    r"(?:may|are\s+eligible\s+to)\s+apply"
+    r"|not\s+open\s+to\s+(?:new|the\s+(?:general\s+)?public)"
+    r"|competition\s+is\s+limited\s+to)\b", re.I)
+
+
+def _applicant_labels(candidate: dict[str, Any]) -> list[str]:
+    """Pull the published eligible-applicant labels out of a candidate.
+
+    Prefers a structured `_applicant_types` list (set by the Grants.gov
+    scraper); falls back to parsing the "Eligible applicants: a; b; c" segment
+    the scraper writes into `notes`."""
+    raw = candidate.get("_applicant_types")
+    if isinstance(raw, list) and raw:
+        return [str(x).strip() for x in raw if str(x).strip()]
+    notes = candidate.get("notes") or ""
+    m = re.search(r"Eligible applicants:\s*(.+?)(?:\s*\|\s*|$)", notes, re.I)
+    if not m:
+        return []
+    return [p.strip() for p in re.split(r";|·", m.group(1)) if p.strip()]
+
+
+def _bucket(label: str) -> set[str]:
+    return {name for name, rx in _APPLICANT_BUCKET_RES if rx.search(label)}
+
+
+def applicant_type_mismatch_reject(candidate: dict[str, Any],
+                                   policies: dict[str, Any]) -> tuple[bool, str]:
+    """(True, reason) when a call's published eligibility EXCLUDES the deploying
+    org's applicant type — either a closed-to-named-recipients phrase, or an
+    explicit applicant-type list with no open type and no overlap with the org's
+    own types. Conservative: silent on calls with no published list / an open
+    type / an unclassifiable list (geo + theme gates still apply)."""
+    elig_cfg = policies.get("eligibility") or {}
+    if not elig_cfg.get("reject_applicant_type_mismatch", True):
+        return False, ""
+    org_buckets = {str(b).strip().lower()
+                   for b in (elig_cfg.get("org_applicant_types") or ["nonprofit"])
+                   if str(b).strip()}
+    # Decisive "closed to a named set" wording in the eligibility text.
+    elig_text = " ".join([
+        candidate.get("notes") or "",
+        candidate.get("brief_description") or "",
+    ])
+    if _CLOSED_TO_NAMED_RE.search(elig_text):
+        return True, ("not open to all — restricted to a named/existing set of "
+                      "recipients (invitation-only or current-grantees-only)")
+    labels = _applicant_labels(candidate)
+    if not labels:
+        return False, ""                       # no published list → can't judge
+    rfp_buckets: set[str] = set()
+    for lbl in labels:
+        rfp_buckets |= _bucket(lbl)
+    if "open" in rfp_buckets or not rfp_buckets:
+        return False, ""                       # unrestricted / unclassifiable
+    if org_buckets & rfp_buckets:
+        return False, ""                       # the org's type IS admitted
+    pretty = "; ".join(labels[:4]) + ("; …" if len(labels) > 4 else "")
+    return True, (f"applicant-type mismatch — open only to [{pretty}], not to "
+                  f"{'/'.join(sorted(org_buckets)) or 'our'} applicants")
 
 
 # The pure worldwide tier — applied AFTER the named-foreign check so a vague
@@ -360,7 +487,16 @@ _ERROR_PAGE_RE = re.compile(
     r"|an?\s+(?:unexpected\s+)?error\s+has\s+occurred"
     r"|error\s+occurred\s+while\s+processing"
     r"|404\s*[-—:]?\s*(?:error|page\s+not\s+found|not\s+found)"
-    r"|page\s+(?:cannot\s+be\s+found|could\s+not\s+be\s+found|not\s+found)"
+    # "Page not found", and the WordPress/CMS soft-404 body that returns 200 but
+    # says the post is gone — e.g. healthresearch.org: "No Results Found · The
+    # page you requested could not be found. Try refining your search…".
+    r"|page\s+(?:you\s+(?:requested|are\s+looking\s+for)\s+)?"
+    r"(?:cannot|can'?t|could\s+not|was\s+not|doesn'?t|does\s+not)\s+(?:be\s+)?"
+    r"(?:found|exist)"
+    r"|page\s+not\s+found"
+    r"|\bno\s+results?\s+found\b"
+    r"|try\s+refining\s+your\s+search"
+    r"|use\s+the\s+navigation\s+above\s+to\s+locate"
     r"|service\s+(?:temporarily\s+)?unavailable"
     r"|this\s+page\s+(?:isn'?t|is\s+not)\s+working"
     r"|exceeding\s+(?:its\s+)?recaptcha\b[^.]*quota"
@@ -370,10 +506,17 @@ _ERROR_PAGE_RE = re.compile(
 def error_page_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
     """(True, reason) when the fetched page is an error / unavailable template
     rather than a real opportunity (e.g. the ResearchNet 'system has encountered
-    an error' page from a stale/broken detail URL)."""
+    an error' page from a stale/broken detail URL).
+
+    Honors a `_dead_page` flag set by the liveness check (core.live_check) /
+    scrapers when a fetch returned a 404/410 or a soft-404 body — the strongest
+    'this link is dead' signal, independent of the title/description text."""
+    if candidate.get("_dead_page"):
+        return True, candidate.get("_dead_reason") or "dead link (page gone / error)"
     blob = " ".join([
         candidate.get("opportunity_title") or "",
         candidate.get("brief_description") or "",
+        candidate.get("notes") or "",
     ])
     if _ERROR_PAGE_RE.search(blob):
         return True, "error / unavailable page (not a real opportunity)"
@@ -407,6 +550,12 @@ _CONSULTANCY_TITLE_RE = re.compile(
     r"|(?:individual|external|technical|independent)\s+consultant"
     r"|contractors?|recruitment\s+of\s+(?:a\s+)?(?:consultant|firm|individual)"
     r"|provision\s+of\s+consult)", re.I)
+# Reimbursement programs (e.g. "Ryan White HIV/AIDS Program Part F Dental
+# Reimbursement Program") repay incurred costs to a closed set of named existing
+# providers/grantees — a domestic scheme, not an open competitive grant. Default
+# ON; title-scoped so legit calls that merely offer "travel reimbursement" in
+# their body aren't caught.
+_REIMBURSEMENT_TITLE_RE = re.compile(r"\breimbursement\b", re.I)
 
 
 def non_grant_reject(candidate: dict[str, Any],
@@ -423,6 +572,9 @@ def non_grant_reject(candidate: dict[str, Any],
         return True, "training / education program (not a project grant)"
     if excl.get("reject_consultancies", True) and _CONSULTANCY_TITLE_RE.search(title):
         return True, "consultancy / individual-contractor procurement (org seeks grants)"
+    if excl.get("reject_reimbursement", True) and _REIMBURSEMENT_TITLE_RE.search(title):
+        return True, ("reimbursement program (repays named existing providers for "
+                      "incurred costs — a closed scheme, not an open grant)")
     return False, ""
 
 
@@ -549,20 +701,9 @@ def feasibility_hard_reject(candidate: dict[str, Any], policies: dict[str, Any])
 # US-domestic-only signal — the decisive geography reject for a non-US
 # deployment. See docs/SCAN_CLASSIFICATION_ALGORITHM.md §6 (the "domestic"
 # test from HRSA-26-083: "All domestic public or private … entities").
-# Context-anchored so it won't trip on unrelated "domestic" uses (e.g.
-# "domestic violence").
-_US_DOMESTIC_ONLY_PATTERN = re.compile(
-    r"\ball\s+domestic\b"
-    r"|\bdomestic\s+(?:public|private|non-?profit|for-?profit|entit|organi|"
-    r"applicant|institution|faith-based|community-based)"
-    r"|u\.?s\.?-based\s+(?:entit|organi|applicant|institution)"
-    r"|must\s+be\s+(?:a\s+|an\s+)?u\.?s\.?\b"
-    r"|located\s+in\s+the\s+united\s+states"
-    r"|(?:u\.?s\.?|united\s+states)\s+(?:entit|organi|applicant)[a-z]*\s+only",
-    re.IGNORECASE,
-)
-
-
+# The pattern itself (`_US_DOMESTIC_ONLY_PATTERN`) is defined once, up near
+# `grants_gov_domestic_only`, and is reused here so the scraper-side drop and
+# this gate-side reject stay in lock-step.
 def us_domestic_only_reject(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
     """Reject US-domestic-only opportunities for a non-US deployment.
 
@@ -1037,6 +1178,10 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     rejected, reason = us_domestic_only_reject(candidate, policies)
     if rejected:
         return False, f"geography: {reason}"
+    # Applicant-type match — does the call admit the deploying org's type at all?
+    rejected, reason = applicant_type_mismatch_reject(candidate, policies)
+    if rejected:
+        return False, f"eligibility: {reason}"
     ok, reason = country_eligible(candidate, policies)
     if not ok:
         return False, f"country: {reason}"
