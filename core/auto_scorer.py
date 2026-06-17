@@ -979,6 +979,17 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
         return False, "URL lists / indexes calls, not a single call"
     if _LISTING_TITLE_RE.match((candidate.get("opportunity_title") or "").strip()):
         return False, "title is a generic calls-listing heading, not a single call"
+    # Aggregator detail links (DevelopmentAid, …) are a crawl SEED only — never
+    # stored. The pipeline resolves theme-relevant hits to the donor's own
+    # source URL first (then this link is the source). Anything still on an
+    # aggregator host here didn't resolve (or isn't relevant) → drop it.
+    try:
+        from core.source_resolver import is_aggregator as _is_aggr
+        if _is_aggr(link):
+            return False, ("aggregator listing link — used only to seed a source "
+                           "lookup, not stored directly")
+    except Exception:
+        pass
     # DevelopmentAid past-tense grant (Awarded / Closed). Set by the
     # bespoke enricher in scraper._enrich_developmentaid — those listings
     # show on the catalog but aren't open opportunities.
