@@ -507,6 +507,21 @@ with tab_settings:
             list(_live["themes"].get("excluded_any") or []),
             key="pol_themes_excluded",
         )
+        st.markdown("**Opportunity-type opt-outs** — title-based hard rejects. "
+                    "Turn off if your org *does* pursue these.")
+        _excl = _live.get("exclusions") or {}
+        st.checkbox(
+            "Reject training / education programs",
+            value=bool(_excl.get("reject_training_only", True)),
+            key="pol_excl_training",
+            help="Drops 'X Training Center', 'Student Education Program', etc. — "
+                 "capacity-building of trainees, not a grant to implement a project.")
+        st.checkbox(
+            "Reject loans / debt instruments",
+            value=bool(_excl.get("reject_loans", True)),
+            key="pol_excl_loans",
+            help="Drops loans / concessional debt — most implementing orgs want "
+                 "grants and awards, not money to repay.")
 
     with pol_tabs[2]:
         st.markdown(
@@ -616,6 +631,10 @@ with tab_settings:
             "themes": {
                 "required_any": _list("pol_themes_required"),
                 "excluded_any": _list("pol_themes_excluded"),
+            },
+            "exclusions": {
+                "reject_training_only": bool(st.session_state.get("pol_excl_training", True)),
+                "reject_loans": bool(st.session_state.get("pol_excl_loans", True)),
             },
             "criteria": {
                 ckey: {
