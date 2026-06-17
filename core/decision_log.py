@@ -116,14 +116,33 @@ def log_rejects(records: Iterable[dict]) -> int:
 
 
 def log_decision(row: dict, decision: str, by: str | None = None) -> bool:
-    """Log a human Proceed / Park / Decline on a record."""
+    """Log a human Proceed / Park / Decline on a record — a training LABEL.
+
+    Captures CONFIRMATIONS as well as overrides: a reviewer who saves a record
+    keeping the recommended decision is endorsing it, which is the majority
+    (and most important) signal — logging only changes would bias the model
+    toward disagreement. Idempotent per record: skips when the latest
+    human_decision already on file for this rfp carries the same label, so
+    repeated saves don't pile up duplicates. Append-only otherwise (a later
+    changed decision is a new row; the trainer takes the latest per rfp_uid)."""
     if not row or not (decision or "").strip():
         return False
+    label = str(decision).strip().title()
+    uid = row.get("uid") or row.get("rfp_uid")
     try:
+        sb = get_client()
+        if uid:
+            try:
+                prev = (sb.table(_TABLE).select("label")
+                        .eq("event_type", "human_decision").eq("rfp_uid", uid)
+                        .order("created_at", desc=True).limit(1).execute().data or [])
+                if prev and (prev[0].get("label") or "").strip().lower() == label.lower():
+                    return True            # unchanged confirmation already logged
+            except Exception:
+                pass                       # can't dedup → fall through and log
         rec = _base_record(row, event_type="human_decision",
-                           label=str(decision).strip().title(),
-                           reason=None, by=by)
-        get_client().table(_TABLE).insert(rec).execute()
+                           label=label, reason=None, by=by)
+        sb.table(_TABLE).insert(rec).execute()
         return True
     except Exception as exc:
         log.debug("decision_log.log_decision failed: %s", exc)
