@@ -385,6 +385,16 @@ if bsave.button("💾 Save changes", type="primary", disabled=not can_edit, widt
         "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
     }
     sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
+    # ML Phase 1/3 — capture the human decision as a labeled signal (this Review
+    # screen is a second decision path alongside Records). Dedup in log_decision
+    # keeps one current label per record across both paths.
+    if new_decision:
+        try:
+            from core import decision_log
+            decision_log.log_decision({**row, **update}, new_decision,
+                                      by=user.get("email"))
+        except Exception:
+            pass
     st.cache_data.clear()
     st.success(
         f"Saved {row['uid']} · new score {live_score:.1f} → **{live_rec}** · "
