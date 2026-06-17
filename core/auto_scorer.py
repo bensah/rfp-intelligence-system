@@ -352,6 +352,70 @@ def non_funding_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
     return False, ""
 
 
+# Pages that rendered an ERROR (the crawl reached a generic error / 404 / "site
+# unavailable" template, not the real call). Title + description only, with
+# high-precision phrases so legit RFP prose isn't caught.
+_ERROR_PAGE_RE = re.compile(
+    r"(the\s+system\s+has\s+encountered\s+an\s+error"
+    r"|an?\s+(?:unexpected\s+)?error\s+has\s+occurred"
+    r"|error\s+occurred\s+while\s+processing"
+    r"|404\s*[-—:]?\s*(?:error|page\s+not\s+found|not\s+found)"
+    r"|page\s+(?:cannot\s+be\s+found|could\s+not\s+be\s+found|not\s+found)"
+    r"|service\s+(?:temporarily\s+)?unavailable"
+    r"|this\s+page\s+(?:isn'?t|is\s+not)\s+working"
+    r"|exceeding\s+(?:its\s+)?recaptcha\b[^.]*quota"
+    r")", re.I)
+
+
+def error_page_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
+    """(True, reason) when the fetched page is an error / unavailable template
+    rather than a real opportunity (e.g. the ResearchNet 'system has encountered
+    an error' page from a stale/broken detail URL)."""
+    blob = " ".join([
+        candidate.get("opportunity_title") or "",
+        candidate.get("brief_description") or "",
+    ])
+    if _ERROR_PAGE_RE.search(blob):
+        return True, "error / unavailable page (not a real opportunity)"
+    return False, ""
+
+
+# Title-level signals for opportunity TYPES many implementing orgs (e.g. CHAI)
+# don't pursue, BOTH configurable via policies['exclusions'] so an org that DOES
+# want them just turns the flag off:
+#   * training / education programs — capacity-building of named trainees, not a
+#     grant to implement a project.
+#   * loans / debt instruments — orgs that implement programs want grants/awards,
+#     not money they must repay.
+_TRAINING_TITLE_RE = re.compile(
+    r"\b(?:"
+    r"training\s+(?:cent(?:er|re)s?|programs?|programmes?|institutes?|hubs?)"
+    r"|(?:clinical|residency|resident|faculty|student|nurse|nursing|physician|"
+    r"medical|workforce|fellowship|preceptor|scholar)\s+(?:training|education)\b"
+    r"|(?:student|medical|nursing|graduate|undergraduate|health\s+professions?)"
+    r"\s+education\s+programs?"
+    r"|education\s+and\s+training\s+programs?"
+    r"|faculty\s+development\s+programs?"
+    r")", re.I)
+_LOAN_TITLE_RE = re.compile(
+    r"\b(?:loans?|loan\s+repayment|concessional\s+(?:loan|lending|finance))\b", re.I)
+
+
+def non_grant_reject(candidate: dict[str, Any],
+                     policies: dict[str, Any]) -> tuple[bool, str]:
+    """(True, reason) for opportunity TYPES the org has opted out of via
+    policies['exclusions'] — training/education programs and loans. Title-based
+    (a project grant rarely IS titled 'X Training Center' / 'Loan Program').
+    Both default ON; an org that wants them sets the flag false in Settings."""
+    excl = policies.get("exclusions") or {}
+    title = candidate.get("opportunity_title") or ""
+    if excl.get("reject_loans", True) and _LOAN_TITLE_RE.search(title):
+        return True, "loan / debt instrument (org seeks grants & awards, not loans)"
+    if excl.get("reject_training_only", True) and _TRAINING_TITLE_RE.search(title):
+        return True, "training / education program (not a project grant)"
+    return False, ""
+
+
 def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
     """Geo gate — PARK the ambiguous, REJECT the clearly-out-of-scope.
 
@@ -905,6 +969,14 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
         return False, f"type: {reason}"
     # Job/vacancy postings + clearly non-funding pages → drop (RFP-focused).
     rejected, reason = non_funding_reject(candidate)
+    if rejected:
+        return False, f"type: {reason}"
+    # Error / unavailable pages (system error, 404, service down) → not a call.
+    rejected, reason = error_page_reject(candidate)
+    if rejected:
+        return False, f"not-an-rfp: {reason}"
+    # Opt-out types (training/education programs, loans) — policy-configurable.
+    rejected, reason = non_grant_reject(candidate, policies)
     if rejected:
         return False, f"type: {reason}"
     # Language — if it's Arabic/CJK/etc. nothing downstream can process
