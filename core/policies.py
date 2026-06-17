@@ -66,6 +66,13 @@ DEFAULT_POLICIES: dict[str, Any] = {
             "basic research",
         ],
     },
+    # Opportunity-TYPE opt-outs (title-based hard rejects). Defaults suit an
+    # implementing org like the organisation that wants project grants/awards. An org that
+    # DOES pursue training programs or loans turns the flag off in Settings.
+    "exclusions": {
+        "reject_training_only": True,   # "X Training Center / Education Program"
+        "reject_loans": True,           # loans / concessional debt (not grants)
+    },
     # Per-criterion rigor (0-5) + keyword bags. Rigor controls how strict
     # the keyword match must be to score the criterion as Yes / Partial / No.
     "criteria": {
