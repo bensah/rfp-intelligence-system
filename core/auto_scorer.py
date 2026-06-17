@@ -399,6 +399,14 @@ _TRAINING_TITLE_RE = re.compile(
     r")", re.I)
 _LOAN_TITLE_RE = re.compile(
     r"\b(?:loans?|loan\s+repayment|concessional\s+(?:loan|lending|finance))\b", re.I)
+# Individual consultant / contractor procurement — the applicant is a person or
+# firm hired to deliver a service, not an org receiving a project grant. Default
+# ON; an org that pursues consultancies turns it off in Settings.
+_CONSULTANCY_TITLE_RE = re.compile(
+    r"\b(?:consultanc(?:y|ies)|consultants?|consulting\s+(?:services?|firm)"
+    r"|(?:individual|external|technical|independent)\s+consultant"
+    r"|contractors?|recruitment\s+of\s+(?:a\s+)?(?:consultant|firm|individual)"
+    r"|provision\s+of\s+consult)", re.I)
 
 
 def non_grant_reject(candidate: dict[str, Any],
@@ -413,6 +421,8 @@ def non_grant_reject(candidate: dict[str, Any],
         return True, "loan / debt instrument (org seeks grants & awards, not loans)"
     if excl.get("reject_training_only", True) and _TRAINING_TITLE_RE.search(title):
         return True, "training / education program (not a project grant)"
+    if excl.get("reject_consultancies", True) and _CONSULTANCY_TITLE_RE.search(title):
+        return True, "consultancy / individual-contractor procurement (org seeks grants)"
     return False, ""
 
 

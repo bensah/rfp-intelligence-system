@@ -522,6 +522,13 @@ with tab_settings:
             key="pol_excl_loans",
             help="Drops loans / concessional debt — most implementing orgs want "
                  "grants and awards, not money to repay.")
+        st.checkbox(
+            "Reject consultancy / contractor RFPs",
+            value=bool(_excl.get("reject_consultancies", True)),
+            key="pol_excl_consult",
+            help="Drops 'X Consultants' / 'X Contractor' procurement — hiring a "
+                 "person/firm to deliver a service, not an org project grant. "
+                 "Turn off if your org pursues consultancies.")
 
     with pol_tabs[2]:
         st.markdown(
@@ -635,6 +642,7 @@ with tab_settings:
             "exclusions": {
                 "reject_training_only": bool(st.session_state.get("pol_excl_training", True)),
                 "reject_loans": bool(st.session_state.get("pol_excl_loans", True)),
+                "reject_consultancies": bool(st.session_state.get("pol_excl_consult", True)),
             },
             "criteria": {
                 ckey: {
