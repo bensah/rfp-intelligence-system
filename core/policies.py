@@ -74,6 +74,25 @@ DEFAULT_POLICIES: dict[str, Any] = {
         "reject_loans": True,           # loans / concessional debt (not grants)
         "reject_consultancies": True,   # individual consultant / contractor RFPs
                                         # (org seeks project grants, not gigs)
+        "reject_reimbursement": True,   # "X Reimbursement Program" — reimburses
+                                        # named existing providers/grantees for
+                                        # incurred costs; almost always a closed
+                                        # domestic scheme, not an open grant.
+    },
+    # Who the deploying org IS, matched against what each RFP says it accepts.
+    # When a call publishes an explicit eligible-applicant list that has NO open
+    # type AND none of the org's types, it's structurally out of scope → reject.
+    "eligibility": {
+        # The deploying org's own applicant type(s), as canonical buckets:
+        #   nonprofit | government | school_district | higher_ed |
+        #   for_profit | individual | tribal
+        # A typical implementing NGO is a nonprofit. Edit in Admin > Settings.
+        "org_applicant_types": ["nonprofit"],
+        # When True: reject a call whose published eligible-applicant list is
+        # explicit, carries no "Unrestricted / open to any / Others" type, and
+        # admits none of org_applicant_types. Calls with no published list, or
+        # an open type, are never rejected on this basis (conservative).
+        "reject_applicant_type_mismatch": True,
     },
     # Per-criterion rigor (0-5) + keyword bags. Rigor controls how strict
     # the keyword match must be to score the criterion as Yes / Partial / No.

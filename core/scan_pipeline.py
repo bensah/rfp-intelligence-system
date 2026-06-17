@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from core import deep_read, source_resolver
+from core import deep_read, source_resolver, live_check
 from core.auto_scorer import auto_score, is_eligible, theme_eligible
 from core.deduplicator import find_duplicates
 from core.policies import get_policies
@@ -273,6 +273,8 @@ def ingest_candidates(
     duplicate_unchanged = 0
     rejected = 0
     _reject_records: list[dict] = []   # ML Phase 1 — labeled rejects for learning
+    _live_checks = 0                   # bounded HTTP liveness fetches this run
+    _live_check_max = live_check.max_checks()
     ts = datetime.now()
 
     for i, cand in enumerate(candidates):
@@ -296,6 +298,30 @@ def ingest_candidates(
             log.info("reject: %s — %s", cand.get("opportunity_title", "")[:60], reason)
             _reject_records.append({**cand, "_reject_reason": reason})
             continue
+
+        # Cheap liveness + re-enrich (plain HTTP — runs on Cloud too, unlike the
+        # Chromium deep-read below). For a thin candidate (no deadline / no
+        # description, often a stale search hit), confirm the link is live and
+        # pull a missing deadline / description from the FULL body, then RE-GATE.
+        # Catches dead links (404 / soft-404 "page not found" bodies) and expired
+        # deadlines buried in prose the listing snippet didn't carry.
+        _thin = not (cand.get("brief_description") or "").strip()
+        if (not dry_run and (_thin or not cand.get("submission_deadline"))
+                and _live_checks < _live_check_max):
+            _live_checks += 1
+            try:
+                fetched = live_check.recheck_and_enrich(cand)
+            except Exception as exc:
+                fetched = False
+                log.debug("live-check skipped: %s", exc)
+            if fetched:
+                ok, reason = is_eligible(cand, policies)
+                if not ok:
+                    rejected += 1
+                    log.info("reject (post live-check): %s — %s",
+                             cand.get("opportunity_title", "")[:60], reason)
+                    _reject_records.append({**cand, "_reject_reason": reason})
+                    continue
 
         # Deep-read survivors that lack a deadline OR are too thin to judge
         # eligibility (no description) — render the page in Chromium to recover
