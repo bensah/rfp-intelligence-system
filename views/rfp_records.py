@@ -738,10 +738,13 @@ def edit_dialog(row: dict) -> None:
             "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
         }
         sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
-        # ML Phase 1 — log the human decision as a labeled signal when it changes.
+        # ML Phase 1/3 — log the human decision as a labeled signal on save.
+        # Captures CONFIRMATIONS (reviewer kept the recommended decision) as
+        # well as overrides — logging only changes would bias the model toward
+        # disagreement. log_decision dedups per record so repeated saves of the
+        # same decision don't pile up.
         _new_dec = _val(dec_in)
-        if (_new_dec and str(_new_dec).strip().lower()
-                != str(row.get("decision") or "").strip().lower()):
+        if _new_dec:
             try:
                 from core import decision_log
                 decision_log.log_decision({**row, **update}, _new_dec,
