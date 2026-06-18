@@ -248,6 +248,75 @@ _BARE_ACRONYMS: dict[str, list[str]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Two-level taxonomy (display + hierarchy) layered on top of the canonical keys.
+# The keys above ("IDs - Tuberculosis") stay the single source of truth for
+# classification, donor fit + matching; this layer just lets every FORM show a
+# clean hierarchy — pick a high-level Category, then drill into its sub-areas —
+# while storing canonical keys (or a Category name for a broad pick).
+# ---------------------------------------------------------------------------
+CATEGORY_FULL: dict[str, str] = {
+    "WCH": "Women & Children's Health",
+    "NCDs": "Non-Communicable Diseases",
+    "IDs": "Infectious Diseases",
+    "HSS": "Health System Strengthening",
+    "Cross-cutting": "Cross-cutting",
+}
+
+
+def _split_key(key: str) -> tuple[str, str]:
+    if " - " in (key or ""):
+        pre, sub = key.split(" - ", 1)
+        return pre.strip(), sub.strip()
+    return "", (key or "").strip()
+
+
+def subarea_label(key: str) -> str:
+    """'Cross-cutting - Assistive Technology' -> 'Assistive Technology'."""
+    return _split_key(key)[1]
+
+
+def category_full(key: str) -> str:
+    """'HSS - Health Financing' -> 'Health System Strengthening'."""
+    pre, _ = _split_key(key)
+    return CATEGORY_FULL.get(pre, pre or key)
+
+
+# Ordered {full category: [sub-area label, ...]} for the hierarchical picker.
+TAXONOMY: dict[str, list[str]] = {}
+for _k in PROGRAM_AREA_KEYWORDS:
+    TAXONOMY.setdefault(category_full(_k), []).append(subarea_label(_k))
+CATEGORIES: list[str] = list(TAXONOMY.keys())
+
+_KEY_BY_PAIR = {(category_full(k), subarea_label(k)): k for k in PROGRAM_AREA_KEYWORDS}
+_KEYS_BY_CATEGORY: dict[str, list[str]] = {}
+_KEYS_BY_SUBLABEL: dict[str, list[str]] = {}
+for _k in PROGRAM_AREA_KEYWORDS:
+    _KEYS_BY_CATEGORY.setdefault(category_full(_k), []).append(_k)
+    _KEYS_BY_SUBLABEL.setdefault(subarea_label(_k), []).append(_k)
+
+
+def key_for(full_category: str, subarea: str) -> str | None:
+    """Canonical key for a (category, sub-area) pair, or None."""
+    return _KEY_BY_PAIR.get((full_category, subarea))
+
+
+def expand(selections) -> set[str]:
+    """Expand a mix of Category names / canonical keys / bare sub-labels into the
+    set of canonical sub-area keys (a Category → all its keys). Use for matching
+    org ↔ RFP ↔ donor program areas regardless of how each was captured."""
+    out: set[str] = set()
+    for sel in (selections or []):
+        s = str(sel).strip()
+        if s in PROGRAM_AREA_KEYWORDS:
+            out.add(s)
+        elif s in _KEYS_BY_CATEGORY:
+            out.update(_KEYS_BY_CATEGORY[s])
+        elif s in _KEYS_BY_SUBLABEL:
+            out.update(_KEYS_BY_SUBLABEL[s])
+    return out
+
+
 def _matches(text: str, keyword: str) -> bool:
     """Case-insensitive **word-boundary** match for ANY keyword.
 
