@@ -35,10 +35,9 @@ CRITERIA = (
 )
 _MUST = ("qualification", "strategic_fit", "capacity", "geographic_fit", "cofinancing")
 
-# Donor route/eligibility flags that, when truthy, REQUIRE a local board /
-# local registration — penalised if the org lacks one.
-_LOCAL_BOARD_FLAGS = ("requires_local_board", "local_board_required",
-                      "local_registration_required")
+# Real donor_intel columns (migration 020) that, when truthy, require a local
+# board / local registration — penalised if the org lacks one.
+_LOCAL_BOARD_FLAGS = ("local_board_required", "local_registration_required")
 
 
 def _as_list(v: Any) -> list[str]:
