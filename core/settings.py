@@ -106,6 +106,11 @@ _ORG_DEFAULTS = {
     "org_contact_email":   "",
     "org_logo_url":        "",  # legacy — uploaded logo lives in org_logo_b64
     "org_website":         "",
+    # Bid-fitness inputs (drive PREFER 9 Bid effort + PREFER 8 Competitiveness):
+    "org_has_bd_team":     "false",   # Business-Development / fundraising team?
+    "org_is_grassroot":    "false",   # grassroots/local NGO (else international)?
+    "org_is_multi_country": "false",  # operate across many countries?
+    "org_hq_country":      "",        # HQ country (matched vs donor HQ)
 }
 
 
