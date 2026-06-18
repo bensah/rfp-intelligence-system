@@ -31,7 +31,7 @@ from typing import Any
 
 from core import geographies as geo
 from core.policies import CRITERION_KEYS
-from core.scorer import score_submission
+from core.scorer import criterion_score, score_submission
 
 # Region/tier labels from the shared geography vocabulary — used so an admin's
 # eligible-geographies selection that is a REGION (not a country) is recognised
@@ -1212,8 +1212,13 @@ def _criterion_value(text: str, rule: dict[str, Any]) -> str:
     return "No"
 
 
-_MUST_KEYS = tuple(k for k in CRITERION_KEYS if k.startswith("must_"))
-_PREFER_KEYS = tuple(k for k in CRITERION_KEYS if k.startswith("prefer_"))
+# MUST / PREFER membership — explicit since the bid/no-bid rename dropped the
+# must_/prefer_ prefixes (the keys now speak for themselves). Order mirrors
+# CRITERION_KEYS.
+_MUST_KEYS = ("qualification", "strategic_fit", "capacity",
+              "geographic_fit", "cofinancing")
+_PREFER_KEYS = ("funding_quality", "funder_relationship",
+                "competitiveness", "bid_effort")
 
 # Internal scoring vocab ("Yes"/"Partial"/"No") → DB / UI dropdown vocab
 # ("True"/"Partial"/"False"). Applied right before auto_score returns so
@@ -1306,16 +1311,21 @@ def _decision_from_criteria(values: dict[str, str]) -> str:
           * ≥3 of 4 PREFERs = Yes        → Proceed
           * else                         → Park (review)
     """
-    musts_no = sum(1 for m in _MUST_KEYS if values.get(m) == "No")
-    musts_partial = sum(1 for m in _MUST_KEYS if values.get(m) == "Partial")
+    # Normalise through criterion_score (2/1/0/None) so this works for the
+    # internal Yes/Partial/No values AND stored DB labels — legacy
+    # True/Partial/False and the new MS-Form rich labels alike. A "Not sure" /
+    # unscored MUST (None) doesn't trigger Decline (conservative).
+    sc = {k: criterion_score(values.get(k)) for k in (_MUST_KEYS + _PREFER_KEYS)}
+    musts_no = sum(1 for m in _MUST_KEYS if sc.get(m) == 0)
+    musts_partial = sum(1 for m in _MUST_KEYS if sc.get(m) == 1)
     if musts_no >= 1:
         return "Decline"
     if musts_partial >= 2:
         return "Decline"
     if musts_partial == 1:
         return "Park"
-    # All MUSTs = Yes at this point.
-    prefers_yes = sum(1 for p in _PREFER_KEYS if values.get(p) == "Yes")
+    # No blocking MUSTs at this point.
+    prefers_yes = sum(1 for p in _PREFER_KEYS if sc.get(p) == 2)
     if prefers_yes >= 3:
         return "Proceed"
     return "Park"
@@ -1440,12 +1450,12 @@ def _apply_scoring_rules(
                 except (TypeError, ValueError):
                     continue
                 if amount_usd >= threshold:
-                    values["prefer_6_funding_quality"] = tier.get("value") or values.get("prefer_6_funding_quality")
+                    values["funding_quality"] = tier.get("value") or values.get("funding_quality")
                     break
         else:
             # No funding amount published → we can't judge funding quality.
             # Flag Partial (review) rather than scoring the lowest "No" tier.
-            values["prefer_6_funding_quality"] = "Partial"
+            values["funding_quality"] = "Partial"
 
     # --- 3. Resourcing large-amount ----------------------------------------
     res = rules.get("resourcing_large_amount") or {}
@@ -1457,9 +1467,9 @@ def _apply_scoring_rules(
         if threshold and amount_usd >= threshold:
             # Don't downgrade if a previous rule (e.g. USG) already set
             # Partial — stays Partial. Don't upgrade Yes → Partial either.
-            current = values.get("must_5_resourcing")
+            current = values.get("cofinancing")
             if current in (None, "No"):
-                values["must_5_resourcing"] = res.get("forced_value") or "Partial"
+                values["cofinancing"] = res.get("forced_value") or "Partial"
 
     # --- 4. Criterion defaults (Monitorable, Partnership) -------------------
     crit_defaults = rules.get("criterion_defaults") or {}
@@ -1505,7 +1515,7 @@ def auto_score(
 ) -> dict[str, Any]:
     """Return a dict of fields ready to merge into the rfp_submissions row.
 
-    Output keys: feasibility, must_1_govt_alignment, ..., prefer_9_scale,
+    Output keys: feasibility, qualification, ..., bid_effort,
     alignment_score, auto_recommendation, decision, decline_flags_present,
     geographic_scope (if detected), program_area (if detected).
     """
@@ -1533,11 +1543,39 @@ def auto_score(
     # configurable shape; the function below is the executor.
     values = _apply_scoring_rules(values, candidate, policies, text, criteria_rules)
 
+    # OBJECTIVE derivation of the 9 criteria from org × RFP facts — the
+    # auto-scan's pick, factoring each criterion's FULL definition (e.g.
+    # strategic_fit = priorities AND experience; bid_effort = deadline × BD team).
+    # Overrides the keyword guess where derivable; None leaves the keyword/default
+    # value. Human review can still change any of these.
+    try:
+        from core import criteria_derive
+        from core import org_profile as _orgp
+        from core import settings as _settings
+        _donor_row = None
+        try:
+            from db.supabase_client import get_client
+            _fa = (candidate.get("funding_agency") or "").strip()
+            if _fa:
+                _dq = (get_client().table("donor_intel").select("*")
+                       .ilike("donor", _fa).limit(1).execute().data or [])
+                _donor_row = _dq[0] if _dq else None
+        except Exception:
+            _donor_row = None
+        _derived = criteria_derive.derive_criteria(
+            candidate, _orgp.get_profile(), _donor_row, _settings.get_org(), policies)
+        for _k, _lbl in _derived.items():
+            if _lbl is not None:
+                values[_k] = _lbl
+    except Exception:
+        pass
+
     # decline_flags rule (per the reference deployment's policy):
     #   Decline flag = NO only when all 5 MUSTs == Yes AND ≥3 of 4 PREFERs == Yes
-    #   Decline flag = YES otherwise
-    all_musts_yes = all(values.get(m) == "Yes" for m in _MUST_KEYS)
-    prefers_yes = sum(1 for p in _PREFER_KEYS if values.get(p) == "Yes")
+    #   Decline flag = YES otherwise. Normalised via criterion_score so the
+    #   bid-effort rich label (and any True/Partial/False) counts correctly.
+    all_musts_yes = all(criterion_score(values.get(m)) == 2 for m in _MUST_KEYS)
+    prefers_yes = sum(1 for p in _PREFER_KEYS if criterion_score(values.get(p)) == 2)
     decline_flags = not (all_musts_yes and prefers_yes >= 3)
 
     # Numeric score for display purposes (Review gauge). We still compute
@@ -1628,8 +1666,20 @@ def auto_score(
         geo = _extract_geographic_scope(text, policies)
         if geo:
             out["geographic_scope"] = geo
-    if not candidate.get("program_area"):
-        prog = _extract_program_area(text, policies)
+    # program_area: classify from the description. REPLACE a generic crawled
+    # value (e.g. "Health" — not a taxonomy key) with specific areas so
+    # strategic_fit can match the org; leave an already-taxonomy-keyed value
+    # (human- or previously-classified) alone. Also stamp focus_theme with the
+    # high-level categories when we (re)classify.
+    from core.program_area_classifier import (
+        PROGRAM_AREA_KEYWORDS as _PAK, UNSPECIFIED as _UNSPEC,
+        category_full as _catfull,
+    )
+    _cur_pa = candidate.get("program_area")
+    _cur_list = _cur_pa if isinstance(_cur_pa, (list, tuple)) else ([_cur_pa] if _cur_pa else [])
+    if not any(str(v) in _PAK for v in _cur_list):
+        prog = [a for a in (_extract_program_area(text, policies) or []) if a != _UNSPEC]
         if prog:
             out["program_area"] = prog
+            out["focus_theme"] = "; ".join(sorted({_catfull(a) for a in prog}))
     return out

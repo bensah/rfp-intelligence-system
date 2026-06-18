@@ -1,15 +1,15 @@
 # Eligibility scoring weights. Each criterion is scored as
 #   Yes = 1.0, Partial = 0.5, No = 0.0, null = 0.0 (unscored).
 # Weights must sum to 1.0; alignment_score = sum(weight_i * value_i) * 100.
-must_1_govt_alignment:    0.15
-must_2_strategic_fit:     0.15
-must_3_implementable:     0.15
-must_4_compliant:         0.10
-must_5_resourcing:        0.10
-prefer_6_funding_quality: 0.08
-prefer_7_monitorable:     0.08
-prefer_8_partnership:     0.10
-prefer_9_scale:           0.09
+qualification:    0.15
+strategic_fit:     0.15
+capacity:     0.15
+geographic_fit:         0.10
+cofinancing:        0.10
+funding_quality: 0.08
+funder_relationship:     0.08
+competitiveness:     0.10
+bid_effort:           0.09
 
 # Auto-recommendation thresholds (applied after decline-flag override).
 thresholds:

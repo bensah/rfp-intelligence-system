@@ -150,9 +150,13 @@ def log_decision(row: dict, decision: str, by: str | None = None) -> bool:
 
 
 def log_feedback(row: dict, verdict: str, by: str | None = None) -> bool:
-    """Log a reviewer 👍/👎 on a record (verdict 'good' or 'bad')."""
+    """Log reviewer feedback on a record: 'good' / 'neutral' / 'bad'.
+
+    Three-way so it mirrors the decision classes without skewing the learning
+    signal: Proceed→good, Park→neutral (intermediary, info-insufficient),
+    Decline→bad. Migrated baseline decisions map the same way."""
     v = (verdict or "").strip().lower()
-    if not row or v not in ("good", "bad"):
+    if not row or v not in ("good", "neutral", "bad"):
         return False
     try:
         rec = _base_record(row, event_type="feedback", label=v,

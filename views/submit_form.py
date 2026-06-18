@@ -129,8 +129,9 @@ def render_submit_form(
         opportunity_id = c2.text_input("Opportunity ID (optional)", key=_k("opp_id"))
 
         _single_with_other(
-            "Funder / Donor *", donor_list, key="funder",
-            help_text="Type to search. Pick 'Other' if the funder is not listed.",
+            "Donor *", donor_list, key="funder",
+            help_text="The donor (full name) — matches the Donor Intelligence "
+                      "catalog. Type to search; pick 'Other' if not listed.",
         )
         brief = st.text_area("Brief description", height=110, key=_k("brief"))
 
@@ -199,24 +200,24 @@ def render_submit_form(
 
         grid_l, grid_r = st.columns(2)
         with grid_l:
-            m1 = st.selectbox("MUST 1 — Government alignment", elig,
+            m1 = st.selectbox("MUST 1 — Organisational qualification", elig,
                               index=elig_default, key=_k("m1"))
             m2 = st.selectbox("MUST 2 — Strategic fit", elig,
                               index=elig_default, key=_k("m2"))
-            m3 = st.selectbox("MUST 3 — Implementable scope", elig,
+            m3 = st.selectbox("MUST 3 — Delivery capacity", elig,
                               index=elig_default, key=_k("m3"))
-            m4 = st.selectbox("MUST 4 — Compliant", elig,
+            m4 = st.selectbox("MUST 4 — Geographic fit", elig,
                               index=elig_default, key=_k("m4"))
-            m5 = st.selectbox("MUST 5 — Resourcing / timeline", elig,
+            m5 = st.selectbox("MUST 5 — Co-financing requirements", elig,
                               index=elig_default, key=_k("m5"))
         with grid_r:
             p6 = st.selectbox("PREFER 6 — Funding quality", elig,
                               index=elig_default, key=_k("p6"))
-            p7 = st.selectbox("PREFER 7 — Monitorable results", elig,
+            p7 = st.selectbox("PREFER 7 — Funder relationship", elig,
                               index=elig_default, key=_k("p7"))
-            p8 = st.selectbox("PREFER 8 — Partnership advantage", elig,
+            p8 = st.selectbox("PREFER 8 — Competitiveness", elig,
                               index=elig_default, key=_k("p8"))
-            p9 = st.selectbox("PREFER 9 — Scale & sustainability", elig,
+            p9 = st.selectbox("PREFER 9 — Bid effort", elig,
                               index=elig_default, key=_k("p9"))
 
         st.subheader("3. Decline flags & risks")
@@ -265,15 +266,15 @@ def render_submit_form(
         return
 
     vals = {
-        "must_1_govt_alignment": m1,
-        "must_2_strategic_fit": m2,
-        "must_3_implementable": m3,
-        "must_4_compliant": m4,
-        "must_5_resourcing": m5,
-        "prefer_6_funding_quality": p6,
-        "prefer_7_monitorable": p7,
-        "prefer_8_partnership": p8,
-        "prefer_9_scale": p9,
+        "qualification": m1,
+        "strategic_fit": m2,
+        "capacity": m3,
+        "geographic_fit": m4,
+        "cofinancing": m5,
+        "funding_quality": p6,
+        "funder_relationship": p7,
+        "competitiveness": p8,
+        "bid_effort": p9,
     }
     decline_bool = decline_flags == "Yes"
     align, rec = score_submission(vals, decline_bool)
@@ -314,7 +315,7 @@ def render_submit_form(
         "alignment_score": align,
         "auto_recommendation": rec,
         "decision": _none(decision),
-        "decision_rationale": _none(rationale),
+        "decision_note": _none(rationale),
         "proposal_lead": resolved.get("prop_lead"),
         "contributors": resolved.get("contributors"),
         "reviewers": resolved.get("reviewers"),

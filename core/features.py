@@ -12,11 +12,12 @@ Design choices (see the Phase 3 spec):
   * `auto_recommendation` is deliberately EXCLUDED — it's a deterministic
     function of the criteria, so feeding it would teach the model to echo the
     rule instead of learning a better mapping.
-  * Encoding is NOT baked in here. We store readable values
-    (must_*='Yes'/'Partial'/'No', geo_strength='strong', days_to_deadline=45)
-    and let the trainer encode (ordinal No/Partial/Yes -> 0/1/2, etc.). Keeps
-    the captured jsonb interpretable and lets the encoding change later without
-    re-capturing.
+  * Criterion responses are NORMALISED to an ordinal score (2 / 1 / 0, None for
+    "Not sure" / unscored) via core.scorer.criterion_score, so legacy
+    True/Partial/False AND the new MS-Form rich labels ("Yes, via a partner",
+    "Strong - priorities + experience", "High", …) feed the model on ONE scale
+    (Bernard 2026-06-17: Yes=2, Partial=1, No=0). Other features keep readable
+    values (geo_strength='strong', days_to_deadline=45).
 
 Best-effort: never raises into a scan or a UI save — returns whatever it could
 compute, with missing pieces left as None.
@@ -28,36 +29,23 @@ import math
 from datetime import date, datetime
 from typing import Any
 
+from core.scorer import criterion_score
+
 log = logging.getLogger(__name__)
 
 # The model's parameter order (stable). The trainer reads this; don't reorder
 # without bumping the stored model's feature_order.
 _CRITERION_FEATURES = (
-    "must_1_govt_alignment", "must_2_strategic_fit", "must_3_implementable",
-    "must_4_compliant", "must_5_resourcing",
-    "prefer_6_funding_quality", "prefer_7_monitorable", "prefer_8_partnership",
-    "prefer_9_scale",
+    "qualification", "strategic_fit", "capacity",
+    "geographic_fit", "cofinancing",
+    "funding_quality", "funder_relationship", "competitiveness",
+    "bid_effort",
 )
 FEATURE_ORDER: tuple[str, ...] = _CRITERION_FEATURES + (
     "alignment_score", "geo_strength", "has_deadline", "days_to_deadline",
     "decline_flags_present", "funder_is_usg", "log_value_usd", "channel",
     "text_len",
 )
-
-# DB stores criteria as True/Partial/False; the scorer uses Yes/Partial/No.
-# Normalise both (and legacy 1/0) to a single canonical vocabulary.
-_VALUE_NORMAL = {
-    "yes": "Yes", "true": "Yes", "1": "Yes",
-    "partial": "Partial",
-    "no": "No", "false": "No", "0": "No",
-}
-
-
-def _norm_criterion(v: Any) -> str | None:
-    if v is None or v == "":
-        return None
-    return _VALUE_NORMAL.get(str(v).strip().lower())
-
 
 def _parse_date(v: Any) -> date | None:
     if v is None or v == "":
@@ -140,7 +128,7 @@ def extract(row: dict, policies: dict | None = None, *,
 
     feats: dict[str, Any] = {}
     for k in _CRITERION_FEATURES:
-        feats[k] = _norm_criterion(row.get(k))
+        feats[k] = criterion_score(row.get(k))   # 2 / 1 / 0 / None
 
     sc = row.get("alignment_score")
     try:
