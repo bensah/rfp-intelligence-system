@@ -197,20 +197,20 @@ def apply_to_values(values: dict, candidate: dict, policies: dict) -> Optional[d
 
     comp = compliance(row, org_has_local_board=org_board)
     if comp is not None:
-        values["must_4_compliant"] = comp
+        values["geographic_fit"] = comp
 
     part = partnership(row)
     if part is not None:
-        values["prefer_8_partnership"] = part
+        values["competitiveness"] = part
 
     # MUST 1 / MUST 2 — upgrade from the donor's program-area fit (on-mission,
     # LMIC/global health donor → aligned + strategically relevant). Only lifts
     # to Yes; never downgrades a keyword-derived value.
     m1, m2 = program_alignment(row)
     if m1 == "Yes":
-        values["must_1_govt_alignment"] = m1
+        values["qualification"] = m1
     if m2 == "Yes":
-        values["must_2_strategic_fit"] = m2
+        values["strategic_fit"] = m2
 
     # PREFER 6 fallback ONLY when the RFP itself published no amount — a
     # donor that typically funds >$100k implies Funding Quality = Yes even
@@ -221,7 +221,7 @@ def apply_to_values(values: dict, candidate: dict, policies: dict) -> Optional[d
         fb, pb = _tier_thresholds(tiers)
         fq = funding_quality(row, false_below=fb, partial_below=pb)
         if fq is not None:
-            values["prefer_6_funding_quality"] = fq
+            values["funding_quality"] = fq
     return row
 
 
