@@ -363,7 +363,8 @@ if is_multi:
         width='stretch',
     )
 else:
-    ab1, ab2, ab3, ab4, ab5, ab6, _ = st.columns([1, 1, 1, 1.3, 0.7, 0.7, 2.3])
+    ab1, ab2, ab3, ab4, ab5, ab6, ab7, _ = st.columns(
+        [1, 1, 1, 1.3, 0.6, 0.6, 0.6, 1.9])
     edit_clicked = ab1.button("✏ Edit", width='stretch', disabled=not can_edit)
     delete_clicked = ab2.button(
         "🗑 Delete", width='stretch', disabled=not is_admin,
@@ -375,18 +376,23 @@ else:
         help="Block this source URL / section from future scans."
              if is_admin else "Admins only.",
     )
-    # 👍 / 👎 — label this RFP good/bad as a training signal (ML Phase 1).
+    # 👍 / 😐 / 👎 — label this RFP good/neutral/bad as a training signal.
+    # Three-way mirrors the decision classes (Proceed→good, Park→neutral,
+    # Decline→bad) so feedback doesn't skew the learning data.
     good_clicked = ab5.button("👍", width='stretch',
-                              help="Mark this a GOOD match (training signal).")
-    bad_clicked = ab6.button("👎", width='stretch',
-                             help="Mark this a BAD match (training signal).")
-    if good_clicked or bad_clicked:
+                              help="GOOD match — like a Proceed (training signal).")
+    neutral_clicked = ab6.button("😐", width='stretch',
+                                 help="NEUTRAL — like a Park: unclear / needs review.")
+    bad_clicked = ab7.button("👎", width='stretch',
+                             help="BAD match — like a Decline (training signal).")
+    if good_clicked or neutral_clicked or bad_clicked:
+        verdict = "good" if good_clicked else ("neutral" if neutral_clicked else "bad")
         try:
             from core import decision_log
             decision_log.log_feedback(
-                selected_full_rows[0], "good" if good_clicked else "bad",
-                by=user.get("email"))
-            st.toast(("👍 Marked good" if good_clicked else "👎 Marked bad")
+                selected_full_rows[0], verdict, by=user.get("email"))
+            st.toast({"good": "👍 Marked good", "neutral": "😐 Marked neutral",
+                      "bad": "👎 Marked bad"}[verdict]
                      + " — thanks, this trains the scorer.", icon="🧠")
         except Exception as exc:
             st.warning(f"Couldn't record feedback: {exc}")
@@ -532,16 +538,16 @@ def edit_dialog(row: dict) -> None:
             feas_in = _opt("Feasibility", "feas", dropdowns.get("feasibility"), row.get("feasibility"))
         gl, gr = st.columns(2)
         with gl:
-            m1 = _elig("MUST 1 — Govt alignment", "m1", row.get("must_1_govt_alignment"))
-            m2 = _elig("MUST 2 — Strategic fit", "m2", row.get("must_2_strategic_fit"))
-            m3 = _elig("MUST 3 — Implementable", "m3", row.get("must_3_implementable"))
-            m4 = _elig("MUST 4 — Compliant", "m4", row.get("must_4_compliant"))
-            m5 = _elig("MUST 5 — Resourcing", "m5", row.get("must_5_resourcing"))
+            m1 = _elig("MUST 1 — Govt alignment", "m1", row.get("qualification"))
+            m2 = _elig("MUST 2 — Strategic fit", "m2", row.get("strategic_fit"))
+            m3 = _elig("MUST 3 — Implementable", "m3", row.get("capacity"))
+            m4 = _elig("MUST 4 — Compliant", "m4", row.get("geographic_fit"))
+            m5 = _elig("MUST 5 — Resourcing", "m5", row.get("cofinancing"))
         with gr:
-            p6 = _elig("PREFER 6 — Funding quality", "p6", row.get("prefer_6_funding_quality"))
-            p7 = _elig("PREFER 7 — Monitorable", "p7", row.get("prefer_7_monitorable"))
-            p8 = _elig("PREFER 8 — Partnership", "p8", row.get("prefer_8_partnership"))
-            p9 = _elig("PREFER 9 — Scale", "p9", row.get("prefer_9_scale"))
+            p6 = _elig("PREFER 6 — Funding quality", "p6", row.get("funding_quality"))
+            p7 = _elig("PREFER 7 — Monitorable", "p7", row.get("funder_relationship"))
+            p8 = _elig("PREFER 8 — Partnership", "p8", row.get("competitiveness"))
+            p9 = _elig("PREFER 9 — Scale", "p9", row.get("bid_effort"))
         decline_in = st.radio(
             "Decline flags present?", ["No", "Yes"], horizontal=True,
             index=1 if row.get("decline_flags_present") else 0, key=f"e_decline_{row['uid']}",
@@ -557,7 +563,7 @@ def edit_dialog(row: dict) -> None:
         c1, c2 = st.columns([1, 3])
         with c1:
             dec_in = _opt("Decision", "dec", dropdowns.get("decisions"), row.get("decision"))
-        rat_in = c2.text_area("Rationale", value=_str(row.get("decision_rationale")), height=70, key=f"e_rat_{row['uid']}")
+        rat_in = c2.text_area("Rationale", value=_str(row.get("decision_note")), height=70, key=f"e_rat_{row['uid']}")
         c_sub, c_stage, c_prog = st.columns([1, 1, 1])
         submissions_in = c_sub.number_input(
             "Submissions",
@@ -676,15 +682,15 @@ def edit_dialog(row: dict) -> None:
                 pass
         # Eligibility values always come back as True / Partial / False (no "—")
         vals = {
-            "must_1_govt_alignment": m1,
-            "must_2_strategic_fit": m2,
-            "must_3_implementable": m3,
-            "must_4_compliant": m4,
-            "must_5_resourcing": m5,
-            "prefer_6_funding_quality": p6,
-            "prefer_7_monitorable": p7,
-            "prefer_8_partnership": p8,
-            "prefer_9_scale": p9,
+            "qualification": m1,
+            "strategic_fit": m2,
+            "capacity": m3,
+            "geographic_fit": m4,
+            "cofinancing": m5,
+            "funding_quality": p6,
+            "funder_relationship": p7,
+            "competitiveness": p8,
+            "bid_effort": p9,
         }
         decline_bool = decline_in == "Yes"
         align, rec = score_submission(vals, decline_bool)
@@ -715,7 +721,7 @@ def edit_dialog(row: dict) -> None:
             "auto_recommendation": rec,
             "submissions": int(submissions_in) if submissions_in else 1,
             "decision": _val(dec_in),
-            "decision_rationale": _val(rat_in),
+            "decision_note": _val(rat_in),
             "stage": _val(stage_in),
             "progress_status": _val(prog_status),
             "donor_decision": _val(donor_dec),
