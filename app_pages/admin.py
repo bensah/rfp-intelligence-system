@@ -602,21 +602,16 @@ with tab_settings:
 
         with pol_tabs[2]:
             st.markdown(
-                "**Per-criterion rigor + keyword bags.** Rigor 0 = criterion not "
-                "enforced (always Yes). Rigor 5 = needs 5+ positive matches for Yes; "
-                "≥3 matches → Partial. Negative-keyword matches force No."
+                "**Crawl keyword assist (optional).** Criteria are auto-derived "
+                "from the Organization profile (Setup → Bid Fitness); these terms "
+                "refine the crawl against the RFP text — a **positive** term "
+                "*confirms* the criterion when it can't be derived from the "
+                "profile; a **negative** term is a *red flag* that forces it to "
+                "**No** (for a MUST that screens the RFP out as Decline). Leave "
+                "blank to rely purely on the derivation. Scores stay 2 / 1 / 0. "
+                "(Out-of-capability hard-reject terms live under **Themes → Excluded**.)"
             )
-            st.warning(
-                "⚠ **Feasibility is special**: its negative keywords act as a "
-                "scan-time HARD REJECT (the RFP isn't inserted at all). Other "
-                "criteria's negatives only flip the criterion's value to *No*. "
-                "Put clinical-trial / preclinical / out-of-capability phrases under "
-                "**Feasibility → Negative** to filter at scan time, OR under "
-                "**Themes → Excluded** (which also rejects)."
-            )
-            criteria_inputs: dict[str, dict] = {}
-            crit_labels = {
-                "feasibility": "Feasibility",
+            _crit_labels = {
                 "qualification": "MUST 1 — Organisational qualification",
                 "strategic_fit": "MUST 2 — Strategic fit",
                 "capacity": "MUST 3 — Delivery capacity",
@@ -627,30 +622,42 @@ with tab_settings:
                 "competitiveness": "PREFER 8 — Competitiveness",
                 "bid_effort": "PREFER 9 — Bid effort",
             }
-            for ckey in _pol.CRITERION_KEYS:
+            # The tags below come from the SAVED policy. Use this to overwrite
+            # just the criteria terms with the recommended code defaults (keeps
+            # your countries / themes / exclusions). Clears the widget state so
+            # the new terms render immediately.
+            if st.button("↺ Reset criteria terms to recommended defaults",
+                         key="reset_crit_terms",
+                         help="Replaces only the per-criterion positive/negative "
+                              "terms with the latest recommended set."):
+                import copy as _copy
+                _cur = _pol.get_policies()
+                _cur["criteria"] = _copy.deepcopy(_pol.DEFAULT_POLICIES["criteria"])
+                _pol.set_policies(_cur, updated_by=user.get("email"))
+                for _ck in _crit_labels:
+                    st.session_state.pop(f"pol_pos_{_ck}", None)
+                    st.session_state.pop(f"pol_neg_{_ck}", None)
+                st.session_state["pol_save_msg"] = (
+                    "✓ Criteria terms reset to the recommended defaults.")
+                st.rerun()
+
+            for ckey, clabel in _crit_labels.items():
                 rule = (_live.get("criteria") or {}).get(ckey, {}) or {}
-                with st.expander(crit_labels[ckey], expanded=False):
-                    rigor = st.slider(
-                        "Rigor (0 = ignored, 5 = strict)",
-                        min_value=0, max_value=5,
-                        value=int(rule.get("rigor", 2)),
-                        key=f"pol_rigor_{ckey}",
-                    )
+                with st.expander(clabel, expanded=False):
                     col_pos, col_neg = st.columns(2)
                     with col_pos:
                         _tag_input(
-                            "Positive keywords",
+                            "Positive terms (confirm)",
                             list(rule.get("positive") or []),
                             key=f"pol_pos_{ckey}",
-                            help="Type and press Enter to add.",
-                        )
+                            help="Found in the RFP → confirms this criterion (Yes) "
+                                 "when it can't be derived.")
                     with col_neg:
                         _tag_input(
-                            "Negative keywords (force No)",
+                            "Negative terms (red flag → No)",
                             list(rule.get("negative") or []),
                             key=f"pol_neg_{ckey}",
-                        )
-                    criteria_inputs[ckey] = {"rigor": rigor}
+                            help="Found in the RFP → forces this criterion to No.")
 
         with pol_tabs[3]:
             from core import web_search as _ws
@@ -775,13 +782,16 @@ with tab_settings:
                     "reject_applicant_type_mismatch": bool(
                         st.session_state.get("pol_excl_applicant_mismatch", True)),
                 },
+                # Per-criterion crawl-assist terms (positive/negative; no rigor).
                 "criteria": {
                     ckey: {
-                        "rigor": int(st.session_state.get(f"pol_rigor_{ckey}", 2)),
                         "positive": _list(f"pol_pos_{ckey}"),
                         "negative": _list(f"pol_neg_{ckey}"),
                     }
-                    for ckey in _pol.CRITERION_KEYS
+                    for ckey in (
+                        "qualification", "strategic_fit", "capacity",
+                        "geographic_fit", "cofinancing", "funding_quality",
+                        "funder_relationship", "competitiveness", "bid_effort")
                 },
             }
             try:

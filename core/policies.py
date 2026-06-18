@@ -64,6 +64,10 @@ DEFAULT_POLICIES: dict[str, Any] = {
             "in vitro",
             "preclinical",
             "basic research",
+            # Out-of-capability terms relocated from the (retired) Feasibility
+            # criterion — these hard-reject at scan time via the theme gate.
+            "high risk",
+            "highly experimental",
         ],
     },
     # Opportunity-TYPE opt-outs (title-based hard rejects). Defaults suit an
@@ -94,151 +98,117 @@ DEFAULT_POLICIES: dict[str, Any] = {
         # an open type, are never rejected on this basis (conservative).
         "reject_applicant_type_mismatch": True,
     },
-    # Per-criterion rigor (0-5) + keyword bags. Rigor controls how strict
-    # the keyword match must be to score the criterion as Yes / Partial / No.
+    # Per-criterion KEYWORD ASSIST for the crawl (2026-06-17). Criteria are
+    # primarily AUTO-DERIVED from the org profile (core/criteria_derive); these
+    # admin-tunable terms supplement that when crawling RFP text:
+    #   * a POSITIVE term found  → confirm the criterion ("Yes") when the
+    #                              derivation couldn't determine it from profile data,
+    #   * a NEGATIVE term found  → red flag → force the criterion to "No"
+    #                              (for a MUST that screens the RFP out as Decline).
+    # No terms for a criterion → the derivation / default classification stands.
+    # Terms are aligned to each criterion's QUESTION (no Feasibility; no rigor —
+    # the 2/1/0 scale is fixed). Feasibility's hard-reject terms live in
+    # themes.excluded_any.
     "criteria": {
-        "feasibility": {
-            "rigor": 2,
-            "positive": ["feasible", "implementable", "ready", "established", "proven"],
-            # Negative keywords on FEASIBILITY are scan-time HARD REJECTS,
-            # not just "Score=No" nudges. Use this for phrases that mean
-            # "we cannot do this kind of work" — e.g. clinical trials.
-            "negative": ["clinical trial", "high risk", "highly experimental"],
-        },
+        # MUST 1 — Do we formally qualify? (org type / domestic-vs-global
+        # registration / local board / donor registration / consortium-lead).
+        # POSITIVE = RFP language matching our org TYPE or global registration;
+        # NEGATIVE = local-only / disqualifying language → No.
         "qualification": {
-            # MUST 1 = alignment with the TARGET COUNTRY's national health
-            # priorities (NOT "is government an eligible applicant"). Most
-            # LMIC global-health calls map to national strategies, so this
-            # DEFAULTS to Yes (see scoring_rules.criterion_defaults) and only
-            # drops to No when a research-only negative keyword hits.
-            "rigor": 3,
-            "positive": [
-                "government", "ministry of health", "country-led",
-                "national strategy", "national plan", "national priorit",
-                "policy", "health system", "public sector", "ministry",
-                "surveillance", "observatory", "digital health", "e-health",
-            ],
-            # Donor-country priorities (not the deploying country's): research-only calls.
-            # Flip MUST 1 to No unless the call clearly leads to scale-up.
-            "negative": [
-                "independent academic", "researcher-led only",
-                "clinical trial", "randomized controlled", "randomised controlled",
-                "drug development", "drug discovery", "vaccine development",
-                "basic research", "purely academic", "preclinical",
-            ],
+            "positive": ["non-profit", "nonprofit", "not-for-profit", "charity",
+                         "ngo", "non-governmental organization", "non-governmental",
+                         "international organization", "international ngo",
+                         "international philanthropy", "development agency",
+                         "open to all", "any legal entity"],
+            "negative": ["local organizations only", "local organisations only",
+                         "grassroots", "grassroot", "local board of trustees",
+                         "board of trustees required", "registered locally",
+                         "local registration required", "community-based organization",
+                         "national ngos only", "domestic applicants only",
+                         "u.s. applicants only", "government agencies only",
+                         "for-profit only", "individuals only"],
         },
+        # MUST 2 — Fits our strategic priorities AND track record? POSITIVE = our
+        # program/strategy language; NEGATIVE = off-strategy (research-only) work.
         "strategic_fit": {
-            # Matches the deploying org's strategic program areas + health
-            # system strengthening / digital health. One hit → Yes (rigor 1).
-            "rigor": 1,
-            "positive": [
-                "health systems strengthening", "health system",
-                "implementation", "scale up", "primary care", "primary health care",
-                "service delivery", "supply chain", "access to medicine",
-                "access to healthcare", "access to quality healthcare",
-                "digital health", "e-health", "ehealth", "mhealth",
-                "telemedicine", "telehealth", "health information",
-                "surveillance", "observatory",
-                "HIV", "AIDS", "tuberculosis", "malaria", "nutrition",
-                "maternal", "newborn", "child health", "non-communicable",
-                "NCD", "diagnostic", "treatment",
-            ],
-            "negative": [],
+            "positive": ["health system strengthening", "health systems",
+                         "primary health care", "service delivery", "implementation",
+                         "scale up", "disease prevention", "treatment", "diagnostics",
+                         "access to medicines", "supply chain"],
+            "negative": ["basic research", "laboratory study", "preclinical",
+                         "fundamental science", "drug discovery", "bench science"],
         },
+        # MUST 3 — Can we deliver at the award size/scope? POSITIVE = implementing-
+        # org language; NEGATIVE = scope/size that excludes an established INGO.
         "capacity": {
-            # An LMIC/Africa-targeted health call that cleared the country gate
-            # is implementable by default (see criterion_defaults). Geography +
-            # field-implementation keywords reinforce it; "pilot only" flips No.
-            "rigor": 1,
-            "positive": [
-                "technical assistance", "deploy", "rollout", "scale",
-                "implementation", "operational", "in the field",
-                "field implementation", "africa", "sub-saharan", "asia",
-                "developing countr", "low- and middle-income", "lmic",
-            ],
-            "negative": ["pilot only", "feasibility study only"],
+            "positive": ["technical assistance", "implementing partner",
+                         "implementation partner", "established organization",
+                         "proven track record", "at scale", "prime recipient"],
+            "negative": ["start-ups only", "startups only", "small grants only",
+                         "micro-grant", "micro grants", "seed funding only",
+                         "individuals only"],
         },
+        # MUST 4 — Funder geography ↔ our presence / partner? POSITIVE = our
+        # regions; NEGATIVE = geographies where we have no presence.
         "geographic_fit": {
-            "rigor": 2,
-            "positive": ["compliance", "regulatory", "approved", "ethical"],
-            "negative": [],
+            "positive": ["sub-saharan africa", "low- and middle-income", "lmic",
+                         "developing countries", "global", "africa", "global south"],
+            "negative": ["high-income countries only", "oecd countries only",
+                         "domestic only", "united states only", "europe only"],
         },
+        # MUST 5 — Co-financing/match + compliance? POSITIVE = none required;
+        # NEGATIVE = match / cost-share required → No.
         "cofinancing": {
-            "rigor": 2,
-            "positive": ["funded", "budget", "support package", "partnership", "co-funded"],
-            "negative": ["matching funds required", "self-funded only"],
+            "positive": ["no match required", "no cost-share", "no co-financing",
+                         "fully funded", "no matching funds"],
+            "negative": ["matching funds required", "match required",
+                         "cost-share required", "cost sharing required",
+                         "co-financing required", "cofinancing required",
+                         "in-kind contribution required", "counterpart funding"],
         },
+        # PREFER 6 — Funding terms attractiveness. POSITIVE = large/flexible/multi-
+        # year/scale; NEGATIVE = small/restricted/one-off.
         "funding_quality": {
-            "rigor": 2,
-            "positive": [
-                "multi-year", "flexible", "core funding",
-                "unrestricted", "long-term",
-            ],
-            "negative": ["one-time only", "highly restricted"],
+            "positive": ["multi-year", "multiyear", "core funding", "unrestricted",
+                         "flexible funding", "long-term", "large grant", "at scale"],
+            "negative": ["one-time only", "highly restricted", "seed funding",
+                         "small grant", "one year only", "short-term"],
         },
+        # PREFER 7 — Relationship with the funder (mostly org-side: funder_history /
+        # donor registrations / trusted partners). RFP cues only here.
         "funder_relationship": {
-            "rigor": 2,
-            "positive": [
-                "monitoring", "evaluation", "M&E",
-                "indicators", "metrics", "data",
-            ],
-            "negative": [],
+            "positive": ["existing grantees", "current partners", "by invitation",
+                         "current grantees eligible"],
+            "negative": ["first-time applicants only", "new applicants only",
+                         "not currently funded"],
         },
+        # PREFER 8 — How well-positioned to win? POSITIVE = limited field / edge;
+        # NEGATIVE = wide-open competition.
         "competitiveness": {
-            "rigor": 2,
-            "positive": ["partner", "collaboration", "consortium", "coalition"],
-            "negative": ["sole bidder", "single applicant"],
+            "positive": ["by invitation", "invitation only", "limited competition",
+                         "sole source", "restricted competition", "pre-qualified",
+                         "incumbent"],
+            "negative": ["highly competitive", "open competition",
+                         "open to all applicants", "large number of applicants"],
         },
+        # PREFER 9 — Proposal feasible in time/resources? POSITIVE = generous
+        # runway; NEGATIVE = heavy/urgent process.
         "bid_effort": {
-            # National / multi-district / regional reach = scale → Yes. A
-            # national observatory counts. Single-site work with no scale
-            # roadmap stays No (small pilot).
-            "rigor": 1,
-            "positive": [
-                "scale", "scale up", "scale-up", "national", "nationwide",
-                "country-wide", "system-wide", "population", "population-level",
-                "observatory", "multi-district", "multiple districts",
-                "regions", "regional", "national programme", "national program",
-            ],
-            "negative": ["small pilot only"],
+            "positive": ["rolling deadline", "rolling basis", "no deadline",
+                         "applications accepted on an ongoing basis", "open call"],
+            "negative": ["two-stage application", "full proposal required upfront",
+                         "extensive documentation"],
         },
     },
 
     # =====================================================================
-    # SCORING RULES — applied AFTER the keyword-based criterion scoring as
-    # an override layer. Captures domain knowledge that can't be reduced to
-    # keyword bags: funder identity (USG → admin burden + HQ reluctance),
-    # amount-based funding quality, and default values for criteria where
-    # human judgement matters more than RFP text (Partnership, Monitorable).
-    # Each rule is admin-tunable from Admin → Settings → policies.
+    # SCORING RULES — the per-criterion keyword bags + override layer were
+    # RETIRED (2026-06-17); criteria are now objectively DERIVED from the org
+    # profile (core/criteria_derive). Only the funding-quality value tiers
+    # remain — read by derive_funding_quality for its High/Moderate/Low
+    # thresholds (FX-converted to USD via core.dropdowns.usd_rate).
     # =====================================================================
     "scoring_rules": {
-        # US-gov funders trigger reluctance + admin-burden flags. The
-        # patterns match against funding_agency case-insensitively. When
-        # any pattern hits, geographic_fit + cofinancing are forced
-        # to "Partial" (a yellow flag for reviewers), regardless of what
-        # the keyword scorer returned.
-        "usg_funders": {
-            "enabled": True,
-            "patterns": [
-                "USAID", "U.S. Agency for International Development",
-                "Department of Defense", "DoD", "DOD-",
-                "DHAPP", "PEPFAR",
-                "Centers for Disease Control", "CDC",
-                "National Institutes of Health", "NIH",
-                "Health and Human Services", "HHS",
-                "Department of State", "U.S. Department of",
-                "Dept. of the Army", "Dept. of the Navy",
-                "Dept. of the Air Force", "USAMRAA",
-                "Department of Defense HIV", "Defense Health",
-                "Grants.gov", "U.S. federal",
-            ],
-            "forced_values": {
-                "geographic_fit": "Partial",
-                "cofinancing": "Partial",
-            },
-        },
-
         # Amount-based funding quality. Picks the highest tier the
         # estimated_value satisfies. Always converted to USD first via the
         # FX layer (core.dropdowns.usd_rate) so mixed-currency grants
@@ -252,75 +222,6 @@ DEFAULT_POLICIES: dict[str, Any] = {
                 {"threshold_usd":   500_000, "value": "Partial"},
                 {"threshold_usd":         0, "value": "No"},
             ],
-        },
-
-        # Large-amount → Resourcing burden = Partial (regardless of funder).
-        # Stacks with usg_funders (both → Partial, no conflict).
-        "resourcing_large_amount": {
-            "enabled": True,
-            "threshold_usd": 1_000_000,
-            "forced_value": "Partial",
-        },
-
-        # Per-criterion default values applied when:
-        #  (a) the keyword scorer returns "No" AND there's no positive text
-        #      signal at all (i.e. we're confessing ignorance, not rejecting)
-        # Used to encode "default-true unless explicit barrier" (Monitorable)
-        # and "default-false unless reviewer confirms" (Partnership).
-        "criterion_defaults": {
-            "qualification": {
-                "enabled": True,
-                "default_value": "Yes",
-                # LMIC global-health calls map to national health priorities
-                # by default. Drops to "No" only when a research-only negative
-                # keyword hits (clinical trial / drug or vaccine development /
-                # basic research) — donor-country priorities, not the deploying country's.
-                "respect_negative_keywords": True,
-            },
-            "capacity": {
-                "enabled": True,
-                "default_value": "Yes",
-                # An LMIC-health call past the country gate is implementable
-                # by default; "pilot only" / "feasibility study only" → No.
-                "respect_negative_keywords": True,
-            },
-            "geographic_fit": {
-                "enabled": True,
-                "default_value": "Partial",
-                # PLACEHOLDER until the donor_requirements matrix is wired.
-                # Default Partial (→ review) rather than No, so a missing
-                # compliance signal doesn't auto-Decline a valid RFP. The
-                # matrix will set this True/Partial/False per donor.
-                "respect_negative_keywords": True,
-            },
-            "cofinancing": {
-                "enabled": True,
-                "default_value": "Yes",
-                # Default resourceable — timeline is usually fine for a
-                # freshly-posted call. Your MUST 5 = timeline + requirements:
-                # the resourcing_large_amount rule already nudges big budgets
-                # to Partial; the deadline<2-weeks + document-package-weight
-                # logic refines this once the donor matrix is wired.
-                # "matching funds required" / "self-funded only" → No.
-                "respect_negative_keywords": True,
-            },
-            "funder_relationship": {
-                "enabled": True,
-                "default_value": "Yes",
-                # Even with no text match, default to Yes — most modern
-                # grants assume M&E by default. Only set to No if negative
-                # keywords explicitly hit (e.g. "no monitoring permitted").
-                "respect_negative_keywords": True,
-            },
-            "competitiveness": {
-                "enabled": True,
-                "default_value": "No",
-                # Partnership advantage is a reviewer-confirmed signal
-                # (do we actually have a named partner?), not something
-                # the RFP text can tell us. Default to No so the reviewer
-                # actively flips it when a partner is lined up.
-                "respect_positive_keywords": False,
-            },
         },
     },
 }
