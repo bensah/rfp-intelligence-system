@@ -1510,6 +1510,31 @@ def _apply_scoring_rules(
     return values
 
 
+def _apply_criteria_keywords(values: dict[str, Any], text: str,
+                             policies: dict[str, Any]) -> dict[str, Any]:
+    """Crawl keyword ASSIST (supplements the objective derivation).
+
+    Per criterion, against the RFP text:
+      * a NEGATIVE term found → force the criterion to "No" (red flag; for a
+        MUST this screens the RFP out as Decline),
+      * else a POSITIVE term found AND the criterion is still undetermined
+        (None) → set it "Yes".
+    Criteria with no configured terms are left exactly as the derivation set
+    them. Terms live in policies['criteria'][key]{positive,negative}."""
+    if not text:
+        return values
+    tl = text.lower()
+    for key, rule in (policies.get("criteria") or {}).items():
+        if key not in values:
+            continue
+        if any(n and n.lower() in tl for n in (rule.get("negative") or [])):
+            values[key] = "No"
+        elif values.get(key) is None and any(
+                p and p.lower() in tl for p in (rule.get("positive") or [])):
+            values[key] = "Yes"
+    return values
+
+
 def auto_score(
     candidate: dict[str, Any], policies: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1520,28 +1545,13 @@ def auto_score(
     geographic_scope (if detected), program_area (if detected).
     """
     text = _full_text(candidate)
-    criteria_rules = policies.get("criteria", {}) or {}
-    values: dict[str, str | None] = {}
-    for key in CRITERION_KEYS:
-        rule = criteria_rules.get(key) or {}
-        values[key] = _criterion_value(text, rule)
-
-    # Feasibility uses a HIGH/MEDIUM/LOW vocabulary in the UI (see
-    # config/dropdowns.yaml → feasibility), not the YES/PARTIAL/NO that
-    # _criterion_value emits. Writing "No" here would surface as a stray
-    # option on the Edit dropdown. Reserve feasibility for human judgement:
-    # auto-scan leaves it NULL, the reviewer picks High/Medium/Low after
-    # reading the brief. The scan-time hard reject (feasibility_hard_reject
-    # above) still fires using the same keyword config — we just don't
-    # persist a score-style value.
-    values["feasibility"] = None
-
-    # Apply the scoring-rules override layer. This captures the domain
-    # knowledge that pure keyword matching can't express — funder identity,
-    # amount-based tiers, "default-true unless explicit barrier" style
-    # rules. See policies.DEFAULT_POLICIES["scoring_rules"] for the
-    # configurable shape; the function below is the executor.
-    values = _apply_scoring_rules(values, candidate, policies, text, criteria_rules)
+    # Criteria are now OBJECTIVELY DERIVED from org × RFP (× donor) facts — the
+    # per-criterion keyword bags + scoring_rules override layer were retired
+    # (2026-06-17). Base every criterion to null ("Not sure" = missing); the
+    # derivation below fills what it can determine and leaves the rest null
+    # (honest — never a fabricated 0/No). Feasibility is human-only (High/Medium/
+    # Low on Review); its out-of-capability terms now live in Themes → Excluded.
+    values: dict[str, str | None] = {key: None for key in CRITERION_KEYS}
 
     # OBJECTIVE derivation of the 9 criteria from org × RFP facts — the
     # auto-scan's pick, factoring each criterion's FULL definition (e.g.
@@ -1569,6 +1579,10 @@ def auto_score(
                 values[_k] = _lbl
     except Exception:
         pass
+
+    # Crawl keyword ASSIST — admin-configurable per-criterion terms supplement
+    # the derivation against the RFP text (see policies['criteria']).
+    values = _apply_criteria_keywords(values, text, policies)
 
     # decline_flags rule (per the reference deployment's policy):
     #   Decline flag = NO only when all 5 MUSTs == Yes AND ≥3 of 4 PREFERs == Yes
