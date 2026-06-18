@@ -127,7 +127,14 @@ def _cost_share_required(rfp: dict) -> bool | None:
 
 
 def derive_cofinancing(org: dict, rfp: dict, donor: dict | None = None) -> str | None:
-    required = _cost_share_required(rfp)
+    # Authoritative signal first: the donor profile's cost-share / prefinance
+    # requirement (donor_intel). Fall back to parsing the RFP text.
+    required = None
+    if donor and any(_truthy(donor.get(f)) for f in
+                     ("cost_sharing_match_required", "prefinance_required")):
+        required = True
+    if required is None:
+        required = _cost_share_required(rfp)
     if not required:                       # None (not stated) or False → assume none
         return "Yes / none required"
     cap = str(org.get("cofinancing_capacity") or "limited").lower()
@@ -190,15 +197,12 @@ def derive_bid_effort(rfp: dict, org_settings: dict | None = None) -> str | None
     return bid_effort_label(days_until(rfp.get("submission_deadline")), bd)
 
 
-# Donor-requirement flag names (best-effort — donor_intel may add/rename these;
-# absent flags simply skip that factor). "assumed backside donor intel".
-_GRASSROOT_FLAGS = ("requires_local_org", "local_org_required", "grassroots_only",
-                    "local_ngo_only", "requires_local_presence")
-_BOARD_FLAGS = ("requires_local_board", "local_board_required")
-_COFIN_FLAGS = ("requires_cofinancing", "cofinancing_required",
-                "cost_share_required", "requires_cost_share")
-_MULTI_FLAGS = ("requires_multi_country", "multi_country_required",
-                "multi_country_preferred", "regional_presence_required")
+# Real donor_intel requirement columns (migration 020). Values are text
+# (Yes/No/Required/…) → _truthy. Absent/blank flags simply skip that factor.
+_GRASSROOT_FLAGS = ("local_registration_required", "local_partner_required")
+_BOARD_FLAGS = ("local_board_required",)
+_COFIN_FLAGS = ("cost_sharing_match_required", "prefinance_required")
+_MULTI_FLAGS = ("global_multi_country_scope",)
 
 
 def _truthy(v: Any) -> bool:
