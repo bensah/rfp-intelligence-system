@@ -18,7 +18,9 @@ import streamlit as st
 
 from core import dropdowns, settings
 from core.review_week import all_weeks_for_year, review_week_label, upcoming_review_week_label
-from core.scorer import CRITERIA, score_submission
+from core.scorer import (
+    CRITERIA, CRITERION_RESPONSES, default_response, score_submission,
+)
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -182,40 +184,28 @@ st.divider()
 # Inline-editable eligibility grid + live gauge
 # -----------------------------------------------------------------------------
 LABELS = {
-    "must_1_govt_alignment": "MUST 1 · Govt alignment",
-    "must_2_strategic_fit":  "MUST 2 · Strategic fit",
-    "must_3_implementable":  "MUST 3 · Implementable",
-    "must_4_compliant":      "MUST 4 · Compliant",
-    "must_5_resourcing":     "MUST 5 · Resourcing",
-    "prefer_6_funding_quality": "PREFER 6 · Funding quality",
-    "prefer_7_monitorable":     "PREFER 7 · Monitorable",
-    "prefer_8_partnership":     "PREFER 8 · Partnership",
-    "prefer_9_scale":           "PREFER 9 · Scale",
+    "qualification": "MUST 1 · Organisational qualification",
+    "strategic_fit":  "MUST 2 · Strategic fit",
+    "capacity":  "MUST 3 · Delivery capacity",
+    "geographic_fit":      "MUST 4 · Geographic fit",
+    "cofinancing":     "MUST 5 · Co-financing requirements",
+    "funding_quality": "PREFER 6 · Funding quality",
+    "funder_relationship":     "PREFER 7 · Funder relationship",
+    "competitiveness":     "PREFER 8 · Competitiveness",
+    "bid_effort":           "PREFER 9 · Bid effort",
 }
-ELIG_OPTS = list(dropdowns.get("eligibility_values"))  # True / Partial / False
 
 
-def _coerce_elig(v) -> str:
-    """Map any stored value (Yes/True/y/1/Partial/P/No/False/n/0/None/NaN/etc.)
-    to one of the canonical labels: True / Partial / False.
-
-    Unknown or null values default to "Partial" — eligibility fields must
-    never be empty; "Partial" is the conservative middle ground that
-    invites a human to confirm.
-    """
+def _coerce_elig(v, key: str) -> str:
+    """Pre-select the best per-criterion response for a stored value — maps
+    legacy True/Partial/False by score and passes new rich labels through
+    (core.scorer.default_response)."""
     try:
-        if v is None or pd.isna(v):
-            return "Partial"
+        if v is not None and pd.isna(v):
+            v = None
     except (TypeError, ValueError):
         pass
-    s = str(v).strip().lower()
-    if s in ("yes", "y", "true", "1"):
-        return "True"
-    if s in ("partial", "p"):
-        return "Partial"
-    if s in ("no", "n", "false", "0"):
-        return "False"
-    return "Partial"
+    return default_response(key, v)
 
 
 # Detect if this is a scraped/automated submission (no human criteria yet)
@@ -232,16 +222,16 @@ stored_has_values = any(
 # user's in-progress edits aren't clobbered on every rerun.
 # Sentinel includes a schema version so a code change invalidates stale
 # session_state from older labels (Yes/No → True/False).
-_seed_sentinel = f"_review_seeded_v2_{row['uid']}"
+_seed_sentinel = f"_review_seeded_v3_{row['uid']}"
 if _seed_sentinel not in st.session_state:
     for _k in CRITERIA:
-        st.session_state[f"elig_{row['uid']}_{_k}"] = _coerce_elig(row.get(_k))
+        st.session_state[f"elig_{row['uid']}_{_k}"] = _coerce_elig(row.get(_k), _k)
     st.session_state[f"decline_{row['uid']}"] = "Yes" if row.get("decline_flags_present") else "No"
     st.session_state[f"risks_{row['uid']}"] = _safe_str(row.get("key_risks"))
     _stored_dec = row.get("decision") or row.get("auto_recommendation")
     if _stored_dec:
         st.session_state[f"dec_{row['uid']}"] = _stored_dec
-    st.session_state[f"rat_{row['uid']}"] = _safe_str(row.get("decision_rationale"))
+    st.session_state[f"rat_{row['uid']}"] = _safe_str(row.get("decision_note"))
     st.session_state[_seed_sentinel] = True
 
 # "Reset to stored values" — clears the sentinel + widget state so values re-seed
@@ -270,23 +260,24 @@ with grid_col:
         else:
             st.caption(
                 "_No criterion values are stored for this RFP. "
-                "Pick True / Partial / False below and click Save changes._"
+                "Pick a response for each criterion below and click Save changes._"
             )
     g1, g2 = st.columns(2)
     edited_values: dict[str, str] = {}
     for i, key in enumerate(CRITERIA):
         target = g1 if i < 5 else g2
         with target:
-            current = _coerce_elig(row.get(key))
-            idx = ELIG_OPTS.index(current) if current in ELIG_OPTS else 0
+            opts = CRITERION_RESPONSES.get(key, [])
+            current = _coerce_elig(row.get(key), key)
+            idx = opts.index(current) if current in opts else 0
             picked = st.selectbox(
                 LABELS[key],
-                ELIG_OPTS,
+                opts,
                 index=idx,
                 key=f"elig_{row['uid']}_{key}",
                 disabled=not can_edit,
             )
-            edited_values[key] = picked  # never None now; always one of ELIG_OPTS
+            edited_values[key] = picked  # one of the per-criterion response labels
 
     df_col1, df_col2 = st.columns([1, 3])
     decline_in = df_col1.radio(
@@ -303,16 +294,39 @@ with grid_col:
 # Compute LIVE score from edited values
 live_score, live_rec = score_submission(edited_values, decline_in == "Yes")
 
+# Composite org × donor × RFP match: 80% eligibility criteria + 20% donor-org
+# relationship (thematic / geographic / route), with the hard MUST gate. The
+# gauge shows this composite; criteria-only is the delta reference.
+from core import matching as _matching
+from core import org_profile as _orgp
+from core import settings as _settings
+_org_prof = _orgp.get_profile()
+_org_set = _settings.get_org()
+_donor = None
+try:
+    _fa = (row.get("funding_agency") or "").strip()
+    if _fa:
+        _dq = (sb.table("donor_intel").select("*")
+               .ilike("donor", _fa).limit(1).execute().data or [])
+        _donor = _dq[0] if _dq else None
+except Exception:
+    _donor = None
+_match = _matching.composite_match({**row, **edited_values}, _org_prof, _donor, _org_set)
+
+
+def _tick(v: float) -> str:
+    return "✓" if v >= 1 else ("~" if v >= 0.5 else "✗")
+
+
 with gauge_col:
     fig = go.Figure(
         go.Indicator(
             mode="gauge+number+delta",
-            value=live_score,
-            # Reserve the lower 25% of the figure for the number + delta so
-            # the gauge arc doesn't crowd the "X / 100" text.
+            value=_match["composite"],
+            title={"text": "Composite match", "font": {"size": 14}},
             domain={"x": [0, 1], "y": [0.25, 1]},
             delta={
-                "reference": float(row.get("alignment_score") or 0),
+                "reference": live_score,          # vs criteria-only
                 "valueformat": ".1f",
                 "position": "bottom",
             },
@@ -332,13 +346,23 @@ with gauge_col:
     )
     fig.update_layout(height=280, margin=dict(t=20, b=20, l=20, r=20))
     st.plotly_chart(fig, width='stretch')
+    _ex = _match["extras"]
     st.markdown(
-        f"<div style='text-align:center;color:#555;font-size:0.88rem'>"
-        f"<b>Live auto-rec: {live_rec}</b>  ·  "
-        f"Stored: {row.get('auto_recommendation') or '—'} "
-        f"({(row.get('alignment_score') or 0):.1f})"
-        f"</div>",
+        f"<div style='text-align:center;color:#333;font-size:0.9rem'>"
+        f"<b>Match: {_match['decision']}</b>"
+        f"{' · ⚠ a MUST is “No”' if _match['must_no'] else ''}</div>",
         unsafe_allow_html=True,
+    )
+    st.caption(
+        f"composite {_match['composite']:.0f} = 80% criteria "
+        f"({_match['criteria_score']:.0f}) + 20% donor-org ({_match['extras_score']:.0f})  ·  "
+        f"donor-org: thematic {_tick(_ex['donor_thematic_fit'])} · "
+        f"geo {_tick(_ex['donor_geographic_fit'])} · route {_tick(_ex['donor_route_fit'])}"
+        + ("" if _donor else "  ·  _(no donor profile matched — donor-org neutral)_")
+    )
+    st.caption(
+        f"criteria-only auto-rec: **{live_rec}**  ·  stored: "
+        f"{row.get('auto_recommendation') or '—'} ({(row.get('alignment_score') or 0):.1f})"
     )
 
 st.divider()
@@ -364,7 +388,7 @@ new_decision = dc1.selectbox(
 )
 new_rationale = dc2.text_area(
     "Decision rationale (2-3 lines)",
-    value=_safe_str(row.get("decision_rationale")),
+    value=_safe_str(row.get("decision_note")),
     key=f"rat_{row['uid']}",
     height=90,
     disabled=not can_edit,
@@ -379,7 +403,7 @@ if bsave.button("💾 Save changes", type="primary", disabled=not can_edit, widt
         "alignment_score": live_score,
         "auto_recommendation": live_rec,
         "decision": new_decision,
-        "decision_rationale": new_rationale.strip() or None,
+        "decision_note": new_rationale.strip() or None,
         "decision_date": date.today().isoformat(),
         "decision_overridden_by": user.get("email"),
         "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
@@ -401,6 +425,33 @@ if bsave.button("💾 Save changes", type="primary", disabled=not can_edit, widt
         f"decision **{new_decision}**."
     )
     st.rerun()
+
+
+# -----------------------------------------------------------------------------
+# Quick feedback — ANY reviewer in the meeting can rate (no admin needed). Feeds
+# the learning engine; mirrors the 👍/😐/👎 on the Records page. 3-way so Park
+# (Neutral) doesn't skew the signal.
+# -----------------------------------------------------------------------------
+st.markdown("**Rate this RFP** — quick training signal for the learning engine")
+fb1, fb2, fb3, _fbsp = st.columns([1, 1, 1, 5])
+_fb_good = fb1.button("👍 Good", key=f"fb_good_{row['uid']}", width='stretch',
+                      help="Like a Proceed — a strong match.")
+_fb_neutral = fb2.button("😐 Neutral", key=f"fb_neutral_{row['uid']}", width='stretch',
+                         help="Like a Park — unclear / needs more info.")
+_fb_bad = fb3.button("👎 Bad", key=f"fb_bad_{row['uid']}", width='stretch',
+                     help="Like a Decline — poor match.")
+if _fb_good or _fb_neutral or _fb_bad:
+    _verdict = "good" if _fb_good else ("neutral" if _fb_neutral else "bad")
+    try:
+        from core import decision_log
+        decision_log.log_feedback(row, _verdict, by=user.get("email"))
+        st.toast({"good": "👍 Marked good", "neutral": "😐 Marked neutral",
+                  "bad": "👎 Marked bad"}[_verdict]
+                 + " — thanks, this trains the scorer.", icon="🧠")
+    except Exception as exc:
+        st.warning(f"Couldn't record feedback: {exc}")
+
+st.divider()
 
 
 # -----------------------------------------------------------------------------

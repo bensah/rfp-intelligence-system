@@ -105,7 +105,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
             # "we cannot do this kind of work" — e.g. clinical trials.
             "negative": ["clinical trial", "high risk", "highly experimental"],
         },
-        "must_1_govt_alignment": {
+        "qualification": {
             # MUST 1 = alignment with the TARGET COUNTRY's national health
             # priorities (NOT "is government an eligible applicant"). Most
             # LMIC global-health calls map to national strategies, so this
@@ -127,7 +127,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
                 "basic research", "purely academic", "preclinical",
             ],
         },
-        "must_2_strategic_fit": {
+        "strategic_fit": {
             # Matches the deploying org's strategic program areas + health
             # system strengthening / digital health. One hit → Yes (rigor 1).
             "rigor": 1,
@@ -145,7 +145,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
             ],
             "negative": [],
         },
-        "must_3_implementable": {
+        "capacity": {
             # An LMIC/Africa-targeted health call that cleared the country gate
             # is implementable by default (see criterion_defaults). Geography +
             # field-implementation keywords reinforce it; "pilot only" flips No.
@@ -158,17 +158,17 @@ DEFAULT_POLICIES: dict[str, Any] = {
             ],
             "negative": ["pilot only", "feasibility study only"],
         },
-        "must_4_compliant": {
+        "geographic_fit": {
             "rigor": 2,
             "positive": ["compliance", "regulatory", "approved", "ethical"],
             "negative": [],
         },
-        "must_5_resourcing": {
+        "cofinancing": {
             "rigor": 2,
             "positive": ["funded", "budget", "support package", "partnership", "co-funded"],
             "negative": ["matching funds required", "self-funded only"],
         },
-        "prefer_6_funding_quality": {
+        "funding_quality": {
             "rigor": 2,
             "positive": [
                 "multi-year", "flexible", "core funding",
@@ -176,7 +176,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
             ],
             "negative": ["one-time only", "highly restricted"],
         },
-        "prefer_7_monitorable": {
+        "funder_relationship": {
             "rigor": 2,
             "positive": [
                 "monitoring", "evaluation", "M&E",
@@ -184,12 +184,12 @@ DEFAULT_POLICIES: dict[str, Any] = {
             ],
             "negative": [],
         },
-        "prefer_8_partnership": {
+        "competitiveness": {
             "rigor": 2,
             "positive": ["partner", "collaboration", "consortium", "coalition"],
             "negative": ["sole bidder", "single applicant"],
         },
-        "prefer_9_scale": {
+        "bid_effort": {
             # National / multi-district / regional reach = scale → Yes. A
             # national observatory counts. Single-site work with no scale
             # roadmap stays No (small pilot).
@@ -215,7 +215,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
     "scoring_rules": {
         # US-gov funders trigger reluctance + admin-burden flags. The
         # patterns match against funding_agency case-insensitively. When
-        # any pattern hits, must_4_compliant + must_5_resourcing are forced
+        # any pattern hits, geographic_fit + cofinancing are forced
         # to "Partial" (a yellow flag for reviewers), regardless of what
         # the keyword scorer returned.
         "usg_funders": {
@@ -234,8 +234,8 @@ DEFAULT_POLICIES: dict[str, Any] = {
                 "Grants.gov", "U.S. federal",
             ],
             "forced_values": {
-                "must_4_compliant": "Partial",
-                "must_5_resourcing": "Partial",
+                "geographic_fit": "Partial",
+                "cofinancing": "Partial",
             },
         },
 
@@ -268,7 +268,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
         # Used to encode "default-true unless explicit barrier" (Monitorable)
         # and "default-false unless reviewer confirms" (Partnership).
         "criterion_defaults": {
-            "must_1_govt_alignment": {
+            "qualification": {
                 "enabled": True,
                 "default_value": "Yes",
                 # LMIC global-health calls map to national health priorities
@@ -277,14 +277,14 @@ DEFAULT_POLICIES: dict[str, Any] = {
                 # basic research) — donor-country priorities, not the deploying country's.
                 "respect_negative_keywords": True,
             },
-            "must_3_implementable": {
+            "capacity": {
                 "enabled": True,
                 "default_value": "Yes",
                 # An LMIC-health call past the country gate is implementable
                 # by default; "pilot only" / "feasibility study only" → No.
                 "respect_negative_keywords": True,
             },
-            "must_4_compliant": {
+            "geographic_fit": {
                 "enabled": True,
                 "default_value": "Partial",
                 # PLACEHOLDER until the donor_requirements matrix is wired.
@@ -293,7 +293,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
                 # matrix will set this True/Partial/False per donor.
                 "respect_negative_keywords": True,
             },
-            "must_5_resourcing": {
+            "cofinancing": {
                 "enabled": True,
                 "default_value": "Yes",
                 # Default resourceable — timeline is usually fine for a
@@ -304,7 +304,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
                 # "matching funds required" / "self-funded only" → No.
                 "respect_negative_keywords": True,
             },
-            "prefer_7_monitorable": {
+            "funder_relationship": {
                 "enabled": True,
                 "default_value": "Yes",
                 # Even with no text match, default to Yes — most modern
@@ -312,7 +312,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
                 # keywords explicitly hit (e.g. "no monitoring permitted").
                 "respect_negative_keywords": True,
             },
-            "prefer_8_partnership": {
+            "competitiveness": {
                 "enabled": True,
                 "default_value": "No",
                 # Partnership advantage is a reviewer-confirmed signal
@@ -330,15 +330,15 @@ DEFAULT_POLICIES: dict[str, Any] = {
 # + feasibility leading).
 CRITERION_KEYS: tuple[str, ...] = (
     "feasibility",
-    "must_1_govt_alignment",
-    "must_2_strategic_fit",
-    "must_3_implementable",
-    "must_4_compliant",
-    "must_5_resourcing",
-    "prefer_6_funding_quality",
-    "prefer_7_monitorable",
-    "prefer_8_partnership",
-    "prefer_9_scale",
+    "qualification",
+    "strategic_fit",
+    "capacity",
+    "geographic_fit",
+    "cofinancing",
+    "funding_quality",
+    "funder_relationship",
+    "competitiveness",
+    "bid_effort",
 )
 
 

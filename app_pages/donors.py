@@ -585,7 +585,7 @@ def _edit_dialog(row: dict) -> None:
         c1, c2 = st.columns(2)
         edited["donor"] = c1.text_input("Donor", row.get("donor") or "",
                                         key=f"donor_{row['canonical_key']}")
-        edited["donor_short"] = c2.text_input("Donor short", row.get("donor_short") or "",
+        edited["donor_short"] = c2.text_input("Donor Code", row.get("donor_short") or "",
                                               key=f"donor_short_{row['canonical_key']}")
         c3, c4 = st.columns(2)
         _cur_cat = _normalize_category(row.get("donor_category"))
