@@ -23,7 +23,7 @@ from core import geographies as _geo
 from core import permissions, settings
 from core import program_area_classifier as _pa
 from core.program_area_classifier import category_full as _pa_cat, subarea_label as _pa_sub
-from core.program_area_select import program_area_rating_editor, rating_bars_html
+from core.program_area_select import program_area_matrix_editor, rating_bars_html
 from core.partners import ALL_PARTNERS
 from db.supabase_client import get_client
 
@@ -1035,16 +1035,16 @@ def _edit_dialog(row: dict) -> None:
 
     # ── Scope & fit ──────────────────────────────────────────────────────────
     with t_scope:
-        # Strategic priority areas — the SHARED hierarchical taxonomy + 0–5 grade
-        # per child sub-area (identical schema + grading to the org fit profile,
-        # so the two correlate into a strategic-fit score). Replaces the old
-        # free multiselect AND the *_fit checkbox flags.
-        _sel, _ratings = program_area_rating_editor(
-            "Strategic priority areas (domains / areas of expertise)",
+        # Strategic priority areas — ONE matrix (pick area + grade 0–5) on the
+        # SHARED taxonomy, identical to the org fit profile so the two correlate
+        # into the strategic-fit score. Replaces the cascading dropdowns + the
+        # old *_fit checkbox flags.
+        _sel, _ratings = program_area_matrix_editor(
+            "Strategic priority areas",
             row.get("priority_program_areas"), row.get("program_area_ratings"),
             key_prefix=f"ppa_{ck}",
-            help="Pick a category, then drill into sub-areas. Same vocabulary the "
-                 "org fit profile uses — grade each sub-area 0–5 to drive strategic fit.")
+            help="The donor's funding priorities. Grade 0–5 how central each area is "
+                 "to this funder — matched against your org's priorities for strategic fit.")
         edited["priority_program_areas"] = json.dumps(_sel)
         edited["program_area_ratings"] = json.dumps(_ratings)
         st.divider()
