@@ -142,77 +142,69 @@ def program_area_rating_editor(label, current_selection, current_ratings, key_pr
 
 def program_area_matrix_editor(label, current_selection, current_ratings, key_prefix,
                                *, container=None, help=""):
-    """A clean 3-column cascading grid — Category | Sub-area (filtered to the
-    chosen category) | Priority (0–5) — one row per area, with add / remove.
-    Returns (selection_keys, ratings_dict {child_key: int 0-5}).
+    """Lightweight, clean parent/child grading: ONE Category multiselect (pick the
+    parents) + ONE st.data_editor whose rows are those categories' sub-areas, with
+    a single editable Priority (0–5) column. Returns (selection_keys, ratings_dict).
 
-    Built from per-row widgets (not st.data_editor) because a data-editor column's
-    options can't depend on another cell in the same row — so the child list could
-    not be filtered by the row's category. Row state is kept in session_state keyed
-    by a stable per-row id so add/remove don't scramble values."""
+    Only TWO widgets total (the per-row-widgets version was too heavy: ~4 widgets
+    per area, each interaction re-running the whole script). Rating 0 = not a
+    priority / no track record → that sub-area is simply not selected. Grades are
+    persisted by KEY in session_state, so changing the category set never resets a
+    grade you've already entered."""
     c = container or st
     c.markdown(f"**{label}**")
     if help:
         c.caption(help)
-    c.caption(RATING_LEGEND)
 
-    ids_key, nid_key = f"{key_prefix}_ids", f"{key_prefix}_nextid"
-    if ids_key not in st.session_state:                     # seed once from saved data
-        sel = [k for k in _as_selection(current_selection) if k in PROGRAM_AREA_KEYWORDS]
-        rmap = _as_rating_map(current_ratings)
-        ids = []
-        for n, k in enumerate(sel):
-            ids.append(n)
-            st.session_state[f"{key_prefix}_cat_{n}"] = category_full(k)
-            st.session_state[f"{key_prefix}_sub_{n}"] = subarea_label(k)
-            st.session_state[f"{key_prefix}_rate_{n}"] = int(rmap.get(k, 3))
-        st.session_state[ids_key] = ids
-        st.session_state[nid_key] = len(sel)
+    sel0 = [k for k in _as_selection(current_selection) if k in PROGRAM_AREA_KEYWORDS]
+    # Persistent {child key: grade}, seeded once from the saved data.
+    sk = f"{key_prefix}_ratings_state"
+    if sk not in st.session_state:
+        st.session_state[sk] = {k: v for k, v in _as_rating_map(current_ratings).items()}
+        for k in sel0:                       # selected-but-ungraded → default medium
+            st.session_state[sk].setdefault(k, 3)
+    rstate = st.session_state[sk]
 
-    cat_opts = [""] + CATEGORIES
-    hdr = c.columns([5, 5, 2, 1])
-    hdr[0].caption("**Category**")
-    hdr[1].caption("**Sub-area**")
-    hdr[2].caption("**Priority (0–5)**")
+    # Category (parent) multiselect — default to the categories already in use.
+    cats_key = f"{key_prefix}_cats"
+    if cats_key not in st.session_state:
+        st.session_state[cats_key] = [cat for cat in CATEGORIES
+                                      if cat in {category_full(k) for k in sel0}]
+    cats = c.multiselect(
+        "Categories (parent areas)", CATEGORIES, key=cats_key,
+        help="Pick the parent categories you work in / fund; their sub-areas appear "
+             "below to grade. Set a sub-area to 0 to drop it.")
 
-    remove_id = None
-    for i in list(st.session_state[ids_key]):
-        cat_key, sub_key, rate_key = (f"{key_prefix}_cat_{i}", f"{key_prefix}_sub_{i}",
-                                      f"{key_prefix}_rate_{i}")
-        cols = c.columns([5, 5, 2, 1])
-        cat = cols[0].selectbox("Category", cat_opts, key=cat_key,
-                                label_visibility="collapsed")
-        subs = [""] + TAXONOMY.get(cat, [])
-        if st.session_state.get(sub_key, "") not in subs:   # category changed → drop stale sub
-            st.session_state[sub_key] = ""
-        cols[1].selectbox("Sub-area", subs, key=sub_key, label_visibility="collapsed")
-        st.session_state.setdefault(rate_key, 3)
-        cols[2].number_input("Priority", min_value=0, max_value=5, step=1, key=rate_key,
-                             label_visibility="collapsed")
-        if cols[3].button("✕", key=f"{key_prefix}_rm_{i}", help="Remove this row"):
-            remove_id = i
+    child_keys = [k for cat in cats for sub in TAXONOMY.get(cat, [])
+                  if (k := key_for(cat, sub))]
+    if not child_keys:
+        c.caption("Pick one or more categories to grade their sub-areas.")
+        return [], {}
 
-    if c.button("➕ Add area", key=f"{key_prefix}_add"):
-        nid = st.session_state[nid_key]
-        st.session_state[f"{key_prefix}_rate_{nid}"] = 3
-        st.session_state[ids_key].append(nid)
-        st.session_state[nid_key] += 1
-        st.rerun()
-    if remove_id is not None:
-        st.session_state[ids_key] = [x for x in st.session_state[ids_key] if x != remove_id]
-        st.rerun()
+    c.caption(f"Grade each sub-area — {RATING_LEGEND}")
+    _base = pd.DataFrame({
+        "Category": [category_full(k) for k in child_keys],
+        "Sub-area": [subarea_label(k) for k in child_keys],
+        "Priority (0–5)": [int(rstate.get(k, 0)) for k in child_keys],
+    })
+    _edited = c.data_editor(
+        _base, hide_index=True, width="stretch", num_rows="fixed",
+        key=f"{key_prefix}_tbl_" + "|".join(child_keys),
+        column_config={
+            "Category": st.column_config.TextColumn("Category", disabled=True),
+            "Sub-area": st.column_config.TextColumn("Sub-area", disabled=True, width="medium"),
+            "Priority (0–5)": st.column_config.NumberColumn(
+                "Priority (0–5)", min_value=0, max_value=5, step=1, help=RATING_LEGEND),
+        })
+    for k, v in zip(child_keys, _edited["Priority (0–5)"].tolist()):
+        try:
+            rstate[k] = max(0, min(5, int(v)))
+        except (TypeError, ValueError):
+            rstate[k] = int(rstate.get(k, 0))
 
-    out_sel: list[str] = []
-    out_rat: dict[str, int] = {}
-    for i in st.session_state[ids_key]:
-        cat = st.session_state.get(f"{key_prefix}_cat_{i}", "")
-        sub = st.session_state.get(f"{key_prefix}_sub_{i}", "")
-        if not cat or not sub:
-            continue
-        k = key_for(cat, sub)
-        if k and k not in out_rat:
-            out_sel.append(k)
-            out_rat[k] = max(0, min(5, int(st.session_state.get(f"{key_prefix}_rate_{i}", 3))))
+    # Selection = sub-areas graded > 0 (0 = absent / not a priority).
+    out_sel = [k for k in child_keys if rstate.get(k, 0) > 0]
+    out_rat = {k: int(rstate[k]) for k in out_sel}
     return out_sel, out_rat
 
 
