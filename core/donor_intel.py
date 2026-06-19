@@ -156,20 +156,40 @@ def partnership(row: dict) -> Optional[str]:
     return None
 
 
-# Health / program-area fit columns in the donor matrix.
+# Health / program-area fit columns in the donor matrix (legacy flags — still
+# honoured, but program areas are now primarily captured in priority_program_areas
+# against the shared taxonomy in core.program_area_classifier).
 _HEALTH_FIT_FIELDS = (
     "infectious_diseases_fit", "hiv_aids_fit", "tb_fit", "malaria_fit",
     "immunization_vaccines_fit", "mnch_fit", "srhr_family_planning_fit",
     "nutrition_fit", "ncds_fit", "hss_fit", "digital_health_data_ai_fit",
 )
+# Taxonomy category PREFIXES that count as "health" for MUST-2 alignment.
+_HEALTH_CATEGORY_PREFIXES = ("WCH", "NCDs", "IDs", "HSS", "Cross-cutting")
+_HEALTH_CATEGORY_NAMES = (
+    "Women & Children's Health", "Non-Communicable Diseases",
+    "Infectious Diseases", "Health System Strengthening", "Cross-cutting (Health)",
+)
+
+
+def _has_health_program_area(row: dict) -> bool:
+    """True if priority_program_areas contains any health-category key/name."""
+    raw = row.get("priority_program_areas")
+    if not raw:
+        return False
+    txt = str(raw)
+    if any(name in txt for name in _HEALTH_CATEGORY_NAMES):
+        return True
+    return any(re.search(rf"\b{p}\s*-", txt) for p in _HEALTH_CATEGORY_PREFIXES)
 
 
 def program_alignment(row: dict) -> tuple[Optional[str], Optional[str]]:
     """Derive (MUST-1 govt alignment, MUST-2 strategic fit) from the matched
-    donor's program-area fit + geographic focus. UPGRADE-ONLY: returns 'Yes' or
+    donor's program areas + geographic focus. UPGRADE-ONLY: returns 'Yes' or
     None (never 'No'), so a verified, on-mission donor lifts these criteria but
     a thin keyword read is never penalised by the matrix. None = defer."""
-    health_fit = any(_yes(row, f) for f in _HEALTH_FIT_FIELDS)
+    health_fit = (any(_yes(row, f) for f in _HEALTH_FIT_FIELDS)
+                  or _has_health_program_area(row))
     lmic = _yes(row, "lmic_africa_focus") or _yes(row, "global_multi_country_scope")
     must1 = must2 = None
     if health_fit:

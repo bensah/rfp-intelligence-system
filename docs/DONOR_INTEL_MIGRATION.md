@@ -39,6 +39,63 @@ Run these in the Supabase SQL editor, in order (all are idempotent):
 3. `db/migrations/022_donor_contacts.sql` — creates `donor_contacts`, the one-to-many
    list of focal persons / additional contacts per donor (managed from the Donors
    page, not the workbook).
+4. `db/migrations/025_donor_intel_profile_fields.sql` — adds the qualitative profile
+   (About / footprint / intelligence / `past_projects_json`).
+5. `db/migrations/026_donor_intel_founded.sql` — adds `founded` (year established).
+6. `db/migrations/029_donor_intel_strategic_fields.sql` — adds the **strategic
+   intelligence** fields surfaced by the tabbed edit form and the print-ready
+   profile (see below). Apply this to populate the "Donor Intelligence Report"
+   layout (NIHR / DIV examples in `docs/`).
+7. `db/migrations/030_donor_program_area_ratings.sql` — adds `program_area_ratings`
+   (JSON `{canonical child key: 0–5}`) for the graded **Strategic priority areas**.
+8. `db/migrations/031_donor_funders_collaborators.sql` — adds `funders_collaborators`
+   (JSON array of partner names) — the funders/philanthropies/partners behind or
+   alongside a donor (e.g. the DIV Fund is backed by Coefficient Giving, GiveWell,
+   Livelihood Impact Fund, CRI Foundation, Global Development Incubator, Anonymous
+   Donors). Blank for most donors. Drawn from the shared partner vocabulary
+   (`core/partners.py → ALL_PARTNERS`) merged with the donor catalog, the SAME list
+   the org profile's "Trusted partners" pickers use (accepts typed additions for
+   private firms / academic institutions). `past_projects_json` also gains an
+   optional per-project `link` (JSON-only, no column change).
+
+### Strategic priority areas — shared taxonomy + 0–5 grading (migration 030)
+
+Program areas are captured against ONE shared hierarchical taxonomy
+(`core/program_area_classifier.py` — Category → child sub-areas, e.g.
+`Infectious Diseases → IDs - Malaria & NTDs`), now spanning **health AND social /
+development** sectors (Education, Economic Development, Agriculture, WASH, Climate
+& Environment, Governance, Gender & Inclusion, Humanitarian). The **identical**
+picker + 0–5 grader is used by the donor profile (Donors → Scope & fit → Strategic
+priority areas) and the org fit profile (Admin → Organisation → Strategic priority
+areas, stored in `org_profile.program_area_ratings`). Only child sub-areas are
+graded. `core.matching.strategic_fit_score()` correlates the two 0–5 vectors
+(cosine) into the donor-thematic-fit score; it falls back to set overlap when
+either side is ungraded. The legacy `*_fit` flag columns are retained for
+back-compat but no longer edited in the UI.
+
+### Strategic-intelligence fields (migration 029)
+
+The donor profile is organised into the same sections as a CHAI BD "Donor
+Intelligence Report" (the edit form is tabbed; the View detail + PDF print in that
+order). Migration 029 adds:
+
+| Field | Section | What it captures |
+| --- | --- | --- |
+| `parent_organization` | Identity | The funder behind the fund (e.g. "UK DHSC via ODA", "USAID"). |
+| `strategic_priorities` | About & strategy | Current priorities / rotating themes / period (e.g. "2026 theme: AMR; 2026–2030"). |
+| `in_scope` / `out_of_scope` | Scope & fit | What the donor **does** vs **does not** fund. |
+| `selection_criteria` | Eligibility & process | Evaluation criteria, weights, and what wins. |
+| `eligibility_notes` | Eligibility & process | Who can be lead / co-applicant, partnership & registration rules. |
+| `application_deadlines` | Eligibility & process | Key dates / submission deadline. |
+| `submission_portal_url` | Eligibility & process | Link to the application portal. |
+| `funding_programs` | Funding | Named schemes / windows (distinct from `funding_mechanism` *types*). |
+| `funding_tiers_json` | Funding | JSON array of bands/stages: `[{name, amount, duration, notes}]` (NIHR Band 1/2/3, DIV Stage 1/2/3). |
+| `strategic_fit_notes` | Strategic guidance | Our alignment + comparative advantages. |
+| `gaps_risks` | Strategic guidance | Gaps to address + application risks. |
+| `recommended_approach` | Strategic guidance | Recommended tier/band, positioning, next steps. |
+
+`past_projects_json` (migration 025) also gained two optional per-project keys —
+`stage` and `description` — handled in the JSON payload, so no column change.
 
 > If you add your own columns to the workbook later, add a matching
 > `alter table donor_intel add column if not exists … text;` migration first —
