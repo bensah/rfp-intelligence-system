@@ -641,9 +641,9 @@ def render_org_setup(user, sb):
             _crit_labels = {
                 "qualification": "MUST 1 — Organisational qualification",
                 "strategic_fit": "MUST 2 — Strategic fit",
-                "capacity": "MUST 3 — Delivery capacity",
+                "capacity": "MUST 3 — Implementation capacity",
                 "geographic_fit": "MUST 4 — Geographic fit",
-                "cofinancing": "MUST 5 — Cofinancing requirements",
+                "cofinancing": "MUST 5 — Cofinancing & compliance",
                 "funding_quality": "PREFER 6 — Funding quality",
                 "funder_relationship": "PREFER 7 — Funder relationship",
                 "competitiveness": "PREFER 8 — Competitiveness",
