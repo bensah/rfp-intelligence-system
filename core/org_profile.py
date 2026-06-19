@@ -51,13 +51,15 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "annual_budget_usd": None,              # number — org size / financial-capacity bar
     "largest_grant_usd": None,              # number — absorptive capacity for award size
 
-    # --- strategic_fit (priorities + experience) ---
+    # --- strategic_fit + competitiveness (priorities vs track record) ---
     "domains": [],                          # areas of demonstrated expertise / experience
-    "priority_areas": [],                   # declared strategic priorities
-    "program_area_ratings": {},             # {canonical child key: 0-5 priority} —
-                                            # graded SAME as donor_intel.program_area_ratings,
-                                            # correlated for the graded strategic-fit score
-                                            # (core.matching.strategic_fit_score)
+    "domain_ratings": {},                   # {child key: 0-5} TRACK-RECORD strength per
+                                            # domain — feeds COMPETITIVENESS (how well-placed
+                                            # we are to win an RFP in that exact area)
+    "priority_areas": [],                   # declared strategic priorities (may have no footprint yet)
+    "program_area_ratings": {},             # {child key: 0-5} STRATEGY priority per area —
+                                            # feeds STRATEGIC FIT (MUST-2), correlated with
+                                            # donor_intel.program_area_ratings
 
     # --- geographic_fit (presence) ---
     "countries_of_operation": [],           # where we operate directly
