@@ -97,9 +97,8 @@ def render_org_setup(user, sb):
         bd_team = st.checkbox(
             "We have a Business Development / Fundraising / Resource Mobilization team",
             value=str(_org.get("org_has_bd_team", "false")).lower() == "true",
-            help="Counts as 'sufficient resources' in the Bid effort (PREFER 9) score — "
-                 "combined with days-to-deadline it sets how feasible a proposal is "
-                 "(see the auto-derived Bid effort scale).",
+            key="org_has_bd_team",
+            help="Feeds the Bid-effort feasibility score (PREFER 9).",
         )
         # ---- Logo: file uploader stored as base64 in app_settings -----------
         # The file is encoded inline into the settings table — no filesystem
@@ -217,6 +216,7 @@ def render_org_setup(user, sb):
         legal_type = fp1.selectbox(
             "Legal type", _legal_opts,
             index=_legal_opts.index(_legal_cur) if _legal_cur in _legal_opts else 0,
+            format_func=_orgp.legal_type_label,
             help="Applicant category — matched against each call's eligible-applicant "
                  "rules (qualification).")
         founding_year = fp2.number_input(
@@ -240,9 +240,10 @@ def render_org_setup(user, sb):
             value=int(_prof["largest_grant_usd"]) if _prof.get("largest_grant_usd") else 0,
             help="Absorptive capacity for award size (capacity).")
 
-        st.markdown("**Preferred award size (USD)** — drives funding quality (PREFER 6). "
-                    "Geometric bands: ≤√(low·mid) Low · ≤√(mid·max) Moderate · above High. "
-                    "Leave 0 to use absolute defaults.")
+        _FUNDING_HELP = ("Drives funding quality (PREFER 6). Geometric bands: "
+                         "≤√(low·mid) Low · ≤√(mid·max) Moderate · above High. "
+                         "Leave 0 to use absolute defaults.")
+        st.markdown("**Preferred award size (USD)**", help=_FUNDING_HELP)
         ft1, ft2, ft3 = st.columns(3)
         ftl = ft1.number_input("Target — low (floor)", min_value=0, step=50000,
             value=int(_prof["funding_target_low"]) if _prof.get("funding_target_low") else 0)
@@ -251,8 +252,9 @@ def render_org_setup(user, sb):
         ftx = ft3.number_input("Target — max (ceiling)", min_value=0, step=50000,
             value=int(_prof["funding_target_max"]) if _prof.get("funding_target_max") else 0)
 
-        st.markdown("**Eligibility facts** — matched to each donor's documented "
-                    "conditions for qualification (MUST-1).")
+        st.markdown("**Eligibility facts**",
+                    help="Matched to each donor's documented conditions for "
+                         "qualification (MUST-1).")
         eq1, eq2, eq3, eq4 = st.columns(4)
         org_independent = eq1.checkbox(
             "Independent entity", value=bool(_prof.get("org_is_independent_entity", True)),
@@ -270,6 +272,43 @@ def render_org_setup(user, sb):
             "Org stage", _stage_opts,
             index=_stage_opts.index(_stage_cur) if _stage_cur in _stage_opts else 0,
             help="Some funders fund early-stage organisations only (e.g. DRK).")
+
+        # ── Geography & languages (moved up, right after the eligibility facts) ──
+        geo1, geo2 = st.columns(2)
+        registrations_sel = _ms(geo1, "Countries registered", _geo.COUNTRIES,
+            "countries_registered",
+            help="Legal-registration jurisdictions (qualification).")
+        countries_op_sel = _ms(geo2, "Countries of operation", _geo.GEO_OPTIONS,
+            "countries_of_operation",
+            help="Where you operate directly — same geo vocabulary as donor scope "
+                 "(geographic fit).")
+        langs_sel = _ms(st, "Proposal languages", _LANGS, "proposal_languages",
+            help="Languages you can write a competitive bid in (bid effort).")
+
+        # ── Competitiveness (moved to right after Proposal languages) ────────
+        st.markdown("**Competitiveness**",
+                    help="Drives PREFER 8 against each donor's requirements (org age + "
+                         "grassroots / board / co-financing / multi-country / HQ match).")
+        cmp1, cmp2, cmp3 = st.columns(3)
+        grassroot = cmp1.checkbox(
+            "We are a grassroots / local NGO",
+            value=str(_org.get("org_is_grassroot", "false")).lower() == "true",
+            key="orgp_grassroot",
+            help="Leave UNCHECKED if you're an international NGO. If a donor requires a "
+                 "local/grassroots org and you're international, you're less competitive.")
+        multi_country = cmp2.checkbox(
+            "We are a multi-country organization",
+            value=str(_org.get("org_is_multi_country", "false")).lower() == "true",
+            key="orgp_multi_country",
+            help="Boosts competitiveness when a donor requires multi-country "
+                 "presence / submission.")
+        _hq_opts = ["(none)"] + list(_geo.COUNTRIES)
+        _hq_cur = _org.get("org_hq_country") or "(none)"
+        hq_country = cmp3.selectbox(
+            "HQ country", _hq_opts,
+            index=_hq_opts.index(_hq_cur) if _hq_cur in _hq_opts else 0,
+            key="orgp_hq_country",
+            help="Matching the donor's HQ country boosts competitiveness.")
 
         # TWO distinct, separately-graded matrices on the SAME shared taxonomy:
         #  • Domains / areas of expertise = TRACK RECORD (history of implementing) →
@@ -290,24 +329,12 @@ def render_org_setup(user, sb):
                  "yet (e.g. nutrition 5 = a top priority you're pursuing). Drives "
                  "strategic fit (MUST-2), matched to each donor's graded priorities.")
 
-        # ── Geography — registered first, operation below; languages top-right ──
-        geo1, geo2 = st.columns(2)
-        registrations_sel = _ms(geo1, "Countries registered", _geo.COUNTRIES,
-            "countries_registered",
-            help="Legal-registration jurisdictions (qualification).")
-        langs_sel = _ms(geo2, "Proposal languages", _LANGS, "proposal_languages",
-            help="Languages you can write a competitive bid in (bid effort).")
-        countries_op_sel = _ms(st, "Countries of operation", _geo.GEO_OPTIONS,
-            "countries_of_operation",
-            help="Where you operate directly — same geo vocabulary as donor scope "
-                 "(geographic fit).")
-
-        # ── Partners — ONE table (name · type · country) ─────────────────────
-        st.markdown("**Partners** — all partners in one place (non-profit, for-profit, "
-                    "academic, government, multilateral, …). The type + country power "
-                    "donor conditions that require a SPECIFIC partner (e.g. NIHR → a UK "
-                    "academic institution); any partner also counts toward geographic "
-                    "'via a partner' fit.")
+        # ── Affiliated partners & collaborators — ONE table (name · type · country) ──
+        st.markdown("**Affiliated Partners and Collaborators** (private, non-profit, "
+                    "donors, etc.)",
+                    help="Type + country power donor conditions that require a SPECIFIC "
+                         "partner (e.g. NIHR → a UK academic institution); any partner "
+                         "also counts toward geographic 'via a partner' fit.")
         import pandas as _pd
         _PARTNER_TYPES = ["Nonprofit / NGO", "Academic / research institutions",
                           "For-profit / private", "Government", "Multilateral / UN",
@@ -368,30 +395,6 @@ def render_org_setup(user, sb):
             _portals, "donor_registrations",
             help="Donor application/registration portals you hold (e.g. Grants.gov, "
                  "SAM.gov, wellcome.org). Pick or type to add (qualification).")
-
-        st.markdown("**Competitiveness** — drives PREFER 8 against each donor's "
-                    "requirements (org age + grassroots/board/co-financing/multi-country "
-                    "/ HQ match).")
-        cmp1, cmp2, cmp3 = st.columns(3)
-        grassroot = cmp1.checkbox(
-            "We are a grassroots / local NGO",
-            value=str(_org.get("org_is_grassroot", "false")).lower() == "true",
-            key="orgp_grassroot",
-            help="Leave UNCHECKED if you're an international NGO. If a donor requires a "
-                 "local/grassroots org and you're international, you're less competitive.")
-        multi_country = cmp2.checkbox(
-            "We are a multi-country organization",
-            value=str(_org.get("org_is_multi_country", "false")).lower() == "true",
-            key="orgp_multi_country",
-            help="Boosts competitiveness when a donor requires multi-country "
-                 "presence / submission.")
-        _hq_opts = ["(none)"] + list(_geo.COUNTRIES)
-        _hq_cur = _org.get("org_hq_country") or "(none)"
-        hq_country = cmp3.selectbox(
-            "HQ country", _hq_opts,
-            index=_hq_opts.index(_hq_cur) if _hq_cur in _hq_opts else 0,
-            key="orgp_hq_country",
-            help="Matching the donor's HQ country boosts competitiveness.")
 
         if st.button("💾 Save fit profile", type="primary", key="save_org_fit_profile"):
             _orgp.set_profile({
