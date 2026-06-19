@@ -28,7 +28,7 @@ import streamlit as st
 
 from core import dropdowns
 from core.review_week import review_week_label
-from core.scorer import score_submission
+from core.scorer import CRITERION_RESPONSES, score_submission
 from core.uid_generator import generate_uid
 from db.supabase_client import get_client
 
@@ -113,6 +113,14 @@ def render_submit_form(
     def _none(v):
         return None if v in (NONE, "", None) else v
 
+    def _crit(label: str, key: str, criterion: str):
+        """Per-criterion dropdown using the CURRENT response vocabulary
+        (core.scorer.CRITERION_RESPONSES). Defaults to 'Not sure' (= unscored /
+        missing) so the submitter sets only what they actually know."""
+        opts = CRITERION_RESPONSES.get(criterion) or list(elig)
+        didx = opts.index("Not sure") if "Not sure" in opts else 0
+        return st.selectbox(label, opts, index=didx, key=_k(key))
+
     # ------------------------------------------------------------------
     # Form
     # ------------------------------------------------------------------
@@ -188,37 +196,27 @@ def render_submit_form(
 
         st.subheader("2. Eligibility")
         st.caption(
-            "Each criterion defaults to **Partial** — adjust to True or False "
-            "as appropriate. There's no 'unset' state; every field "
-            "contributes to the alignment score."
+            "Answer each criterion with the best-fit option. **Not sure** leaves it "
+            "unscored (treated as missing — it won't drag the score down). MUST 1–5 "
+            "are hard; any clear **No** means decline."
         )
         c_f, _spacer = st.columns([1, 3])
-        feas = c_f.selectbox("Feasibility *", _none_first(feasibility),
-                             key=_k("feas"))
-
-        elig_default = elig.index("Partial") if "Partial" in elig else 0
+        feas = c_f.selectbox("Feasibility", _none_first(feasibility),
+                             key=_k("feas"),
+                             help="Optional — feasibility is no longer a scored criterion.")
 
         grid_l, grid_r = st.columns(2)
         with grid_l:
-            m1 = st.selectbox("MUST 1 — Organisational qualification", elig,
-                              index=elig_default, key=_k("m1"))
-            m2 = st.selectbox("MUST 2 — Strategic fit", elig,
-                              index=elig_default, key=_k("m2"))
-            m3 = st.selectbox("MUST 3 — Delivery capacity", elig,
-                              index=elig_default, key=_k("m3"))
-            m4 = st.selectbox("MUST 4 — Geographic fit", elig,
-                              index=elig_default, key=_k("m4"))
-            m5 = st.selectbox("MUST 5 — Co-financing requirements", elig,
-                              index=elig_default, key=_k("m5"))
+            m1 = _crit("MUST 1 — Organisational qualification", "m1", "qualification")
+            m2 = _crit("MUST 2 — Strategic fit", "m2", "strategic_fit")
+            m3 = _crit("MUST 3 — Delivery capacity", "m3", "capacity")
+            m4 = _crit("MUST 4 — Geographic fit", "m4", "geographic_fit")
+            m5 = _crit("MUST 5 — Co-financing requirements", "m5", "cofinancing")
         with grid_r:
-            p6 = st.selectbox("PREFER 6 — Funding quality", elig,
-                              index=elig_default, key=_k("p6"))
-            p7 = st.selectbox("PREFER 7 — Funder relationship", elig,
-                              index=elig_default, key=_k("p7"))
-            p8 = st.selectbox("PREFER 8 — Competitiveness", elig,
-                              index=elig_default, key=_k("p8"))
-            p9 = st.selectbox("PREFER 9 — Bid effort", elig,
-                              index=elig_default, key=_k("p9"))
+            p6 = _crit("PREFER 6 — Funding quality", "p6", "funding_quality")
+            p7 = _crit("PREFER 7 — Funder relationship", "p7", "funder_relationship")
+            p8 = _crit("PREFER 8 — Competitiveness", "p8", "competitiveness")
+            p9 = _crit("PREFER 9 — Bid effort", "p9", "bid_effort")
 
         st.subheader("3. Decline flags & risks")
         c_df, _spacer2 = st.columns([1, 3])
@@ -230,9 +228,9 @@ def render_submit_form(
 
         st.subheader("4. Initial decision (your recommendation)")
         c_d, c_dr = st.columns([1, 3])
-        decision = c_d.selectbox("Decision *", _none_first(decisions),
+        decision = c_d.selectbox("Bid decision *", _none_first(decisions),
                                  key=_k("decision"))
-        rationale = c_dr.text_area("Decision rationale (2-3 lines)",
+        rationale = c_dr.text_area("Decision rationale (1–2 lines)",
                                    height=80, key=_k("rationale"))
 
         st.subheader("5. Team")
@@ -255,8 +253,6 @@ def render_submit_form(
         errors.append("Opportunity title is required.")
     if not resolved.get("funder"):
         errors.append("Funder is required.")
-    if _none(feas) is None:
-        errors.append("Feasibility is required.")
     if _none(decision) is None:
         errors.append("Decision is required.")
     if not resolved.get("prop_lead"):
