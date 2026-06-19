@@ -205,7 +205,7 @@ with st.container(border=True):
 with st.container(border=True):
     st.markdown("#### 🤝 Funders & languages")
     _kv(st, "Donors we've won grants/awards from", ", ".join(prof.get("funder_history") or []) or "—")
-    _kv(st, "Donor registrations (portals)", ", ".join(prof.get("donor_registrations") or []) or "—")
+    _kv(st, "Donor portal registration active", ", ".join(prof.get("donor_registrations") or []) or "—")
     _kv(st, "Proposal languages", ", ".join(prof.get("proposal_languages") or []) or "—")
 
 # ── Team ──────────────────────────────────────────────────────────────────────
