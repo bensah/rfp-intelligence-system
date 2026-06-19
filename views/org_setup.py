@@ -290,30 +290,24 @@ def render_org_setup(user, sb):
                  "yet (e.g. nutrition 5 = a top priority you're pursuing). Drives "
                  "strategic fit (MUST-2), matched to each donor's graded priorities.")
 
-        gc1, gc2 = st.columns(2)
-        countries_op_sel = _ms(gc1, "Countries of operation", _geo.GEO_OPTIONS,
+        # ── Geography — registered first, operation below; languages top-right ──
+        geo1, geo2 = st.columns(2)
+        registrations_sel = _ms(geo1, "Countries registered", _geo.COUNTRIES,
+            "countries_registered",
+            help="Legal-registration jurisdictions (qualification).")
+        langs_sel = _ms(geo2, "Proposal languages", _LANGS, "proposal_languages",
+            help="Languages you can write a competitive bid in (bid effort).")
+        countries_op_sel = _ms(st, "Countries of operation", _geo.GEO_OPTIONS,
             "countries_of_operation",
             help="Where you operate directly — same geo vocabulary as donor scope "
                  "(geographic fit).")
-        partners_sel = _ms(gc2,
-            "Trusted non-profit partners (bilaterals, multilaterals, INGOs, philanthropies)",
-            NONPROFIT_PARTNERS, "trusted_partners",
-            help="Pick from the curated partner list; choose 'Other' / type to add a "
-                 "missing one (geographic fit).")
 
-        tp1, tp2 = st.columns(2)
-        forprofit_sel = _ms(tp1, "Trusted for-profit partners",
-            [], "trusted_for_profit_partners",
-            help="For-profit firms you partner / form a consortium with. Type to add — "
-                 "your entries are saved so the next user can pick them.")
-        academic_sel = _ms(tp2, "Trusted academic institutions",
-            [], "trusted_academic_institutions",
-            help="Universities / research institutions. Type to add — saved for reuse "
-                 "by the next user.")
-
-        st.markdown("**Partners (with type + country)** — for donor conditions that "
-                    "require a SPECIFIC partner (e.g. NIHR → a UK academic institution). "
-                    "Add as many as apply (qualification).")
+        # ── Partners — ONE table (name · type · country) ─────────────────────
+        st.markdown("**Partners** — all partners in one place (non-profit, for-profit, "
+                    "academic, government, multilateral, …). The type + country power "
+                    "donor conditions that require a SPECIFIC partner (e.g. NIHR → a UK "
+                    "academic institution); any partner also counts toward geographic "
+                    "'via a partner' fit.")
         import pandas as _pd
         _PARTNER_TYPES = ["Nonprofit / NGO", "Academic / research institutions",
                           "For-profit / private", "Government", "Multilateral / UN",
@@ -328,15 +322,32 @@ def render_org_setup(user, sb):
             s = str(v).strip()
             return "" if s.lower() in ("nan", "none") else s
 
-        _pbase = _pd.DataFrame(_prof.get("partners") or [],
-                               columns=["name", "type", "country"])
+        # Seed the table from the structured `partners` PLUS the legacy flat lists
+        # (one-time merge — each legacy partner becomes a row with its type filled;
+        # country left blank to complete). On save, everything is stored in
+        # `partners` and the flat lists are consolidated away.
+        _seed = [dict(p) for p in (_prof.get("partners") or []) if isinstance(p, dict)]
+        _seen = {_pc(p.get("name")).lower() for p in _seed}
+
+        def _merge(names, ptype):
+            for n in (names or []):
+                nm = str(n).strip()
+                if nm and nm.lower() not in _seen:
+                    _seen.add(nm.lower())
+                    _seed.append({"name": nm, "type": ptype, "country": ""})
+
+        _merge(_prof.get("trusted_partners"), "Nonprofit / NGO")
+        _merge(_prof.get("trusted_for_profit_partners"), "For-profit / private")
+        _merge(_prof.get("trusted_academic_institutions"), "Academic / research institutions")
+
+        _pbase = _pd.DataFrame(_seed, columns=["name", "type", "country"])
         for _c in ("name", "type", "country"):
             _pbase[_c] = _pbase[_c].astype("string")
         _ped = st.data_editor(
             _pbase, num_rows="dynamic", hide_index=True, width="stretch",
             key="orgp_partners_tbl",
             column_config={
-                "name": st.column_config.TextColumn("Partner name", width="medium"),
+                "name": st.column_config.TextColumn("Partner name", width="large"),
                 "type": st.column_config.SelectboxColumn("Type", options=_PARTNER_TYPES, width="medium"),
                 "country": st.column_config.SelectboxColumn("Country", options=list(_geo.COUNTRIES), width="medium"),
             })
@@ -347,22 +358,16 @@ def render_org_setup(user, sb):
                 partners_struct.append({"name": _nm, "type": _pc(_r.get("type")),
                                         "country": _pc(_r.get("country"))})
 
-        qc1, qc2 = st.columns(2)
-        registrations_sel = _ms(qc1, "Countries registered", _geo.COUNTRIES,
-            "countries_registered",
-            help="Legal-registration jurisdictions (qualification).")
-        donor_regs_sel = _ms(qc2, "Donor registrations (donor portal)",
-            _portals, "donor_registrations",
-            help="Donor application/registration portals you hold (e.g. Grants.gov, "
-                 "SAM.gov, wellcome.org). Pick or type to add (qualification).")
-
-        fh1, fh2 = st.columns(2)
-        funders_sel = _ms(fh1, "Donors we've already won grants / awards from",
+        # ── Funders & donor registrations (registrations swapped to here) ────
+        fr1, fr2 = st.columns(2)
+        funders_sel = _ms(fr1, "Donors we've already won grants / awards from",
             _donor_names, "funder_history",
             help="Pick from the Donor Intelligence catalog (or type to add) — "
                  "past / current funders (funder relationship).")
-        langs_sel = _ms(fh2, "Proposal languages", _LANGS, "proposal_languages",
-            help="Languages you can write a competitive bid in (bid effort).")
+        donor_regs_sel = _ms(fr2, "Donor registrations (donor portal)",
+            _portals, "donor_registrations",
+            help="Donor application/registration portals you hold (e.g. Grants.gov, "
+                 "SAM.gov, wellcome.org). Pick or type to add (qualification).")
 
         st.markdown("**Competitiveness** — drives PREFER 8 against each donor's "
                     "requirements (org age + grassroots/board/co-financing/multi-country "
@@ -408,9 +413,13 @@ def render_org_setup(user, sb):
                 "priority_areas": priorities_sel,
                 "program_area_ratings": priority_ratings,
                 "countries_of_operation": countries_op_sel,
-                "trusted_partners": partners_sel,
-                "trusted_for_profit_partners": forprofit_sel,
-                "trusted_academic_institutions": academic_sel,
+                # Partners now live in the single `partners` table above. The flat
+                # lists are kept (consolidated) only for back-compat readers:
+                # trusted_partners = every partner name (geographic 'via a partner'
+                # fit), and the for-profit/academic lists collapse into it.
+                "trusted_partners": [p["name"] for p in partners_struct],
+                "trusted_for_profit_partners": [],
+                "trusted_academic_institutions": [],
                 "countries_registered": registrations_sel,
                 "donor_registrations": donor_regs_sel,
                 "funder_history": funders_sel,
