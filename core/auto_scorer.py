@@ -1539,6 +1539,46 @@ def _apply_criteria_keywords(values: dict[str, Any], text: str,
     return values
 
 
+# Below this description length (chars) a candidate with no other substantive
+# field counts as a "blank cheque" — nothing to judge.
+_BLANK_DESC_MIN = 140
+
+
+def _is_blank_cheque(candidate: dict[str, Any]) -> bool:
+    """True when the candidate carries essentially NO substantive data to judge —
+    no deadline, no real award value, no geography, no SPECIFIC program area, and
+    only a threadbare description (e.g. a paywalled / premium-listing anchor that
+    yielded just a title). Such a row must not earn a positive score off the
+    fabricated optimistic defaults (qualification "Yes, fully" when nothing is
+    documented, etc.) — there's nothing to bid on, so it is declined."""
+    if candidate.get("submission_deadline"):
+        return False
+    val = candidate.get("estimated_value")
+    try:
+        if val is not None and float(val) > 0:   # float('nan') > 0 is False — good
+            return False
+    except (TypeError, ValueError):
+        pass
+
+    def _listed(x) -> bool:
+        if not x:
+            return False
+        if isinstance(x, (list, tuple)):
+            return any(str(i).strip() for i in x)
+        return bool(str(x).strip())
+
+    if _listed(candidate.get("geographic_scope")):
+        return False
+    pa = candidate.get("program_area")
+    pa_list = pa if isinstance(pa, (list, tuple)) else ([pa] if pa else [])
+    from core.program_area_classifier import PROGRAM_AREA_KEYWORDS as _PAK
+    if any(str(p) in _PAK for p in pa_list):
+        return False
+    if len((candidate.get("brief_description") or "").strip()) >= _BLANK_DESC_MIN:
+        return False
+    return True
+
+
 def auto_score(
     candidate: dict[str, Any], policies: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1658,6 +1698,19 @@ def auto_score(
     # calls dropped entirely).
     if rec == "Proceed" and _geo_strength(candidate, policies) != "strong":
         rec = "Park"
+
+    # BLANK-CHEQUE GUARD (final say): a candidate with no substantive data to judge
+    # (no deadline, value, geography, specific program area, or real description)
+    # must not score off fabricated positive defaults. Clear those fake positives
+    # back to "Not sure" and DECLINE — there's nothing to bid on. This overrides
+    # the sparse-text→Park promotion above (that one parks <200-char rows for
+    # review; a true blank cheque is declined, not parked).
+    if _is_blank_cheque(candidate):
+        for _k in (*_MUST_KEYS, *_PREFER_KEYS):
+            values[_k] = None
+        score = 0.0
+        rec = "Decline"
+        decline_flags = True
 
     # Default applicant role = Prime unless RFP text demands a research /
     # region-specific institution (in which case the deploying org applies
