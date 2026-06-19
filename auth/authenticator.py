@@ -229,7 +229,15 @@ def login_gate() -> Optional[dict[str, Any]]:
 
     email = st.session_state.get("username")
     name = st.session_state.get("name")
-    user = _fetch_user(email) if email else None
+    try:
+        user = _fetch_user(email) if email else None
+    except Exception as exc:  # transient DB/network failure that survived retries
+        st.error(
+            "⚠ Couldn't reach the database right now (temporary network / Supabase "
+            "hiccup). Refresh the page to try again."
+        )
+        st.caption(f"Details: {type(exc).__name__}")
+        st.stop()
 
     if not user or not user.get("is_active"):
         st.error("Your account is inactive. Contact an administrator.")
@@ -265,9 +273,30 @@ def _render_sidebar_user(user: dict[str, Any], auth=None) -> None:
 
 
 def _fetch_user(email: str) -> Optional[dict[str, Any]]:
-    sb = get_client()
-    res = sb.table("users").select("*").eq("email", email).limit(1).execute()
-    return res.data[0] if res.data else None
+    """Fetch the user row, resilient to transient Supabase/httpx blips.
+
+    The cached client can hand back a keep-alive connection the server already
+    closed (common after the app sits idle), so the first request fails with
+    httpx.RemoteProtocolError. Retry a few times, and on each transient failure
+    DROP the cached client so get_client() rebuilds a fresh httpx pool — a
+    same-client retry could otherwise re-hit the very same dead connection.
+    """
+    import time as _time
+    from db import supabase_client as _sc
+
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            sb = _sc.get_client()
+            res = sb.table("users").select("*").eq("email", email).limit(1).execute()
+            return res.data[0] if res.data else None
+        except Exception as exc:  # noqa: BLE001 — re-raised below if not transient
+            if type(exc).__name__ not in _sc._TRANSIENT_EXC:
+                raise
+            last_exc = exc
+            _sc.get_client.cache_clear()       # force a fresh client/pool next loop
+            _time.sleep(0.4 * (attempt + 1))
+    raise last_exc if last_exc else RuntimeError("could not reach the database")
 
 
 def _record_login(email: str) -> None:
