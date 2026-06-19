@@ -108,6 +108,27 @@ LIST_FIELDS: tuple[str, ...] = (
 
 COFINANCING_LEVELS: tuple[str, ...] = ("none", "limited", "moderate", "strong")
 
+# Canonical legal_type buckets -> human-readable labels. Stored value stays the
+# canonical code (matched by the scan/scorer); the form dropdown and the
+# read-only Organization view show the label via legal_type_label().
+LEGAL_TYPE_LABELS: dict[str, str] = {
+    "nonprofit": "Non-profit organization",
+    "government": "Government",
+    "higher_ed": "Higher Education",
+    "for_profit": "For-profit company",
+    "individual": "Individual",
+    "tribal": "Tribal organization",
+}
+
+
+def legal_type_label(code: Any) -> str:
+    """Readable label for a stored legal_type code; unknown codes are
+    title-cased with underscores stripped, empty -> em dash."""
+    s = str(code or "").strip()
+    if not s:
+        return "—"
+    return LEGAL_TYPE_LABELS.get(s, s.replace("_", " ").title())
+
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
     """base merged with overlay (overlay wins; lists replace wholesale)."""
