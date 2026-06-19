@@ -357,7 +357,8 @@ with gauge_col:
         f"composite {_match['composite']:.0f} = 80% criteria "
         f"({_match['criteria_score']:.0f}) + 20% donor-org ({_match['extras_score']:.0f})  ·  "
         f"donor-org: thematic {_tick(_ex['donor_thematic_fit'])} · "
-        f"geo {_tick(_ex['donor_geographic_fit'])} · route {_tick(_ex['donor_route_fit'])}"
+        f"geo {_tick(_ex['donor_geographic_fit'])} · route {_tick(_ex['donor_route_fit'])} · "
+        f"relationship {_tick(_ex.get('donor_relationship_fit', 0.5))}"
         + ("" if _donor else "  ·  _(no donor profile matched — donor-org neutral)_")
     )
     st.caption(
