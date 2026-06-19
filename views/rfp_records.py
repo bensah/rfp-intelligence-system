@@ -540,9 +540,9 @@ def edit_dialog(row: dict) -> None:
         with gl:
             m1 = _elig("MUST 1 — Govt alignment", "m1", row.get("qualification"))
             m2 = _elig("MUST 2 — Strategic fit", "m2", row.get("strategic_fit"))
-            m3 = _elig("MUST 3 — Implementable", "m3", row.get("capacity"))
+            m3 = _elig("MUST 3 — Implementation capacity", "m3", row.get("capacity"))
             m4 = _elig("MUST 4 — Compliant", "m4", row.get("geographic_fit"))
-            m5 = _elig("MUST 5 — Resourcing", "m5", row.get("cofinancing"))
+            m5 = _elig("MUST 5 — Cofinancing & compliance", "m5", row.get("cofinancing"))
         with gr:
             p6 = _elig("PREFER 6 — Funding quality", "p6", row.get("funding_quality"))
             p7 = _elig("PREFER 7 — Monitorable", "p7", row.get("funder_relationship"))
