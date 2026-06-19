@@ -634,6 +634,13 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
             _skip = len(rfp_rows) - len(_new)
             for i in range(0, len(_new), 200):
                 sb.table("rfp_submissions").insert(_new[i:i + 200]).execute()
+            # Tombstone the imported rows in the permanent seen-ledger so they're
+            # remembered (never silently re-scanned in) even if later deleted.
+            try:
+                from core import seen_ledger
+                seen_ledger.record(_new, reason="migration")
+            except Exception as _e:
+                print(f"  (seen-ledger record skipped: {_e})")
             print(f"  rfp_submissions: {len(_new)} NEW inserted · "
                   f"{_skip} existing skipped (not overwritten)")
 
