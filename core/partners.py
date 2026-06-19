@@ -120,12 +120,13 @@ PARTNERS: list[tuple[str, str, int | None]] = [
     ("Malaria No More", "MNM", 2006),
     # Philanthropic / pooled funders & collaborators (e.g. DIV Fund backers).
     ("Development Innovation Ventures Fund", "DIV Fund", None),
-    ("Coefficient Giving", "Coefficient Giving", None),
+    ("Coefficient Giving", "Coefficient Giving", 2017),   # formerly Open Philanthropy
     ("GiveWell", "GiveWell", 2007),
     ("Livelihood Impact Fund", "Livelihood Impact Fund", None),
-    ("CRI Foundation", "CRI Foundation", None),
-    ("Global Development Incubator", "Global Development Incubator", 2013),
+    ("CRI Foundation", "CRI Foundation", 2006),
+    ("Global Development Incubator", "Global Development Incubator", 2007),
     ("Anonymous Donors", "Anonymous Donors", None),
+    ("UK Department of Health and Social Care", "DHSC", 2018),
 ]
 
 # Display options for partner pickers: "Name (ACRONYM)" — but just "Name" when
