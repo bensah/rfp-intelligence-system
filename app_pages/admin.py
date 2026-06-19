@@ -309,6 +309,37 @@ with tab_settings:
             value=int(_prof["largest_grant_usd"]) if _prof.get("largest_grant_usd") else 0,
             help="Absorptive capacity for award size (capacity).")
 
+        st.markdown("**Preferred award size (USD)** — drives funding quality (PREFER 6). "
+                    "Geometric bands: ≤√(low·mid) Low · ≤√(mid·max) Moderate · above High. "
+                    "Leave 0 to use absolute defaults.")
+        ft1, ft2, ft3 = st.columns(3)
+        ftl = ft1.number_input("Target — low (floor)", min_value=0, step=50000,
+            value=int(_prof["funding_target_low"]) if _prof.get("funding_target_low") else 0)
+        ftm = ft2.number_input("Target — mid (sweet spot)", min_value=0, step=50000,
+            value=int(_prof["funding_target_mid"]) if _prof.get("funding_target_mid") else 0)
+        ftx = ft3.number_input("Target — max (ceiling)", min_value=0, step=50000,
+            value=int(_prof["funding_target_max"]) if _prof.get("funding_target_max") else 0)
+
+        st.markdown("**Eligibility facts** — matched to each donor's documented "
+                    "conditions for qualification (MUST-1).")
+        eq1, eq2, eq3, eq4 = st.columns(4)
+        org_independent = eq1.checkbox(
+            "Independent entity", value=bool(_prof.get("org_is_independent_entity", True)),
+            key="orgp_independent",
+            help="NOT a branch/affiliate of a larger INGO. Some funders exclude affiliates.")
+        org_sam_uei = eq2.checkbox(
+            "Holds SAM.gov / UEI", value=bool(_prof.get("org_has_sam_uei", False)),
+            key="orgp_sam_uei")
+        org_tax_exempt = eq3.checkbox(
+            "Tax-exempt (501c3 / equiv.)", value=bool(_prof.get("org_tax_exempt", False)),
+            key="orgp_tax_exempt")
+        _stage_opts = ["established", "early-stage"]
+        _stage_cur = _prof.get("org_stage", "established")
+        org_stage = eq4.selectbox(
+            "Org stage", _stage_opts,
+            index=_stage_opts.index(_stage_cur) if _stage_cur in _stage_opts else 0,
+            help="Some funders fund early-stage organisations only (e.g. DRK).")
+
         # TWO distinct, separately-graded matrices on the SAME shared taxonomy:
         #  • Domains / areas of expertise = TRACK RECORD (history of implementing) →
         #    feeds COMPETITIVENESS (how well-placed we are to win in that exact area).
@@ -348,6 +379,42 @@ with tab_settings:
             [], "trusted_academic_institutions",
             help="Universities / research institutions. Type to add — saved for reuse "
                  "by the next user.")
+
+        st.markdown("**Partners (with type + country)** — for donor conditions that "
+                    "require a SPECIFIC partner (e.g. NIHR → a UK academic institution). "
+                    "Add as many as apply (qualification).")
+        import pandas as _pd
+        _PARTNER_TYPES = ["Nonprofit / NGO", "Academic / research institutions",
+                          "For-profit / private", "Government", "Multilateral / UN",
+                          "Bilateral / development agency", "Philanthropy / foundation"]
+
+        def _pc(v):
+            try:
+                if v is None or _pd.isna(v):
+                    return ""
+            except (TypeError, ValueError):
+                pass
+            s = str(v).strip()
+            return "" if s.lower() in ("nan", "none") else s
+
+        _pbase = _pd.DataFrame(_prof.get("partners") or [],
+                               columns=["name", "type", "country"])
+        for _c in ("name", "type", "country"):
+            _pbase[_c] = _pbase[_c].astype("string")
+        _ped = st.data_editor(
+            _pbase, num_rows="dynamic", hide_index=True, width="stretch",
+            key="orgp_partners_tbl",
+            column_config={
+                "name": st.column_config.TextColumn("Partner name", width="medium"),
+                "type": st.column_config.SelectboxColumn("Type", options=_PARTNER_TYPES, width="medium"),
+                "country": st.column_config.SelectboxColumn("Country", options=list(_geo.COUNTRIES), width="medium"),
+            })
+        partners_struct = []
+        for _r in _ped.to_dict("records"):
+            _nm = _pc(_r.get("name"))
+            if _nm:
+                partners_struct.append({"name": _nm, "type": _pc(_r.get("type")),
+                                        "country": _pc(_r.get("country"))})
 
         qc1, qc2 = st.columns(2)
         registrations_sel = _ms(qc1, "Countries registered", _geo.COUNTRIES,
@@ -397,6 +464,14 @@ with tab_settings:
                 "cofinancing_capacity": cofin,
                 "annual_budget_usd": int(annual_budget) or None,
                 "largest_grant_usd": int(largest_grant) or None,
+                "funding_target_low": int(ftl) or None,
+                "funding_target_mid": int(ftm) or None,
+                "funding_target_max": int(ftx) or None,
+                "org_is_independent_entity": bool(org_independent),
+                "org_has_sam_uei": bool(org_sam_uei),
+                "org_tax_exempt": bool(org_tax_exempt),
+                "org_stage": org_stage,
+                "partners": partners_struct,
                 "domains": domains_sel,
                 "domain_ratings": domain_ratings,
                 "priority_areas": priorities_sel,
