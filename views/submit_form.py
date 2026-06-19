@@ -228,15 +228,15 @@ def render_submit_form(
                 "MUST 2 — Strategic fit", "m2", "strategic_fit",
                 "Does this RFP fit our defined strategic priorities?")
             m3 = _crit(
-                "MUST 3 — Delivery capacity", "m3", "capacity",
-                "Can we deliver at the stated award size and scope (team, systems, "
+                "MUST 3 — Implementation capacity", "m3", "capacity",
+                "Can we implement at the stated award size and scope (team, systems, "
                 "a grant size we can manage)?")
             m4 = _crit(
                 "MUST 4 — Geographic fit", "m4", "geographic_fit",
                 "Does the funder's geographic scope align with where we currently "
                 "have operations / programs or a trusted partner?")
             m5 = _crit(
-                "MUST 5 — Co-financing / compliance", "m5", "cofinancing",
+                "MUST 5 — Cofinancing & compliance", "m5", "cofinancing",
                 "Can we meet any co-financing / match and the funder's compliance "
                 "requirements? (Yes, none required → we can; No, required → it's "
                 "required and we can't.)")
