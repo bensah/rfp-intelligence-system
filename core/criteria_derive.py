@@ -8,14 +8,16 @@ override any value; this only runs in auto_score for the auto-scan path.
 
 Definitions encoded (see the bid/no-bid questionnaire):
   qualification        passed the hard gate ⇒ formally eligible
-  strategic_fit        priorities (org.priority_areas) AND experience (org.domains)
-                       vs rfp.program_area
+  strategic_fit        org STRATEGY (org.priority_areas + program_area_ratings)
+                       correlated with the DONOR's graded priorities → Strongly
+                       aligns / Limited priority / Off-strategy (experience excluded)
   capacity             rfp.estimated_value vs org.largest_grant_usd / annual_budget_usd
   geographic_fit       rfp.geographic_scope vs org.countries_of_operation / trusted_partners
   cofinancing          rfp cost-share requirement vs org.cofinancing_capacity
   funding_quality      rfp.estimated_value tiers
   funder_relationship  rfp.funding_agency in org.funder_history
-  competitiveness      no objective source yet → None (human picks)
+  competitiveness      org TRACK RECORD (org.domains + domain_ratings) on the RFP's
+                       exact program area + donor-requirement fit (board/grassroots/…)
   bid_effort           days-to-deadline × org_has_bd_team (core.scorer.bid_effort_label)
 """
 from __future__ import annotations
@@ -67,21 +69,30 @@ def _rfp_program_keys(rfp: dict) -> set[str]:
 
 
 # --- per-criterion derivations (return a CRITERION_RESPONSES label or None) ---
-def derive_strategic_fit(org: dict, rfp: dict) -> str | None:
+def derive_strategic_fit(org: dict, rfp: dict, donor: dict | None = None) -> str | None:
+    """STRATEGIC FIT (MUST-2): does this funder fit our *strategy*? Correlate the
+    org's graded strategic priority areas with the DONOR's graded priorities:
+      ≥60% → Strongly aligns · 20–<60% → Limited priority · <20% → Off-strategy.
+    Falls back to org-priorities-vs-RFP-program-area overlap when the donor has no
+    graded priorities; None ('Not sure') when there's no signal either way.
+    NOTE: experience/track-record now lives in competitiveness, not here."""
+    from core.matching import strategic_fit_score      # local import (no cycle)
+    score = strategic_fit_score(
+        org.get("priority_areas"), org.get("program_area_ratings"),
+        (donor or {}).get("priority_program_areas"),
+        (donor or {}).get("program_area_ratings"))
+    if score is not None:
+        if score >= 0.60:
+            return "Strongly aligns"
+        if score >= 0.20:
+            return "Limited priority"
+        return "Off-strategy"
+    # Fallback: org priorities vs the RFP's own program area (binary overlap).
     rfp_keys = _rfp_program_keys(rfp)
     org_pri = org.get("priority_areas") or []
-    org_dom = org.get("domains") or []
-    if not rfp_keys or (not org_pri and not org_dom):
+    if not rfp_keys or not org_pri:
         return None
-    pri = bool(_pa.expand(org_pri) & rfp_keys) if org_pri else False
-    exp = bool(_pa.expand(org_dom) & rfp_keys) if org_dom else False
-    if pri and exp:
-        return "Strong - priorities + experience"
-    if pri:
-        return "Priority area, limited experience"
-    if exp:
-        return "Experienced but off-strategy"
-    return "Neither"
+    return "Strongly aligns" if (_pa.expand(org_pri) & rfp_keys) else "Off-strategy"
 
 
 def derive_capacity(org: dict, rfp: dict) -> str | None:
@@ -225,6 +236,18 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
     org_settings = org_settings or {}
     score, signals = 0.0, 0
 
+    # Track record on the RFP's EXACT program area — the strongest competitiveness
+    # signal. Build the org's 0–5 domain (experience) vector and read the best
+    # rating across the call's program keys: strong record = an edge; none = wide open.
+    rfp_keys = _rfp_program_keys(rfp)
+    if rfp_keys and (org.get("domains") or org.get("domain_ratings")):
+        from core.matching import _priority_vector       # local import (no cycle)
+        dvec = _priority_vector(org.get("domains"), org.get("domain_ratings"))
+        if dvec:
+            signals += 1
+            strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0)  # 0–5
+            score += 1.5 if strength >= 4 else (0.5 if strength >= 2 else -1.0)
+
     fy = _num(org.get("founding_year"))
     if fy:
         signals += 1
@@ -278,7 +301,7 @@ def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = Non
     org = org or {}
     return {
         "qualification": "Yes, fully",
-        "strategic_fit": derive_strategic_fit(org, rfp),
+        "strategic_fit": derive_strategic_fit(org, rfp, donor),
         "capacity": derive_capacity(org, rfp),
         "geographic_fit": derive_geographic_fit(org, rfp),
         "cofinancing": derive_cofinancing(org, rfp, donor),
