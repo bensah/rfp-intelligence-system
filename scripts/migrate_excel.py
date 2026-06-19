@@ -616,7 +616,26 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
                 print(f"  derived submitted_by_email for {filled} row(s) from users")
         except Exception as exc:
             print(f"  (skipped email derivation: {exc})")
-    upsert("rfp_submissions", rfp_rows, conflict_key="uid")
+    # Insert-ONLY-new (2026-06-19): never overwrite RFPs already in the system.
+    # Re-importing the Excel must NOT push old-dimension criteria values into the
+    # renamed columns — only brand-new Form_IDs (uids) are migrated; existing rows
+    # keep their reviewed values untouched.
+    if dry_run:
+        print(f"  rfp_submissions (dry-run): {len(rfp_rows)} mapped — would insert NEW uids only")
+    elif sb is not None and rfp_rows:
+        try:
+            _ex = sb.table("rfp_submissions").select("uid").execute().data or []
+            _existing_uids = {(e.get("uid") or "") for e in _ex}
+        except Exception as _e:                       # don't risk a partial overwrite
+            print(f"  ⚠ could not read existing uids ({_e}); skipped rfp insert for safety")
+            _existing_uids = None
+        if _existing_uids is not None:
+            _new = [r for r in rfp_rows if r.get("uid") and r["uid"] not in _existing_uids]
+            _skip = len(rfp_rows) - len(_new)
+            for i in range(0, len(_new), 200):
+                sb.table("rfp_submissions").insert(_new[i:i + 200]).execute()
+            print(f"  rfp_submissions: {len(_new)} NEW inserted · "
+                  f"{_skip} existing skipped (not overwritten)")
 
     # --- meeting_logs (Meeting_Log) — header auto-detected
     print("[Meeting_Log -> meeting_logs]")
