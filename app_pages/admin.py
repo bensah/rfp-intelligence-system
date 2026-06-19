@@ -35,6 +35,23 @@ if not permissions.is_admin(user):
 sb = get_client()
 st.title("Settings")
 
+
+def _purge_seen_ledger(sb, deleted_rows) -> int:
+    """Remove the given deleted rfp rows' uids from the permanent seen-ledger.
+
+    Used ONLY by the explicit "rescan from scratch" / "fresh-test reset" tools, so
+    a deliberate auto-scan wipe can be re-found. Individual RFP deletes do NOT
+    call this — their tombstone stays, so a rejected opportunity never re-enters.
+    Best-effort; returns the count purged (0 on any error)."""
+    try:
+        uids = [r.get("uid") for r in (deleted_rows or []) if r.get("uid")]
+        if not uids:
+            return 0
+        sb.table("rfp_seen").delete().in_("uid", uids).execute()
+        return len(uids)
+    except Exception:
+        return 0
+
 (tab_settings, tab_users, tab_access, tab_data, tab_sources,
  tab_scan, tab_blacklist, tab_learning) = st.tabs(
     ["Setup", "Manage Users", "User Access", "Records", "Sources",
@@ -834,10 +851,18 @@ with tab_data:
         if arc2.button("🧹 Wipe auto-scan rows", width='stretch', key="wipe_auto_rfps"):
             try:
                 res = sb.table("rfp_submissions").delete().eq("source", "auto").execute()
-                deleted = len(res.data or [])
+                _rows = res.data or []
+                deleted = len(_rows)
+                # This is an explicit "rescan from scratch" reset, so also clear
+                # these uids from the permanent seen-ledger — otherwise the
+                # tombstones would suppress the very rows you want re-found.
+                # (Individual RFP deletes elsewhere intentionally KEEP their
+                # tombstone, so a rejected opportunity never re-enters.)
+                _purged = _purge_seen_ledger(sb, _rows)
                 arc1.success(
-                    f"Deleted **{deleted}** auto-scanned RFP(s). "
-                    "Click 🔄 Scan now on the Screen tab (or in Manual Scan tab) to refresh."
+                    f"Deleted **{deleted}** auto-scanned RFP(s)"
+                    + (f" (and cleared {_purged} seen-ledger tombstone(s))" if _purged else "")
+                    + ". Click 🔄 Scan now on the Screen tab (or in Manual Scan tab) to refresh."
                 )
             except Exception as exc:
                 arc1.error(f"Wipe failed: {exc}")
@@ -887,6 +912,9 @@ with tab_data:
                     .neq("id", "00000000-0000-0000-0000-000000000000")
                     .execute()
                 )
+                # Clear these uids from the permanent seen-ledger so the fresh
+                # rescan can repopulate them (see "Wipe auto-scan rows" above).
+                _purge_seen_ledger(sb, r1.data or [])
                 ft1.success(
                     f"✓ Reset complete. Deleted **{len(r1.data or [])}** auto-scan "
                     f"RFP(s) and **{len(r2.data or [])}** scan log row(s). Click "

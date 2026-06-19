@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from core import deep_read, source_resolver, live_check
+from core import deep_read, source_resolver, live_check, seen_ledger
 from core.auto_scorer import auto_score, is_eligible, theme_eligible
 from core.deduplicator import find_duplicates
 from core.policies import get_policies
@@ -266,11 +266,18 @@ def ingest_candidates(
         )
     existing = existing or []
 
+    # Permanent tombstone ledger — the backstop that stops a previously-found RFP
+    # re-entering after its live row was DELETED (live `existing` only sees rows
+    # still in rfp_submissions). Loaded once per scan; best-effort ([] if the
+    # table/migration 033 isn't there yet, so the scan still runs).
+    seen = [] if dry_run else seen_ledger.fetch_all()
+
     policies = get_policies()
 
     inserted = 0
     updated = 0
     duplicate_unchanged = 0
+    suppressed_seen = 0
     rejected = 0
     _reject_records: list[dict] = []   # ML Phase 1 — labeled rejects for learning
     _live_checks = 0                   # bounded HTTP liveness fetches this run
@@ -396,11 +403,23 @@ def ingest_candidates(
             )
             continue
 
+        # SUPPRESS PATH — no LIVE match, but this RFP was seen before and since
+        # deleted. The permanent ledger remembers it, so never re-add it.
+        if not dry_run and seen and find_duplicates(probe, existing=seen):
+            suppressed_seen += 1
+            log.info(
+                "suppress (previously seen / deleted): %s",
+                cand["opportunity_title"][:60],
+            )
+            continue
+
         # INSERT PATH — totally new RFP.
         row = _build_row(cand, serial=i, ts=ts, policies=policies)
         if not dry_run:
             try:
                 sb.table("rfp_submissions").insert(row).execute()
+                # Tombstone immediately so it's remembered even if later deleted.
+                seen_ledger.record_one(row, reason="ingested")
                 existing.append({
                     "id": None,
                     "uid": row["uid"],
@@ -435,7 +454,10 @@ def ingest_candidates(
 
     # Return the rejected count up the stack so it lands in scan_logs.
     log.info(
-        "scan ingest: inserted=%d updated=%d unchanged_dups=%d rejected=%d",
-        inserted, updated, duplicate_unchanged, rejected,
+        "scan ingest: inserted=%d updated=%d unchanged_dups=%d "
+        "suppressed_seen=%d rejected=%d",
+        inserted, updated, duplicate_unchanged, suppressed_seen, rejected,
     )
-    return (inserted + updated, duplicate_unchanged, rejected)
+    # Previously-seen suppressions are de-dup outcomes, not new rows — fold them
+    # into the duplicate count so KPIs/logs don't read them as fresh finds.
+    return (inserted + updated, duplicate_unchanged + suppressed_seen, rejected)
