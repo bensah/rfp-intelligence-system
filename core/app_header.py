@@ -561,7 +561,7 @@ def _render_user_menu() -> None:
         )
         st.divider()
         st.page_link("app_pages/help.py", label="Help", icon="❓")
-        st.page_link("app_pages/organization.py", label="Organization Details", icon="🏢")
+        st.page_link("app_pages/organization.py", label="Organization", icon="🏢")
         st.page_link("app_pages/profile.py", label="Profile", icon="👤")
         if _perms.is_admin(u):
             st.page_link("app_pages/admin.py", label="Settings", icon="⚙️")
