@@ -54,6 +54,10 @@ DEFAULT_PROFILE: dict[str, Any] = {
     # --- strategic_fit (priorities + experience) ---
     "domains": [],                          # areas of demonstrated expertise / experience
     "priority_areas": [],                   # declared strategic priorities
+    "program_area_ratings": {},             # {canonical child key: 0-5 priority} —
+                                            # graded SAME as donor_intel.program_area_ratings,
+                                            # correlated for the graded strategic-fit score
+                                            # (core.matching.strategic_fit_score)
 
     # --- geographic_fit (presence) ---
     "countries_of_operation": [],           # where we operate directly

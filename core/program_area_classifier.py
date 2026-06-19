@@ -163,6 +163,11 @@ PROGRAM_AREA_KEYWORDS: dict[str, list[str]] = {
         "hepatitis B", "hepatitis C", "hepatitis A",
         "viral hepatitis", "liver fibrosis", "cirrhosis",
     ],
+    "IDs - Antimicrobial Resistance (AMR)": [
+        "antimicrobial resistance", "antibiotic resistance", "drug resistance",
+        "antimicrobial stewardship", "antibiotic stewardship", "AMR", "AMU",
+        "rational antibiotic", "AWaRe", "diagnostic stewardship",
+    ],
     # ---- HSS (Health Systems Strengthening) --------------------------------
     "HSS - Health Workforce": [
         "health workforce", "community health worker", "CHW",
@@ -236,6 +241,147 @@ PROGRAM_AREA_KEYWORDS: dict[str, list[str]] = {
         "evidence generation", "evidence-based",
         "scientific publication", "peer-reviewed",
     ],
+    # ====================================================================
+    # Beyond health — social & development sectors (same canonical-key
+    # convention "PREFIX - Sub-area"; PREFIX expanded in CATEGORY_FULL below).
+    # ====================================================================
+    # ---- EDU (Education & Learning) ----------------------------------------
+    "EDU - Early Childhood Development": [
+        "early childhood", "ECD", "preschool", "pre-primary", "early learning",
+    ],
+    "EDU - Basic Education": [
+        "primary education", "secondary education", "basic education",
+        "schooling", "school enrolment", "school enrollment",
+        "girls education", "out-of-school", "education access",
+    ],
+    "EDU - Higher Education & TVET": [
+        "higher education", "tertiary education", "university",
+        "vocational", "TVET", "technical and vocational", "skills training",
+        "apprenticeship",
+    ],
+    "EDU - Literacy & Numeracy": [
+        "literacy", "numeracy", "foundational learning", "reading outcomes",
+        "teaching at the right level", "TaRL", "learning poverty",
+    ],
+    "EDU - Education Technology": [
+        "edtech", "education technology", "e-learning", "digital learning",
+        "remote learning", "learning platform",
+    ],
+    # ---- ECON (Economic Development & Livelihoods) -------------------------
+    "ECON - Financial Inclusion": [
+        "financial inclusion", "microfinance", "mobile money", "savings group",
+        "credit access", "fintech", "digital finance", "banking the unbanked",
+    ],
+    "ECON - MSME & Entrepreneurship": [
+        "MSME", "SME", "small business", "entrepreneurship",
+        "enterprise development", "startup", "incubation", "accelerator",
+    ],
+    "ECON - Jobs & Skills": [
+        "employment", "job creation", "workforce development", "livelihoods",
+        "decent work", "income generation", "self-employment",
+    ],
+    "ECON - Social Protection": [
+        "social protection", "cash transfer", "safety net", "social safety net",
+        "unconditional cash", "social assistance", "graduation approach",
+    ],
+    "ECON - Trade & Markets": [
+        "trade facilitation", "market systems", "value chain", "market access",
+        "regional integration", "export promotion",
+    ],
+    # ---- AGRI (Agriculture & Food Systems) ---------------------------------
+    "AGRI - Smallholder Productivity": [
+        "smallholder", "crop yield", "agricultural productivity", "farm inputs",
+        "improved seeds", "fertilizer", "agricultural extension",
+    ],
+    "AGRI - Food Security & Resilience": [
+        "food security", "food insecurity", "seasonal hunger", "famine",
+        "resilient food systems", "food systems",
+    ],
+    "AGRI - Climate-Smart Agriculture": [
+        "climate-smart agriculture", "agroecology", "drought-resistant",
+        "rainwater harvesting", "irrigation", "regenerative agriculture",
+    ],
+    "AGRI - Livestock & Fisheries": [
+        "livestock", "poultry", "fisheries", "aquaculture", "animal health",
+        "pastoralist", "rangeland",
+    ],
+    # ---- WASH (Water, Sanitation & Hygiene) --------------------------------
+    "WASH - Safe Water": [
+        "safe water", "drinking water", "water supply", "water access",
+        "water treatment", "chlorination", "borehole", "piped water",
+    ],
+    "WASH - Sanitation": [
+        "sanitation", "latrine", "toilet", "open defecation",
+        "faecal sludge", "fecal sludge", "sewerage", "CLTS",
+    ],
+    "WASH - Hygiene": [
+        "hygiene promotion", "handwashing", "menstrual hygiene",
+        "WASH in schools", "hygiene behaviour",
+    ],
+    # ---- ENV (Climate, Energy & Environment) -------------------------------
+    "ENV - Climate Adaptation & Resilience": [
+        "climate adaptation", "climate resilience", "disaster risk reduction",
+        "DRR", "early warning system", "flood resilience", "drought resilience",
+    ],
+    "ENV - Clean & Renewable Energy": [
+        "renewable energy", "solar power", "clean energy", "energy access",
+        "off-grid", "mini-grid", "clean cooking", "electrification",
+    ],
+    "ENV - Biodiversity & Conservation": [
+        "biodiversity", "conservation", "deforestation", "reforestation",
+        "ecosystem restoration", "wildlife", "marine protection",
+    ],
+    "ENV - Pollution & Waste": [
+        "pollution", "air pollution", "plastic pollution", "waste management",
+        "recycling", "lead exposure", "circular economy",
+    ],
+    # ---- GOV (Governance, Peace & Rights) ----------------------------------
+    "GOV - Democracy & Civic Participation": [
+        "democracy", "elections", "civic participation", "civil society",
+        "citizen engagement", "civic space",
+    ],
+    "GOV - Anti-corruption & Accountability": [
+        "anti-corruption", "transparency", "accountability",
+        "public financial management", "PFM", "open government", "audit",
+    ],
+    "GOV - Human Rights & Justice": [
+        "human rights", "rule of law", "access to justice", "legal aid",
+        "rights-based", "civic freedoms",
+    ],
+    "GOV - Peace & Conflict": [
+        "peacebuilding", "conflict prevention", "fragility", "stabilization",
+        "social cohesion", "violence prevention", "countering violent extremism",
+    ],
+    # ---- GES (Gender, Equity & Inclusion) ----------------------------------
+    "GES - Gender Equality & GBV": [
+        "gender equality", "gender-based violence", "GBV", "VAWG",
+        "women empowerment", "women's empowerment", "gender mainstreaming",
+    ],
+    "GES - Disability Inclusion": [
+        "disability inclusion", "inclusive education", "inclusive employment",
+        "universal design",
+    ],
+    "GES - Youth Empowerment": [
+        "youth empowerment", "young people", "youth development",
+        "youth leadership", "adolescent programming",
+    ],
+    "GES - Migration & Displacement": [
+        "refugee", "migrant", "displacement", "internally displaced", "IDP",
+        "asylum seeker", "forced migration", "host community",
+    ],
+    # ---- HUM (Humanitarian & Resilience) -----------------------------------
+    "HUM - Emergency Response": [
+        "humanitarian", "emergency response", "disaster response",
+        "relief operation", "crisis response", "rapid response",
+    ],
+    "HUM - Food Assistance": [
+        "food assistance", "food aid", "in-kind food", "emergency nutrition",
+        "general food distribution",
+    ],
+    "HUM - Shelter & Settlements": [
+        "shelter", "settlement", "camp management", "non-food items",
+        "transitional shelter",
+    ],
 }
 
 
@@ -256,11 +402,21 @@ _BARE_ACRONYMS: dict[str, list[str]] = {
 # while storing canonical keys (or a Category name for a broad pick).
 # ---------------------------------------------------------------------------
 CATEGORY_FULL: dict[str, str] = {
+    # Health
     "WCH": "Women & Children's Health",
     "NCDs": "Non-Communicable Diseases",
     "IDs": "Infectious Diseases",
     "HSS": "Health System Strengthening",
-    "Cross-cutting": "Cross-cutting",
+    "Cross-cutting": "Cross-cutting (Health)",
+    # Social & development
+    "EDU": "Education & Learning",
+    "ECON": "Economic Development & Livelihoods",
+    "AGRI": "Agriculture & Food Systems",
+    "WASH": "Water, Sanitation & Hygiene (WASH)",
+    "ENV": "Climate, Energy & Environment",
+    "GOV": "Governance, Peace & Rights",
+    "GES": "Gender, Equity & Inclusion",
+    "HUM": "Humanitarian & Resilience",
 }
 
 

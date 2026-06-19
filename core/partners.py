@@ -118,10 +118,28 @@ PARTNERS: list[tuple[str, str, int | None]] = [
     ("Global Antibiotic Research and Development Partnership", "GARDP", 2016),
     ("Global Health Innovative Technology Fund", "GHIT Fund", 2013),
     ("Malaria No More", "MNM", 2006),
+    # Philanthropic / pooled funders & collaborators (e.g. DIV Fund backers).
+    ("Development Innovation Ventures Fund", "DIV Fund", None),
+    ("Coefficient Giving", "Coefficient Giving", None),
+    ("GiveWell", "GiveWell", 2007),
+    ("Livelihood Impact Fund", "Livelihood Impact Fund", None),
+    ("CRI Foundation", "CRI Foundation", None),
+    ("Global Development Incubator", "Global Development Incubator", 2013),
+    ("Anonymous Donors", "Anonymous Donors", None),
 ]
 
-# Display options for the "Trusted non-profit partners" picker: "Name (ACRONYM)".
-NONPROFIT_PARTNERS: list[str] = [f"{name} ({acr})" for name, acr, _ in PARTNERS]
+# Display options for partner pickers: "Name (ACRONYM)" — but just "Name" when
+# there's no distinct acronym (avoids ugly "Coefficient Giving (Coefficient Giving)").
+NONPROFIT_PARTNERS: list[str] = [
+    name if (not acr or acr.strip().lower() == name.strip().lower()) else f"{name} ({acr})"
+    for name, acr, _ in PARTNERS
+]
+
+# Unified partner vocabulary — ALL possible partner/funder types (bilaterals,
+# multilaterals, INGOs, philanthropies, pooled funds, donors). The single list the
+# "Funders & collaborators" (donor intel) and "Trusted partners" (org profile)
+# pickers share; both accept typed additions for private firms / academic orgs.
+ALL_PARTNERS: list[str] = NONPROFIT_PARTNERS
 
 # Acronym (upper) + lowercased name -> founded year, for the donor_intel backfill.
 PARTNER_FOUNDED: dict[str, int] = {}

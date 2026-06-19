@@ -245,7 +245,7 @@ with tab_settings:
         )
         from core import org_profile as _orgp
         from core import geographies as _geo
-        from core.program_area_select import program_area_picker
+        from core.program_area_select import program_area_picker, program_area_rating_editor
         from core.partners import NONPROFIT_PARTNERS, DONOR_PORTALS, clean_portal_url
         _prof = _orgp.get_profile()
 
@@ -309,18 +309,20 @@ with tab_settings:
             value=int(_prof["largest_grant_usd"]) if _prof.get("largest_grant_usd") else 0,
             help="Absorptive capacity for award size (capacity).")
 
-        pc1, pc2 = st.columns(2)
         domains_sel = program_area_picker(
             "Domains / areas of expertise", _prof.get("domains"), "orgp_domains",
-            container=pc1,
             help="Where you have demonstrated experience — pick a category, then "
                  "drill into sub-areas. Same vocabulary as the RFP program area & "
                  "donor fit (strategic fit).")
-        priorities_sel = program_area_picker(
+        # Strategic priority areas — graded 0–5 per child sub-area on the SAME
+        # taxonomy donors use, so org ↔ donor priorities correlate into the
+        # graded strategic-fit score (core.matching.strategic_fit_score).
+        priorities_sel, priority_ratings = program_area_rating_editor(
             "Strategic priority areas", _prof.get("priority_areas"),
-            "orgp_priority_areas", container=pc2,
-            help="Your declared strategic focus — matched to the RFP program area "
-                 "(strategic fit).")
+            _prof.get("program_area_ratings"), "orgp_priority_areas",
+            help="Your declared strategic focus — grade each sub-area 0–5 "
+                 "(0 absent → 5 very high). Matched to each donor's graded "
+                 "priorities. Only child sub-areas are graded.")
 
         gc1, gc2 = st.columns(2)
         countries_op_sel = _ms(gc1, "Countries of operation", _geo.GEO_OPTIONS,
@@ -393,6 +395,7 @@ with tab_settings:
                 "largest_grant_usd": int(largest_grant) or None,
                 "domains": domains_sel,
                 "priority_areas": priorities_sel,
+                "program_area_ratings": priority_ratings,
                 "countries_of_operation": countries_op_sel,
                 "trusted_partners": partners_sel,
                 "trusted_for_profit_partners": forprofit_sel,
