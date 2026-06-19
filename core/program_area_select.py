@@ -182,14 +182,23 @@ def program_area_matrix_editor(label, current_selection, current_ratings, key_pr
         return [], {}
 
     c.caption(f"Grade each sub-area — {RATING_LEGEND}")
-    _base = pd.DataFrame({
-        "Category": [category_full(k) for k in child_keys],
-        "Sub-area": [subarea_label(k) for k in child_keys],
-        "Priority (0–5)": [int(rstate.get(k, 0)) for k in child_keys],
-    })
+    # IMPORTANT: build the editor's DataFrame ONLY when the row-set (categories)
+    # changes, and keep it in session_state. Rebuilding `data` from a source we
+    # also write back to on every rerun made the keyed data_editor "fight" the new
+    # data → the cell flickered and reverted (the 5→3 bug). Now the editor owns
+    # its edits within a stable row-set; we just read the return to persist.
+    sig = "|".join(child_keys)
+    df_key, sig_key = f"{key_prefix}_df", f"{key_prefix}_sig"
+    if st.session_state.get(sig_key) != sig:
+        st.session_state[df_key] = pd.DataFrame({
+            "Category": [category_full(k) for k in child_keys],
+            "Sub-area": [subarea_label(k) for k in child_keys],
+            "Priority (0–5)": [int(rstate.get(k, 0)) for k in child_keys],
+        })
+        st.session_state[sig_key] = sig
     _edited = c.data_editor(
-        _base, hide_index=True, width="stretch", num_rows="fixed",
-        key=f"{key_prefix}_tbl_" + "|".join(child_keys),
+        st.session_state[df_key], hide_index=True, width="stretch", num_rows="fixed",
+        key=f"{key_prefix}_tbl_{sig}",
         column_config={
             "Category": st.column_config.TextColumn("Category", disabled=True),
             "Sub-area": st.column_config.TextColumn("Sub-area", disabled=True, width="medium"),
