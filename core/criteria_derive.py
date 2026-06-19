@@ -33,6 +33,13 @@ from core.scorer import bid_effort_label, days_until
 
 _PA_KEYS = set(_pa.PROGRAM_AREA_KEYWORDS)
 
+# Cues that a (US-federal) call welcomes NON-US / international applicants. Absent
+# these on a grants.gov call, we assume US-organisations-only.
+_INTL_ELIGIBLE_RE = re.compile(
+    r"\b(international|foreign|outside the (?:us|u\.s\.|united states)|non-?u\.?s\.?|"
+    r"any country|globally|world-?wide|developing countr|"
+    r"low-?\s*and\s*middle-?income|lmics?)\b", re.I)
+
 
 def _as_list(v: Any) -> list[str]:
     if v is None:
@@ -111,11 +118,22 @@ def derive_capacity(org: dict, rfp: dict) -> str | None:
     return "No, beyond us"
 
 
-def derive_geographic_fit(org: dict, rfp: dict) -> str | None:
+def derive_geographic_fit(org: dict, rfp: dict, org_settings: dict | None = None) -> str | None:
     rfp_geo = _as_list(rfp.get("geographic_scope"))
     own = org.get("countries_of_operation") or []
     if not rfp_geo:
-        return None                        # geography silent → can't judge
+        # grants.gov assumption: a US-federal call that doesn't explicitly invite
+        # international applicants targets US organisations only → treat as
+        # United States (so a non-US org gets "No presence there", not "Not sure").
+        link = f"{rfp.get('opportunity_link') or ''} {rfp.get('source') or ''}".lower()
+        if "grants.gov" in link:
+            txt = f"{rfp.get('brief_description') or ''} {rfp.get('notes') or ''}"
+            if not _INTL_ELIGIBLE_RE.search(txt):
+                _us = {"united states", "united states of america", "usa", "u.s.", "us"}
+                org_us = (str((org_settings or {}).get("org_is_us_entity", "")).lower() == "true"
+                          or any(str(c).strip().lower() in _us for c in own))
+                return "Yes, our own presence" if org_us else "No presence there"
+        return None                        # geography silent (non-grants.gov) → can't judge
     if own and (set(_geo.expand(list(own))) & set(_geo.expand(rfp_geo))):
         return "Yes, our own presence"
     if org.get("trusted_partners"):
@@ -463,7 +481,7 @@ def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = Non
         "qualification": derive_qualification(org, rfp, donor, org_settings),
         "strategic_fit": derive_strategic_fit(org, rfp, donor),
         "capacity": derive_capacity(org, rfp),
-        "geographic_fit": derive_geographic_fit(org, rfp),
+        "geographic_fit": derive_geographic_fit(org, rfp, org_settings),
         "cofinancing": derive_cofinancing(org, rfp, donor),
         "funding_quality": derive_funding_quality(rfp, org, policies),
         "funder_relationship": derive_funder_relationship(org, rfp, donor),
