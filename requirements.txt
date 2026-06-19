@@ -3,6 +3,10 @@ streamlit-authenticator>=0.3.3
 supabase>=2.4.0
 pandas>=2.2.0
 numpy>=1.26.0
+# Decision model (ML Phase 3) — robust training of the Proceed/Park/Decline
+# classifier (scripts/train_decision_model.py). Serving stays pure-python on
+# stored coefficients, but training uses scikit-learn's LogisticRegression + CV.
+scikit-learn>=1.5.0
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 feedparser>=6.0.11
