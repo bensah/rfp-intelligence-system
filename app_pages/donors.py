@@ -1519,7 +1519,7 @@ def _view_dialog(row: dict) -> None:
     _hdr_funders = _to_list(row.get("funders_collaborators"))
     if _hdr_funders:
         _shown = ", ".join(_hdr_funders[:3]) + ("…" if len(_hdr_funders) > 3 else "")
-        _subparts.append("Funded by " + _html.escape(_shown))
+        _subparts.append("Partnered with " + _html.escape(_shown))
     if _disp(row.get("website")):
         _w = _disp(row.get("website"))
         _wh = _w if _w.startswith(("http://", "https://")) else f"https://{_w}"
