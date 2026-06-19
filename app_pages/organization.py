@@ -32,7 +32,7 @@ def _edit_org_dialog() -> None:
 
 # ── Header ──────────────────────────────────────────────────────────────────
 _hl, _hr = st.columns([5, 1.4])
-_hl.title("Organization Details")
+_hl.title("Organization")
 if can_edit:
     if _hr.button("✏️ Edit organization", width="stretch", type="primary"):
         _edit_org_dialog()
