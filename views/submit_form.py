@@ -115,13 +115,19 @@ def render_submit_form(
     def _none(v):
         return None if v in (NONE, "", None) else v
 
-    def _crit(label: str, key: str, criterion: str):
+    def _crit(label: str, key: str, criterion: str, desc: str = ""):
         """Per-criterion dropdown using the CURRENT response vocabulary
-        (core.scorer.CRITERION_RESPONSES). Defaults to 'Not sure' (= unscored /
+        (core.scorer.CRITERION_RESPONSES). Renders the question title + its
+        guiding description (same wording as the MS Form) above the dropdown so
+        the answer direction is unambiguous. Defaults to 'Not sure' (= unscored /
         missing) so the submitter sets only what they actually know."""
         opts = CRITERION_RESPONSES.get(criterion) or list(elig)
         didx = opts.index("Not sure") if "Not sure" in opts else 0
-        return st.selectbox(label, opts, index=didx, key=_k(key))
+        st.markdown(f"**{label}**")
+        if desc:
+            st.caption(desc)
+        return st.selectbox(label, opts, index=didx, key=_k(key),
+                            label_visibility="collapsed")
 
     # ------------------------------------------------------------------
     # Form
@@ -213,16 +219,45 @@ def render_submit_form(
 
         grid_l, grid_r = st.columns(2)
         with grid_l:
-            m1 = _crit("MUST 1 — Organisational qualification", "m1", "qualification")
-            m2 = _crit("MUST 2 — Strategic fit", "m2", "strategic_fit")
-            m3 = _crit("MUST 3 — Delivery capacity", "m3", "capacity")
-            m4 = _crit("MUST 4 — Geographic fit", "m4", "geographic_fit")
-            m5 = _crit("MUST 5 — Co-financing requirements", "m5", "cofinancing")
+            m1 = _crit(
+                "MUST 1 — Organisational qualification", "m1", "qualification",
+                "Do we formally qualify to apply — org type, domestic vs global "
+                "registration, local board requirement, any mandatory donor "
+                "registration (e.g. SAM/PADOR) or consortium-lead requirement?")
+            m2 = _crit(
+                "MUST 2 — Strategic fit", "m2", "strategic_fit",
+                "Does this RFP fit our defined strategic priorities?")
+            m3 = _crit(
+                "MUST 3 — Delivery capacity", "m3", "capacity",
+                "Can we deliver at the stated award size and scope (team, systems, "
+                "a grant size we can manage)?")
+            m4 = _crit(
+                "MUST 4 — Geographic fit", "m4", "geographic_fit",
+                "Does the funder's geographic scope align with where we currently "
+                "have operations / programs or a trusted partner?")
+            m5 = _crit(
+                "MUST 5 — Co-financing / compliance", "m5", "cofinancing",
+                "Can we meet any co-financing / match and the funder's compliance "
+                "requirements? (Yes, none required → we can; No, required → it's "
+                "required and we can't.)")
         with grid_r:
-            p6 = _crit("PREFER 6 — Funding quality", "p6", "funding_quality")
-            p7 = _crit("PREFER 7 — Funder relationship", "p7", "funder_relationship")
-            p8 = _crit("PREFER 8 — Competitiveness", "p8", "competitiveness")
-            p9 = _crit("PREFER 9 — Bid effort", "p9", "bid_effort")
+            p6 = _crit(
+                "PREFER 6 — Funding quality", "p6", "funding_quality",
+                "Is the award size attractive — within our preferred funding range "
+                "(not too small to bother with, not beyond what we can absorb)?")
+            p7 = _crit(
+                "PREFER 7 — Funder relationship", "p7", "funder_relationship",
+                "Do we have a relationship with this funder — a current / past "
+                "grant, or registration / contact on their portal?")
+            p8 = _crit(
+                "PREFER 8 — Competitiveness", "p8", "competitiveness",
+                "How well-positioned are we to win — track record in this exact "
+                "area, incumbency, and fit to the funder's requirements "
+                "(board / grassroots / co-financing / multi-country / HQ)?")
+            p9 = _crit(
+                "PREFER 9 — Bid effort", "p9", "bid_effort",
+                "Is the bid effort feasible — enough time to the deadline and a "
+                "business-development / proposal team to do it justice?")
 
         # Feasibility = the submitter's own subjective read on the opportunity —
         # the human counterpart to the auto-scan tier that derives Proceed/Park/

@@ -350,6 +350,7 @@ def ingest_candidates(
         # Find duplicates using a minimal projection (find_duplicates only
         # reads these keys).
         probe = {
+            "opportunity_id": cand.get("opportunity_id"),
             "opportunity_title": cand["opportunity_title"],
             "opportunity_link": cand.get("opportunity_link"),
             "funding_agency": cand.get("funding_agency"),

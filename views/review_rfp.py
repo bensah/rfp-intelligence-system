@@ -166,8 +166,16 @@ with det2:
     st.markdown("**Value**")
     val = row.get("estimated_value")
     st.write(f"Estimated: {_fmt(val)} {_fmt(row.get('currency'))}")
-    usd = (val or 0) * dropdowns.usd_rate(row.get("currency"))
-    st.write(f"≈ ${usd:,.0f} USD")
+    # Coerce to a clean number — NaN is truthy, so `val or 0` left "$nan USD".
+    try:
+        _v = float(val)
+        if pd.isna(_v):
+            _v = 0.0
+    except (TypeError, ValueError):
+        _v = 0.0
+    if _v > 0:
+        usd = _v * dropdowns.usd_rate(row.get("currency"))
+        st.write(f"≈ ${usd:,.0f} USD")
     st.markdown("**Program area**")
     st.write(_fmt(row.get("program_area")))
     st.write(f"Geography: {_fmt(row.get('geographic_scope'))}")
@@ -323,7 +331,7 @@ with gauge_col:
         go.Indicator(
             mode="gauge+number+delta",
             value=_match["composite"],
-            title={"text": "Composite match", "font": {"size": 14}},
+            title={"text": "Bid Strength", "font": {"size": 14}},
             domain={"x": [0, 1], "y": [0.25, 1]},
             delta={
                 "reference": live_score,          # vs criteria-only
