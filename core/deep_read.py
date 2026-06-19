@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -176,10 +177,34 @@ def _dead_reason(status, title: str, text: str) -> str | None:
     return None
 
 
+_AMOUNT_RE = re.compile(
+    r"(?:US\s*)?\$\s*([\d]{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*"
+    r"(million|billion|thousand|m|bn|b|k)?\b", re.I)
+_AMOUNT_MULT = {"million": 1e6, "m": 1e6, "billion": 1e9, "bn": 1e9, "b": 1e9,
+                "thousand": 1e3, "k": 1e3}
+
+
+def _amount_from_text(text: str) -> float | None:
+    """Largest plausible USD figure on the page (e.g. 'Grant Size $100,000',
+    'up to $100,000'). Grant pages quote the award ceiling as the headline $; the
+    max plausible $-amount is a reliable capture. Requires a '$' (so years / IDs
+    don't match). Returns None if nothing in the $1k–$10B range is found."""
+    best = 0.0
+    for m in _AMOUNT_RE.finditer(text or ""):
+        try:
+            num = float(m.group(1).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+        num *= _AMOUNT_MULT.get((m.group(2) or "").lower(), 1.0)
+        if 1_000 <= num <= 1e10:
+            best = max(best, num)
+    return best or None
+
+
 def _harvest(candidate: dict, text: str, soup) -> None:
-    """Pull deadline / eligibility / description out of one rendered page into
-    the candidate (only filling what's still missing). No link-following — the
-    caller decides when to follow."""
+    """Pull deadline / amount / eligibility / description out of one rendered page
+    into the candidate (only filling what's still missing). No link-following —
+    the caller decides when to follow."""
     from core.scraper import (  # noqa: WPS433 (lazy — avoids import cycle)
         _extract_deadline_from_text, _extract_description_from_soup,
         _extract_eligibility_from_text,
@@ -188,6 +213,13 @@ def _harvest(candidate: dict, text: str, soup) -> None:
         d = _extract_deadline_from_text(text)
         if d:
             candidate["submission_deadline"] = d
+    # Award amount — 'Grant Size $100,000', 'up to $100,000', etc. (capacity +
+    # funding_quality both need it; was previously never harvested from HTML).
+    if not candidate.get("estimated_value"):
+        amt = _amount_from_text(text)
+        if amt:
+            candidate["estimated_value"] = amt
+            candidate.setdefault("currency", "USD")
     # Eligibility / geography prose → fold into the description so the country
     # gate (which reads brief_description) can judge scope without us guessing a
     # synonym-expanded geographic_scope list.
