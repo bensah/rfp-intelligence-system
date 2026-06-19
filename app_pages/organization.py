@@ -63,12 +63,37 @@ with _top[1]:
 st.divider()
 
 
+# Card styling — muted uppercase labels over prominent values, green card heads.
+st.markdown(
+    """
+    <style>
+    .org-field { margin: 0 0 0.95rem 0; }
+    .org-field .lbl { font-size:.70rem; letter-spacing:.045em; text-transform:uppercase;
+                      color:#64748b; font-weight:700; margin:0 0 1px 0; }
+    .org-field .val { font-size:1.02rem; color:#0f172a; font-weight:500; line-height:1.3; }
+    div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:12px; }
+    div[data-testid="stVerticalBlockBorderWrapper"] h4 { margin:.1rem 0 .6rem 0; color:#00703C; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 def _yn(v) -> str:
     s = str(v or "").strip().lower()
     if s in ("true", "yes"):
         return "Yes"
     if s in ("false", "no"):
         return "No"
+    return "—"
+
+
+def _present(v) -> str:
+    s = str(v or "").strip().lower()
+    if s in ("true", "yes"):
+        return "Present"
+    if s in ("false", "no"):
+        return "Absent"
     return "—"
 
 
@@ -80,17 +105,22 @@ def _money(v) -> str:
 
 
 def _kv(container, label, value):
-    container.markdown(f"**{label}**  \n{value if value not in (None, '', []) else '—'}")
+    v = value if value not in (None, "", []) else "—"
+    container.markdown(
+        f"<div class='org-field'><div class='lbl'>{label}</div>"
+        f"<div class='val'>{v}</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ── Identity & eligibility gates ──────────────────────────────────────────────
 with st.container(border=True):
-    st.markdown("#### 🏷 Identity & eligibility gates")
+    st.markdown("#### 🏷 Identity & eligibility")
     g = st.columns(4)
-    _kv(g[0], "Legal type", prof.get("legal_type"))
-    _kv(g[1], "Founding year", prof.get("founding_year"))
-    _kv(g[2], "US-based entity", _yn(org.get("org_is_us_entity")))
-    _kv(g[3], "Local board", (org.get("org_has_local_board") or "—").title())
+    _kv(g[0], "Legally registered as", _orgp.legal_type_label(prof.get("legal_type")))
+    _kv(g[1], "Founded in the year", prof.get("founding_year"))
+    _kv(g[2], "Located in", org.get("org_country"))
+    _kv(g[3], "Local board", _present(org.get("org_has_local_board")))
     g2 = st.columns(4)
     _kv(g2[0], "BD / fundraising team", _yn(org.get("org_has_bd_team")))
     _kv(g2[1], "Grassroots / local NGO", _yn(org.get("org_is_grassroot")))
@@ -99,7 +129,9 @@ with st.container(border=True):
 
 # ── Capacity & funding targets ────────────────────────────────────────────────
 with st.container(border=True):
-    st.markdown("#### 💰 Capacity & funding targets")
+    st.markdown("#### 💰 Capacity & funding targets",
+                help="Funding-quality bands use geometric midpoints: ≤√(low·mid) Low · "
+                     "≤√(mid·max) Moderate · above High.")
     c = st.columns(4)
     _kv(c[0], "Annual budget", _money(prof.get("annual_budget_usd")))
     _kv(c[1], "Largest grant managed", _money(prof.get("largest_grant_usd")))
@@ -109,8 +141,6 @@ with st.container(border=True):
     _kv(c2[0], "Funding target — low", _money(prof.get("funding_target_low")))
     _kv(c2[1], "Funding target — mid", _money(prof.get("funding_target_mid")))
     _kv(c2[2], "Funding target — max", _money(prof.get("funding_target_max")))
-    st.caption("Funding-quality bands use geometric midpoints: ≤√(low·mid) Low · "
-               "≤√(mid·max) Moderate · above High.")
     e = st.columns(3)
     _kv(e[0], "Independent entity (not INGO affiliate)", _yn(prof.get("org_is_independent_entity")))
     _kv(e[1], "Holds SAM.gov / UEI", _yn(prof.get("org_has_sam_uei")))
@@ -148,21 +178,16 @@ with st.container(border=True):
 # ── Geography & partners ──────────────────────────────────────────────────────
 with st.container(border=True):
     st.markdown("#### 🌍 Geography & partners")
-    _kv(st, "Countries of operation", ", ".join(prof.get("countries_of_operation") or []) or "—")
-    _kv(st, "Countries registered", ", ".join(prof.get("countries_registered") or []) or "—")
+    _gc = st.columns(2)
+    _kv(_gc[0], "Countries registered", ", ".join(prof.get("countries_registered") or []) or "—")
+    _kv(_gc[1], "Countries of operation", ", ".join(prof.get("countries_of_operation") or []) or "—")
     _partners = prof.get("partners") or []
     if _partners:
-        st.markdown("**Partners (name · type · country)**")
+        st.markdown("**Affiliated partners & collaborators**")
         st.dataframe(
             pd.DataFrame(_partners).reindex(columns=["name", "type", "country"]).rename(
                 columns={"name": "Partner", "type": "Type", "country": "Country"}),
             hide_index=True, width="stretch")
-    for _lbl, _key in (("Trusted non-profit partners", "trusted_partners"),
-                       ("Trusted for-profit partners", "trusted_for_profit_partners"),
-                       ("Trusted academic institutions", "trusted_academic_institutions")):
-        _v = prof.get(_key) or []
-        if _v:
-            _kv(st, _lbl, ", ".join(_v))
 
 # ── Funder relationships & languages ──────────────────────────────────────────
 with st.container(border=True):
