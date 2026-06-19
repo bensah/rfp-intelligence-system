@@ -21,6 +21,10 @@ import streamlit as st
 
 from core import geographies as _geo
 from core import permissions, settings
+from core import program_area_classifier as _pa
+from core.program_area_classifier import category_full as _pa_cat, subarea_label as _pa_sub
+from core.program_area_select import program_area_rating_editor, rating_bars_html
+from core.partners import ALL_PARTNERS
 from db.supabase_client import get_client
 
 # Deploying org's country — substituted wherever a record uses the literal
@@ -97,6 +101,20 @@ _LABEL_OVERRIDES = {
     "donor_values": "Values",
     "strategy_url": "Strategy (URL)",
     "projected_budget_period": "Budget period",
+    # Strategic-intelligence fields (migration 029)
+    "parent_organization": "Parent / funded by",
+    "strategic_priorities": "Strategic priorities",
+    "in_scope": "What they fund (in scope)",
+    "out_of_scope": "What they don't fund (out of scope)",
+    "selection_criteria": "Selection / evaluation criteria",
+    "funding_programs": "Funding programs / windows",
+    "eligibility_notes": "Who can apply / lead",
+    "application_deadlines": "Key dates / deadlines",
+    "submission_portal_url": "Submission portal (URL)",
+    "strategic_fit_notes": "Ideal applicant & what this funder rewards",
+    "gaps_risks": "Common pitfalls & disqualifiers",
+    "recommended_approach": "How to position a competitive application",
+    "funders_collaborators": "Funders & collaborators",
 }
 
 
@@ -312,7 +330,15 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
             "current_awards", "past_awards", "projected_budget",
             "projected_budget_period", "funding_cycle", "recent_activity",
             "application_process", "reporting_requirements",
-            "past_projects_json"]
+            "past_projects_json",
+            # Strategic-intelligence fields (migration 029) — narrative + JSON.
+            # Listed here so they're treated as text (not flags) and persist /
+            # surface in the view, share and PDF.
+            "parent_organization", "strategic_priorities", "in_scope",
+            "out_of_scope", "selection_criteria", "funding_programs",
+            "funding_tiers_json", "eligibility_notes", "application_deadlines",
+            "submission_portal_url", "strategic_fit_notes", "gaps_risks",
+            "recommended_approach", "program_area_ratings", "funders_collaborators"]
 # Columns kept for backward-compat but no longer surfaced anywhere (not edited,
 # not shown in View, not in share/PDF). verification_level already captures data
 # confidence, so the free-text "verification caveats" was redundant + confusing.
@@ -345,8 +371,9 @@ df["category_clean"] = (df["donor_category"].map(_normalize_category)
 # ── Structured dropdown vocabularies for the donor edit form ────────────────
 # Free text → finite choices. Multi fields accept typed custom values (covers
 # "Other"); single fields use an explicit "Other (specify)" escape hatch.
-# PROGRAM_AREAS reuses the program-area-fit flags so it matches Scan Preferences.
-PROGRAM_AREAS = [re.sub(r"\s*fit$", "", _label(c), flags=re.I) for c in _FIT]
+# (Program areas now use the SHARED hierarchical taxonomy via
+# core.program_area_select.program_area_rating_editor — same schema as the org
+# fit profile — so the donor's *_fit flags are deprecated for the picker.)
 FUNDING_MECHANISMS = [
     "Grants", "Loans / concessional finance", "Procurement / contracts",
     "Program-related investments (equity/debt)", "Technical assistance",
@@ -403,9 +430,37 @@ def _to_list(v) -> list[str]:
     return [t.strip() for t in re.split(r"[;,]", s) if t.strip()]
 
 
+def _na(v) -> bool:
+    """True if v is pandas NA/NaN/NaT (safe on non-scalars)."""
+    try:
+        return v is not None and bool(pd.isna(v))
+    except (TypeError, ValueError):
+        return False
+
+
+def _cell(v):
+    """Stripped string for a data-editor cell, or None. Safe against pandas
+    NA / NaN (a bare `if cell` on a StringDtype NA raises 'ambiguous')."""
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    s = str(v).strip()
+    return s or None
+
+
 # Fields stored as JSON lists — rendered as comma lists in share/export.
 _LIST_FIELDS = {"funding_scope_geographic", "priority_program_areas",
-                "funding_mechanism"}
+                "funding_mechanism", "funders_collaborators"}
+
+# Unified partner/funder options for the "Funders & collaborators" picker — the
+# shared partner vocabulary merged with the donor catalog (so any catalogued donor
+# is also pickable as a funder/collaborator). Typed additions are accepted too.
+_PARTNER_OPTIONS = list(dict.fromkeys(
+    list(ALL_PARTNERS)
+    + sorted(df["donor"].dropna().astype(str).str.strip().unique().tolist()
+             if "donor" in df.columns else [])))
 
 
 def _disp_field(row: dict, col: str):
@@ -416,58 +471,290 @@ def _disp_field(row: dict, col: str):
     return _disp(row.get(col))
 
 
-def _past_projects(row: dict) -> list[dict]:
-    """Parsed past-projects list (only entries with a title), or []."""
+def _json_dicts(v) -> list[dict]:
+    """Parse a JSON-array-of-objects column into a list of dicts (else [])."""
     try:
-        pp = json.loads(row.get("past_projects_json") or "[]")
+        j = json.loads(v or "[]")
     except (ValueError, TypeError):
         return []
-    return [p for p in pp if isinstance(p, dict) and p.get("title")] if isinstance(pp, list) else []
+    return [d for d in j if isinstance(d, dict)] if isinstance(j, list) else []
+
+
+def _past_projects(row: dict) -> list[dict]:
+    """Parsed past-projects list (only entries with a title), or []."""
+    return [p for p in _json_dicts(row.get("past_projects_json")) if p.get("title")]
+
+
+def _funding_tiers(row: dict) -> list[dict]:
+    """Parsed funding-tiers list (only entries with a name), or []."""
+    return [t for t in _json_dicts(row.get("funding_tiers_json")) if t.get("name")]
+
+
+# Fields that count toward the data-completeness score (every donor-facing field).
+# JSON/list fields count as documented when non-empty; flags count when explicitly
+# yes/no (blank = undocumented). donor_short is excluded (optional acronym).
+_COMPLETENESS_TEXT = [
+    "donor", "donor_category", "website", "founded", "parent_organization",
+    "general_email", "main_phone", "hq_country", "hq_address",
+    "donor_linkedin_url", "other_profile_urls", "summary_description", "mission",
+    "vision", "donor_values", "strategic_priorities", "strategy_url",
+    "award_low_usd", "award_high_usd", "total_annual_funding_global",
+    "total_awards", "total_funding_to_date", "current_awards", "past_awards",
+    "projected_budget", "funding_programs", "in_scope", "out_of_scope",
+    "direct_local_org_eligible", "active_route_status", "prefinance_required",
+    "application_process", "funding_cycle", "reporting_requirements",
+    "application_deadlines", "submission_portal_url", "recent_activity",
+    "eligibility_notes", "selection_criteria", "strategic_fit_notes",
+    "gaps_risks", "recommended_approach", "verification_level",
+    "evidence_summary", "notes", "source_urls",
+]
+_COMPLETENESS_JSON = ["funding_tiers_json", "past_projects_json"]
+
+
+def _completeness(row: dict) -> tuple[int, int, int]:
+    """Data-quality = % of donor fields that are documented (all fields counted).
+    Returns (percent, populated, total)."""
+    have = total = 0
+    for c in _COMPLETENESS_TEXT:
+        total += 1
+        if _disp(row.get(c)):
+            have += 1
+    for c in list(_LIST_FIELDS) + _COMPLETENESS_JSON:
+        total += 1
+        ok = bool(_json_dicts(row.get(c))) if c.endswith("_json") else bool(_to_list(row.get(c)))
+        if ok:
+            have += 1
+    # program_area_ratings is a JSON OBJECT (not a list) — documented if non-empty.
+    total += 1
+    try:
+        _r = json.loads(row.get("program_area_ratings") or "{}")
+    except (ValueError, TypeError):
+        _r = {}
+    if isinstance(_r, dict) and _r:
+        have += 1
+    # Flags — but NOT the deprecated *_fit program-area flags (program areas are
+    # now captured in priority_program_areas + program_area_ratings).
+    for c in _FLAGS:
+        if c in _FIT:
+            continue
+        total += 1
+        if str(row.get(c) or "").strip().lower() in ("yes", "no"):
+            have += 1
+    pct = round(100 * have / total) if total else 0
+    return pct, have, total
+
+
+# Dialog styling: breathing room, sticky header, and a clear section/sub-label
+# hierarchy (section = bold dark-blue; sub-label = small uppercase grey).
+_DIALOG_CSS = """
+<style>
+div[data-testid="stDialog"] div[role="dialog"]{padding-left:1.1rem;padding-right:1.1rem;}
+.di-stick{position:sticky;top:0;z-index:999;background:var(--background-color,#fff);
+  padding:.5rem 0 .55rem;margin:-.3rem 0 .7rem;border-bottom:2px solid #e2e8f0;}
+.di-stick-title{font-size:1.35rem;font-weight:800;color:#0f3d6e;line-height:1.2;}
+.di-stick-sub{font-size:.82rem;color:#64748b;margin-top:3px;}
+.di-badge{display:inline-block;margin-top:7px;padding:2px 11px;border-radius:11px;
+  color:#fff;font-size:.74rem;font-weight:700;}
+.di-sec{font-size:1.07rem;font-weight:700;color:#0f3d6e;margin:-2px 0 9px;}
+.di-sub{font-size:.74rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+  color:#64748b;margin:13px 0 5px;}
+</style>
+"""
+
+
+def _inject_dialog_css() -> None:
+    st.markdown(_DIALOG_CSS, unsafe_allow_html=True)
+
+
+def _completeness_band(pct: int) -> tuple[str, str]:
+    """(label, hex colour) for a completeness percentage."""
+    if pct >= 75:
+        return "High", "#16a34a"
+    if pct >= 50:
+        return "Moderate", "#d97706"
+    return "Low", "#dc2626"
+
+
+def _sec_header(emoji: str, title: str) -> None:
+    st.markdown(f"<div class='di-sec'>{emoji}&nbsp;&nbsp;{title}</div>",
+                unsafe_allow_html=True)
+
+
+def _sub(text: str) -> None:
+    st.markdown(f"<div class='di-sub'>{text}</div>", unsafe_allow_html=True)
+
+
+def _project_line(p: dict) -> str:
+    """One markdown bullet for a funded project: title — amount, year, country,
+    stage. <desc>."""
+    bits = []
+    amt = p.get("amount")
+    if amt not in (None, ""):
+        cur = (p.get("currency") or "").strip()
+        try:
+            bits.append((f"{cur} " if cur else "") + f"{float(amt):,.0f}")
+        except (TypeError, ValueError):
+            bits.append(((f"{cur} " if cur else "") + str(amt)).strip())
+    for k in ("year", "country", "stage"):
+        if p.get(k):
+            bits.append(str(p[k]).strip())
+    head = f"- {str(p['title']).strip()}"
+    if bits:
+        head += f" — {', '.join(bits)}"
+    desc = str(p.get("description") or "").strip()
+    if desc:
+        head += f". {desc}"
+    link = str(p.get("link") or "").strip()
+    if link:
+        head += f" ({link})"
+    return head
+
+
+def _tier_line(t: dict) -> str:
+    """One markdown bullet for a funding tier: **name** — amount, duration. <notes>."""
+    seg = [str(t[k]).strip() for k in ("amount", "duration") if t.get(k)]
+    head = f"- **{str(t.get('name', '')).strip()}**"
+    if seg:
+        head += f" — {', '.join(seg)}"
+    notes = str(t.get("notes") or "").strip()
+    if notes:
+        head += f". {notes}"
+    return head
 
 
 def _summary_lines(row: dict) -> list[str]:
-    """Markdown summary for share / PDF / download — the core matrix fields PLUS
-    the full donor-intelligence profile (About, footprint, intelligence, past
-    projects). Blank fields are skipped, so the summary only shows what's known."""
+    """Sectioned markdown for share / PDF / download, laid out in 'Donor
+    Intelligence Report' order so the A4-portrait PDF prints with clean section
+    headings. Blank fields and empty sections are skipped — only what's known
+    shows. Section-title lines (no leading '- ') render as PDF sub-headings."""
     lines = [f"# {_title_name(row)}", ""]
-    # Core matrix fields (identity, awards, scope, routes, institutional contact).
-    for col in _SHORT_TEXT + list(_CHOICE) + _LONG_TEXT + _CONTACT:
-        v = _disp_field(row, col)
-        if col in ("donor", "donor_short") or col in _HIDDEN_FIELDS or not v:
-            continue
-        lines.append(f"- **{_label(col)}:** {v}")
-    # Profile fields (handled below: projected_budget pairs with its period,
-    # past_projects_json renders as its own block).
-    for col in _PROFILE:
-        if col in ("projected_budget", "projected_budget_period", "past_projects_json"):
-            continue
-        v = _disp(row.get(col))
-        if v:
-            lines.append(f"- **{_label(col)}:** {v}")
+
+    def section(title: str, pairs: list[tuple[str, str]]) -> None:
+        pairs = [(lbl, v) for lbl, v in pairs if v]
+        if not pairs:
+            return
+        lines.append(title)
+        for lbl, v in pairs:
+            lines.append(f"- **{lbl}:** {v}")
+        lines.append("")
+
+    def flags(group: str) -> str | None:
+        labs = []
+        for c in _FLAG_GROUPS.get(group, []):
+            if _yes(row.get(c)):
+                labs.append(re.sub(r"\s*fit$", "", _label(c), flags=re.I)
+                            if group == "Program-area fit" else _label(c))
+        return ", ".join(labs) or None
+
+    def choice(col: str) -> str | None:
+        return _pretty_choice(row.get(col)) if _disp(row.get(col)) else None
+
+    def listf(col: str) -> str | None:
+        vals = _to_list(row.get(col))
+        return ", ".join(vals) if vals else None
+
+    _cat = _normalize_category(row.get("donor_category"))
+    section("Overview", [
+        ("Category", _cat if _cat != "(uncategorised)" else None),
+        ("Founded", _disp(row.get("founded"))),
+        (_label("parent_organization"), _disp(row.get("parent_organization"))),
+        ("Website", _disp(row.get("website"))),
+        ("HQ country", _disp(row.get("hq_country"))),
+        ("HQ address", _disp(row.get("hq_address"))),
+        ("General email", _disp(row.get("general_email"))),
+        ("Main phone", _disp(row.get("main_phone"))),
+        ("LinkedIn", _disp(row.get("donor_linkedin_url"))),
+        ("Other profiles", _disp(row.get("other_profile_urls"))),
+    ])
+    section("About & strategy", [
+        ("Summary", _disp(row.get("summary_description"))),
+        ("Mission", _disp(row.get("mission"))),
+        ("Vision", _disp(row.get("vision"))),
+        ("Values", _disp(row.get("donor_values"))),
+        (_label("strategic_priorities"), _disp(row.get("strategic_priorities"))),
+        ("Strategy (URL)", _disp(row.get("strategy_url"))),
+    ])
+
+    _lo, _hi = _disp(row.get("award_low_usd")), _disp(row.get("award_high_usd"))
+    _award = f"{_lo or '—'} – {_hi or '—'}" if (_lo or _hi) else None
     _pb = _disp(row.get("projected_budget"))
     if _pb:
         _per = _disp(row.get("projected_budget_period"))
-        lines.append(f"- **{_label('projected_budget')}:** {_pb}"
-                     + (f" ({_per})" if _per else ""))
+        _pb = f"{_pb} ({_per})" if _per else _pb
+    section("Funding", [
+        ("Award range", _award),
+        ("Annual funding", _disp(row.get("total_annual_funding_global"))),
+        ("Total awards", _disp(row.get("total_awards"))),
+        ("Total funding to date", _disp(row.get("total_funding_to_date"))),
+        ("Current awards", _disp(row.get("current_awards"))),
+        ("Past awards", _disp(row.get("past_awards"))),
+        ("Projected budget", _pb),
+        ("Funding mechanism", _disp_field(row, "funding_mechanism")),
+        (_label("funders_collaborators"), _disp_field(row, "funders_collaborators")),
+        (_label("funding_programs"), _disp(row.get("funding_programs"))),
+    ])
+    _tiers = _funding_tiers(row)
+    if _tiers:
+        lines.append("Funding tiers / bands")
+        lines.extend(_tier_line(t) for t in _tiers)
+        lines.append("")
+
+    # Scope & fit — strategic priority areas (graded), geographies, in/out scope.
+    _areas_s = _to_list(row.get("priority_program_areas"))
+    try:
+        _pa_ratings_s = json.loads(row.get("program_area_ratings") or "{}")
+        _pa_ratings_s = _pa_ratings_s if isinstance(_pa_ratings_s, dict) else {}
+    except (ValueError, TypeError):
+        _pa_ratings_s = {}
+    _scope_pairs = [(lbl, v) for lbl, v in (
+        ("Funding scope — geographies", listf("funding_scope_geographic")),
+        (_label("in_scope"), _disp(row.get("in_scope"))),
+        (_label("out_of_scope"), _disp(row.get("out_of_scope"))),
+    ) if v]
+    if _areas_s or _scope_pairs:
+        lines.append("Scope & fit")
+        for _k, _v in sorted(_pa_ratings_s.items(), key=lambda kv: (-int(kv[1]), kv[0])):
+            lines.append(f"- **Priority:** {_pa_sub(_k)} ({_pa_cat(_k)}) — {int(_v)}/5")
+        for _a in _areas_s:
+            if _a not in _pa_ratings_s:
+                lines.append(f"- **Priority area:** {_pa_sub(_a)}")
+        for _lbl, _v in _scope_pairs:
+            lines.append(f"- **{_lbl}:** {_v}")
+        lines.append("")
+    section("Eligibility & process", [
+        ("Eligibility & routes", flags("Eligibility & routes")),
+        ("Requirements & compliance", flags("Requirements & compliance")),
+        ("Direct local org eligible", _disp(row.get("direct_local_org_eligible"))),
+        ("Route status", _disp(row.get("active_route_status"))),
+        ("Prefinance", choice("prefinance_required")),
+        ("Application process", _disp(row.get("application_process"))),
+        ("Funding cycle", _disp(row.get("funding_cycle"))),
+        ("Reporting requirements", _disp(row.get("reporting_requirements"))),
+        (_label("application_deadlines"), _disp(row.get("application_deadlines"))),
+        (_label("submission_portal_url"), _disp(row.get("submission_portal_url"))),
+        ("Recent activity", _disp(row.get("recent_activity"))),
+        (_label("eligibility_notes"), _disp(row.get("eligibility_notes"))),
+        (_label("selection_criteria"), _disp(row.get("selection_criteria"))),
+    ])
+
     projects = _past_projects(row)
     if projects:
+        lines.append(f"Track record — funded projects ({len(projects)})")
+        lines.extend(_project_line(p) for p in projects)
         lines.append("")
-        lines.append(f"**Past projects ({len(projects)}):**")
-        for p in projects:
-            bits = []
-            amt = p.get("amount")
-            if amt not in (None, ""):
-                cur = (p.get("currency") or "").strip()
-                try:
-                    bits.append((f"{cur} " if cur else "") + f"{float(amt):,.0f}")
-                except (TypeError, ValueError):
-                    bits.append(((f"{cur} " if cur else "") + str(amt)).strip())
-            if p.get("year"):
-                bits.append(str(p["year"]).strip())
-            if p.get("country"):
-                bits.append(str(p["country"]).strip())
-            tail = f" — {', '.join(bits)}" if bits else ""
-            lines.append(f"- {str(p['title']).strip()}{tail}")
+
+    section("Strategic guidance", [
+        (_label("strategic_fit_notes"), _disp(row.get("strategic_fit_notes"))),
+        (_label("gaps_risks"), _disp(row.get("gaps_risks"))),
+        (_label("recommended_approach"), _disp(row.get("recommended_approach"))),
+    ])
+    section("Sources & data quality", [
+        ("Verification", choice("verification_level")),
+        ("Evidence summary", _disp(row.get("evidence_summary"))),
+        ("Notes", _disp(row.get("notes"))),
+        ("Aliases", _disp(row.get("aliases"))),
+        ("Source URLs", _disp(row.get("source_urls"))),
+    ])
     return lines
 
 
@@ -505,11 +792,16 @@ def _yes(v) -> bool:
     return str(v).strip().lower() == "yes"
 
 
-def _checkbox_matrix(row: dict, *, editable: bool, key_prefix: str) -> dict:
+def _checkbox_matrix(row: dict, *, editable: bool, key_prefix: str,
+                     groups: list[str] | None = None) -> dict:
     """Render the flag groups as a multi-column checkbox grid. Returns the
-    edited {col: 'yes'|'no'|<original-if-untouched-blank>} when editable."""
+    edited {col: 'yes'|'no'|<original-if-untouched-blank>} when editable.
+    `groups` limits rendering to the named flag groups (so the tabbed edit form
+    can place each group on its own tab); None = all groups."""
     edited: dict = {}
     for group, cols in _FLAG_GROUPS.items():
+        if groups is not None and group not in groups:
+            continue
         if not cols:
             continue
         st.markdown(f"**{group}**")
@@ -579,14 +871,33 @@ def _render_contacts(row: dict) -> None:
 # ---------------------------------------------------------------------------
 @st.dialog("Edit donor", width="large")
 def _edit_dialog(row: dict) -> None:
-    st.markdown(f"### {row.get('donor')}")
+    import html as _html
+    _inject_dialog_css()
+    # Sanitize pandas NaN → None up front so blank columns render as empty fields
+    # in the form (otherwise `nan or ""` keeps the float NaN → shows literal "nan").
+    row = {k: (None if _na(v) else v) for k, v in row.items()}
+    _ename = _disp(row.get("donor")) or "New donor"
+    _eshort = _disp(row.get("donor_short"))
+    st.markdown(
+        f"<div class='di-stick'><div class='di-stick-title'>{_html.escape(_ename)}"
+        + (f" ({_html.escape(_eshort)})" if _eshort else "")
+        + "</div><div class='di-stick-sub'>Editing donor intelligence · "
+        + "app owners only — keep entries funder-centric & reusable across tenants"
+        + "</div></div>", unsafe_allow_html=True)
     edited: dict = {}
-    with st.container():
+    ck = row["canonical_key"]
+    (t_id, t_about, t_fund, t_scope, t_elig,
+     t_track, t_strat, t_contacts) = st.tabs([
+        "🏷 Identity", "📖 About & strategy", "💰 Funding", "🎯 Scope & fit",
+        "✅ Eligibility & process", "📚 Track record", "🧭 Strategic guidance",
+        "📇 Contacts"])
+
+    # ── Identity ─────────────────────────────────────────────────────────────
+    with t_id:
         c1, c2 = st.columns(2)
-        edited["donor"] = c1.text_input("Donor", row.get("donor") or "",
-                                        key=f"donor_{row['canonical_key']}")
+        edited["donor"] = c1.text_input("Donor", row.get("donor") or "", key=f"donor_{ck}")
         edited["donor_short"] = c2.text_input("Donor Code", row.get("donor_short") or "",
-                                              key=f"donor_short_{row['canonical_key']}")
+                                              key=f"donor_short_{ck}")
         c3, c4 = st.columns(2)
         _cur_cat = _normalize_category(row.get("donor_category"))
         _cat_opts = list(_CATEGORIES)
@@ -595,144 +906,248 @@ def _edit_dialog(row: dict) -> None:
         edited["donor_category"] = c3.selectbox(
             "Donor category", _cat_opts,
             index=(_cat_opts.index(_cur_cat) if _cur_cat in _cat_opts else 0),
-            key=f"cat_{row['canonical_key']}")
-        edited["website"] = c4.text_input("Website", row.get("website") or "",
-                                          key=f"website_{row['canonical_key']}")
+            key=f"cat_{ck}")
+        edited["website"] = c4.text_input("Website", row.get("website") or "", key=f"website_{ck}")
         # Founded — year dropdown (append a legacy value not in the list so an
         # existing donor's value is never dropped on save).
         _cur_founded = str(row.get("founded") or "").strip()
         _yr_opts = (_YEAR_OPTIONS if _cur_founded in _YEAR_OPTIONS
                     else _YEAR_OPTIONS + [_cur_founded])
-        c5, _c6 = st.columns(2)
+        c5, c6 = st.columns(2)
         edited["founded"] = c5.selectbox(
             "Founded (year)", _yr_opts, index=_yr_opts.index(_cur_founded),
-            key=f"founded_{row['canonical_key']}",
-            help="Year the organisation was established.")
+            key=f"founded_{ck}", help="Year the organisation was established.")
+        edited["parent_organization"] = c6.text_input(
+            _label("parent_organization"), row.get("parent_organization") or "",
+            key=f"parent_org_{ck}",
+            help="The funder behind the fund, e.g. 'UK DHSC via ODA' or 'USAID'.")
 
-        # Official / institutional contact (HQ country is a dropdown to avoid
-        # typos). Sits right after the identity fields, before 'About'.
         st.markdown("**Official / institutional contact**")
         ic1, ic2 = st.columns(2)
-        edited["general_email"] = ic1.text_input(
-            "General email", row.get("general_email") or "",
-            key=f"general_email_{row['canonical_key']}")
-        edited["main_phone"] = ic2.text_input(
-            "Main phone", row.get("main_phone") or "",
-            key=f"main_phone_{row['canonical_key']}")
+        edited["general_email"] = ic1.text_input("General email", row.get("general_email") or "",
+                                                 key=f"general_email_{ck}")
+        edited["main_phone"] = ic2.text_input("Main phone", row.get("main_phone") or "",
+                                              key=f"main_phone_{ck}")
         ic3, ic4 = st.columns(2)
         _cur_hq = str(row.get("hq_country") or "").strip()
         _hq_opts = (_HQ_COUNTRY_OPTIONS if _cur_hq in _HQ_COUNTRY_OPTIONS
                     else _HQ_COUNTRY_OPTIONS + [_cur_hq])
-        edited["hq_country"] = ic3.selectbox(
-            "HQ country", _hq_opts, index=_hq_opts.index(_cur_hq),
-            key=f"hq_country_{row['canonical_key']}")
-        edited["donor_linkedin_url"] = ic4.text_input(
-            "Donor LinkedIn", row.get("donor_linkedin_url") or "",
-            key=f"donor_linkedin_url_{row['canonical_key']}")
-        edited["hq_address"] = st.text_area(
-            "HQ address", row.get("hq_address") or "", height=60,
-            key=f"hq_address_{row['canonical_key']}")
-        edited["other_profile_urls"] = st.text_area(
-            "Other profile URLs", row.get("other_profile_urls") or "", height=60,
-            key=f"other_profile_urls_{row['canonical_key']}")
+        edited["hq_country"] = ic3.selectbox("HQ country", _hq_opts,
+                                             index=_hq_opts.index(_cur_hq), key=f"hq_country_{ck}")
+        edited["donor_linkedin_url"] = ic4.text_input("Donor LinkedIn",
+                                                      row.get("donor_linkedin_url") or "",
+                                                      key=f"donor_linkedin_url_{ck}")
+        edited["hq_address"] = st.text_area("HQ address", row.get("hq_address") or "",
+                                            height=60, key=f"hq_address_{ck}")
+        edited["other_profile_urls"] = st.text_area("Other profile URLs",
+                                                    row.get("other_profile_urls") or "",
+                                                    height=60, key=f"other_profile_urls_{ck}")
 
-        # About this donor — summary / mission / vision / values / strategy
-        # (follows the institutional contact, before Funding footprint).
-        st.markdown("**About this donor**")
+    # ── About & strategy ─────────────────────────────────────────────────────
+    with t_about:
         edited["summary_description"] = st.text_area(
-            "Summary / description", row.get("summary_description") or "", height=80,
-            key=f"summary_description_{row['canonical_key']}")
+            "Summary / description", row.get("summary_description") or "", height=90,
+            key=f"summary_description_{ck}")
         _mv1, _mv2 = st.columns(2)
-        edited["mission"] = _mv1.text_area("Mission", row.get("mission") or "", height=70,
-                                           key=f"mission_{row['canonical_key']}")
-        edited["vision"] = _mv2.text_area("Vision", row.get("vision") or "", height=70,
-                                          key=f"vision_{row['canonical_key']}")
-        edited["donor_values"] = st.text_area(
-            "Values", row.get("donor_values") or "", height=70,
-            key=f"donor_values_{row['canonical_key']}")
+        edited["mission"] = _mv1.text_area("Mission", row.get("mission") or "", height=80,
+                                           key=f"mission_{ck}")
+        edited["vision"] = _mv2.text_area("Vision", row.get("vision") or "", height=80,
+                                          key=f"vision_{ck}")
+        edited["donor_values"] = st.text_area("Values", row.get("donor_values") or "",
+                                              height=70, key=f"donor_values_{ck}")
+        edited["strategic_priorities"] = st.text_area(
+            _label("strategic_priorities"), row.get("strategic_priorities") or "", height=120,
+            key=f"strategic_priorities_{ck}",
+            help="Current strategic priorities, rotating themes and the period they cover "
+                 "(e.g. '2026 theme: AMR; 2026–2030 strategy; 4 Is framework').")
         edited["strategy_url"] = st.text_input(
-            "Donor strategy (URL)", row.get("strategy_url") or "",
-            key=f"strategy_url_{row['canonical_key']}",
+            "Donor strategy (URL)", row.get("strategy_url") or "", key=f"strategy_url_{ck}",
             help="Link to the donor's published strategy document.")
 
-        # Funding footprint — counts + money (free text so "~120/year" is fine).
+    # ── Funding ──────────────────────────────────────────────────────────────
+    with t_fund:
         st.markdown("**Funding footprint**")
         _ff1, _ff2 = st.columns(2)
-        edited["total_awards"] = _ff1.text_input(
-            "Total awards", row.get("total_awards") or "",
-            key=f"total_awards_{row['canonical_key']}")
+        edited["total_awards"] = _ff1.text_input("Total awards", row.get("total_awards") or "",
+                                                 key=f"total_awards_{ck}")
         edited["total_funding_to_date"] = _ff2.text_input(
             "Total funding to date (amount)", row.get("total_funding_to_date") or "",
-            key=f"total_funding_to_date_{row['canonical_key']}")
+            key=f"total_funding_to_date_{ck}")
         _ff3, _ff4 = st.columns(2)
-        edited["current_awards"] = _ff3.text_input(
-            "Current / active awards", row.get("current_awards") or "",
-            key=f"current_awards_{row['canonical_key']}")
-        edited["past_awards"] = _ff4.text_input(
-            "Past awards", row.get("past_awards") or "",
-            key=f"past_awards_{row['canonical_key']}")
+        edited["current_awards"] = _ff3.text_input("Current / active awards",
+                                                   row.get("current_awards") or "",
+                                                   key=f"current_awards_{ck}")
+        edited["past_awards"] = _ff4.text_input("Past awards", row.get("past_awards") or "",
+                                                key=f"past_awards_{ck}")
         _pb1, _pb2 = st.columns([3, 2])
         edited["projected_budget"] = _pb1.text_input(
-            "Projected budget / published allocations",
-            row.get("projected_budget") or "",
-            key=f"projbud_{row['canonical_key']}",
-            help="The amount, e.g. '200 billion XAF' or '$5M'.")
+            "Projected budget / published allocations", row.get("projected_budget") or "",
+            key=f"projbud_{ck}", help="The amount, e.g. '200 billion XAF' or '$5M'.")
         edited["projected_budget_period"] = _pb2.text_input(
-            "Period / end year",
-            row.get("projected_budget_period") or "",
-            key=f"projbudper_{row['canonical_key']}",
-            help="When it applies, e.g. '2024–2030' or 'by 2046'.")
+            "Period / end year", row.get("projected_budget_period") or "",
+            key=f"projbudper_{ck}", help="When it applies, e.g. '2024–2030' or 'by 2046'.")
 
-        # Intelligence — structured where it helps consistency across donors;
-        # each dropdown has an "Other (specify)" escape hatch for edge cases.
-        st.markdown("**Intelligence**")
-        _in1, _in2 = st.columns(2)
-        with _in1:
+        st.markdown("**Award size & mechanism**")
+        fcols = st.columns(2)
+        for j, col in enumerate(["award_low_usd", "award_high_usd",
+                                 "total_annual_funding_global"]):
+            edited[col] = fcols[j % 2].text_input(_label(col), row.get(col) or "", key=f"{col}_{ck}")
+        edited["funding_mechanism"] = json.dumps(_multi_with_options(
+            "Funding mechanism (type)", FUNDING_MECHANISMS, row.get("funding_mechanism"),
+            key=f"fm_{ck}", help="The kind of money — grants, loans, technical assistance, …"))
+        edited["funding_programs"] = st.text_area(
+            _label("funding_programs"), row.get("funding_programs") or "", height=80,
+            key=f"funding_programs_{ck}",
+            help="Named schemes / windows, e.g. 'GHR Themed; Global Professorships; Fellowships'.")
+        edited["funders_collaborators"] = json.dumps(_multi_with_options(
+            _label("funders_collaborators"), _PARTNER_OPTIONS,
+            row.get("funders_collaborators"), key=f"fundcollab_{ck}",
+            help="Funders, pooled funders, philanthropies & partners behind/alongside "
+                 "this donor. Shared partner vocabulary — type to add a private firm, "
+                 "academic institution or other partner. Blank for most donors."))
+
+        st.markdown("**Funding tiers / bands / stages**")
+        st.caption("One row per band/stage — e.g. NIHR Band 1/2/3 or DIV Stage 1/2/3.")
+        try:
+            _tiers = json.loads(row.get("funding_tiers_json") or "[]")
+            _tiers = _tiers if isinstance(_tiers, list) else []
+        except (ValueError, TypeError):
+            _tiers = []
+        _tier_base = (pd.DataFrame(_tiers) if _tiers else pd.DataFrame()).reindex(
+            columns=["name", "amount", "duration", "notes"])
+        for _tc in ("name", "amount", "duration", "notes"):
+            _tier_base[_tc] = _tier_base[_tc].astype("string")
+        _tier_edited = st.data_editor(
+            _tier_base, num_rows="dynamic", hide_index=True, width='stretch',
+            key=f"tier_ed_{ck}",
+            column_config={
+                "name": st.column_config.TextColumn("Tier / band / stage"),
+                "amount": st.column_config.TextColumn("Amount / ceiling"),
+                "duration": st.column_config.TextColumn("Duration"),
+                "notes": st.column_config.TextColumn("Notes / criteria", width="large"),
+            })
+        _tier_recs = []
+        for _tr in _tier_edited.to_dict("records"):
+            if not _cell(_tr.get("name")):
+                continue
+            _tier_recs.append({k: _cell(_tr.get(k))
+                               for k in ("name", "amount", "duration", "notes")})
+        edited["funding_tiers_json"] = json.dumps(_tier_recs)
+
+    # ── Scope & fit ──────────────────────────────────────────────────────────
+    with t_scope:
+        # Strategic priority areas — the SHARED hierarchical taxonomy + 0–5 grade
+        # per child sub-area (identical schema + grading to the org fit profile,
+        # so the two correlate into a strategic-fit score). Replaces the old
+        # free multiselect AND the *_fit checkbox flags.
+        _sel, _ratings = program_area_rating_editor(
+            "Strategic priority areas (domains / areas of expertise)",
+            row.get("priority_program_areas"), row.get("program_area_ratings"),
+            key_prefix=f"ppa_{ck}",
+            help="Pick a category, then drill into sub-areas. Same vocabulary the "
+                 "org fit profile uses — grade each sub-area 0–5 to drive strategic fit.")
+        edited["priority_program_areas"] = json.dumps(_sel)
+        edited["program_area_ratings"] = json.dumps(_ratings)
+        st.divider()
+        edited["funding_scope_geographic"] = json.dumps(_multi_with_options(
+            "Funding scope — geographies (UN regions / tiers / countries)",
+            _geo.GEO_OPTIONS, row.get("funding_scope_geographic"),
+            key=f"fsg_{ck}",
+            help="Where the donor funds. Drives the 'Funds in' filter + coverage view."))
+        _sc1, _sc2 = st.columns(2)
+        edited["in_scope"] = _sc1.text_area(
+            _label("in_scope"), row.get("in_scope") or "", height=170, key=f"in_scope_{ck}",
+            help="What the donor DOES fund — eligible activities, study types, topics.")
+        edited["out_of_scope"] = _sc2.text_area(
+            _label("out_of_scope"), row.get("out_of_scope") or "", height=170,
+            key=f"out_of_scope_{ck}", help="What the donor explicitly does NOT fund.")
+
+    # ── Eligibility & process ────────────────────────────────────────────────
+    with t_elig:
+        edited.update(_checkbox_matrix(
+            row, editable=True, key_prefix=f"ed_{ck}",
+            groups=["Eligibility & routes", "Requirements & compliance"]))
+        st.divider()
+        _r1, _r2 = st.columns(2)
+        with _r1:
+            edited["direct_local_org_eligible"] = _single_with_other(
+                "Direct local org eligible", LOCAL_ORG_ELIGIBLE,
+                row.get("direct_local_org_eligible"), key=f"dle_{ck}")
+        with _r2:
+            edited["active_route_status"] = _single_with_other(
+                "Route status", ROUTE_STATUSES, row.get("active_route_status"), key=f"rstat_{ck}")
+        _pc1, _pc2 = st.columns(2)
+        with _pc1:
+            _pf_opts = _CHOICE["prefinance_required"]
+            _cur_pf = row.get("prefinance_required") or ""
+            edited["prefinance_required"] = st.selectbox(
+                _label("prefinance_required"), _pf_opts,
+                index=_pf_opts.index(_cur_pf) if _cur_pf in _pf_opts else 0,
+                key=f"prefinance_required_{ck}", format_func=_pretty_choice)
+        with _pc2:
             edited["funding_cycle"] = _single_with_other(
-                "Funding cycle / timing", FUNDING_CYCLES,
-                row.get("funding_cycle"), key=f"fcyc_{row['canonical_key']}")
-        edited["recent_activity"] = _in2.text_input(
-            "Recent activity / last funded", row.get("recent_activity") or "",
-            key=f"recent_activity_{row['canonical_key']}",
-            help="Free text — e.g. a year or last-funded note.")
-        _ip1, _ip2 = st.columns(2)
-        with _ip1:
+                "Funding cycle / timing", FUNDING_CYCLES, row.get("funding_cycle"),
+                key=f"fcyc_{ck}")
+        _ap1, _ap2 = st.columns(2)
+        with _ap1:
             edited["application_process"] = _single_with_other(
                 "Application process", APPLICATION_PROCESSES,
-                row.get("application_process"), key=f"appproc_{row['canonical_key']}")
-        with _ip2:
+                row.get("application_process"), key=f"appproc_{ck}")
+        with _ap2:
             edited["reporting_requirements"] = _single_with_other(
                 "Reporting requirements", REPORTING_REQUIREMENTS,
-                row.get("reporting_requirements"), key=f"reprq_{row['canonical_key']}")
+                row.get("reporting_requirements"), key=f"reprq_{ck}")
+        _dl1, _dl2 = st.columns(2)
+        edited["application_deadlines"] = _dl1.text_input(
+            _label("application_deadlines"), row.get("application_deadlines") or "",
+            key=f"appdl_{ck}", help="Key dates, e.g. 'Stage 1 outline: 1pm UK, 8 Jul 2026'.")
+        edited["submission_portal_url"] = _dl2.text_input(
+            _label("submission_portal_url"), row.get("submission_portal_url") or "",
+            key=f"portal_{ck}")
+        edited["recent_activity"] = st.text_input(
+            "Recent activity / last funded", row.get("recent_activity") or "",
+            key=f"recent_activity_{ck}", help="Free text — e.g. a year or last-funded note.")
+        edited["eligibility_notes"] = st.text_area(
+            _label("eligibility_notes"), row.get("eligibility_notes") or "", height=90,
+            key=f"elig_notes_{ck}",
+            help="Who can be lead / co-applicant, partnership rules, registration constraints.")
+        edited["selection_criteria"] = st.text_area(
+            _label("selection_criteria"), row.get("selection_criteria") or "", height=120,
+            key=f"selcrit_{ck}", help="Evaluation criteria, relative weights, and what wins.")
 
-        # Past projects — title + award amount (+ year/country). Stored as JSON
-        # in past_projects_json; add rows freely.
-        st.markdown("**Past projects**")
+    # ── Track record — funded projects (JSON: past_projects_json) ────────────
+    with t_track:
+        st.caption("Funded projects — title, amount, year, country, stage, short "
+                   "description, link. Add rows freely.")
         try:
             _proj = json.loads(row.get("past_projects_json") or "[]")
             _proj = _proj if isinstance(_proj, list) else []
         except (ValueError, TypeError):
             _proj = []
-        _proj_base = (pd.DataFrame(_proj) if _proj else pd.DataFrame()).reindex(
-            columns=["title", "amount", "currency", "year", "country"])
+        _proj_cols = ["title", "amount", "currency", "year", "country", "stage",
+                      "description", "link"]
+        _proj_base = (pd.DataFrame(_proj) if _proj else pd.DataFrame()).reindex(columns=_proj_cols)
         # Enforce dtypes so they match the column_config (a NumberColumn over an
         # object/empty column raises StreamlitAPIException at render time).
         _proj_base["amount"] = pd.to_numeric(_proj_base["amount"], errors="coerce")
-        for _tc in ("title", "currency", "year", "country"):
+        for _tc in ("title", "currency", "year", "country", "stage", "description", "link"):
             _proj_base[_tc] = _proj_base[_tc].astype("string")
         _proj_edited = st.data_editor(
             _proj_base, num_rows="dynamic", hide_index=True, width='stretch',
-            key=f"proj_ed_{row['canonical_key']}",
+            key=f"proj_ed_{ck}",
             column_config={
-                "title": st.column_config.TextColumn("Project title", width="large"),
+                "title": st.column_config.TextColumn("Project title", width="medium"),
                 "amount": st.column_config.NumberColumn("Award amount", format="%.0f"),
                 "currency": st.column_config.TextColumn("Currency", default="USD"),
                 "year": st.column_config.TextColumn("Year"),
                 "country": st.column_config.TextColumn("Country"),
+                "stage": st.column_config.TextColumn("Stage / band"),
+                "description": st.column_config.TextColumn("Description", width="large"),
+                "link": st.column_config.LinkColumn("Link"),
             })
         _proj_recs = []
         for _pr in _proj_edited.to_dict("records"):
-            if not str(_pr.get("title") or "").strip():
+            if not _cell(_pr.get("title")):
                 continue
             _amt = _pr.get("amount")
             try:
@@ -740,87 +1155,81 @@ def _edit_dialog(row: dict) -> None:
             except (TypeError, ValueError):
                 _amt = None
             _proj_recs.append({
-                "title": str(_pr.get("title")).strip(),
+                "title": _cell(_pr.get("title")),
                 "amount": _amt,
-                "currency": (str(_pr.get("currency")).strip() or None) if _pr.get("currency") else None,
-                "year": (str(_pr.get("year")).strip() or None) if _pr.get("year") else None,
-                "country": (str(_pr.get("country")).strip() or None) if _pr.get("country") else None,
+                "currency": _cell(_pr.get("currency")),
+                "year": _cell(_pr.get("year")),
+                "country": _cell(_pr.get("country")),
+                "stage": _cell(_pr.get("stage")),
+                "description": _cell(_pr.get("description")),
+                "link": _cell(_pr.get("link")),
             })
         edited["past_projects_json"] = json.dumps(_proj_recs)
 
-        # Choice dropdowns. Values stay lowercase (the scorer keys off them, e.g.
-        # prefinance_required == "reimbursement_only"); only the DISPLAY is
-        # prettified → "None", "Partial", "Reimbursement Only", "High", …
-        for col, opts in _CHOICE.items():
-            cur = row.get(col) or ""
-            edited[col] = st.selectbox(
-                _label(col), opts, index=opts.index(cur) if cur in opts else 0,
-                key=f"{col}_{row['canonical_key']}", format_func=_pretty_choice,
-            )
-        # Funding short text
-        fcols = st.columns(2)
-        for j, col in enumerate(["award_low_usd", "award_high_usd",
-                                 "total_annual_funding_global"]):
-            edited[col] = fcols[j % 2].text_input(
-                _label(col), row.get(col) or "", key=f"{col}_{row['canonical_key']}")
-        edited["funding_mechanism"] = json.dumps(_multi_with_options(
-            "Funding mechanism", FUNDING_MECHANISMS, row.get("funding_mechanism"),
-            key=f"fm_{row['canonical_key']}"))
+    # ── Strategic guidance — funder-centric, reusable across tenants ─────────
+    with t_strat:
+        st.caption("Funder-centric guidance any applicant institution can use — "
+                   "describe the **donor**, not one organisation. Keep it generic "
+                   "(no tenant names) but specific enough to be actionable.")
+        edited["strategic_fit_notes"] = st.text_area(
+            _label("strategic_fit_notes"), row.get("strategic_fit_notes") or "", height=120,
+            key=f"stratfit_{ck}",
+            help="The applicant profile this funder rewards and the strengths that win "
+                 "(e.g. 'LMIC-led teams with government demand and prior evidence').")
+        edited["gaps_risks"] = st.text_area(
+            _label("gaps_risks"), row.get("gaps_risks") or "", height=120, key=f"gaps_{ck}",
+            help="Common reasons applications fail / are disqualified — generic to any "
+                 "applicant (e.g. 'service delivery framed as research', 'no causal design').")
+        edited["recommended_approach"] = st.text_area(
+            _label("recommended_approach"), row.get("recommended_approach") or "", height=120,
+            key=f"recapp_{ck}",
+            help="How to position a strong application — recommended tier/band, framing "
+                 "and sequencing — usable by any institution.")
+        st.divider()
+        _vc1, _vc2 = st.columns([1, 2])
+        with _vc1:
+            _vl_opts = _CHOICE["verification_level"]
+            _cur_vl = row.get("verification_level") or ""
+            edited["verification_level"] = st.selectbox(
+                _label("verification_level"), _vl_opts,
+                index=_vl_opts.index(_cur_vl) if _cur_vl in _vl_opts else 0,
+                key=f"verification_level_{ck}", format_func=_pretty_choice)
+        edited["evidence_summary"] = st.text_area("Evidence summary",
+                                                  row.get("evidence_summary") or "", height=80,
+                                                  key=f"evidence_summary_{ck}")
+        edited["notes"] = st.text_area("Notes", row.get("notes") or "", height=70,
+                                       key=f"notes_{ck}")
+        _ax1, _ax2 = st.columns(2)
+        edited["aliases"] = _ax1.text_area("Aliases", row.get("aliases") or "", height=70,
+                                           key=f"aliases_{ck}")
+        edited["source_urls"] = _ax2.text_area("Source URLs", row.get("source_urls") or "",
+                                               height=70, key=f"source_urls_{ck}")
 
-    st.divider()
-    edited.update(_checkbox_matrix(row, editable=True, key_prefix=f"ed_{row['canonical_key']}"))
-
-    st.divider()
-    st.markdown("**Eligibility, scope & routes**")
-    edited["funding_scope_geographic"] = json.dumps(_multi_with_options(
-        "Funding scope — geographies (UN regions / tiers / countries)",
-        _geo.GEO_OPTIONS, row.get("funding_scope_geographic"),
-        key=f"fsg_{row['canonical_key']}",
-        help="Where the donor funds. Drives the 'Funds in' filter + coverage view."))
-    edited["priority_program_areas"] = json.dumps(_multi_with_options(
-        "Priority program areas", PROGRAM_AREAS, row.get("priority_program_areas"),
-        key=f"ppa_{row['canonical_key']}",
-        help="Reuses the program-area vocabulary from Scan Preferences."))
-    _r1, _r2 = st.columns(2)
-    with _r1:
-        edited["direct_local_org_eligible"] = _single_with_other(
-            "Direct local org eligible", LOCAL_ORG_ELIGIBLE,
-            row.get("direct_local_org_eligible"), key=f"dle_{row['canonical_key']}")
-    with _r2:
-        edited["active_route_status"] = _single_with_other(
-            "Route status", ROUTE_STATUSES, row.get("active_route_status"),
-            key=f"rstat_{row['canonical_key']}")
-
-    st.markdown("**Other details**")
-    for col in ["evidence_summary", "notes", "aliases", "source_urls"]:
-        edited[col] = st.text_area(_label(col), row.get(col) or "", height=70,
-                                   key=f"{col}_{row['canonical_key']}")
-
-    st.divider()
-    st.markdown("**Contacts — focal persons & additional (private)**")
-    st.caption("Add as many as you like (＋ row). Official channels or people the "
-               "team has engaged. Sourced from public pages or first-party — never guessed.")
-    _existing = _load_contacts(row["canonical_key"])
-    if _existing.empty:
-        _base = pd.DataFrame({c: pd.Series(dtype=("bool" if c == "is_official" else "object"))
-                              for c in _CONTACT_COLS})
-    else:
-        _base = _existing.reindex(columns=_CONTACT_COLS)
-        _base["is_official"] = _base["is_official"].fillna(False).astype(bool)
-    contacts_edited = st.data_editor(
-        _base, num_rows="dynamic", width='stretch', hide_index=True,
-        key=f"contacts_ed_{row['canonical_key']}",
-        column_config={
-            "contact_name": st.column_config.TextColumn("Name"),
-            "role_title": st.column_config.TextColumn("Role / title"),
-            "email": st.column_config.TextColumn("Email"),
-            "phone": st.column_config.TextColumn("Phone"),
-            "linkedin_url": st.column_config.TextColumn("LinkedIn URL"),
-            "address": st.column_config.TextColumn("Address"),
-            "is_official": st.column_config.CheckboxColumn("Official?", default=False),
-            "notes": st.column_config.TextColumn("Notes"),
-        },
-    )
+    # ── Contacts — focal persons & additional (private) ──────────────────────
+    with t_contacts:
+        st.caption("Add as many as you like (＋ row). Official channels or people the "
+                   "team has engaged. Sourced from public pages or first-party — never guessed.")
+        _existing = _load_contacts(row["canonical_key"])
+        if _existing.empty:
+            _base = pd.DataFrame({c: pd.Series(dtype=("bool" if c == "is_official" else "object"))
+                                  for c in _CONTACT_COLS})
+        else:
+            _base = _existing.reindex(columns=_CONTACT_COLS)
+            _base["is_official"] = _base["is_official"].fillna(False).astype(bool)
+        contacts_edited = st.data_editor(
+            _base, num_rows="dynamic", width='stretch', hide_index=True,
+            key=f"contacts_ed_{ck}",
+            column_config={
+                "contact_name": st.column_config.TextColumn("Name"),
+                "role_title": st.column_config.TextColumn("Role / title"),
+                "email": st.column_config.TextColumn("Email"),
+                "phone": st.column_config.TextColumn("Phone"),
+                "linkedin_url": st.column_config.TextColumn("LinkedIn URL"),
+                "address": st.column_config.TextColumn("Address"),
+                "is_official": st.column_config.CheckboxColumn("Official?", default=False),
+                "notes": st.column_config.TextColumn("Notes"),
+            },
+        )
 
     if st.button("💾 Save changes", type="primary", width='stretch'):
         payload = {k: (v.strip() if isinstance(v, str) else v) or None
@@ -888,8 +1297,8 @@ def _edit_dialog(row: dict) -> None:
         if _dropped:
             _warns.append(
                 "These fields aren't stored yet because the database is missing "
-                "their columns. Apply **migration 025** in Supabase, then re-save: "
-                + ", ".join(_dropped))
+                "their columns. Apply the latest donor migrations (**025–029**) in "
+                "Supabase, then re-save: " + ", ".join(_dropped))
         if _contact_warn:
             _warns.append(_contact_warn)
         if _warns:
@@ -1064,14 +1473,10 @@ def _share_dialog(row: dict) -> None:
     lines = _summary_lines(row)
     _contacts = _load_contacts(row["canonical_key"])
     if not _contacts.empty:
-        lines.append("")
-        lines.append("**Contacts:**")
+        lines.append("Contacts — focal persons")
         for _, cr in _contacts.iterrows():
             lines.append("- " + _contact_line(cr.to_dict()).replace("  \n", " — ").replace(r"\$", "$"))
-    yes_flags = [_label(c) for c in _FLAGS if _yes(row.get(c))]
-    if yes_flags:
         lines.append("")
-        lines.append("**Flags = yes:** " + ", ".join(yes_flags))
     md = "\n".join(lines)
     st.caption("Copy this summary, or download the full PDF.")
     st.code(md, language="markdown")
@@ -1099,36 +1504,65 @@ def _view_dialog(row: dict) -> None:
             "padding:2px 11px;border-radius:12px;margin:0 5px 7px 0;"
             f"font-size:0.85rem;'>{lab}</span>" for lab in labels)
 
+    import html as _html
+    _inject_dialog_css()
+
+    # ── Sticky header — name + subtitle + data-completeness badge ────────────
+    _name = _disp(row.get("donor")) or "—"
+    _short = _disp(row.get("donor_short"))
+    _title_txt = _name + (f" ({_short})" if _short and _short.lower() not in _name.lower() else "")
+    _subparts = []
+    _cat = _normalize_category(row.get("donor_category"))
+    if _cat and _cat != "(uncategorised)":
+        _subparts.append(_html.escape(_cat))
+    if _disp(row.get("founded")):
+        _subparts.append(f"Founded {_html.escape(_disp(row.get('founded')))}")
+    if _disp(row.get("parent_organization")):
+        _subparts.append("Funded by " + _html.escape(_disp(row.get("parent_organization"))))
+    if _disp(row.get("website")):
+        _w = _disp(row.get("website"))
+        _wh = _w if _w.startswith(("http://", "https://")) else f"https://{_w}"
+        _subparts.append(f"<a href='{_html.escape(_wh)}' target='_blank'>{_html.escape(_w)}</a>")
+    _pct, _have, _total = _completeness(row)
+    _band_lbl, _band_col = _completeness_band(_pct)
+    st.markdown(
+        f"<div class='di-stick'><div class='di-stick-title'>{_html.escape(_title_txt)}</div>"
+        + (f"<div class='di-stick-sub'>{' · '.join(_subparts)}</div>" if _subparts else "")
+        + f"<span class='di-badge' style='background:{_band_col}'>"
+        + f"Data completeness {_pct}% · {_band_lbl} ({_have}/{_total} fields)</span></div>",
+        unsafe_allow_html=True)
     if row.get("verification_level") == "low":
         st.warning("⚠ Low verification — confirm against the live call package.")
-    st.subheader(_disp(row.get("donor")) or "—")
-    sub = []
-    if _disp(row.get("donor_category")):
-        sub.append(_normalize_category(row.get("donor_category")))
-    if _disp(row.get("founded")):
-        sub.append(f"Founded {_disp(row.get('founded'))}")
-    if _disp(row.get("website")):
-        w = _disp(row.get("website"))
-        sub.append(f"[{w}]({w})")
-    if sub:
-        st.caption(" · ".join(sub))
 
-    # ── Contacts (institutional + focal) — right after identity ──────────────
-    _render_contacts(row)
+    # ── 🏷 Identity — official / institutional contact ───────────────────────
+    _inst = [(_label(c), c) for c in
+             ("general_email", "main_phone", "hq_country", "hq_address",
+              "donor_linkedin_url", "other_profile_urls") if _disp(row.get(c))]
+    if _inst:
+        with st.container(border=True):
+            _sec_header("🏷", "Identity")
+            for _lbl, _c in _inst:
+                _v = _disp(row.get(_c))
+                st.markdown(f"- **{_lbl}:** [{_v}]({_v})" if _v.startswith("http")
+                            else f"- **{_lbl}:** {_v}")
 
-    # ── About — summary / mission / vision / values / strategy ───────────────
-    _about = [(lbl, _disp(row.get(col))) for col, lbl in (
+    # ── 📖 About & strategy ──────────────────────────────────────────────────
+    _about = [(lbl, col) for col, lbl in (
         ("summary_description", "Summary"), ("mission", "Mission"),
-        ("vision", "Vision"), ("donor_values", "Values")) if _disp(row.get(col))]
+        ("vision", "Vision"), ("donor_values", "Values"),
+        ("strategic_priorities", _label("strategic_priorities")))
+        if _disp(row.get(col))]
     _su = _disp(row.get("strategy_url"))
     if _about or _su:
-        st.markdown("**About**")
-        for _lbl, _v in _about:
-            st.markdown(f"- **{_lbl}:** {_v}")
-        if _su:
-            st.markdown(f"- **Strategy:** [{_su}]({_su})")
+        with st.container(border=True):
+            _sec_header("📖", "About & strategy")
+            for _lbl, _col in _about:
+                _sub(_lbl)
+                st.markdown(_disp(row.get(_col)))
+            if _su:
+                st.markdown(f"**Strategy:** [{_su}]({_su})")
 
-    # ── Key facts — funding footprint (only the populated ones) ──────────────
+    # ── 💰 Funding — footprint facts + mechanism / programs / tiers ──────────
     facts: list[tuple[str, str]] = []
     lo, hi = _md(row.get("award_low_usd")), _md(row.get("award_high_usd"))
     if lo or hi:
@@ -1138,105 +1572,186 @@ def _view_dialog(row: dict) -> None:
                      ("total_awards", "Total awards"),
                      ("current_awards", "Current awards"),
                      ("past_awards", "Past awards"),
-                     ("projected_budget", "Projected budget"),
-                     ("verification_level", "Verification"),
-                     ("prefinance_required", "Prefinance")):
+                     ("projected_budget", "Projected budget")):
         v = _md(row.get(col)) or _disp(row.get(col))
         if col == "projected_budget" and v:
             _per = _disp(row.get("projected_budget_period"))
             if _per:
                 v = f"{v} ({_per})"
-        elif col in ("verification_level", "prefinance_required") and v:
-            v = _pretty_choice(v)
         if v:
             facts.append((lbl, v))
-    if facts:
-        _fcols = st.columns(min(len(facts), 4))
-        for _i, (_lbl, _v) in enumerate(facts):
-            _fcols[_i % len(_fcols)].markdown(f"**{_lbl}**  \n{_v}")
-
-    # ── Funding scope / program areas / mechanism (chips) + routes ───────────
-    _scope = _to_list(row.get("funding_scope_geographic"))
-    if _scope:
-        st.markdown("**Funding scope — geographies**")
-        st.markdown(_chips(_scope), unsafe_allow_html=True)
-    _areas = _to_list(row.get("priority_program_areas"))
-    if _areas:
-        st.markdown("**Priority program areas**")
-        st.markdown(_chips(_areas), unsafe_allow_html=True)
     _mech = _to_list(row.get("funding_mechanism"))
-    if _mech:
-        st.markdown("**Funding mechanism**")
-        st.markdown(_chips(_mech), unsafe_allow_html=True)
-    for _lbl, _col in (("Route status", "active_route_status"),
-                       ("Direct local org eligible", "direct_local_org_eligible")):
-        if _disp(row.get(_col)):
-            st.markdown(f"- **{_lbl}:** {_disp(row.get(_col))}")
+    _programs = _disp(row.get("funding_programs"))
+    _funders = _to_list(row.get("funders_collaborators"))
+    _tiers = _funding_tiers(row)
+    if facts or _mech or _programs or _funders or _tiers:
+        with st.container(border=True):
+            _sec_header("💰", "Funding")
+            if facts:
+                _fcols = st.columns(min(len(facts), 4))
+                for _i, (_lbl, _v) in enumerate(facts):
+                    _fcols[_i % len(_fcols)].markdown(f"**{_lbl}**  \n{_v}")
+            if _mech:
+                _sub("Funding mechanism")
+                st.markdown(_chips(_mech), unsafe_allow_html=True)
+            if _funders:
+                _sub(_label("funders_collaborators"))
+                st.markdown(_chips(_funders), unsafe_allow_html=True)
+            if _programs:
+                _sub(_label("funding_programs"))
+                st.markdown(_programs)
+            if _tiers:
+                _sub("Funding tiers / bands / stages")
+                _tdf = pd.DataFrame(_tiers).reindex(
+                    columns=["name", "amount", "duration", "notes"])
+                st.dataframe(
+                    _tdf.rename(columns={"name": "Tier / band / stage", "amount": "Amount",
+                                         "duration": "Duration", "notes": "Notes / criteria"}),
+                    hide_index=True, width='stretch')
 
-    # ── Intelligence — qualitative profile (populated only) ──────────────────
-    _intel = [(lbl, _disp(row.get(col))) for col, lbl in (
-        ("funding_cycle", "Funding cycle"),
-        ("recent_activity", "Recent activity"),
-        ("application_process", "Application process"),
-        ("reporting_requirements", "Reporting requirements")) if _disp(row.get(col))]
-    if _intel:
-        st.markdown("**Intelligence**")
-        for _lbl, _v in _intel:
-            st.markdown(f"- **{_lbl}:** {_v}")
-
-    # ── Past projects — title + award amount (populated only) ────────────────
+    # ── 🎯 Scope & fit — strategic priority areas (graded) / geo / in-out ────
+    _scope = _to_list(row.get("funding_scope_geographic"))
+    _areas = _to_list(row.get("priority_program_areas"))
+    _in_scope = _disp(row.get("in_scope"))
+    _out_scope = _disp(row.get("out_of_scope"))
     try:
-        _projects = json.loads(row.get("past_projects_json") or "[]")
-        _projects = _projects if isinstance(_projects, list) else []
+        _pa_ratings = json.loads(row.get("program_area_ratings") or "{}")
+        _pa_ratings = _pa_ratings if isinstance(_pa_ratings, dict) else {}
     except (ValueError, TypeError):
-        _projects = []
-    _projects = [p for p in _projects if isinstance(p, dict) and p.get("title")]
+        _pa_ratings = {}
+    _bars = rating_bars_html(_pa_ratings)
+    _ungraded = [a for a in _areas if a not in _pa_ratings]
+    if _scope or _areas or _in_scope or _out_scope:
+        with st.container(border=True):
+            _sec_header("🎯", "Scope & fit")
+            if _bars or _ungraded:
+                _sub("Strategic priority areas")
+                if _bars:
+                    st.markdown(_bars, unsafe_allow_html=True)
+                if _ungraded:
+                    st.markdown(_chips([_pa_sub(a) for a in _ungraded]),
+                                unsafe_allow_html=True)
+            if _scope:
+                _sub("Funding scope — geographies")
+                st.markdown(_chips(_scope), unsafe_allow_html=True)
+            if _in_scope or _out_scope:
+                _sc1, _sc2 = st.columns(2)
+                if _in_scope:
+                    _sc1.markdown(f"**✓ {_label('in_scope')}**")
+                    _sc1.markdown(_in_scope)
+                if _out_scope:
+                    _sc2.markdown(f"**✗ {_label('out_of_scope')}**")
+                    _sc2.markdown(_out_scope)
+
+    # ── ✅ Eligibility & process — routes/requirements flags + logistics ─────
+    _elig_kv = []
+    for _lbl, _col in (("Route status", "active_route_status"),
+                       ("Direct local org eligible", "direct_local_org_eligible"),
+                       ("Prefinance", "prefinance_required"),
+                       ("Application process", "application_process"),
+                       ("Funding cycle", "funding_cycle"),
+                       ("Reporting requirements", "reporting_requirements"),
+                       (_label("application_deadlines"), "application_deadlines"),
+                       (_label("submission_portal_url"), "submission_portal_url"),
+                       ("Recent activity", "recent_activity")):
+        v = _disp(row.get(_col))
+        if _col == "prefinance_required" and v:
+            v = _pretty_choice(v)
+        if v:
+            _elig_kv.append((_lbl, _col, v))
+    _elig_flags = {g: [_label(c) for c in _FLAG_GROUPS.get(g, []) if _yes(row.get(c))]
+                   for g in ("Eligibility & routes", "Requirements & compliance")}
+    _elig_notes = _disp(row.get("eligibility_notes"))
+    _sel = _disp(row.get("selection_criteria"))
+    if any(_elig_flags.values()) or _elig_kv or _elig_notes or _sel:
+        with st.container(border=True):
+            _sec_header("✅", "Eligibility & process")
+            for _g, _labs in _elig_flags.items():
+                if _labs:
+                    _sub(_g)
+                    st.markdown(_chips(_labs), unsafe_allow_html=True)
+            if _elig_kv:
+                _sub("Application logistics")
+                for _lbl, _col, v in _elig_kv:
+                    if _col == "submission_portal_url" and v.startswith("http"):
+                        st.markdown(f"- **{_lbl}:** [{v}]({v})")
+                    else:
+                        st.markdown(f"- **{_lbl}:** {v}")
+            if _elig_notes:
+                _sub(_label("eligibility_notes"))
+                st.markdown(_elig_notes)
+            if _sel:
+                _sub(_label("selection_criteria"))
+                st.markdown(_sel)
+
+    # ── 📚 Track record — funded projects (incl. stage + description) ────────
+    _projects = _past_projects(row)
     if _projects:
-        st.markdown(f"**Past projects** ({len(_projects)})")
-        _pdf = pd.DataFrame(_projects)
-        _show = [c for c in ["title", "amount", "currency", "year", "country"]
-                 if c in _pdf.columns and _pdf[c].notna().any()]
-        st.dataframe(
-            _pdf[_show].rename(columns={
-                "title": "Project", "amount": "Award", "currency": "Cur.",
-                "year": "Year", "country": "Country"}),
-            hide_index=True, width='stretch')
+        with st.container(border=True):
+            _sec_header("📚", f"Track record — funded projects ({len(_projects)})")
+            _pdf = pd.DataFrame(_projects)
+            _show = [c for c in ["title", "amount", "currency", "year", "country",
+                                 "stage", "description", "link"]
+                     if c in _pdf.columns and _pdf[c].notna().any()]
+            st.dataframe(
+                _pdf[_show].rename(columns={
+                    "title": "Project", "amount": "Award", "currency": "Cur.",
+                    "year": "Year", "country": "Country", "stage": "Stage",
+                    "description": "Description", "link": "Link"}),
+                hide_index=True, width='stretch',
+                column_config={"Link": st.column_config.LinkColumn("Link", display_text="Open ↗")})
 
-    # ── Flags as clean chips (only "yes"); Program-area drops the "…fit" tail ─
+    # ── 🧭 Strategic guidance — funder-centric, useful to any applicant ──────
+    _guide = [(_label(col), _disp(row.get(col))) for col in
+              ("strategic_fit_notes", "gaps_risks", "recommended_approach")
+              if _disp(row.get(col))]
+    if _guide:
+        with st.container(border=True):
+            _sec_header("🧭", "Strategic guidance")
+            st.caption("Funder-centric guidance for any applicant — what this donor "
+                       "rewards, what to avoid, and how to position a strong bid.")
+            for _lbl, _v in _guide:
+                _sub(_lbl)
+                st.markdown(_v)
 
-    for _group, _gcols in _FLAG_GROUPS.items():
-        _yeses = [c for c in _gcols if _yes(row.get(c))]
-        if not _yeses:
-            continue
-        if _group == "Program-area fit":
-            _labels = [re.sub(r"\s*fit$", "", _label(c), flags=re.I) for c in _yeses]
-        else:
-            _labels = [_label(c) for c in _yeses]
-        st.markdown(f"**{_group}**")
-        st.markdown(_chips(_labels), unsafe_allow_html=True)
+    # ── 📇 Contacts — focal persons (donor_contacts) ─────────────────────────
+    _focal = _load_contacts(row["canonical_key"])
+    if not _focal.empty:
+        with st.container(border=True):
+            _sec_header("📇", "Contacts — focal persons")
+            for _, cr in _focal.iterrows():
+                st.markdown("- " + _contact_line(cr.to_dict()))
 
-    # ── Other details — only non-empty (structured fields shown above) ───────
-    _structured = {"funding_scope_geographic", "priority_program_areas",
-                   "active_route_status", "direct_local_org_eligible"}
-    _other = [(c, _disp(row.get(c))) for c in _LONG_TEXT
-              if c not in _structured and c not in _HIDDEN_FIELDS
-              and _disp(row.get(c))]
-    if _other:
-        st.markdown("**Other details**")
-        for col, val in _other:
-            if col == "source_urls":
-                st.markdown(f"**{_label(col)}:**")
-                for u in val.replace("\\n", "\n").splitlines():
+    # ── Sources & data quality ───────────────────────────────────────────────
+    _ver = _pretty_choice(row.get("verification_level")) if _disp(row.get("verification_level")) else None
+    _ev = _disp(row.get("evidence_summary"))
+    _notes = _disp(row.get("notes"))
+    _alias = _disp(row.get("aliases"))
+    _urls = _disp(row.get("source_urls"))
+    if _ver or _ev or _notes or _alias or _urls:
+        with st.container(border=True):
+            _sec_header("🗂", "Sources & data quality")
+            st.markdown(f"- **Profile completeness:** {_pct}% ({_have}/{_total} fields)")
+            if _ver:
+                st.markdown(f"- **Verification (manual):** {_ver}")
+            if _ev:
+                st.markdown(f"- **Evidence summary:** {_md(row.get('evidence_summary')) or _ev}")
+            if _notes:
+                st.markdown(f"- **Notes:** {_md(row.get('notes')) or _notes}")
+            if _alias:
+                st.markdown(f"- **Aliases:** {_alias}")
+            if _urls:
+                _sub("Source URLs")
+                for u in _urls.replace("\\n", "\n").splitlines():
                     if u.strip():
                         st.markdown(f"- {u.strip()}")
-            else:
-                st.markdown(f"**{_label(col)}:** {_md(row.get(col)) or val}")
 
     st.divider()
     fname = (row.get("donor_short") or row.get("donor") or "donor").strip().replace(" ", "_")
     lines = _summary_lines(row)
+    st.caption("Download the full profile as a print-ready A4 portrait PDF.")
     try:
-        st.download_button("⬇ Download (share)", _donor_pdf(lines),
+        st.download_button("⬇ Download / print (PDF)", _donor_pdf(lines),
                            file_name=f"{fname}.pdf", mime="application/pdf",
                            key=f"view_dl_{row['canonical_key']}")
     except Exception:
@@ -1306,7 +1821,9 @@ with st.expander("🔎 Filter & search", expanded=False):
         "Verification",
         sorted(df["verification_level"].dropna().unique().tolist()) if "verification_level" in df else [],
         key="donor_ver")
-    fit = fc4.multiselect("Program-area fit = yes", _FIT, format_func=_label, key="donor_fit")
+    areas_f = fc4.multiselect(
+        "Strategic priority area", _pa.CATEGORIES, key="donor_pa",
+        help="Donors whose priority program areas fall in this taxonomy category.")
     fc5, fc6 = st.columns(2)
     appl = fc5.multiselect(
         "Eligible applicant type",
@@ -1326,8 +1843,12 @@ if cats:
     fdf = fdf[fdf["category_clean"].isin(cats)]
 if vers:
     fdf = fdf[fdf["verification_level"].isin(vers)]
-for fc in fit:
-    fdf = fdf[fdf[fc] == "yes"]
+# Strategic-priority-area filter — match donor priority_program_areas (expanded
+# to taxonomy child keys) against the selected categories.
+if areas_f and "priority_program_areas" in fdf.columns:
+    _want_pa = _pa.expand(areas_f)
+    fdf = fdf[fdf["priority_program_areas"].apply(
+        lambda v: bool(_pa.expand(_to_list(v)) & _want_pa))]
 # Applicant-type filter (OR across selected types) using existing eligibility flags.
 _APPL_FLAG = {"NGO": "ngo_eligible", "For-profit / private": "for_profit_eligible",
               "Sub-recipient / partner": "subrecipient_partner_possible"}
