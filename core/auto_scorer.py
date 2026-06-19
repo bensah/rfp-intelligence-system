@@ -1556,6 +1556,7 @@ def auto_score(
     # (honest — never a fabricated 0/No). Feasibility is human-only (High/Medium/
     # Low on Review); its out-of-capability terms now live in Themes → Excluded.
     values: dict[str, str | None] = {key: None for key in CRITERION_KEYS}
+    _donor_row = None   # matched donor_intel row (set below; used by Path-B decision)
 
     # OBJECTIVE derivation of the 9 criteria from org × RFP facts — the
     # auto-scan's pick, factoring each criterion's FULL definition (e.g.
@@ -1601,10 +1602,21 @@ def auto_score(
     scorer_input = {k: values[k] for k in values if k != "feasibility"}
     score, _legacy_rec = score_submission(scorer_input, decline_flags)
 
-    # Recommendation is driven by the explicit decision tree:
-    # ANY MUST=No → Decline; ≥2 MUSTs=Partial → Decline; 1 Partial → Park;
-    # all MUSTs=Yes + ≥3 PREFERs=Yes → Proceed; else → Park.
+    # Recommendation — PATH B (agreed 2026-06-19): composite_match =
+    #   0.80*criteria_score + 0.20*donor-org extras, with a HARD MUST gate
+    #   (any MUST scored No → Decline), thresholds ≥70 Proceed / 45–69 Park.
+    # Falls back to the criteria-only decision tree if matching is unavailable.
     rec = _decision_from_criteria(values)
+    try:
+        from core import matching as _matching
+        from core import org_profile as _orgp
+        from core import settings as _settings
+        _m = _matching.composite_match(
+            {**candidate, **values}, _orgp.get_profile(), _donor_row, _settings.get_org())
+        rec = _m["decision"]
+        score = _m["composite"]
+    except Exception:
+        pass
 
     # SPARSE-TEXT GUARD: if the candidate text is too thin to make a fair
     # judgement (typical for listing-page anchors where we only got a
