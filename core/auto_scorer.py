@@ -336,7 +336,11 @@ def applicant_type_mismatch_reject(candidate: dict[str, Any],
     own types. Conservative: silent on calls with no published list / an open
     type / an unclassifiable list (geo + theme gates still apply)."""
     elig_cfg = policies.get("eligibility") or {}
-    if not elig_cfg.get("reject_applicant_type_mismatch", True):
+    # DEFAULT OFF (Bernard 2026-06-19): an applicant-type mismatch must NOT hard-
+    # reject — it's a QUALIFICATION (MUST-1) signal computed later from org↔donor
+    # eligibility, not a scan-time drop. Only rejects if a deployment explicitly
+    # opts back in via policies.eligibility.reject_applicant_type_mismatch = true.
+    if not elig_cfg.get("reject_applicant_type_mismatch", False):
         return False, ""
     org_buckets = {str(b).strip().lower()
                    for b in (elig_cfg.get("org_applicant_types") or ["nonprofit"])
