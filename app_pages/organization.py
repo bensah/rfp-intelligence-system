@@ -16,18 +16,26 @@ from core import org_profile as _orgp
 from core import permissions, settings
 from core.program_area_classifier import category_full as _cat, subarea_label as _sub
 from core.program_area_select import rating_bars_html
+from db.supabase_client import get_client
 
 user = st.session_state["app_user"]
 can_edit = permissions.is_admin(user)          # admin OR super_user only
 org = settings.get_org()
 prof = _orgp.get_profile()
 
+
+@st.dialog("Edit organization", width="large")
+def _edit_org_dialog() -> None:
+    """In-place overlay reusing the EXACT Settings → Setup form (one source)."""
+    from views.org_setup import render_org_setup
+    render_org_setup(user, get_client())
+
 # ── Header ──────────────────────────────────────────────────────────────────
 _hl, _hr = st.columns([5, 1.4])
 _hl.title("Organization Details")
 if can_edit:
     if _hr.button("✏️ Edit organization", width="stretch", type="primary"):
-        st.switch_page("app_pages/admin.py")
+        _edit_org_dialog()
 else:
     _hr.caption("View only — editing is restricted to app owners.")
 
