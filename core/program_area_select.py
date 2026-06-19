@@ -142,54 +142,77 @@ def program_area_rating_editor(label, current_selection, current_ratings, key_pr
 
 def program_area_matrix_editor(label, current_selection, current_ratings, key_prefix,
                                *, container=None, help=""):
-    """ONE grid table: each row picks a program area ("Sub-area · Category") and
-    grades it 0–5. Replaces the cascading category→sub-area dropdowns + a separate
-    rating table with a single editable matrix. Returns
-    (selection_keys, ratings_dict {child_key: int 0-5})."""
+    """A clean 3-column cascading grid — Category | Sub-area (filtered to the
+    chosen category) | Priority (0–5) — one row per area, with add / remove.
+    Returns (selection_keys, ratings_dict {child_key: int 0-5}).
+
+    Built from per-row widgets (not st.data_editor) because a data-editor column's
+    options can't depend on another cell in the same row — so the child list could
+    not be filtered by the row's category. Row state is kept in session_state keyed
+    by a stable per-row id so add/remove don't scramble values."""
     c = container or st
     c.markdown(f"**{label}**")
     if help:
         c.caption(help)
-    disp_by_key = {k: f"{subarea_label(k)}  ·  {category_full(k)}"
-                   for k in PROGRAM_AREA_KEYWORDS}
-    key_by_disp = {v: k for k, v in disp_by_key.items()}
-    options = sorted(disp_by_key.values())
-    sel = [k for k in _as_selection(current_selection) if k in PROGRAM_AREA_KEYWORDS]
-    rmap = _as_rating_map(current_ratings)
-    base = pd.DataFrame(
-        [{"Program area": disp_by_key[k], "Priority (0–5)": int(rmap.get(k, 3))} for k in sel],
-        columns=["Program area", "Priority (0–5)"])
-    base["Program area"] = base["Program area"].astype("object")
-    base["Priority (0–5)"] = pd.to_numeric(base["Priority (0–5)"], errors="coerce")
-    c.caption(f"Add a row → pick a program area → grade 0–5.  {RATING_LEGEND}")
-    edited = c.data_editor(
-        base, num_rows="dynamic", hide_index=True, width="stretch",
-        key=f"{key_prefix}_matrix",
-        column_config={
-            "Program area": st.column_config.SelectboxColumn(
-                "Program area (category › sub-area)", options=options, width="large"),
-            "Priority (0–5)": st.column_config.NumberColumn(
-                "Priority (0–5)", min_value=0, max_value=5, step=1, width="small",
-                default=3, help=RATING_LEGEND),
-        })
+    c.caption(RATING_LEGEND)
+
+    ids_key, nid_key = f"{key_prefix}_ids", f"{key_prefix}_nextid"
+    if ids_key not in st.session_state:                     # seed once from saved data
+        sel = [k for k in _as_selection(current_selection) if k in PROGRAM_AREA_KEYWORDS]
+        rmap = _as_rating_map(current_ratings)
+        ids = []
+        for n, k in enumerate(sel):
+            ids.append(n)
+            st.session_state[f"{key_prefix}_cat_{n}"] = category_full(k)
+            st.session_state[f"{key_prefix}_sub_{n}"] = subarea_label(k)
+            st.session_state[f"{key_prefix}_rate_{n}"] = int(rmap.get(k, 3))
+        st.session_state[ids_key] = ids
+        st.session_state[nid_key] = len(sel)
+
+    cat_opts = [""] + CATEGORIES
+    hdr = c.columns([5, 5, 2, 1])
+    hdr[0].caption("**Category**")
+    hdr[1].caption("**Sub-area**")
+    hdr[2].caption("**Priority (0–5)**")
+
+    remove_id = None
+    for i in list(st.session_state[ids_key]):
+        cat_key, sub_key, rate_key = (f"{key_prefix}_cat_{i}", f"{key_prefix}_sub_{i}",
+                                      f"{key_prefix}_rate_{i}")
+        cols = c.columns([5, 5, 2, 1])
+        cat = cols[0].selectbox("Category", cat_opts, key=cat_key,
+                                label_visibility="collapsed")
+        subs = [""] + TAXONOMY.get(cat, [])
+        if st.session_state.get(sub_key, "") not in subs:   # category changed → drop stale sub
+            st.session_state[sub_key] = ""
+        cols[1].selectbox("Sub-area", subs, key=sub_key, label_visibility="collapsed")
+        st.session_state.setdefault(rate_key, 3)
+        cols[2].number_input("Priority", min_value=0, max_value=5, step=1, key=rate_key,
+                             label_visibility="collapsed")
+        if cols[3].button("✕", key=f"{key_prefix}_rm_{i}", help="Remove this row"):
+            remove_id = i
+
+    if c.button("➕ Add area", key=f"{key_prefix}_add"):
+        nid = st.session_state[nid_key]
+        st.session_state[f"{key_prefix}_rate_{nid}"] = 3
+        st.session_state[ids_key].append(nid)
+        st.session_state[nid_key] += 1
+        st.rerun()
+    if remove_id is not None:
+        st.session_state[ids_key] = [x for x in st.session_state[ids_key] if x != remove_id]
+        st.rerun()
+
     out_sel: list[str] = []
     out_rat: dict[str, int] = {}
-    for r in edited.to_dict("records"):
-        disp = r.get("Program area")
-        try:
-            blank = disp is None or pd.isna(disp)
-        except (TypeError, ValueError):
-            blank = disp is None
-        k = None if blank else key_by_disp.get(str(disp).strip())
-        if not k or k in out_rat:
+    for i in st.session_state[ids_key]:
+        cat = st.session_state.get(f"{key_prefix}_cat_{i}", "")
+        sub = st.session_state.get(f"{key_prefix}_sub_{i}", "")
+        if not cat or not sub:
             continue
-        v = r.get("Priority (0–5)")
-        try:
-            v = 3 if (v is None or pd.isna(v)) else int(v)
-        except (TypeError, ValueError):
-            v = 3
-        out_sel.append(k)
-        out_rat[k] = max(0, min(5, v))
+        k = key_for(cat, sub)
+        if k and k not in out_rat:
+            out_sel.append(k)
+            out_rat[k] = max(0, min(5, int(st.session_state.get(f"{key_prefix}_rate_{i}", 3))))
     return out_sel, out_rat
 
 
