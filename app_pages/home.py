@@ -13,7 +13,6 @@ import streamlit as st
 
 from core import excel_sync
 from db.supabase_client import get_client
-from views.submit_form import render_submit_form
 
 # Home-specific block-container padding only — global theme (headings,
 # .quickcard, metric tiles, buttons) lives in core/app_header._GLOBAL_CSS
@@ -72,19 +71,6 @@ if _pending:
     except Exception as exc:
         st.warning(f"Auto-sync error: {exc}")
 
-# ---- Submit-RFP modal (Streamlit ≥1.32 @st.dialog) ----
-# The form lives in views/submit_form.py so the same code renders here in
-# the modal AND on the Pipelines page. key_prefix keeps widget IDs unique
-# so both can coexist in one session.
-@st.dialog("Submit a new RFP", width="large")
-def _submit_rfp_modal():
-    render_submit_form(
-        user,
-        key_prefix="home_modal",
-        on_success=lambda row: st.rerun(),
-    )
-
-
 # Title + Submit-RFP button on the same row (button top-right).
 _title_col, _btn_col = st.columns([5, 1])
 with _title_col:
@@ -95,9 +81,9 @@ with _btn_col:
     if st.button("📝 Submit Discovered RFP", type="primary",
                  width='stretch', key="home_submit_rfp_btn",
                  help="Capture an opportunity you found outside the Friday scan. "
-                      "Opens a modal; no duplicate-check gate — submitted "
+                      "Opens the Submit page; no duplicate-check gate — submitted "
                       "immediately, dedup happens at display time."):
-        _submit_rfp_modal()
+        st.switch_page("app_pages/submit_rfp.py")
 
 
 # -----------------------------------------------------------------------------
