@@ -44,14 +44,31 @@ def _scope_text(v: Any) -> str | None:
     return str(v)
 
 
+def _org_tag() -> str | None:
+    """The deploying org's short/long name — stamps every learning row so labels
+    stay attributable to THIS tenant (CHAI). Each deployment already has its own
+    DB, and the features are computed against this org's profile, so labels are
+    inherently per-tenant; this tag makes it explicit (and pooled-DB-ready)."""
+    try:
+        from core import settings as _s
+        o = _s.get_org()
+        return (o.get("org_short") or o.get("org_name") or "").strip() or None
+    except Exception:
+        return None
+
+
 def _features(cand: dict) -> dict | None:
     """Capture the decision-model feature vector inline (ML Phase 3). Best-effort
     — telemetry must never break a scan or a save. System-reject candidates are
     pre-scoring, so their criteria features come back None; that's fine (they're
-    negatives, judged on geo/deadline/channel)."""
+    negatives, judged on geo/deadline/channel). The org tag is folded in so the
+    row is self-describing as a THIS-tenant label."""
     try:
         from core import features as _f
-        feats = _f.extract(cand)
+        feats = _f.extract(cand) or {}
+        org = _org_tag()
+        if org:
+            feats["org"] = org      # tenant tag (the model reads only FEATURE_ORDER keys)
         return feats or None
     except Exception as exc:
         log.debug("decision_log._features failed: %s", exc)
@@ -140,8 +157,13 @@ def log_decision(row: dict, decision: str, by: str | None = None) -> bool:
                     return True            # unchanged confirmation already logged
             except Exception:
                 pass                       # can't dedup → fall through and log
+        # Capture the reviewer's written rationale alongside the decision so the
+        # full human review (final 9 criteria in `features` + decision + rationale
+        # + org tag) is one learning record.
+        _note = (row.get("decision_note") or row.get("decision_rationale")
+                 or row.get("notes") or None)
         rec = _base_record(row, event_type="human_decision",
-                           label=label, reason=None, by=by)
+                           label=label, reason=_note, by=by)
         sb.table(_TABLE).insert(rec).execute()
         return True
     except Exception as exc:
