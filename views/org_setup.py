@@ -391,10 +391,11 @@ def render_org_setup(user, sb):
             _donor_names, "funder_history",
             help="Pick from the Donor Intelligence catalog (or type to add) — "
                  "past / current funders (funder relationship).")
-        donor_regs_sel = _ms(fr2, "Donor registrations (donor portal)",
+        donor_regs_sel = _ms(fr2, "Donor portal registration active",
             _portals, "donor_registrations",
-            help="Donor application/registration portals you hold (e.g. Grants.gov, "
-                 "SAM.gov, wellcome.org). Pick or type to add (qualification).")
+            help="Donor portals where your registration is active (e.g. Grants.gov, "
+                 "SAM.gov, wellcome.org) — each one listed is true for that donor. "
+                 "Pick or type to add (qualification).")
 
         if st.button("💾 Save fit profile", type="primary", key="save_org_fit_profile"):
             _orgp.set_profile({
