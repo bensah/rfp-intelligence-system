@@ -320,6 +320,15 @@ _ORG_TYPE_BUCKET = {
 }
 _DONOR_TYPE_FLAG = {"ngo": "ngo_eligible", "for_profit": "for_profit_eligible"}
 
+# High-precision RFP-text cues that the award is for an INDIVIDUAL applicant
+# (early-career investigator / single PI / fellowship) — an org can't apply.
+_INDIVIDUAL_APPLICANT_RE = re.compile(
+    r"\b(individual investigators?|single principal investigator|"
+    r"co-?principal investigators?\s+are\s+ineligible|"
+    r"early[- ]career investigators?|junior faculty|"
+    r"post-?doctoral\s+(?:student|fellow|researcher|scholar)s?|"
+    r"for individuals(?:\s+not\s+an?\s+organi[sz]ation)?)\b", re.I)
+
 
 def _partner_match(org: dict, ptype: Any, pcountry: Any) -> bool:
     """True if the org lists a partner matching the required type and/or country."""
@@ -359,6 +368,15 @@ def derive_qualification(org: dict, rfp: dict, donor: dict | None = None,
             fails.append("x")
         elif ok is None:
             unknowns.append("x")
+
+    # 0. Individual / single-PI / early-career-investigator award — an
+    # ORGANISATION can't apply. Caught from the RFP text (no structured field).
+    _qtext = " ".join(str(rfp.get(f) or "") for f in
+                      ("opportunity_title", "brief_description", "notes"))
+    if _INDIVIDUAL_APPLICANT_RE.search(_qtext):
+        is_individual_applicant = (
+            str(org.get("legal_type") or "").strip().lower() == "individual")
+        check(True, is_individual_applicant)   # an org (non-individual) → fail
 
     # 1. Applicant type — fail only when the org's bucket is clearly excluded.
     bucket = _ORG_TYPE_BUCKET.get(str(org.get("legal_type") or "").strip().lower(), "")
