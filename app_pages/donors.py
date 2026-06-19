@@ -114,7 +114,25 @@ _LABEL_OVERRIDES = {
     "gaps_risks": "Common pitfalls & disqualifiers",
     "recommended_approach": "How to position a competitive application",
     "funders_collaborators": "Funders & Collaborators",
+    "hq_country_required": "Applicant must be HQ'd in",
+    "org_stage_required": "Org stage required",
+    "max_annual_budget_usd": "Max annual budget (eligibility ceiling)",
+    "min_track_record_usd": "Min largest grant managed (floor)",
+    "required_partner_type": "Required partner type",
+    "required_partner_country": "Required partner country",
+    "max_request_pct_of_budget": "Max request (% of project budget)",
+    "min_cofinancing_secured_pct": "Min co-financing secured (%)",
+    "independent_entity_required": "Independent entity required (no INGO affiliates)",
+    "welcome_registration_required": "Pre-registration / senior-leadership approval required",
 }
+
+# Partner-type vocabulary — shared with the org fit profile so a donor's
+# required_partner_type matches the org's partner records.
+_PARTNER_TYPE_OPTIONS = [
+    "Nonprofit / NGO", "Academic / research institutions", "For-profit / private",
+    "Government", "Multilateral / UN", "Bilateral / development agency",
+    "Philanthropy / foundation",
+]
 
 
 def _pretty_choice(v: str) -> str:
@@ -337,7 +355,11 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
             "out_of_scope", "selection_criteria", "funding_programs",
             "funding_tiers_json", "eligibility_notes", "application_deadlines",
             "submission_portal_url", "strategic_fit_notes", "gaps_risks",
-            "recommended_approach", "program_area_ratings", "funders_collaborators"]
+            "recommended_approach", "program_area_ratings", "funders_collaborators",
+            # Hard eligibility conditions (migration 032) — VALUED (not flags).
+            "hq_country_required", "org_stage_required", "max_annual_budget_usd",
+            "min_track_record_usd", "required_partner_type", "required_partner_country",
+            "max_request_pct_of_budget", "min_cofinancing_secured_pct"]
 # Columns kept for backward-compat but no longer surfaced anywhere (not edited,
 # not shown in View, not in share/PDF). verification_level already captures data
 # confidence, so the free-text "verification caveats" was redundant + confusing.
@@ -733,6 +755,14 @@ def _summary_lines(row: dict) -> list[str]:
         ("Recent activity", _disp(row.get("recent_activity"))),
         (_label("eligibility_notes"), _disp(row.get("eligibility_notes"))),
         (_label("selection_criteria"), _disp(row.get("selection_criteria"))),
+        (_label("hq_country_required"), _disp(row.get("hq_country_required"))),
+        (_label("org_stage_required"), _disp(row.get("org_stage_required"))),
+        (_label("max_annual_budget_usd"), _disp_field(row, "max_annual_budget_usd")),
+        (_label("min_track_record_usd"), _disp_field(row, "min_track_record_usd")),
+        (_label("required_partner_type"), _disp(row.get("required_partner_type"))),
+        (_label("required_partner_country"), _disp(row.get("required_partner_country"))),
+        (_label("max_request_pct_of_budget"), _disp(row.get("max_request_pct_of_budget"))),
+        (_label("min_cofinancing_secured_pct"), _disp(row.get("min_cofinancing_secured_pct"))),
     ])
 
     projects = _past_projects(row)
@@ -1113,6 +1143,54 @@ def _edit_dialog(row: dict) -> None:
         edited["selection_criteria"] = st.text_area(
             _label("selection_criteria"), row.get("selection_criteria") or "", height=120,
             key=f"selcrit_{ck}", help="Evaluation criteria, relative weights, and what wins.")
+
+        # Hard eligibility conditions → computed Qualification (MUST-1). Each is
+        # checked ONLY when set here; any condition the applicant fails → ineligible.
+        # (independent_entity_required + welcome_registration_required are yes/no and
+        # appear as checkboxes in the Requirements & compliance group above.)
+        st.divider()
+        st.markdown("**Hard eligibility conditions** — feed Qualification (MUST-1). "
+                    "Leave blank if the donor doesn't impose them.")
+        _hq_base = [""] + list(_geo.COUNTRIES)
+        _curhq = str(row.get("hq_country_required") or "").strip()
+        _hq_opts2 = _hq_base if _curhq in _hq_base else _hq_base + [_curhq]
+        _hs1, _hs2 = st.columns(2)
+        edited["hq_country_required"] = _hs1.selectbox(
+            _label("hq_country_required"), _hq_opts2, index=_hq_opts2.index(_curhq),
+            key=f"hqreq_{ck}", help="e.g. 'United States' for US-501c3-only funders.")
+        _stage_opts2 = ["", "any", "early-stage", "established"]
+        _cur_st = str(row.get("org_stage_required") or "").strip()
+        edited["org_stage_required"] = _hs2.selectbox(
+            _label("org_stage_required"), _stage_opts2,
+            index=_stage_opts2.index(_cur_st) if _cur_st in _stage_opts2 else 0,
+            key=f"stagereq_{ck}", help="e.g. 'early-stage' for DRK-type funders.")
+        _hb1, _hb2 = st.columns(2)
+        edited["max_annual_budget_usd"] = _hb1.text_input(
+            _label("max_annual_budget_usd"), row.get("max_annual_budget_usd") or "",
+            key=f"maxbud_{ck}", help="Applicant's annual budget must be BELOW this (e.g. '$2M').")
+        edited["min_track_record_usd"] = _hb2.text_input(
+            _label("min_track_record_usd"), row.get("min_track_record_usd") or "",
+            key=f"mintrk_{ck}", help="Applicant's largest grant must be ABOVE this (e.g. '$500k').")
+        _pt_base = [""] + _PARTNER_TYPE_OPTIONS
+        _cur_pt = str(row.get("required_partner_type") or "").strip()
+        _pt_opts = _pt_base if _cur_pt in _pt_base else _pt_base + [_cur_pt]
+        _rpc_base = [""] + list(_geo.COUNTRIES)
+        _cur_rpc = str(row.get("required_partner_country") or "").strip()
+        _rpc_opts = _rpc_base if _cur_rpc in _rpc_base else _rpc_base + [_cur_rpc]
+        _pp1, _pp2 = st.columns(2)
+        edited["required_partner_type"] = _pp1.selectbox(
+            _label("required_partner_type"), _pt_opts, index=_pt_opts.index(_cur_pt),
+            key=f"reqpt_{ck}", help="Required partner profile (e.g. NIHR → Academic).")
+        edited["required_partner_country"] = _pp2.selectbox(
+            _label("required_partner_country"), _rpc_opts, index=_rpc_opts.index(_cur_rpc),
+            key=f"reqpc_{ck}", help="Required partner country (e.g. NIHR → United Kingdom).")
+        _hc1, _hc2 = st.columns(2)
+        edited["max_request_pct_of_budget"] = _hc1.text_input(
+            _label("max_request_pct_of_budget"), row.get("max_request_pct_of_budget") or "",
+            key=f"maxpct_{ck}", help="e.g. '50' — request may be ≤50% of the project budget.")
+        edited["min_cofinancing_secured_pct"] = _hc2.text_input(
+            _label("min_cofinancing_secured_pct"), row.get("min_cofinancing_secured_pct") or "",
+            key=f"mincofin_{ck}", help="e.g. '25' — must have ≥25% secured from other sources.")
 
     # ── Track record — funded projects (JSON: past_projects_json) ────────────
     with t_track:
@@ -1654,8 +1732,16 @@ def _view_dialog(row: dict) -> None:
                        ("Reporting requirements", "reporting_requirements"),
                        (_label("application_deadlines"), "application_deadlines"),
                        (_label("submission_portal_url"), "submission_portal_url"),
-                       ("Recent activity", "recent_activity")):
-        v = _disp(row.get(_col))
+                       ("Recent activity", "recent_activity"),
+                       (_label("hq_country_required"), "hq_country_required"),
+                       (_label("org_stage_required"), "org_stage_required"),
+                       (_label("max_annual_budget_usd"), "max_annual_budget_usd"),
+                       (_label("min_track_record_usd"), "min_track_record_usd"),
+                       (_label("required_partner_type"), "required_partner_type"),
+                       (_label("required_partner_country"), "required_partner_country"),
+                       (_label("max_request_pct_of_budget"), "max_request_pct_of_budget"),
+                       (_label("min_cofinancing_secured_pct"), "min_cofinancing_secured_pct")):
+        v = _md(row.get(_col)) or _disp(row.get(_col))
         if _col == "prefinance_required" and v:
             v = _pretty_choice(v)
         if v:
