@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 from core import geographies as _geo
@@ -170,6 +171,41 @@ def _route_fit(org: dict, donor: dict, org_settings: dict) -> float:
     return 1.0 if has_board else 0.0
 
 
+def _norm_name(s: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip()
+
+
+def _names_overlap(a_ids: set[str], b_ids: set[str]) -> bool:
+    """True if any normalised name in a matches one in b — exact, or substring
+    either way (min length 4 to avoid spurious short-token hits)."""
+    for a in a_ids:
+        for b in b_ids:
+            if a and b and (a == b or (len(a) >= 4 and len(b) >= 4 and (a in b or b in a))):
+                return True
+    return False
+
+
+def _relationship_fit(org: dict, donor: dict, org_settings: dict) -> float:
+    """1.0 when the applicant org has an existing tie to the donor — it appears in
+    the donor's Funders & Collaborators (or a partner it lists does), or it has
+    already been funded by this donor. Neutral 0.5 when there's no signal."""
+    funders = {_norm_name(x) for x in _as_list(donor.get("funders_collaborators"))}
+    funders.discard("")
+    donor_names = {_norm_name(donor.get(f)) for f in ("donor", "donor_short")}
+    donor_names.discard("")
+    os = org_settings or {}
+    org_ids = {_norm_name(os.get("org_name")), _norm_name(os.get("org_short"))}
+    # partners/funders the org already works with count as "us or our consortium".
+    org_ids |= {_norm_name(x) for x in (org.get("trusted_partners") or [])}
+    org_ids.discard("")
+    if funders and org_ids and _names_overlap(org_ids, funders):
+        return 1.0   # our org (or a listed partner) is a funder/collaborator of this donor
+    org_hist = {_norm_name(x) for x in (org.get("funder_history") or [])}
+    if donor_names and org_hist and _names_overlap(org_hist, donor_names):
+        return 1.0   # we have previously been funded by this donor
+    return 0.5
+
+
 def donor_org_extras(org: dict | None, donor: dict | None,
                      org_settings: dict | None = None) -> dict[str, float]:
     """The donor-org relationship sub-scores (each 0.0 / 0.5 / 1.0)."""
@@ -179,6 +215,7 @@ def donor_org_extras(org: dict | None, donor: dict | None,
         "donor_thematic_fit": _thematic_fit(org, donor),
         "donor_geographic_fit": _geographic_fit(org, donor),
         "donor_route_fit": _route_fit(org, donor, org_settings or {}),
+        "donor_relationship_fit": _relationship_fit(org, donor, org_settings or {}),
     }
 
 

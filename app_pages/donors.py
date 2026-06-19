@@ -102,7 +102,6 @@ _LABEL_OVERRIDES = {
     "strategy_url": "Strategy (URL)",
     "projected_budget_period": "Budget period",
     # Strategic-intelligence fields (migration 029)
-    "parent_organization": "Parent / funded by",
     "strategic_priorities": "Strategic priorities",
     "in_scope": "What they fund (in scope)",
     "out_of_scope": "What they don't fund (out of scope)",
@@ -114,7 +113,7 @@ _LABEL_OVERRIDES = {
     "strategic_fit_notes": "Ideal applicant & what this funder rewards",
     "gaps_risks": "Common pitfalls & disqualifiers",
     "recommended_approach": "How to position a competitive application",
-    "funders_collaborators": "Funders & collaborators",
+    "funders_collaborators": "Funders & Collaborators",
 }
 
 
@@ -334,7 +333,7 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
             # Strategic-intelligence fields (migration 029) — narrative + JSON.
             # Listed here so they're treated as text (not flags) and persist /
             # surface in the view, share and PDF.
-            "parent_organization", "strategic_priorities", "in_scope",
+            "strategic_priorities", "in_scope",
             "out_of_scope", "selection_criteria", "funding_programs",
             "funding_tiers_json", "eligibility_notes", "application_deadlines",
             "submission_portal_url", "strategic_fit_notes", "gaps_risks",
@@ -494,7 +493,7 @@ def _funding_tiers(row: dict) -> list[dict]:
 # JSON/list fields count as documented when non-empty; flags count when explicitly
 # yes/no (blank = undocumented). donor_short is excluded (optional acronym).
 _COMPLETENESS_TEXT = [
-    "donor", "donor_category", "website", "founded", "parent_organization",
+    "donor", "donor_category", "website", "founded",
     "general_email", "main_phone", "hq_country", "hq_address",
     "donor_linkedin_url", "other_profile_urls", "summary_description", "mission",
     "vision", "donor_values", "strategic_priorities", "strategy_url",
@@ -657,7 +656,6 @@ def _summary_lines(row: dict) -> list[str]:
     section("Overview", [
         ("Category", _cat if _cat != "(uncategorised)" else None),
         ("Founded", _disp(row.get("founded"))),
-        (_label("parent_organization"), _disp(row.get("parent_organization"))),
         ("Website", _disp(row.get("website"))),
         ("HQ country", _disp(row.get("hq_country"))),
         ("HQ address", _disp(row.get("hq_address"))),
@@ -913,14 +911,20 @@ def _edit_dialog(row: dict) -> None:
         _cur_founded = str(row.get("founded") or "").strip()
         _yr_opts = (_YEAR_OPTIONS if _cur_founded in _YEAR_OPTIONS
                     else _YEAR_OPTIONS + [_cur_founded])
-        c5, c6 = st.columns(2)
+        c5, _c6 = st.columns(2)
         edited["founded"] = c5.selectbox(
             "Founded (year)", _yr_opts, index=_yr_opts.index(_cur_founded),
             key=f"founded_{ck}", help="Year the organisation was established.")
-        edited["parent_organization"] = c6.text_input(
-            _label("parent_organization"), row.get("parent_organization") or "",
-            key=f"parent_org_{ck}",
-            help="The funder behind the fund, e.g. 'UK DHSC via ODA' or 'USAID'.")
+        # Funders & Collaborators — the funders/partners behind or alongside this
+        # donor, picked from the shared partner+donor vocabulary (multi-select;
+        # type to add). Replaces the old free-text "Parent / funded by".
+        edited["funders_collaborators"] = json.dumps(_multi_with_options(
+            _label("funders_collaborators"), _PARTNER_OPTIONS,
+            row.get("funders_collaborators"), key=f"fundcollab_{ck}",
+            help="Who funds / partners with this donor (donors, philanthropies, pooled "
+                 "funds, INGOs, …). Same list as the org 'Trusted partners' — type to add "
+                 "a private firm or academic institution. If your org is in this list and "
+                 "you apply, it lifts your competitiveness."))
 
         st.markdown("**Official / institutional contact**")
         ic1, ic2 = st.columns(2)
@@ -999,12 +1003,7 @@ def _edit_dialog(row: dict) -> None:
             _label("funding_programs"), row.get("funding_programs") or "", height=80,
             key=f"funding_programs_{ck}",
             help="Named schemes / windows, e.g. 'GHR Themed; Global Professorships; Fellowships'.")
-        edited["funders_collaborators"] = json.dumps(_multi_with_options(
-            _label("funders_collaborators"), _PARTNER_OPTIONS,
-            row.get("funders_collaborators"), key=f"fundcollab_{ck}",
-            help="Funders, pooled funders, philanthropies & partners behind/alongside "
-                 "this donor. Shared partner vocabulary — type to add a private firm, "
-                 "academic institution or other partner. Blank for most donors."))
+        # (Funders & Collaborators is captured on the Identity tab.)
 
         st.markdown("**Funding tiers / bands / stages**")
         st.caption("One row per band/stage — e.g. NIHR Band 1/2/3 or DIV Stage 1/2/3.")
@@ -1517,8 +1516,10 @@ def _view_dialog(row: dict) -> None:
         _subparts.append(_html.escape(_cat))
     if _disp(row.get("founded")):
         _subparts.append(f"Founded {_html.escape(_disp(row.get('founded')))}")
-    if _disp(row.get("parent_organization")):
-        _subparts.append("Funded by " + _html.escape(_disp(row.get("parent_organization"))))
+    _hdr_funders = _to_list(row.get("funders_collaborators"))
+    if _hdr_funders:
+        _shown = ", ".join(_hdr_funders[:3]) + ("…" if len(_hdr_funders) > 3 else "")
+        _subparts.append("Funded by " + _html.escape(_shown))
     if _disp(row.get("website")):
         _w = _disp(row.get("website"))
         _wh = _w if _w.startswith(("http://", "https://")) else f"https://{_w}"
