@@ -18,6 +18,7 @@ Review visual. Weights + thresholds are module constants (tunable).
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from core import geographies as _geo
@@ -63,7 +64,84 @@ def _truthy(v: Any) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "y", "required")
 
 
+def _ratings_map(v: Any) -> dict[str, int]:
+    """Coerce a program_area_ratings value (dict or JSON text) to {key: int 0-5}."""
+    if isinstance(v, str):
+        try:
+            v = json.loads(v or "{}")
+        except (ValueError, TypeError):
+            v = {}
+    out: dict[str, int] = {}
+    if isinstance(v, dict):
+        for k, val in v.items():
+            try:
+                out[str(k)] = max(0, min(5, int(val)))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _priority_vector(selection: Any, ratings: Any) -> dict[str, float]:
+    """Build a {child key: 0–5} priority vector from a selection (canonical child
+    keys and/or whole parent categories) + explicit ratings. Parent/child-aware:
+
+      * an explicit child rating wins;
+      * a SELECTED child with no rating counts as 5 (selected ⇒ a real priority,
+        so an ungraded ↔ ungraded pick scores as a 5-vs-5 exact match);
+      * a SELECTED whole parent category fills every child of that category with
+        the AVERAGE of that category's explicitly-rated children — or 5 when none
+        of its children are rated.
+
+    So org and donor compare on the same child-key space whether either side
+    captured parent categories, specific sub-areas, or a mix."""
+    sel = _as_list(selection)
+    rmap = _ratings_map(ratings)
+    vec: dict[str, float] = {}
+    for k, v in rmap.items():                       # explicit child grades
+        if k in _pa.PROGRAM_AREA_KEYWORDS:
+            vec[k] = float(v)
+    for s in sel:                                   # selected child, ungraded → 5
+        if s in _pa.PROGRAM_AREA_KEYWORDS:
+            vec.setdefault(s, 5.0)
+    for s in sel:                                   # whole-category pick
+        if s in _pa.CATEGORIES:
+            children = _pa.expand([s])
+            rated = [vec[c] for c in children if c in vec]
+            parent = (sum(rated) / len(rated)) if rated else 5.0
+            for c in children:
+                vec.setdefault(c, parent)
+    return vec
+
+
+def _cosine(a: dict, b: dict) -> float | None:
+    """Cosine similarity (0..1) of two non-negative vectors; None if either empty."""
+    if not a or not b:
+        return None
+    keys = set(a) | set(b)
+    dot = sum(a.get(k, 0.0) * b.get(k, 0.0) for k in keys)
+    na = math.sqrt(sum(a.get(k, 0.0) ** 2 for k in keys))
+    nb = math.sqrt(sum(b.get(k, 0.0) ** 2 for k in keys))
+    return (dot / (na * nb)) if (na and nb) else 0.0
+
+
+def strategic_fit_score(org_selection: Any, org_ratings: Any,
+                        donor_selection: Any, donor_ratings: Any) -> float | None:
+    """Cosine (0..1) of the org's vs the donor's 0–5 priority vectors, parent/
+    child-aware (see `_priority_vector`). None when either side has no
+    program-area signal (caller then falls back to set overlap)."""
+    return _cosine(_priority_vector(org_selection, org_ratings),
+                   _priority_vector(donor_selection, donor_ratings))
+
+
 def _thematic_fit(org: dict, donor: dict) -> float:
+    # Graded path: correlate the org's vs the donor's priority vectors (handles
+    # parent categories, specific sub-areas, ungraded=5, broad=avg-of-children).
+    graded = strategic_fit_score(
+        org.get("priority_areas"), org.get("program_area_ratings"),
+        donor.get("priority_program_areas"), donor.get("program_area_ratings"))
+    if graded is not None:
+        return graded
+    # Fallback: binary overlap on the shared taxonomy (no priority signal one side).
     org_pa = (org.get("priority_areas") or []) + (org.get("domains") or [])
     don_pa = _as_list(donor.get("priority_program_areas"))
     if not org_pa or not don_pa:
