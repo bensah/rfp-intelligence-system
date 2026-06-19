@@ -87,7 +87,7 @@ Stored per RFP (`rfp_submissions`). For the **auto** source they are **objective
 ### 4.4 Decision & composite match
 - **Rule baseline** (`auto_scorer._decision_from_criteria`): any MUST=No→Decline; ≥2 MUST=Partial→Decline; 1 Partial→Park; all MUST=Yes & ≥3 PREFER=Yes→Proceed; else Park. Guards downgrade Proceed→Park on sparse text / missing deadline / weak geo.
 - **`alignment_score`** (0–100, `core/scorer`): weighted sum of the 9 (weights in `config/scoring_weights.yaml`), excluding null (missing) criteria.
-- **Composite match** (`core/matching.composite_match`): **0.80 × criteria_score + 0.20 × donor-org extras**, with a **hard MUST gate** (any MUST=No → Decline), else thresholds **≥70 Proceed · 45–69 Park · <45 Decline**. Donor-org extras (each 0/0.5/1, neutral 0.5 when unknown): `donor_thematic_fit`, `donor_geographic_fit`, `donor_route_fit`. Shown on the Review gauge with a breakdown. Weights/thresholds are module constants.
+- **Composite match** (`core/matching.composite_match`): **0.80 × criteria_score + 0.20 × donor-org extras**, with a **hard MUST gate** (any MUST=No → Decline), else thresholds **≥70 Proceed · 45–69 Park · <45 Decline**. Donor-org extras (each 0/0.5/1, neutral 0.5 when unknown): `donor_thematic_fit` (graded program-area cosine), `donor_geographic_fit`, `donor_route_fit`, `donor_relationship_fit` (1.0 when the applicant org — or a partner it lists — is in the donor's Funders & Collaborators, or has prior funding from the donor). Shown on the Review gauge with a breakdown. Weights/thresholds are module constants.
 
 ---
 

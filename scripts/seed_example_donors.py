@@ -49,7 +49,8 @@ NIHR = {
     "donor_category": "Bilaterals / government development agencies",
     "website": "https://www.nihr.ac.uk/explore-nihr/funding-programmes/global-health.htm",
     "founded": "2006",
-    "parent_organization": "UK Department of Health and Social Care (DHSC), via Official Development Assistance (ODA)",
+    "parent_organization": None,   # superseded by funders_collaborators
+    "funders_collaborators": json.dumps(["UK Department of Health and Social Care (DHSC)"]),
     "general_email": "nihrglobalhealth@nihr.ac.uk",
     "hq_country": "United Kingdom",
     "summary_description": (
@@ -415,6 +416,191 @@ DIV = {
 }
 
 
+# ── DIV Fund backers / collaborators — added as donor records + partner options ──
+COEFFICIENT_GIVING = {
+    "donor": "Coefficient Giving", "donor_short": "Coefficient Giving",
+    "aliases": "Open Philanthropy; Open Phil",
+    "donor_category": "International philanthropies & foundations",
+    "website": "https://www.coefficientgiving.org", "founded": "2017",
+    "hq_country": "United States",
+    "summary_description": (
+        "A US philanthropic adviser and funder (formerly Open Philanthropy; rebranded "
+        "in 2025) that finds and funds outstanding giving opportunities at scale — "
+        ">$4B directed to date. Now operates multi-donor 'funds' other philanthropists "
+        "can join; anchor backing from Dustin Moskovitz and Cari Tuna."),
+    "mission": "Give as well as possible — maximise impact per dollar through evidence and reasoning.",
+    "strategic_priorities": (
+        "Program areas are structured as multi-donor funds: global health & wellbeing "
+        "(incl. global health R&D and scientific research), pandemic preparedness / "
+        "biosecurity, farm animal welfare, and risks from advanced AI."),
+    "funding_mechanism": json.dumps(["Grants", "Program-related investments (equity/debt)"]),
+    "priority_program_areas": json.dumps([
+        "IDs - Pandemic Response", "Cross-cutting - Research", "WCH - Vaccines",
+        "Cross-cutting - Diagnostics", "Cross-cutting - Digital Health (+AI)"]),
+    "program_area_ratings": json.dumps({
+        "IDs - Pandemic Response": 5, "Cross-cutting - Research": 5,
+        "WCH - Vaccines": 3, "Cross-cutting - Diagnostics": 3,
+        "Cross-cutting - Digital Health (+AI)": 3}),
+    "funding_scope_geographic": json.dumps([
+        "Global / worldwide", "Low- and middle-income countries (LMICs)"]),
+    "eligibility_notes": (
+        "Largely proactive / invitation-driven grantmaking sourced through its own "
+        "research and trusted recommenders — not a broad open call. Funds nonprofits "
+        "and, via program-related investments, some for-profits."),
+    "verification_level": "medium",
+    "evidence_summary": "From coefficientgiving.org and reporting on the 2025 Open Philanthropy → Coefficient Giving rebrand.",
+    "source_urls": "https://www.coefficientgiving.org\nhttps://en.wikipedia.org/wiki/Coefficient_Giving",
+    "ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
+    "open_call_unsolicited": "no",
+}
+
+GIVEWELL = {
+    "donor": "GiveWell", "donor_short": "GiveWell",
+    "donor_category": "International philanthropies & foundations",
+    "website": "https://www.givewell.org", "founded": "2007",
+    "hq_country": "United States",
+    "summary_description": (
+        "A US nonprofit charity evaluator turned major grantmaker (>$400M/yr). Finds "
+        "and funds evidence-backed, highly cost-effective programmes that save or "
+        "improve lives in low- and lower-middle-income countries, and publishes all "
+        "its research openly. Channels funding via its Top Charities Fund and All "
+        "Grants Fund."),
+    "mission": "Find and fund the giving opportunities that save or improve the most lives per dollar.",
+    "strategic_priorities": (
+        "Evidence-backed, cost-effective global health & development — malaria (nets, "
+        "seasonal chemoprevention), vitamin A supplementation, vaccination / "
+        "immunisation incentives, safe water, and maternal & child health."),
+    "funding_mechanism": json.dumps(["Grants"]),
+    "priority_program_areas": json.dumps([
+        "IDs - Malaria & NTDs", "WCH - Nutrition", "WCH - Vaccines",
+        "WASH - Safe Water", "WCH - MNCH", "Cross-cutting - Research"]),
+    "program_area_ratings": json.dumps({
+        "IDs - Malaria & NTDs": 5, "WCH - Nutrition": 4, "WCH - Vaccines": 4,
+        "WASH - Safe Water": 4, "WCH - MNCH": 3, "Cross-cutting - Research": 4}),
+    "funding_scope_geographic": json.dumps([
+        "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Asia"]),
+    "eligibility_notes": (
+        "Highly selective and research-led: funds a small set of vetted Top Charities "
+        "plus targeted grants that clear a strict cost-effectiveness bar. Not a broad "
+        "open call."),
+    "verification_level": "high",
+    "evidence_summary": "From givewell.org (How We Work, Top Charities Fund) and public profiles.",
+    "source_urls": "https://www.givewell.org\nhttps://www.givewell.org/how-we-work",
+    "ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
+}
+
+LIVELIHOOD_IMPACT_FUND = {
+    "donor": "Livelihood Impact Fund", "donor_short": "LIF",
+    "donor_category": "International philanthropies & foundations",
+    "founded": None, "hq_country": "United States",
+    "summary_description": (
+        "A US grantmaking foundation that helps people in poverty toward self-"
+        "sufficiency with skills, capital and opportunities. Backs scalable programmes "
+        "delivering at least 5× returns in future earnings per dollar, with multi-year, "
+        "trust-based funding focused on measurable income growth. ~$23M granted in 2023 "
+        "(64 awards, ~$100K–$300K each); works across Africa (originally Cambodia)."),
+    "mission": "Improve the lives of the global poor by equipping individuals and families for self-sufficiency.",
+    "strategic_priorities": (
+        "Livelihoods & economic self-sufficiency — vocational / skills training, jobs, "
+        "financial inclusion and economic empowerment, judged on measurable income growth."),
+    "funding_mechanism": json.dumps(["Grants"]),
+    "award_low_usd": "$100K", "award_high_usd": "$300K",
+    "priority_program_areas": json.dumps([
+        "ECON - Jobs & Skills", "EDU - Higher Education & TVET",
+        "ECON - Financial Inclusion", "ECON - Social Protection", "GES - Youth Empowerment"]),
+    "program_area_ratings": json.dumps({
+        "ECON - Jobs & Skills": 5, "EDU - Higher Education & TVET": 4,
+        "ECON - Financial Inclusion": 4, "ECON - Social Protection": 3,
+        "GES - Youth Empowerment": 3}),
+    "funding_scope_geographic": json.dumps([
+        "Sub-Saharan Africa", "Low- and middle-income countries (LMICs)"]),
+    "eligibility_notes": (
+        "Trust-based, multi-year funding to vetted high-impact organisations; strongly "
+        "outcomes-focused (income growth, lives transformed). Largely sourced / invited."),
+    "verification_level": "medium",
+    "evidence_summary": "From DevelopmentAid and BFA Global profiles of the Livelihood Impact Fund.",
+    "source_urls": "https://bfaglobal.com/livelihood-impact-fund/",
+    "ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
+}
+
+CRI_FOUNDATION = {
+    "donor": "CRI Foundation", "donor_short": "CRI",
+    "aliases": "Child Relief International Foundation",
+    "donor_category": "International philanthropies & foundations",
+    "website": "https://crifoundation.org", "founded": "2006",
+    "hq_country": "United States",
+    "summary_description": (
+        "A New York private foundation (formerly Child Relief International Foundation; "
+        "founded 2006 by Andrew & Bonnie Weiss; >$135M assets) funding cost-effective, "
+        "catalytic work to improve the lives of people in extreme poverty — primarily "
+        "health in sub-Saharan Africa. Requires organisations to be evidence-based or "
+        "evidence-generating with rigorous evaluation; partners with the DIV Fund "
+        "(CRI-DIV collaborative) since 2019."),
+    "mission": "Improve the lives of people in extreme poverty through cost-effective, catalytic, evidence-based giving.",
+    "strategic_priorities": (
+        "Cost-effective health in sub-Saharan Africa; evidence-based or evidence-"
+        "generating interventions with rigorous evaluation; catalytic, collaborative "
+        "funding (e.g. the CRI-DIV collaborative)."),
+    "funding_mechanism": json.dumps(["Grants"]),
+    "funders_collaborators": json.dumps(["Development Innovation Ventures Fund"]),
+    "priority_program_areas": json.dumps([
+        "Cross-cutting - Research", "IDs - Malaria & NTDs", "WCH - MNCH",
+        "HSS - Health Workforce", "WCH - Nutrition"]),
+    "program_area_ratings": json.dumps({
+        "Cross-cutting - Research": 5, "IDs - Malaria & NTDs": 4, "WCH - MNCH": 4,
+        "HSS - Health Workforce": 3, "WCH - Nutrition": 3}),
+    "funding_scope_geographic": json.dumps([
+        "Sub-Saharan Africa", "Low- and middle-income countries (LMICs)"]),
+    "eligibility_notes": (
+        "Funds evidence-based or evidence-generating organisations with rigorous "
+        "evaluation frameworks; emphasis on cost-effective, catalytic opportunities, "
+        "often through collaboratives (e.g. with the DIV Fund)."),
+    "verification_level": "medium",
+    "evidence_summary": "From crifoundation.org (Collaboratives, CRI-DIV) and public foundation profiles.",
+    "source_urls": "https://crifoundation.org\nhttps://crifoundation.org/cri-div/",
+    "ngo_eligible": "yes", "grant_route": "yes", "prior_track_record_required": "yes",
+    "invitation_solicited": "yes",
+}
+
+GLOBAL_DEV_INCUBATOR = {
+    "donor": "Global Development Incubator", "donor_short": "GDI",
+    "donor_category": "International philanthropies & foundations",
+    "website": "https://globaldevincubator.org", "founded": "2007",
+    "hq_country": "United States",
+    "summary_description": (
+        "A Washington DC nonprofit incubator (founded 2007) that brings together ideas, "
+        "leaders and capital to build and scale social-impact ventures. Runs a 12–36 "
+        "month incubation (Discover → Design → Build → Exit) and has shaped 40+ ventures "
+        "across health, agriculture, inclusive finance, climate, youth employment and "
+        "economic inclusion in LMICs. Acts as an intermediary / venture-builder more "
+        "than a pure grantmaker."),
+    "mission": "Bring together ideas, leaders and capital to build and scale the next generation of social solutions.",
+    "strategic_priorities": (
+        "Builds & scales ventures across digital health, inclusive / smallholder "
+        "finance, agriculture, climate & ecosystems, youth employment, economic "
+        "inclusion and MSME development."),
+    "funding_mechanism": json.dumps(["Technical assistance", "Co-financing", "Grants"]),
+    "priority_program_areas": json.dumps([
+        "Cross-cutting - Digital Health (+AI)", "ECON - Financial Inclusion",
+        "AGRI - Smallholder Productivity", "ECON - Jobs & Skills",
+        "ENV - Climate Adaptation & Resilience", "HSS - Health Workforce"]),
+    "program_area_ratings": json.dumps({
+        "Cross-cutting - Digital Health (+AI)": 4, "ECON - Financial Inclusion": 4,
+        "AGRI - Smallholder Productivity": 4, "ECON - Jobs & Skills": 3,
+        "ENV - Climate Adaptation & Resilience": 3, "HSS - Health Workforce": 3}),
+    "funding_scope_geographic": json.dumps([
+        "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa"]),
+    "eligibility_notes": (
+        "Operates as an incubator / intermediary — partners with funders and "
+        "entrepreneurs to build ventures; engagement is selective and relationship-"
+        "driven rather than an open grant call."),
+    "verification_level": "medium",
+    "evidence_summary": "From globaldevincubator.org and the Devex organisation profile.",
+    "source_urls": "https://globaldevincubator.org\nhttps://www.devex.com/organizations/global-development-incubator-gdi-56305",
+    "ngo_eligible": "yes", "subrecipient_partner_possible": "yes", "grant_route": "yes",
+}
+
+
 def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "donor"
 
@@ -427,6 +613,12 @@ def main() -> int:
     plan = [
         (NIHR, ("nihr", "national institute for health and care research")),
         (DIV, ("div fund", "development innovation ventures", "usaid div")),
+        # DIV Fund backers / collaborators — also added as full donor records.
+        (COEFFICIENT_GIVING, ("coefficient giving", "open philanthropy", "open phil")),
+        (GIVEWELL, ("givewell",)),
+        (LIVELIHOOD_IMPACT_FUND, ("livelihood impact fund",)),
+        (CRI_FOUNDATION, ("cri foundation", "child relief international")),
+        (GLOBAL_DEV_INCUBATOR, ("global development incubator",)),
     ]
     for payload, needles in plan:
         key = _find_key(rows, *needles)
