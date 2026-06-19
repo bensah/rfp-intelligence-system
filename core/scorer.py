@@ -41,7 +41,9 @@ _SCORE_MAP = {
     "no": 0, "n": 0, "false": 0, "0": 0,
     # qualification
     "yes, fully": 2, "mostly, one item unclear": 1, "no, not eligible": 0,
-    # strategic_fit
+    # strategic_fit — NEW labels (priorities-vs-donor-priorities) + legacy (kept so
+    # old stored rows still score and map to the new label by score via match_response)
+    "strongly aligns": 2, "limited priority": 1, "off-strategy": 0,
     "strong - priorities + experience": 2, "priority area, limited experience": 1,
     "experienced but off-strategy": 1, "neither": 0,
     # capacity
@@ -152,8 +154,7 @@ CRITERION_RESPONSES: dict[str, list[str]] = {
     "qualification": [
         "Yes, fully", "Mostly, one item unclear", "No, not eligible", "Not sure"],
     "strategic_fit": [
-        "Strong - priorities + experience", "Priority area, limited experience",
-        "Experienced but off-strategy", "Neither", "Not sure"],
+        "Strongly aligns", "Limited priority", "Off-strategy", "Not sure"],
     "capacity": [
         "Yes, comfortably", "Yes, but a stretch", "No, beyond us", "Not sure"],
     "geographic_fit": [

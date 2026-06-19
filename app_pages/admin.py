@@ -245,7 +245,7 @@ with tab_settings:
         )
         from core import org_profile as _orgp
         from core import geographies as _geo
-        from core.program_area_select import program_area_picker, program_area_rating_editor
+        from core.program_area_select import program_area_matrix_editor
         from core.partners import NONPROFIT_PARTNERS, DONOR_PORTALS, clean_portal_url
         _prof = _orgp.get_profile()
 
@@ -309,20 +309,24 @@ with tab_settings:
             value=int(_prof["largest_grant_usd"]) if _prof.get("largest_grant_usd") else 0,
             help="Absorptive capacity for award size (capacity).")
 
-        domains_sel = program_area_picker(
-            "Domains / areas of expertise", _prof.get("domains"), "orgp_domains",
-            help="Where you have demonstrated experience — pick a category, then "
-                 "drill into sub-areas. Same vocabulary as the RFP program area & "
-                 "donor fit (strategic fit).")
-        # Strategic priority areas — graded 0–5 per child sub-area on the SAME
-        # taxonomy donors use, so org ↔ donor priorities correlate into the
-        # graded strategic-fit score (core.matching.strategic_fit_score).
-        priorities_sel, priority_ratings = program_area_rating_editor(
-            "Strategic priority areas", _prof.get("priority_areas"),
-            _prof.get("program_area_ratings"), "orgp_priority_areas",
-            help="Your declared strategic focus — grade each sub-area 0–5 "
-                 "(0 absent → 5 very high). Matched to each donor's graded "
-                 "priorities. Only child sub-areas are graded.")
+        # TWO distinct, separately-graded matrices on the SAME shared taxonomy:
+        #  • Domains / areas of expertise = TRACK RECORD (history of implementing) →
+        #    feeds COMPETITIVENESS (how well-placed we are to win in that exact area).
+        #  • Strategic priority areas = STRATEGY (where we want to grow, footprint or
+        #    not) → feeds STRATEGIC FIT (MUST-2), matched to donor priorities.
+        domains_sel, domain_ratings = program_area_matrix_editor(
+            "Domains / areas of expertise (track record)",
+            _prof.get("domains"), _prof.get("domain_ratings"), "orgp_domains",
+            help="Where you have demonstrated experience — grade 0–5 how strong your "
+                 "track record is (e.g. malaria 5 = many funded/ongoing projects; "
+                 "health workforce 1 = a minor past project). Drives competitiveness.")
+        priorities_sel, priority_ratings = program_area_matrix_editor(
+            "Strategic priority areas (strategy)",
+            _prof.get("priority_areas"), _prof.get("program_area_ratings"),
+            "orgp_priority_areas",
+            help="Where your strategy says you want to work — even with no footprint "
+                 "yet (e.g. nutrition 5 = a top priority you're pursuing). Drives "
+                 "strategic fit (MUST-2), matched to each donor's graded priorities.")
 
         gc1, gc2 = st.columns(2)
         countries_op_sel = _ms(gc1, "Countries of operation", _geo.GEO_OPTIONS,
@@ -394,6 +398,7 @@ with tab_settings:
                 "annual_budget_usd": int(annual_budget) or None,
                 "largest_grant_usd": int(largest_grant) or None,
                 "domains": domains_sel,
+                "domain_ratings": domain_ratings,
                 "priority_areas": priorities_sel,
                 "program_area_ratings": priority_ratings,
                 "countries_of_operation": countries_op_sel,

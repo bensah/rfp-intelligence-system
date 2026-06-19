@@ -140,6 +140,59 @@ def program_area_rating_editor(label, current_selection, current_ratings, key_pr
     return sel, ratings
 
 
+def program_area_matrix_editor(label, current_selection, current_ratings, key_prefix,
+                               *, container=None, help=""):
+    """ONE grid table: each row picks a program area ("Sub-area · Category") and
+    grades it 0–5. Replaces the cascading category→sub-area dropdowns + a separate
+    rating table with a single editable matrix. Returns
+    (selection_keys, ratings_dict {child_key: int 0-5})."""
+    c = container or st
+    c.markdown(f"**{label}**")
+    if help:
+        c.caption(help)
+    disp_by_key = {k: f"{subarea_label(k)}  ·  {category_full(k)}"
+                   for k in PROGRAM_AREA_KEYWORDS}
+    key_by_disp = {v: k for k, v in disp_by_key.items()}
+    options = sorted(disp_by_key.values())
+    sel = [k for k in _as_selection(current_selection) if k in PROGRAM_AREA_KEYWORDS]
+    rmap = _as_rating_map(current_ratings)
+    base = pd.DataFrame(
+        [{"Program area": disp_by_key[k], "Priority (0–5)": int(rmap.get(k, 3))} for k in sel],
+        columns=["Program area", "Priority (0–5)"])
+    base["Program area"] = base["Program area"].astype("object")
+    base["Priority (0–5)"] = pd.to_numeric(base["Priority (0–5)"], errors="coerce")
+    c.caption(f"Add a row → pick a program area → grade 0–5.  {RATING_LEGEND}")
+    edited = c.data_editor(
+        base, num_rows="dynamic", hide_index=True, width="stretch",
+        key=f"{key_prefix}_matrix",
+        column_config={
+            "Program area": st.column_config.SelectboxColumn(
+                "Program area (category › sub-area)", options=options, width="large"),
+            "Priority (0–5)": st.column_config.NumberColumn(
+                "Priority (0–5)", min_value=0, max_value=5, step=1, width="small",
+                default=3, help=RATING_LEGEND),
+        })
+    out_sel: list[str] = []
+    out_rat: dict[str, int] = {}
+    for r in edited.to_dict("records"):
+        disp = r.get("Program area")
+        try:
+            blank = disp is None or pd.isna(disp)
+        except (TypeError, ValueError):
+            blank = disp is None
+        k = None if blank else key_by_disp.get(str(disp).strip())
+        if not k or k in out_rat:
+            continue
+        v = r.get("Priority (0–5)")
+        try:
+            v = 3 if (v is None or pd.isna(v)) else int(v)
+        except (TypeError, ValueError):
+            v = 3
+        out_sel.append(k)
+        out_rat[k] = max(0, min(5, v))
+    return out_sel, out_rat
+
+
 def rating_bars_html(ratings) -> str:
     """Render {child_key: 0-5} as gradient priority bars (highest first). Returns
     an HTML string for st.markdown(..., unsafe_allow_html=True). Empty -> ''."""
