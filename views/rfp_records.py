@@ -538,16 +538,16 @@ def edit_dialog(row: dict) -> None:
             feas_in = _opt("Feasibility", "feas", dropdowns.get("feasibility"), row.get("feasibility"))
         gl, gr = st.columns(2)
         with gl:
-            m1 = _elig("MUST 1 — Govt alignment", "m1", row.get("qualification"))
+            m1 = _elig("MUST 1 — Organisational qualification", "m1", row.get("qualification"))
             m2 = _elig("MUST 2 — Strategic fit", "m2", row.get("strategic_fit"))
             m3 = _elig("MUST 3 — Implementation capacity", "m3", row.get("capacity"))
-            m4 = _elig("MUST 4 — Compliant", "m4", row.get("geographic_fit"))
+            m4 = _elig("MUST 4 — Geographic fit", "m4", row.get("geographic_fit"))
             m5 = _elig("MUST 5 — Cofinancing & compliance", "m5", row.get("cofinancing"))
         with gr:
             p6 = _elig("PREFER 6 — Funding quality", "p6", row.get("funding_quality"))
-            p7 = _elig("PREFER 7 — Monitorable", "p7", row.get("funder_relationship"))
-            p8 = _elig("PREFER 8 — Partnership", "p8", row.get("competitiveness"))
-            p9 = _elig("PREFER 9 — Scale", "p9", row.get("bid_effort"))
+            p7 = _elig("PREFER 7 — Funder relationship", "p7", row.get("funder_relationship"))
+            p8 = _elig("PREFER 8 — Competitiveness", "p8", row.get("competitiveness"))
+            p9 = _elig("PREFER 9 — Bid effort", "p9", row.get("bid_effort"))
         decline_in = st.radio(
             "Decline flags present?", ["No", "Yes"], horizontal=True,
             index=1 if row.get("decline_flags_present") else 0, key=f"e_decline_{row['uid']}",
