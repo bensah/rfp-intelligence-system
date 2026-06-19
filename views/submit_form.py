@@ -1,11 +1,13 @@
 """Reusable RFP submission form.
 
-Renders inside the @st.dialog modal opened from the Home + Pipeline pages.
-The standalone Submit page was removed on 2026-06-05 (nav slot reassigned
-to the User page) — the only entry points now are the two modal buttons.
-Each modal context passes a unique `key_prefix` so widget keys don't
-collide when the form is mounted in two places in the same Streamlit
-session.
+Rendered by the standalone Submit page (app_pages/submit_rfp.py, opened from the
+Home "Submit Discovered RFP" button) and reusable inside any container. Each
+caller passes a unique `key_prefix` so widget keys don't collide when the form
+is mounted in two places in the same Streamlit session.
+
+Note: this is intentionally NOT wrapped in st.form — sections need to react to
+selections (the Team section only shows for a Proceed/Park decision, and the
+"Other → specify" inputs reveal on selection), which st.form would suppress.
 
 DEDUP POLICY (per user request, 2026-06-05):
   The submit handler no longer blocks on duplicates. Every form submission
@@ -124,7 +126,11 @@ def render_submit_form(
     # ------------------------------------------------------------------
     # Form
     # ------------------------------------------------------------------
-    with st.form(_k("rfp_submit"), clear_on_submit=False):
+    # NOT an st.form: the Team section (5) must appear/disappear live as the Bid
+    # decision changes, and the "Other → specify" inputs must reveal on selection
+    # — st.form suppresses per-widget reruns, so a plain container is used and a
+    # normal st.button drives submission.
+    with st.container():
         st.caption(
             f"Submitting as **{user.get('name') or user.get('email')}** "
             f"(logged-in user). Sign out and back in to submit on behalf "
@@ -152,8 +158,11 @@ def render_submit_form(
         with c6:
             role = st.selectbox("Applicant role", _none_first(applicant_roles),
                                 key=_k("applicant_role"),
-                                help="Whether your org applies as Prime, Sub, "
-                                     "or Technical assistance provider.")
+                                help="How the lead applicant participates: Prime "
+                                     "(lead beneficiary), Sub (sub-recipient), or "
+                                     "Technical (assists another applicant — e.g. a "
+                                     "government on a Pandemic Fund bid — without being "
+                                     "a beneficiary).")
         with c7:
             window = st.selectbox("Funding window", _none_first(funding_windows),
                                   key=_k("window"))
@@ -180,15 +189,16 @@ def render_submit_form(
         # so the submitter can capture the partnership structure up-front.
         c15, c16 = st.columns(2)
         lead_applicant = c15.text_input(
-            "Lead applicant (optional)",
+            "Lead applicant *",
             key=_k("lead_app"),
-            help="Org leading the proposal. Leave blank to default per "
-                 "Applicant role (Prime → deploying org; Sub → unknown).",
+            help="The organisation leading the application — e.g. your org, or a "
+                 "government / partner you are supporting. Always required.",
         )
         sub_applicant = c16.text_input(
             "Sub applicant (optional)",
             key=_k("sub_app"),
-            help="Org acting as sub-recipient. Leave blank if not applicable.",
+            help="Sub-recipient / co-applicant, if one is known at the time you "
+                 "log the opportunity.",
         )
 
         _multi_with_other("Geographic scope", geo_scope, key="geo")
@@ -200,10 +210,6 @@ def render_submit_form(
             "unscored (treated as missing — it won't drag the score down). MUST 1–5 "
             "are hard; any clear **No** means decline."
         )
-        c_f, _spacer = st.columns([1, 3])
-        feas = c_f.selectbox("Feasibility", _none_first(feasibility),
-                             key=_k("feas"),
-                             help="Optional — feasibility is no longer a scored criterion.")
 
         grid_l, grid_r = st.columns(2)
         with grid_l:
@@ -217,6 +223,16 @@ def render_submit_form(
             p7 = _crit("PREFER 7 — Funder relationship", "p7", "funder_relationship")
             p8 = _crit("PREFER 8 — Competitiveness", "p8", "competitiveness")
             p9 = _crit("PREFER 9 — Bid effort", "p9", "bid_effort")
+
+        # Feasibility = the submitter's own subjective read on the opportunity —
+        # the human counterpart to the auto-scan tier that derives Proceed/Park/
+        # Decline from the criteria above. Not a scored criterion.
+        c_f, _spacer = st.columns([1, 3])
+        feas = c_f.selectbox(
+            "Feasibility (your read)", _none_first(feasibility), key=_k("feas"),
+            help="Your subjective gut-rating of how promising this RFP is — the "
+                 "human analogue of the auto-scan's Proceed/Park/Decline tier. "
+                 "Optional; not scored.")
 
         st.subheader("3. Decline flags & risks")
         c_df, _spacer2 = st.columns([1, 3])
@@ -233,14 +249,19 @@ def render_submit_form(
         rationale = c_dr.text_area("Decision rationale (1–2 lines)",
                                    height=80, key=_k("rationale"))
 
-        st.subheader("5. Team")
-        c_lead, _ = st.columns([1, 1])
-        with c_lead:
-            _single_with_other("Proposal lead *", team, key="prop_lead")
-        _multi_with_other("Contributors", team, key="contributors")
-        _multi_with_other("Reviewers", team, key="reviewers")
+        # Section 5 (Team) is only relevant when we intend to pursue the bid —
+        # show it for Proceed / Park, hide it for Decline (or an unset decision).
+        _dec_lower = str(_none(decision) or "").strip().lower()
+        show_team = _dec_lower.startswith("proceed") or _dec_lower.startswith("park")
+        if show_team:
+            st.subheader("5. Team")
+            c_lead, _ = st.columns([1, 1])
+            with c_lead:
+                _single_with_other("Proposal lead *", team, key="prop_lead")
+            _multi_with_other("Contributors", team, key="contributors")
+            _multi_with_other("Reviewers", team, key="reviewers")
 
-        submitted = st.form_submit_button("Submit RFP", type="primary")
+        submitted = st.button("Submit RFP", type="primary", key=_k("submit_btn"))
 
     # ------------------------------------------------------------------
     # Validate + build the row
@@ -253,10 +274,13 @@ def render_submit_form(
         errors.append("Opportunity title is required.")
     if not resolved.get("funder"):
         errors.append("Funder is required.")
+    if not (lead_applicant or "").strip():
+        errors.append("Lead applicant is required.")
     if _none(decision) is None:
         errors.append("Decision is required.")
-    if not resolved.get("prop_lead"):
-        errors.append("Proposal lead is required.")
+    # Proposal lead is only required when the Team section is shown (Proceed/Park).
+    if show_team and not resolved.get("prop_lead"):
+        errors.append("Proposal lead is required for a Proceed / Park decision.")
     if errors:
         st.error("Please fix the following:\n\n- " + "\n- ".join(errors))
         return
