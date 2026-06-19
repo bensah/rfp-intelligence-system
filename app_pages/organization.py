@@ -80,7 +80,13 @@ st.markdown(
 
 
 def _yn(v) -> str:
-    s = str(v or "").strip().lower()
+    # NB: handle real booleans before the `or ""` trap — `False or ""` is "",
+    # which would wrongly read as "—" instead of "No".
+    if isinstance(v, bool):
+        return "Yes" if v else "No"
+    if v is None or v == "":
+        return "—"
+    s = str(v).strip().lower()
     if s in ("true", "yes"):
         return "Yes"
     if s in ("false", "no"):
@@ -89,7 +95,11 @@ def _yn(v) -> str:
 
 
 def _present(v) -> str:
-    s = str(v or "").strip().lower()
+    if isinstance(v, bool):
+        return "Present" if v else "Absent"
+    if v is None or v == "":
+        return "—"
+    s = str(v).strip().lower()
     if s in ("true", "yes"):
         return "Present"
     if s in ("false", "no"):
@@ -132,16 +142,18 @@ with st.container(border=True):
     st.markdown("#### 💰 Capacity & funding targets",
                 help="Funding-quality bands use geometric midpoints: ≤√(low·mid) Low · "
                      "≤√(mid·max) Moderate · above High.")
+    # All three rows share a 4-column grid so values line up vertically
+    # (Funding target — mid sits directly under Largest grant managed, etc.).
     c = st.columns(4)
     _kv(c[0], "Annual budget", _money(prof.get("annual_budget_usd")))
     _kv(c[1], "Largest grant managed", _money(prof.get("largest_grant_usd")))
     _kv(c[2], "Co-financing capacity", (prof.get("cofinancing_capacity") or "—").title())
     _kv(c[3], "Org stage", (prof.get("org_stage") or "—").title())
-    c2 = st.columns(3)
+    c2 = st.columns(4)
     _kv(c2[0], "Funding target — low", _money(prof.get("funding_target_low")))
     _kv(c2[1], "Funding target — mid", _money(prof.get("funding_target_mid")))
     _kv(c2[2], "Funding target — max", _money(prof.get("funding_target_max")))
-    e = st.columns(3)
+    e = st.columns(4)
     _kv(e[0], "Independent entity (not INGO affiliate)", _yn(prof.get("org_is_independent_entity")))
     _kv(e[1], "Holds SAM.gov / UEI", _yn(prof.get("org_has_sam_uei")))
     _kv(e[2], "Tax-exempt", _yn(prof.get("org_tax_exempt")))
