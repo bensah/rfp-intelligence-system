@@ -165,14 +165,16 @@ def derive_cofinancing(org: dict, rfp: dict, donor: dict | None = None) -> str |
         required = True
     if required is None:
         required = _cost_share_required(rfp)
-    if not required:                       # None (not stated) or False → assume none
-        return "Yes / none required"
+    if not required:                       # None (not stated) or False → we can meet
+        return "Yes, none required"        # it (none is required), regardless of capacity
+    # RFP requires co-financing → can we meet it given our capacity? strong → yes
+    # (2); moderate → partial, with effort (1); limited/none → no (0).
     cap = str(org.get("cofinancing_capacity") or "limited").lower()
-    if cap in ("strong", "moderate"):
-        return "Yes / none required"
-    if cap == "limited":
+    if cap == "strong":
+        return "Yes, none required"
+    if cap == "moderate":
         return "Partial, with effort"
-    return "No"
+    return "No, required"
 
 
 def derive_funding_quality(rfp: dict, org: dict | None = None,
