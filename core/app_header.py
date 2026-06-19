@@ -561,6 +561,7 @@ def _render_user_menu() -> None:
         )
         st.divider()
         st.page_link("app_pages/help.py", label="Help", icon="❓")
+        st.page_link("app_pages/organization.py", label="Organization Details", icon="🏢")
         st.page_link("app_pages/profile.py", label="Profile", icon="👤")
         if _perms.is_admin(u):
             st.page_link("app_pages/admin.py", label="Settings", icon="⚙️")
@@ -711,10 +712,12 @@ def render_app_header() -> None:
         """
         <style>
           [data-testid="stSidebarNav"] a[href$="/profile" i],
+          [data-testid="stSidebarNav"] a[href$="/organization" i],
           [data-testid="stSidebarNav"] a[href$="/help" i],
           [data-testid="stSidebarNav"] a[href$="/search" i],
           [data-testid="stSidebarNav"] a[href$="/settings" i],
           section[data-testid="stSidebar"] a[href$="/profile" i],
+          section[data-testid="stSidebar"] a[href$="/organization" i],
           section[data-testid="stSidebar"] a[href$="/help" i],
           section[data-testid="stSidebar"] a[href$="/search" i],
           section[data-testid="stSidebar"] a[href$="/settings" i] {

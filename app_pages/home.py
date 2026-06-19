@@ -230,8 +230,9 @@ CARDS = [
      "Three tabs — weekly meeting notes, donor engagement touchpoints, and pending follow-ups."),
     ("Report", "app_pages/report.py", "📊", "KPI dashboard",
      "Activity dashboard tracing the full pipeline — search → triage → reviews → engagements → grants secured."),
-    ("Profile", "app_pages/profile.py", "👤", "Profile · Password",
-     "Manage your profile and change your password. Also reachable any time from the 👤 menu (top-right)."),
+    ("Organization Details", "app_pages/organization.py", "🏢", "Organization Details",
+     "Everything about your organization — profile, bid-fitness, eligibility, partners, team. "
+     "Everyone can view; app owners can edit. (Your account & password live in the 👤 menu, top-right.)"),
 ]
 if role in ("super_user", "admin"):
     CARDS.append(("Settings", "app_pages/admin.py", "⚙️", "Setup · Users · Data · Sources · Scans",
