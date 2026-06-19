@@ -657,112 +657,6 @@ with tab_data:
                     _share_modal(sel_rows, fdf)
 
 
-    # -----------------------------------------------------------------------------
-    # Tab 1 — Donor Sources
-    # -----------------------------------------------------------------------------
-        st.markdown("---")
-        st.subheader("Excel sync")
-        st.caption(
-            "Pulls the master workbook into Supabase. Path comes from "
-            "`EXCEL_SOURCE_PATH` in `.env` (or the local repo copy if unset). "
-            "Auto-sync runs on page load when the file is newer than the last sync."
-        )
-
-        resolved = excel_sync.resolve_excel_path()
-        xls_path = resolved.get("resolved_path")
-        last_mtime, last_iso = excel_sync.get_last_sync()
-
-        sc1, sc2 = st.columns([3, 1])
-        with sc1:
-            # Single line showing the active workbook path (was two lines before;
-            # EXCEL_SOURCE_PATH and the resolved path were almost always identical).
-            if xls_path:
-                try:
-                    mt = xls_path.stat().st_mtime
-                    st.code(f"Active workbook: {xls_path}")
-                    st.caption(
-                        f"File modified: {datetime.fromtimestamp(mt, tz=timezone.utc).isoformat(timespec='seconds')}  ·  "
-                        f"Last sync: {last_iso or '(never)'}"
-                    )
-                    if last_mtime and last_mtime >= mt:
-                        st.success("✓ In sync with the workbook")
-                    else:
-                        st.warning("⚠ Workbook is newer than last sync — click to refresh")
-                except OSError as exc:
-                    st.error(f"Can't read file: {exc}")
-            else:
-                st.error(
-                    "No Excel file found. Upload a workbook below, set "
-                    "`EXCEL_SOURCE_PATH` in `.env`, or drop the workbook in the "
-                    "repo root."
-                )
-            if resolved.get("error"):
-                st.error(resolved["error"])
-
-        if sc2.button("🔄 Sync now", type="primary", disabled=xls_path is None,
-                      width='stretch'):
-            with st.spinner("Running migrate_excel.py..."):
-                result = excel_sync.sync(updated_by=user.get("email"))
-            if result.get("ok"):
-                st.success(f"Synced from {result['path']}")
-            else:
-                st.error(f"Sync failed: {result.get('error') or 'see stderr'}")
-            with st.expander("Sync output", expanded=not result.get("ok")):
-                st.code(result.get("stdout") or "(no stdout)", language="text")
-                if result.get("stderr"):
-                    st.code(result.get("stderr"), language="text")
-            st.rerun()
-
-        # ----- Upload a replacement workbook ----------------------------------
-        # Useful when the user is on a different machine where OneDrive / the
-        # original path doesn't exist, or wants to ship a one-off updated file.
-        # Saves to the currently-resolved path (overwriting), or to the repo
-        # root if no path is resolvable yet.
-        with st.expander("📤 Upload a new workbook (replaces the active file)", expanded=False):
-            st.caption(
-                "Pick a `.xlsx` file from your computer to replace whatever the "
-                "app is currently reading. The uploaded file is saved to "
-                "the path shown above (or to the repo root if no path is "
-                "resolvable). Admin-only — when user policies land we'll gate this "
-                "behind a per-user permission too."
-            )
-            up = st.file_uploader(
-                "Choose a .xlsx file",
-                type=["xlsx"],
-                accept_multiple_files=False,
-                key="excel_workbook_upload",
-            )
-            if up is not None:
-                # Determine the destination. Prefer the currently-resolved path
-                # (replaces in-place). Fall back to the repo root with the
-                # uploaded filename.
-                from pathlib import Path as _P
-                dest = (
-                    xls_path
-                    if xls_path is not None
-                    else _P(__file__).resolve().parent.parent / up.name
-                )
-                ub1, ub2 = st.columns([1, 1])
-                confirm = ub1.button(
-                    f"💾 Save as `{dest.name}` and replace active workbook",
-                    type="primary", key="confirm_upload_btn",
-                )
-                if ub2.button("Cancel upload", key="cancel_upload_btn"):
-                    st.session_state.pop("excel_workbook_upload", None)
-                    st.rerun()
-                if confirm:
-                    try:
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        with open(dest, "wb") as f:
-                            f.write(up.getbuffer())
-                        st.success(
-                            f"✓ Saved to `{dest}`. The next sync will pick it up "
-                            "automatically; click 🔄 Sync now above to refresh now."
-                        )
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Could not save: {exc}")
-
     with _rtab:
         st.subheader("Duplicate flags")
         st.caption(
@@ -1155,6 +1049,113 @@ with tab_sources:
         if a2.button("🗑 Delete", width='stretch', key="ds_delete_btn",
                      disabled=not picked):
             _delete_sources_dialog(sel_ids, sel_names)
+
+    # ----- Excel sync ------------------------------------------------------
+    # The master workbook is a source in its own right (it seeds rfp_submissions
+    # alongside the scanned donor sources above), so its sync controls live here
+    # under Sources rather than on the Records tab.
+    st.markdown("---")
+    st.subheader("Excel sync")
+    st.caption(
+        "Pulls the master workbook into Supabase. Path comes from "
+        "`EXCEL_SOURCE_PATH` in `.env` (or the local repo copy if unset). "
+        "Auto-sync runs on page load when the file is newer than the last sync."
+    )
+
+    resolved = excel_sync.resolve_excel_path()
+    xls_path = resolved.get("resolved_path")
+    last_mtime, last_iso = excel_sync.get_last_sync()
+
+    sc1, sc2 = st.columns([3, 1])
+    with sc1:
+        # Single line showing the active workbook path (was two lines before;
+        # EXCEL_SOURCE_PATH and the resolved path were almost always identical).
+        if xls_path:
+            try:
+                mt = xls_path.stat().st_mtime
+                st.code(f"Active workbook: {xls_path}")
+                st.caption(
+                    f"File modified: {datetime.fromtimestamp(mt, tz=timezone.utc).isoformat(timespec='seconds')}  ·  "
+                    f"Last sync: {last_iso or '(never)'}"
+                )
+                if last_mtime and last_mtime >= mt:
+                    st.success("✓ In sync with the workbook")
+                else:
+                    st.warning("⚠ Workbook is newer than last sync — click to refresh")
+            except OSError as exc:
+                st.error(f"Can't read file: {exc}")
+        else:
+            st.error(
+                "No Excel file found. Upload a workbook below, set "
+                "`EXCEL_SOURCE_PATH` in `.env`, or drop the workbook in the "
+                "repo root."
+            )
+        if resolved.get("error"):
+            st.error(resolved["error"])
+
+    if sc2.button("🔄 Sync now", type="primary", disabled=xls_path is None,
+                  width='stretch'):
+        with st.spinner("Running migrate_excel.py..."):
+            result = excel_sync.sync(updated_by=user.get("email"))
+        if result.get("ok"):
+            st.success(f"Synced from {result['path']}")
+        else:
+            st.error(f"Sync failed: {result.get('error') or 'see stderr'}")
+        with st.expander("Sync output", expanded=not result.get("ok")):
+            st.code(result.get("stdout") or "(no stdout)", language="text")
+            if result.get("stderr"):
+                st.code(result.get("stderr"), language="text")
+        st.rerun()
+
+    # ----- Upload a replacement workbook ----------------------------------
+    # Useful when the user is on a different machine where OneDrive / the
+    # original path doesn't exist, or wants to ship a one-off updated file.
+    # Saves to the currently-resolved path (overwriting), or to the repo
+    # root if no path is resolvable yet.
+    with st.expander("📤 Upload a new workbook (replaces the active file)", expanded=False):
+        st.caption(
+            "Pick a `.xlsx` file from your computer to replace whatever the "
+            "app is currently reading. The uploaded file is saved to "
+            "the path shown above (or to the repo root if no path is "
+            "resolvable). Admin-only — when user policies land we'll gate this "
+            "behind a per-user permission too."
+        )
+        up = st.file_uploader(
+            "Choose a .xlsx file",
+            type=["xlsx"],
+            accept_multiple_files=False,
+            key="excel_workbook_upload",
+        )
+        if up is not None:
+            # Determine the destination. Prefer the currently-resolved path
+            # (replaces in-place). Fall back to the repo root with the
+            # uploaded filename.
+            from pathlib import Path as _P
+            dest = (
+                xls_path
+                if xls_path is not None
+                else _P(__file__).resolve().parent.parent / up.name
+            )
+            ub1, ub2 = st.columns([1, 1])
+            confirm = ub1.button(
+                f"💾 Save as `{dest.name}` and replace active workbook",
+                type="primary", key="confirm_upload_btn",
+            )
+            if ub2.button("Cancel upload", key="cancel_upload_btn"):
+                st.session_state.pop("excel_workbook_upload", None)
+                st.rerun()
+            if confirm:
+                try:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    with open(dest, "wb") as f:
+                        f.write(up.getbuffer())
+                    st.success(
+                        f"✓ Saved to `{dest}`. The next sync will pick it up "
+                        "automatically; click 🔄 Sync now above to refresh now."
+                    )
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not save: {exc}")
 
 
 # -----------------------------------------------------------------------------
