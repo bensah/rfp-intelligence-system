@@ -348,6 +348,13 @@ def render_submit_form(
     # views to suppress double-counting in KPIs).
     try:
         sb.table("rfp_submissions").insert(row).execute()
+        # Tombstone in the permanent seen-ledger so this opportunity is
+        # remembered (and never silently re-scanned in) even if later deleted.
+        try:
+            from core import seen_ledger
+            seen_ledger.record_one(row, reason="manual")
+        except Exception:
+            pass
     except Exception as exc:
         st.error(f"Submit failed: {exc}")
         return
