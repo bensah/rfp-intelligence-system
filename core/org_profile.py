@@ -51,6 +51,22 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "annual_budget_usd": None,              # number — org size / financial-capacity bar
     "largest_grant_usd": None,              # number — absorptive capacity for award size
 
+    # --- funding_quality (PREFER 6) — org's preferred award-size band (USD) ---
+    "funding_target_low": None,             # floor of interest
+    "funding_target_mid": None,             # sweet spot
+    "funding_target_max": None,             # ceiling of interest
+    # Bands use GEOMETRIC midpoints: cut1=sqrt(low*mid), cut2=sqrt(mid*max);
+    # RFP value <=cut1 Low(0) / <=cut2 Moderate(1) / >cut2 High(2).
+
+    # --- qualification (MUST 1) structural facts matched to donor conditions ---
+    "org_is_independent_entity": True,      # not a branch/affiliate of a larger INGO
+    "org_has_sam_uei": False,               # holds SAM.gov / UEI registration
+    "org_tax_exempt": False,                # tax-exempt (501c3 or non-US equivalent)
+    "org_stage": "established",             # "early-stage" | "established"
+    # Partners WITH type + country (for named-partner conditions, e.g. NIHR -> UK
+    # academic). List of {name, type, country}. Complements the flat trusted_* lists.
+    "partners": [],
+
     # --- strategic_fit + competitiveness (priorities vs track record) ---
     "domains": [],                          # areas of demonstrated expertise / experience
     "domain_ratings": {},                   # {child key: 0-5} TRACK-RECORD strength per

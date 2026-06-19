@@ -22,6 +22,7 @@ Definitions encoded (see the bid/no-bid questionnaire):
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -156,23 +157,41 @@ def derive_cofinancing(org: dict, rfp: dict, donor: dict | None = None) -> str |
     return "No"
 
 
-def derive_funding_quality(rfp: dict, policies: dict | None = None) -> str | None:
+def derive_funding_quality(rfp: dict, org: dict | None = None,
+                           policies: dict | None = None) -> str | None:
+    """ORG-RELATIVE attractiveness of the award SIZE. Bands the RFP value against
+    the org's preferred targets (low/mid/max) using GEOMETRIC midpoints
+    (money is multiplicative): cut1=sqrt(low*mid), cut2=sqrt(mid*max).
+      value <= cut1 -> Low(0) · <= cut2 -> Moderate(1) · > cut2 -> High(2).
+    Falls back to absolute tiers when the org hasn't set targets."""
     val = _usd(rfp)
     if not val:
         return None
-    hi, mid = 2_000_000.0, 500_000.0
+    org = org or {}
+    lo = _num(org.get("funding_target_low"))
+    mid = _num(org.get("funding_target_mid"))
+    mx = _num(org.get("funding_target_max"))
+    if lo and mid and mx and lo <= mid <= mx:
+        cut1, cut2 = math.sqrt(lo * mid), math.sqrt(mid * mx)
+        if val > cut2:
+            return "High"
+        if val > cut1:
+            return "Moderate"
+        return "Low"
+    # Fallback: absolute tiers (default hi $2M / mid $500K), tunable via policies.
+    hi, mid2 = 2_000_000.0, 500_000.0
     try:
         tiers = ((policies or {}).get("scoring_rules", {})
                  .get("funding_quality_tiers", {}).get("tiers") or [])
         ths = sorted((float(t["threshold_usd"]) for t in tiers if t.get("threshold_usd")),
                      reverse=True)
         if len(ths) >= 2:
-            hi, mid = ths[0], ths[1]
+            hi, mid2 = ths[0], ths[1]
     except Exception:
         pass
     if val >= hi:
         return "High"
-    if val >= mid:
+    if val >= mid2:
         return "Moderate"
     return "Low"
 
@@ -292,20 +311,143 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
     return "Moderate"
 
 
+# Org legal-type → eligibility bucket; donor eligibility flags per bucket.
+_ORG_TYPE_BUCKET = {
+    "nonprofit": "ngo", "ngo": "ngo", "charity": "ngo", "not-for-profit": "ngo",
+    "government": "govt", "govt": "govt", "public": "govt",
+    "higher_ed": "academic", "academic": "academic", "university": "academic",
+    "for_profit": "for_profit", "for-profit": "for_profit", "business": "for_profit",
+}
+_DONOR_TYPE_FLAG = {"ngo": "ngo_eligible", "for_profit": "for_profit_eligible"}
+
+
+def _partner_match(org: dict, ptype: Any, pcountry: Any) -> bool:
+    """True if the org lists a partner matching the required type and/or country."""
+    pt = str(ptype or "").strip().lower()
+    pc = str(pcountry or "").strip().lower()
+    for p in (org.get("partners") or []):
+        if not isinstance(p, dict):
+            continue
+        if pt and pt not in str(p.get("type", "")).strip().lower():
+            continue
+        if pc and pc != str(p.get("country", "")).strip().lower():
+            continue
+        return True
+    return False
+
+
+def derive_qualification(org: dict, rfp: dict, donor: dict | None = None,
+                         org_settings: dict | None = None) -> str:
+    """MUST-1 — a HARD AND of the eligibility conditions the donor/RFP DOCUMENTS.
+    Each check activates only when its condition is present; ANY activated check
+    the org fails → 'No, not eligible'. An activated check we can't verify (org
+    data missing) → 'Mostly, one item unclear'. Nothing documented → 'Yes, fully'
+    (the scan hard gate already drops clearly out-of-scope calls)."""
+    org = org or {}
+    donor = donor or {}
+    os = org_settings or {}
+    fails: list[str] = []
+    unknowns: list[str] = []
+    n = 0
+
+    def check(active: bool, ok) -> None:
+        nonlocal n
+        if not active:
+            return
+        n += 1
+        if ok is False:
+            fails.append("x")
+        elif ok is None:
+            unknowns.append("x")
+
+    # 1. Applicant type — fail only when the org's bucket is clearly excluded.
+    bucket = _ORG_TYPE_BUCKET.get(str(org.get("legal_type") or "").strip().lower(), "")
+    flag = _DONOR_TYPE_FLAG.get(bucket)
+    if bucket and flag:
+        if str(donor.get(flag) or "").strip().lower() == "no":
+            check(True, False)
+        else:
+            admits = {b for b, f in _DONOR_TYPE_FLAG.items()
+                      if str(donor.get(f) or "").strip().lower() == "yes"}
+            if admits and bucket not in admits and str(donor.get(flag) or "").lower() != "yes":
+                check(True, None)
+    # 2. No-INGO-affiliate
+    check(_truthy(donor.get("independent_entity_required")),
+          bool(org.get("org_is_independent_entity", True)))
+    # 3. HQ country
+    hqreq = str(donor.get("hq_country_required") or "").strip().lower()
+    if hqreq:
+        ohq = str(os.get("org_hq_country") or os.get("org_country") or "").strip().lower()
+        check(True, (ohq == hqreq) if ohq else None)
+    # 4. Local registration (org registered in the focus country, or a local partner)
+    if _truthy(donor.get("local_registration_required")):
+        focus = {s.strip() for s in _as_list(rfp.get("geographic_scope"))}
+        reg = org.get("countries_registered") or []
+        if not focus:
+            check(True, None)
+        else:
+            ok = bool(set(_geo.expand(list(reg))) & set(_geo.expand(list(focus))))
+            ok = ok or any(_partner_match(org, "", c) for c in focus)
+            check(True, ok)
+    # 5. Local board
+    check(_truthy(donor.get("local_board_required")),
+          str(os.get("org_has_local_board", "")).strip().lower() == "yes")
+    # 6. Mandatory / named partner
+    if _truthy(donor.get("partnership_mandatory")) or _truthy(donor.get("local_partner_required")):
+        rt, rc = donor.get("required_partner_type"), donor.get("required_partner_country")
+        if rt or rc:
+            check(True, _partner_match(org, rt, rc))
+        else:
+            check(True, bool(org.get("partners") or org.get("trusted_partners")
+                             or org.get("trusted_academic_institutions")
+                             or org.get("trusted_for_profit_partners")))
+    # 7. Org stage
+    stagereq = str(donor.get("org_stage_required") or "").strip().lower()
+    if stagereq and stagereq != "any":
+        ostage = str(org.get("org_stage") or "").strip().lower()
+        check(True, (ostage == stagereq) if ostage else None)
+    # 8. Max annual budget (eligibility ceiling)
+    mab = _num(donor.get("max_annual_budget_usd"))
+    if mab:
+        ab = _num(org.get("annual_budget_usd"))
+        check(True, (ab <= mab) if ab else None)
+    # 9. Min track record (eligibility floor)
+    mtr = _num(donor.get("min_track_record_usd"))
+    if mtr:
+        lg = _num(org.get("largest_grant_usd"))
+        check(True, (lg >= mtr) if lg else None)
+    # 10. Welcome / pre-registration
+    check(_truthy(donor.get("welcome_registration_required")),
+          _registered_on_portal(org, rfp, donor))
+    # 11. SAM/UEI
+    if _truthy(donor.get("sam_uei_registration_required")):
+        has = bool(org.get("org_has_sam_uei")) or any(
+            "sam" in str(r).lower() for r in (org.get("donor_registrations") or []))
+        check(True, has)
+    # 12. Tax-exempt
+    check(_truthy(donor.get("tax_exempt_status_required")), bool(org.get("org_tax_exempt")))
+
+    if n == 0:
+        return "Yes, fully"
+    if fails:
+        return "No, not eligible"
+    if unknowns:
+        return "Mostly, one item unclear"
+    return "Yes, fully"
+
+
 def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = None,
                     org_settings: dict | None = None,
                     policies: dict | None = None) -> dict[str, str | None]:
-    """All 9 derived labels (None where not determinable). qualification defaults
-    to 'Yes, fully' because the hard gate already rejects clear ineligibility;
-    competitiveness has no objective source yet (left to the reviewer)."""
+    """All 9 derived labels (None where not determinable)."""
     org = org or {}
     return {
-        "qualification": "Yes, fully",
+        "qualification": derive_qualification(org, rfp, donor, org_settings),
         "strategic_fit": derive_strategic_fit(org, rfp, donor),
         "capacity": derive_capacity(org, rfp),
         "geographic_fit": derive_geographic_fit(org, rfp),
         "cofinancing": derive_cofinancing(org, rfp, donor),
-        "funding_quality": derive_funding_quality(rfp, policies),
+        "funding_quality": derive_funding_quality(rfp, org, policies),
         "funder_relationship": derive_funder_relationship(org, rfp, donor),
         "competitiveness": derive_competitiveness(org, rfp, donor, org_settings),
         "bid_effort": derive_bid_effort(rfp, org_settings),
