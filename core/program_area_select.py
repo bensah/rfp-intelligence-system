@@ -26,6 +26,28 @@ RATING_LEGEND = ("0 absent · 1 very low · 2 low · 3 medium · 4 high · 5 ver
 RATING_WORD = {0: "None", 1: "Very low", 2: "Low", 3: "Medium", 4: "High", 5: "Very high"}
 
 
+def _as_selection(current) -> list[str]:
+    """Coerce a stored selection (list, or JSON-string list, or a single value)
+    into a list of strings. Donor fields store JSON text — iterating that string
+    directly would yield characters, so nothing pre-selects."""
+    import json as _json
+    if current is None:
+        return []
+    if isinstance(current, str):
+        s = current.strip()
+        if not s or s.lower() in ("nan", "none", "nat"):
+            return []
+        try:
+            parsed = _json.loads(s)
+            current = parsed if isinstance(parsed, list) else [s]
+        except (ValueError, TypeError):
+            current = [s]
+    try:
+        return [str(x) for x in current]
+    except TypeError:
+        return [str(current)]
+
+
 def _as_rating_map(current_ratings) -> dict:
     """Coerce a stored ratings value (dict or JSON string) to {key: int 0-5}."""
     import json as _json
@@ -49,7 +71,7 @@ def program_area_picker(label, current, key_prefix, *, container=None, help=""):
     """Render the Category → sub-area picker; return the selected list (canonical
     sub-area keys, plus a Category name where the whole category was chosen)."""
     c = container or st
-    current = [str(x) for x in (current or [])]
+    current = _as_selection(current)
     cur_keys = [x for x in current if x in PROGRAM_AREA_KEYWORDS]
     cur_cats = [x for x in current if x in CATEGORIES]
     implied = {category_full(k) for k in cur_keys}
