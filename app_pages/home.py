@@ -78,12 +78,19 @@ with _title_col:
 with _btn_col:
     # Vertical spacer aligns the button roughly with the title baseline.
     st.markdown("<div style='height: 0.8rem'></div>", unsafe_allow_html=True)
-    if st.button("📝 Submit Discovered RFP", type="primary",
-                 width='stretch', key="home_submit_rfp_btn",
-                 help="Capture an opportunity you found outside the Friday scan. "
-                      "Opens the Submit page; no duplicate-check gate — submitted "
-                      "immediately, dedup happens at display time."):
-        st.switch_page("app_pages/submit_rfp.py")
+    # Opens the standalone Submit page in a NEW browser tab (target=_blank) so the
+    # dashboard stays put. The relative href resolves to the page's url_path
+    # (App.py: url_path="submit-new-rfp") on both local and Streamlit Cloud.
+    st.markdown(
+        "<a href='submit-new-rfp' target='_blank' rel='noopener' "
+        "title='Capture an opportunity you found outside the Friday scan — opens "
+        "in a new tab. Submitted immediately; dedup happens at display time.' "
+        "style='display:block;width:100%;box-sizing:border-box;text-align:center;"
+        "background:#00703C;color:#ffffff;padding:0.55rem 0.75rem;border-radius:0.5rem;"
+        "text-decoration:none;font-weight:600;font-size:0.88rem;line-height:1.25;'>"
+        "📝 Submit Discovered RFP</a>",
+        unsafe_allow_html=True,
+    )
 
 
 # -----------------------------------------------------------------------------
