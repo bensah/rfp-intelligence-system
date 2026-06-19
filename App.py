@@ -59,6 +59,8 @@ def _pages(include_admin: bool) -> list:
         st.Page("app_pages/report.py", title="Report", icon="📊", url_path="report"),
         st.Page("app_pages/donors.py", title="Donors", icon="🗺️", url_path="donors"),
         # ── Top-right user-menu pages (sidebar links hidden via CSS) ──
+        st.Page("app_pages/organization.py", title="Organization Details", icon="🏢",
+                url_path="organization"),
         st.Page("app_pages/profile.py", title="Profile", icon="👤", url_path="profile"),
         st.Page("app_pages/help.py", title="Help", icon="❓", url_path="help"),
         st.Page("app_pages/search.py", title="Search", icon="🔍", url_path="search"),
