@@ -48,7 +48,7 @@ _EXA_ENDPOINT = "https://api.exa.ai/search"            # neural / semantic
 _RFP_OR_GROUP = (
     '("call for proposals" OR "request for proposals" OR '
     '"funding opportunity" OR "request for applications" OR '
-    '"expression of interest")'
+    '"call for applications" OR "expression of interest")'
 )
 
 _TAG_RE = re.compile(r"<[^>]+>")
