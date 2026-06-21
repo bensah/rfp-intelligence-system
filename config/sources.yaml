@@ -1,4 +1,4 @@
-# RFP sources to scan. `method` is one of: rss, rest_json, html.
+# RFP sources to scan. `method` is one of: rss, rest_json, html, html_js.
 # Phase 4 implements the first five entries; the rest are stubs for Phase 5.
 
 sources:
@@ -30,6 +30,9 @@ sources:
     method: rss
     url: https://globalsouthopportunities.com/feed/
     priority: 1
+  # NORAD moved into donor_sources 2026-06-20 (html_js now allowed there) — the
+  # catalogue is the single source of truth. Working calls URL:
+  # /en/for-partners/guides-and-tools/calls-for-proposals2/ (JS-rendered).
   - name: Grand Challenges Canada
     # Grand Challenges Canada funding opportunities (WordPress RSS).
     method: rss
@@ -39,6 +42,34 @@ sources:
     method: rest_json
     url: https://api.grants.gov/v1/api/search2
     priority: 1
+  # --- Open-data / public-sector APIs (free, key-less, reuse-permitting) -------
+  # Wired 2026-06-20. All publish under licenses that allow republishing (EU reuse
+  # policy / World Bank CC-BY 4.0 / UK Open Government Licence v3 / EU PSI). The
+  # per-org eligibility gate filters theme/geo, so these pull broadly. Aggregator
+  # APIs (Adzuna/Jooble/TheirStack) were deliberately NOT wired — their ToS forbid
+  # redistributing the aggregated listings.
+  - name: EU Funding & Tenders Portal
+    method: rest_json
+    url: https://api.tech.ec.europa.eu/search-api/prod/rest/search
+    priority: 1
+  - name: World Bank Procurement Notices
+    method: rest_json
+    url: https://search.worldbank.org/api/v2/procnotices
+    priority: 2
+  - name: TED (EU procurement)
+    # EU public procurement, scoped to health CPV (85*) + recent + newest-first.
+    # Mostly EU-domestic — the geo gate filters per tenant.
+    method: rest_json
+    url: https://api.ted.europa.eu/v3/notices/search
+    priority: 3
+  - name: UK Find a Tender
+    method: rest_json
+    url: https://www.find-tender.service.gov.uk/api/1.0/ocdsReleasePackages
+    priority: 3
+  - name: UK Contracts Finder
+    method: rest_json
+    url: https://www.contractsfinder.service.gov.uk/Published/Notices/OCDS/Search?order=desc
+    priority: 3
   - name: UNGM
     method: html
     url: https://www.ungm.org/Public/Notice
@@ -81,20 +112,10 @@ sources:
     method: manual
     url: https://projects.worldbank.org/en/projects-operations/projects-home
     priority: 2
-  - name: EC Funding (EU4Health/EDCTP)
-    # The EU Funding & Tenders Portal is an Angular SPA. Investigated
-    # 2026-06-04: Playwright renders only the navigation shell — result
-    # cards never materialise even with scroll-and-wait. The portal
-    # backs onto a public search API (api.tech.ec.europa.eu/search-api/
-    # prod/rest/search?apiKey=SEDIA) but the status filter lives in the
-    # POST body which Playwright can't read; every JSON-body and
-    # query-string filter syntax I tried returned the full 648K-row
-    # archive. Until a dedicated handler lands (task #35), the page-
-    # monitor will surface portal-wide HTML changes; per-call email
-    # alerts on the portal itself remain the highest-signal channel.
-    method: manual
-    url: https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/calls-for-proposals
-    priority: 1
+  # EC Funding (EU4Health/EDCTP) DEACTIVATED 2026-06-20 — superseded by the EU
+  # Funding & Tenders Portal API (api.tech.ec.europa.eu, wired as rest_json above);
+  # the portal crawl was a no-op (manual). Backup URL:
+  # https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/calls-for-proposals
   - name: Google.org Impact Challenges
     # SPA — content rendered client-side; scraper sees no anchors. The
     # challenges page sporadically lists open calls but our generic
@@ -189,15 +210,9 @@ sources:
     method: manual
     url: https://mastercardfdn.org/en/partners/
     priority: 1
-  - name: Novo Nordisk Foundation
-    # User-discovered backend endpoint 2026-06-04 (via DevTools Network
-    # tab). The public /en/grant/ page is JS-rendered, but its tile widget
-    # calls this WordPress admin-ajax endpoint which returns the rendered
-    # HTML of the grant tiles directly. Our existing HTML scraper can
-    # extract anchors from it.
-    method: html
-    url: https://novonordiskfonden.dk/wp/wp-admin/admin-ajax.php?action=content_api&type=grants&status=open&page=1&forced_lang=en&funding_area=&sort=DESC
-    priority: 1
+  # Novo Nordisk Foundation removed 2026-06-20 — superseded by its clean RSS feed
+  # (/en/grant/feed/) now active in donor_sources. The admin-ajax HTML endpoint
+  # was the stale duplicate.
   - name: Fund for Innovation in Development (FID)
     # WebFetch returned ECONNREFUSED (possibly geo-blocked or temporarily
     # down). Re-probe periodically; URL itself may still be correct.
@@ -244,16 +259,11 @@ sources:
     method: html
     url: https://www.afdb.org/en/projects-and-operations/procurement
     priority: 2
-  - name: EC INTPA (International Partnerships)
-    method: html
-    url: https://international-partnerships.ec.europa.eu/funding-and-technical-assistance_en
-    priority: 2
-  - name: EC DG ECHO (Humanitarian Aid)
-    # Verified via WebFetch 2026-06-04. Listings can be empty between
-    # annual cycles, but page structure works for anchor extraction.
-    method: html
-    url: https://civil-protection-humanitarian-aid.ec.europa.eu/funding-evaluations/financing-civil-protection/calls-proposals_en
-    priority: 2
+  # EC INTPA + EC DG ECHO DEACTIVATED 2026-06-20 — INTPA/ECHO calls publish on the
+  # EU Funding & Tenders portal, covered by the EU F&T API (rest_json) above; TED
+  # API covers EU procurement. Backup URLs:
+  #   https://international-partnerships.ec.europa.eu/funding-and-technical-assistance_en
+  #   https://civil-protection-humanitarian-aid.ec.europa.eu/funding-evaluations/financing-civil-protection/calls-proposals_en
   - name: WHO Procurement
     # WHO routes all open tenders through UNGM (which we already scan as
     # a separate source). No useful WHO-direct scrape target. Keep manual.
