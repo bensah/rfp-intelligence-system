@@ -913,6 +913,8 @@ def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
         # is a keyless POST endpoint that returns the notices directly.
         if "ungm.org" in url.lower():
             return _scan_ungm(name, url)
+        if "grantplus.unops.org" in url.lower():
+            return _scan_unops(name, url)
         # Theme/country filtering now happens in core.scan_pipeline (policy-
         # driven, admin-configurable). Scrapers return raw candidates.
         if method == "rss":
@@ -1831,6 +1833,50 @@ def _scan_ungm(name: str, url: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # HTML — generic best-effort anchor extraction
 # ---------------------------------------------------------------------------
+def _scan_unops(name: str, url: str) -> list[dict[str, Any]]:
+    """UNOPS GrantPlus — the SPA is JS/Google-login, but it lists open calls via a
+    KEYLESS external JSON API (/api/external/funding-opportunity). Returns records
+    with name/referenceNumber/description/geographicAreas/funding/deadline/stage."""
+    out: list[dict[str, Any]] = []
+    api = ("https://grantplus.unops.org/api/external/funding-opportunity"
+           "?pageIndex=0&pageSize=100&ascending=true")
+    try:
+        r = requests.get(api, headers={"User-Agent": USER_AGENT,
+                                       "Accept": "application/json"},
+                         timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        recs = (r.json() or {}).get("records") or []
+    except Exception as exc:
+        log.warning("UNOPS GrantPlus failed: %s", exc)
+        return []
+    for n in recs:
+        if (n.get("stage") or "open").lower() != "open":   # keep only open calls
+            continue
+        title = _clean(n.get("name") or "")
+        if not title:
+            continue
+        oid = n.get("id")
+        geos = [g.get("name") for g in (n.get("geographicAreas") or [])
+                if g.get("name")]
+        out.append({
+            "opportunity_title": title,
+            "opportunity_link": (
+                f"https://grantplus.unops.org/funding-opportunity/{oid}"
+                if oid else "https://grantplus.unops.org/funding-opportunity"),
+            "opportunity_id": _clean(n.get("referenceNumber") or ""),
+            "funding_agency": "UNOPS (GrantPlus)",
+            "brief_description": _clean(n.get("description") or "")[:1800] or None,
+            "date_posted": _parse_iso_date(str(n.get("postingDate") or "")[:10]),
+            "submission_deadline": _parse_iso_date(
+                str(n.get("submissionDueDate") or "")[:10]),
+            "estimated_value": n.get("fundingAvailable"),
+            "currency": (n.get("currency") or {}).get("code"),
+            "geographic_scope": geos or None,
+            "_source_origin": name,
+        })
+    return _dedup_by_link_or_title(out)
+
+
 # Strong opportunity-path URLs — a link whose PATH clearly points at a specific
 # call (e.g. /apply/rfp, /calls-for-proposals/<slug>, /grants/<slug>) is accepted
 # even with a SHORT anchor text ("RFP", "Request for Proposals", "Apply"), which
