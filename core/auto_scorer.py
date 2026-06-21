@@ -1118,6 +1118,15 @@ def rfp_signal_gate(candidate: dict[str, Any]) -> tuple[bool, str]:
     return False, "no valid RFP signal (no call wording, deadline, or award amount)"
 
 
+# News / press / blog / story pages ABOUT an opportunity are not the call itself
+# (e.g. zayedsustainabilityprize.com/en/news). Reject as not-an-rfp.
+_NEWS_URL_RE = re.compile(
+    r"/(news|press|press-release|media|newsroom|blog|stories|story|article)(?:/|$|\?|\.)",
+    re.IGNORECASE)
+_NEWS_TITLE_RE = re.compile(
+    r"^\s*(news|press release|blog|in the news|newsroom)\b[\s\-:|]", re.IGNORECASE)
+
+
 def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
     """Combined gate: search-URL, language, feasibility, deadline, country,
     theme. Logged in scan output for transparency."""
@@ -1137,8 +1146,12 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     # Listing / index of calls (never a single opportunity) — crawl seed only.
     if _LISTING_URL_RE.search(link):
         return False, "URL lists / indexes calls, not a single call"
-    if _LISTING_TITLE_RE.match((candidate.get("opportunity_title") or "").strip()):
+    _t = (candidate.get("opportunity_title") or "").strip()
+    if _LISTING_TITLE_RE.match(_t):
         return False, "title is a generic calls-listing heading, not a single call"
+    # News / press / blog page about an opportunity — not the call itself.
+    if _NEWS_URL_RE.search(link) or _NEWS_TITLE_RE.match(_t):
+        return False, "not-an-rfp: news / press / blog page, not a call"
     # Non-primary sources never get stored: competitor AGGREGATORS (DevelopmentAid,
     # GrantBite, …) — a crawl SEED only; the pipeline resolves theme-relevant hits
     # to the donor's OWN page first, so anything still on an aggregator host here
