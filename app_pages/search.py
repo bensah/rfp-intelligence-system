@@ -83,6 +83,13 @@ def _render_result_actions(wr: dict, *, key: str, user: dict, cols) -> None:
             tracked.add(link)
             st.toast(f"Tracked as {res['uid']} (auto-rec: {res['reason']}).",
                      icon="➕")
+        elif res.get("routed") == "registry":
+            tracked.add(link)
+            st.toast("📚 That's a source/listing page — added to the Sources "
+                     "registry to crawl, not Found Records.", icon="📚")
+        elif res.get("rejected"):
+            tracked.add(link)
+            st.toast(f"🚫 Not added — {res['reason']}", icon="🚫")
         elif res["skipped"]:
             tracked.add(link)
             st.toast("Already tracked — not re-added.", icon="ℹ️")
