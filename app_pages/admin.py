@@ -53,9 +53,9 @@ def _purge_seen_ledger(sb, deleted_rows) -> int:
         return 0
 
 (tab_settings, tab_users, tab_access, tab_data, tab_sources,
- tab_scan, tab_blacklist, tab_learning) = st.tabs(
+ tab_scan, tab_blacklist, tab_verify, tab_learning) = st.tabs(
     ["Setup", "Manage Users", "User Access", "Records", "Sources",
-     "Manual Scan", "Blacklist", "Learning data"]
+     "Manual Scan", "Blacklist", "Verify", "Learning data"]
 )
 
 # User administration tabs — moved here from the old User page in the
@@ -840,14 +840,22 @@ with tab_data:
 with tab_sources:
     st.subheader("Donor sources catalog")
     st.caption(
-        "Curated per-donor RFP-publishing URLs. The Friday scan + manual scan "
-        "iterate over every **active** row here, in addition to the keyword-"
-        "wide sources in `config/sources.yaml`. **Select** rows to edit or "
-        "delete; use **➕ Add donor source** to insert one. (Download the grid "
-        "as CSV via its built-in ⤓ icon, top-right of the table.)"
+        "Curated per-source funding URLs. The Friday scan + manual scan iterate "
+        "over every **active** row here, in addition to the keyword-wide sources "
+        "in `config/sources.yaml`. **New sources are added in Verify → Source "
+        "registry**, then pushed here (single point of entry). Select rows to edit "
+        "or delete. (Download the grid as CSV via its built-in ⤓ icon.)"
     )
 
-    _METHODS = ["html", "rss", "rest_json", "manual"]
+    _METHODS = ["html", "html_js", "rss", "rest_json", "manual"]  # scan dispatch
+    # Unified "Method" dropdown — SAME labels as the Verify > Source registry, each
+    # mapped to a scan dispatch value (donor_sources.scrape_method).
+    _METHOD_LABELS = {"API": "rest_json", "RSS / feed": "rss", "Page crawl": "html",
+                      "JS page crawl": "html_js", "Manual": "manual"}
+    _METHOD_LABEL_OPTS = list(_METHOD_LABELS)
+    _METHOD_TO_LABEL = {v: k for k, v in _METHOD_LABELS.items()}
+    # Shared taxonomy vocab (single source of truth — defined in the registry view).
+    from views.verification import _SRC_OPTS, _ACCESS_OPTS, _TYPE_OPTS
 
     @st.cache_data(ttl=15)
     def _donors() -> pd.DataFrame:
@@ -901,7 +909,13 @@ with tab_sources:
             a_code = c2.text_input("Donor code (e.g. BMGF)")
             c3, c4 = st.columns([3, 1])
             a_url = c3.text_input("RFP listing URL *")
-            a_method = c4.selectbox("Method", _METHODS)
+            a_method = c4.selectbox("Method", _METHOD_LABEL_OPTS,
+                                    index=_METHOD_LABEL_OPTS.index("Page crawl"))
+            c5, c6 = st.columns(2)
+            a_sc = c5.selectbox("Source class", _SRC_OPTS,
+                                index=_SRC_OPTS.index("Primary source"))
+            a_access = c6.selectbox("Access", _ACCESS_OPTS,
+                                    index=_ACCESS_OPTS.index("Free"))
             a_base = st.text_input("Base URL (optional)")
             a_notes = st.text_area("Notes", height=80)
             a_active = st.checkbox("Active", value=True)
@@ -921,7 +935,9 @@ with tab_sources:
                     "donor_code": a_code.strip() or None,
                     "base_url": a_base.strip() or None,
                     "rfp_listing_url": a_url.strip(),
-                    "scrape_method": a_method,
+                    "scrape_method": _METHOD_LABELS[a_method],
+                    "source_class": a_sc,
+                    "access_model": a_access,
                     "notes": a_notes.strip() or None,
                     "is_active": bool(a_active),
                     "created_by": user.get("email"),
@@ -941,8 +957,18 @@ with tab_sources:
             c3, c4 = st.columns([3, 1])
             e_url = c3.text_input("RFP listing URL *",
                                   value=_row.get("rfp_listing_url") or "")
-            _m = _row.get("scrape_method") if _row.get("scrape_method") in _METHODS else "html"
-            e_method = c4.selectbox("Method", _METHODS, index=_METHODS.index(_m))
+            _lbl = _METHOD_TO_LABEL.get(_row.get("scrape_method"), "Page crawl")
+            e_method = c4.selectbox("Method", _METHOD_LABEL_OPTS,
+                                    index=_METHOD_LABEL_OPTS.index(_lbl))
+            c5, c6 = st.columns(2)
+            _scv = (_row.get("source_class") if _row.get("source_class") in _SRC_OPTS
+                    else "Primary source")
+            e_sc = c5.selectbox("Source class", _SRC_OPTS,
+                                index=_SRC_OPTS.index(_scv))
+            _acv = (_row.get("access_model") if _row.get("access_model") in _ACCESS_OPTS
+                    else "Free")
+            e_access = c6.selectbox("Access", _ACCESS_OPTS,
+                                    index=_ACCESS_OPTS.index(_acv))
             e_base = st.text_input("Base URL", value=_row.get("base_url") or "")
             e_notes = st.text_area("Notes", value=_row.get("notes") or "", height=80)
             e_active = st.checkbox("Active", value=bool(_row.get("is_active")))
@@ -962,7 +988,9 @@ with tab_sources:
                     "donor_code": e_code.strip() or None,
                     "base_url": e_base.strip() or None,
                     "rfp_listing_url": e_url.strip(),
-                    "scrape_method": e_method,
+                    "scrape_method": _METHOD_LABELS[e_method],
+                    "source_class": e_sc,
+                    "access_model": e_access,
                     "notes": e_notes.strip() or None,
                     "is_active": bool(e_active),
                 }).eq("id", _row.get("id")).execute()
@@ -991,11 +1019,9 @@ with tab_sources:
         if bc2.button("Cancel", width='stretch', key="ds_del_cancel"):
             st.rerun()
 
-    # ----- Top action bar (right-aligned) -----------------------------------
-    _tsp, t1, t2, t3 = st.columns([4, 1.4, 1.5, 1])
-    if t1.button("➕ Add donor source", type="primary",
-                 width='stretch', key="ds_add_top"):
-        _add_source_dialog()
+    # ----- Top action bar (right-aligned). "Add" lives in the registry now,
+    # so the catalogue only Imports (from yaml) + Refreshes. ------------------
+    _tsp, t2, t3 = st.columns([6, 1.6, 1])
     if t2.button("📥 Import from config", width='stretch',
                  key="ds_import_top"):
         try:
@@ -1010,21 +1036,31 @@ with tab_sources:
     # ----- Selectable table -------------------------------------------------
     ddf = _donors()
     if ddf.empty:
-        st.info("No donor sources yet — use **➕ Add donor source** to start "
-                "scraping a specific donor.")
+        st.info("No sources yet — add them in **Verify → Source registry**, "
+                "then push to this catalogue.")
     else:
         ids = ddf["id"].tolist()
-        disp = ddf[["donor_name", "donor_code", "rfp_listing_url",
-                    "scrape_method", "is_active", "last_scraped_at",
-                    "last_scrape_status", "notes"]].copy()
+        _n_total = len(ddf)
+        _n_active = int(ddf["is_active"].sum()) if "is_active" in ddf else _n_total
+        # Friendly Method label (matches the Verify registry vocabulary).
+        ddf["method_label"] = ddf["scrape_method"].map(
+            lambda m: _METHOD_TO_LABEL.get(m, m))
+        base_cols = ["donor_name", "donor_code", "rfp_listing_url", "method_label"]
+        # Access + Source class (migration 037) shown when present.
+        extra = [c for c in ("source_class", "access_model") if c in ddf.columns]
+        disp = ddf[base_cols + extra + ["is_active", "last_scraped_at",
+                                        "last_scrape_status", "notes"]].copy()
+        st.markdown(f"**{_n_total}** sources · **{_n_active}** active")
         sel = st.dataframe(
             disp, hide_index=True, width='stretch',
             selection_mode="multi-row", on_select="rerun", key="ds_table",
             column_config={
-                "donor_name": st.column_config.TextColumn("Donor"),
+                "donor_name": st.column_config.TextColumn("Source Name"),
                 "donor_code": st.column_config.TextColumn("Code", width="small"),
-                "rfp_listing_url": st.column_config.LinkColumn("Listing URL"),
-                "scrape_method": st.column_config.TextColumn("Method", width="small"),
+                "rfp_listing_url": st.column_config.LinkColumn("Host"),
+                "method_label": st.column_config.TextColumn("Method", width="small"),
+                "source_class": st.column_config.TextColumn("Source class"),
+                "access_model": st.column_config.TextColumn("Access", width="small"),
                 "is_active": st.column_config.CheckboxColumn("Active", width="small"),
                 "last_scraped_at": st.column_config.DatetimeColumn(
                     "Last scan", format="YYYY-MM-DD HH:mm"),
@@ -1038,7 +1074,7 @@ with tab_sources:
         sel_rows = [ddf.iloc[i].to_dict() for i in picked]
         sel_names = [r.get("donor_name") or "(unnamed)" for r in sel_rows]
 
-        st.caption(f"**{len(picked)}** selected." if picked else
+        st.caption(f"**{len(picked)} of {_n_total}** selected." if picked else
                    "Tick rows to edit or delete.")
 
         a1, a2, _asp = st.columns([1, 1, 6])
@@ -1403,7 +1439,15 @@ with tab_blacklist:
 
 
 # -----------------------------------------------------------------------------
-# Tab 8 — Learning data (ML Phase 1: captured rejects / decisions / feedback)
+# Tab 8 — Verify (Workstream A: human verification + feedback over the scan)
+# -----------------------------------------------------------------------------
+with tab_verify:
+    from views.verification import render_verification
+    render_verification(user, sb)
+
+
+# -----------------------------------------------------------------------------
+# Tab 9 — Learning data (ML Phase 1: captured rejects / decisions / feedback)
 # -----------------------------------------------------------------------------
 with tab_learning:
     st.subheader("Learning data — captured signals")
@@ -1422,12 +1466,14 @@ with tab_learning:
                 "on a record — they'll appear here.")
     else:
         _ldf = pd.DataFrame(_ld)
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3, m4, m5 = st.columns(5)
         _ev = _ldf.get("event_type", pd.Series(dtype=str))
         m1.metric("Total signals", len(_ldf))
         m2.metric("System rejects", int((_ev == "system_reject").sum()))
         m3.metric("Human decisions", int((_ev == "human_decision").sum()))
         m4.metric("👍/👎 feedback", int((_ev == "feedback").sum()))
+        m5.metric("Reject verdicts",
+                  int((_ev == "reject_verification").sum()))
         with st.expander("Rejects by reason category", expanded=False):
             _rej = _ldf[_ev == "system_reject"]
             if not _rej.empty:
