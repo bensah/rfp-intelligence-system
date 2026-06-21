@@ -19,7 +19,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core import deep_read, source_resolver, live_check, seen_ledger
-from core.auto_scorer import auto_score, is_eligible, theme_eligible
+from core import aggregators, source_registry, scraper, opportunity_type
+from core.auto_scorer import (auto_score, is_eligible, is_index_page,
+                              theme_eligible)
 from core.deduplicator import find_duplicates
 from core.policies import get_policies
 from core.review_week import review_week_label
@@ -57,6 +59,12 @@ _SCRAPE_STRUCTURED_FIELDS = (
     "submission_format",
     "focus_theme",
     "notes",
+    # Distinct award-scope fields (migration 036) — grants.gov + LLM extractor.
+    "award_floor",
+    "award_ceiling",
+    "total_program_funding",
+    "expected_awards",
+    "funding_opportunity_number",
 )
 
 
@@ -116,6 +124,9 @@ def _build_row(
         "opportunity_title": candidate["opportunity_title"],
         "opportunity_id": candidate.get("opportunity_id"),
         "opportunity_link": candidate.get("opportunity_link"),
+        # Canonicalisation: opportunity_link holds the PRIMARY url (the resolver
+        # rewrote it); keep the aggregator we discovered it through for provenance.
+        "aggregator_url": candidate.get("_aggregator_link"),
         "funding_agency": candidate.get("funding_agency"),
         "brief_description": candidate.get("brief_description"),
         "date_posted": posted.isoformat() if hasattr(posted, "isoformat") else None,
@@ -135,6 +146,7 @@ def _build_row(
         "progress_status": "Not Started",
         "donor_decision": "Not submitted",
         "assigned_to": "TBD",
+        "opportunity_type": candidate.get("opportunity_type"),
     }
     row.update(auto_score(candidate, policies))
     # Carry over the donor's OWN structured fields. auto_score only emits the
@@ -280,9 +292,40 @@ def ingest_candidates(
     suppressed_seen = 0
     rejected = 0
     _reject_records: list[dict] = []   # ML Phase 1 — labeled rejects for learning
+    _source_encounters: list[dict] = []  # host registry — aggregator vs primary log
     _live_checks = 0                   # bounded HTTP liveness fetches this run
     _live_check_max = live_check.max_checks()
     ts = datetime.now()
+
+    # LISTING-CHILDREN CRAWL: a candidate that is an index/listing/aggregator page
+    # is a crawl SEED, not a single call. Walk it for its child opportunity links
+    # so the actual calls get evaluated (aggregator children → resolved to primary
+    # below; donor listing children → the real calls). Bounded + best-effort; the
+    # original index still falls through to is_eligible and is rejected.
+    if not dry_run:
+        _MAX_LISTING_EXPAND = 8
+        extra: list[dict] = []
+        expanded = 0
+        for cand in list(candidates):
+            link = cand.get("opportunity_link") or ""
+            if not link:
+                continue
+            if not (cand.get("_source_class") == "aggregator"
+                    or aggregators.is_aggregator(link) or is_index_page(cand)):
+                continue
+            if expanded >= _MAX_LISTING_EXPAND:
+                break
+            expanded += 1
+            try:
+                kids = scraper.expand_listing(
+                    link, source_name=cand.get("funding_agency") or "listing")
+                extra.extend(kids)
+            except Exception as exc:
+                log.debug("listing expansion failed for %s: %s", link, exc)
+        if extra:
+            log.info("listing expansion: +%d child candidates from %d index page(s)",
+                     len(extra), expanded)
+            candidates = list(candidates) + extra
 
     for i, cand in enumerate(candidates):
         if not (cand.get("opportunity_title") or "").strip():
@@ -291,15 +334,35 @@ def ingest_candidates(
         # listing. For theme-relevant ones, resolve to the donor's OWN source
         # page (Google/Serper) and fetch THAT, so the gate below sees the real
         # deadline / eligibility. Bounded to relevant hits to limit API spend.
-        if (not dry_run and source_resolver.available()
-                and source_resolver.is_aggregator(cand.get("opportunity_link"))):
+        # Log the host we met (aggregator vs primary learning ledger), keyed off
+        # the ORIGINAL link before any resolve rewrites it.
+        _orig_link = cand.get("opportunity_link")
+        try:
+            _kind, _ = aggregators.classify(_orig_link, cand.get("opportunity_title"))
+        except Exception:
+            _kind = "unknown"
+        # Aggregator (by curated source class OR host heuristic) → resolve the
+        # title to the donor's OWN primary page before gating, so we EXTRACT the
+        # primary rather than reject the aggregator. Primary sources skip this.
+        _is_agg = (cand.get("_source_class") == "aggregator"
+                   or aggregators.is_aggregator(_orig_link))
+        if not dry_run and source_resolver.available() and _is_agg:
             try:
                 if theme_eligible(cand, policies)[0]:
                     source_resolver.resolve_and_enrich(cand)
             except Exception as exc:
                 log.debug("source resolve skipped: %s", exc)
+        # Detect the opportunity TYPE (Grant/RFP/CFP/Cooperative Agreement/…) from
+        # the donor's funding-instrument field + title/URL — carried onto both the
+        # inserted row and the reject record, and aggregated onto the source.
+        cand["opportunity_type"] = (cand.get("opportunity_type")
+                                    or opportunity_type.detect(cand))
         # First-pass eligibility gate (cheap: URL/title/keyword/deadline/scope).
         ok, reason = is_eligible(cand, policies)
+        _source_encounters.append({
+            "url": _orig_link, "title": cand.get("opportunity_title"),
+            "detected": _kind, "accepted": ok,
+            "opportunity_type": cand.get("opportunity_type")})
         if not ok:
             rejected += 1
             log.info("reject: %s — %s", cand.get("opportunity_title", "")[:60], reason)
@@ -452,6 +515,14 @@ def ingest_candidates(
             decision_log.log_rejects(_reject_records)
         except Exception as exc:
             log.debug("decision_log unavailable: %s", exc)
+
+    # Host registry — record every source we met this scan (aggregator vs primary),
+    # so new hosts surface for human confirmation. Best-effort (no-op pre-mig-034).
+    if _source_encounters and not dry_run:
+        try:
+            source_registry.record_encounters(_source_encounters)
+        except Exception as exc:
+            log.debug("source_registry unavailable: %s", exc)
 
     # Return the rejected count up the stack so it lands in scan_logs.
     log.info(

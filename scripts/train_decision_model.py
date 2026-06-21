@@ -1,12 +1,20 @@
-"""Train the decision model (ML Phase 3) — predict the human Proceed/Park/Decline
-from the features captured in scan_decisions.
+"""Train the decision model (ML Phase 3 / Workstream B6) — predict the human
+Proceed/Park/Decline from the features captured in scan_decisions.
 
-Trains with scikit-learn (class-weighted multinomial LogisticRegression + L2,
-stratified k-fold CV). The fitted scaler + coefficients are exported as a compact
-JSON blob in app_settings.decision_model so SERVING stays pure-python on Cloud
+MODEL CHOICE (see docs/DECISION_MODEL_REPORT.md + scripts/eval_decision_model.py):
+class-weighted multinomial LogisticRegression (L2), C tuned by CV. KNN scored a
+hair higher in nested CV (0.77 vs 0.72 macro-F1) but the gap is inside one fold's
+std at n≈63 (tied), KNN's probabilities are badly calibrated (CV log-loss worse
+than uniform), it can't serve through the pure-python path, and instance-based
+methods degrade hardest under the train(migration)/serve(auto) distribution shift
+this dataset has. LogReg is portable, calibrated, interpretable, and clears the
+rule baseline — the right assistive serving model.
+
+The fitted scaler + coefficients are exported as a compact JSON blob in
+app_settings.decision_model so SERVING stays pure-python on Cloud
 (core.decision_model.predict — no sklearn at request time).
 
-  python scripts/train_decision_model.py            # train + report (no write)
+  python scripts/train_decision_model.py            # train + honest report (no write)
   python scripts/train_decision_model.py --commit   # also persist (SHADOW: active=False)
   python scripts/train_decision_model.py --activate  # persist AND surface (active=True)
 
@@ -23,20 +31,22 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (accuracy_score, confusion_matrix, f1_score,
-                             recall_score)
-from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import (balanced_accuracy_score, confusion_matrix,
+                             f1_score, recall_score)
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.decision_model import CLASSES, FEATURE_NAMES, raw_vector  # noqa: E402
-from core.settings import set_setting                                # noqa: E402
-from db.supabase_client import get_client                            # noqa: E402
+from _dataset import load                                          # noqa: E402
+from core.decision_model import CLASSES, FEATURE_NAMES            # noqa: E402
+from core.settings import set_setting                              # noqa: E402
 
 MIN_TOTAL = 45          # cold-start: need at least this many labels …
 MIN_PER_CLASS = 10      # … and this many of EACH class
-_C = 1.0                # inverse L2 strength
-_CLS_IDX = {c: i for i, c in enumerate(CLASSES)}
+_C_GRID = [0.05, 0.1, 0.25, 0.5, 1.0]   # L2 inverse strength, tuned by CV
 
 
 def _impute_scale_fit(X):
@@ -54,23 +64,26 @@ def _apply(X, means, stds):
     return (np.where(np.isnan(X), means, X) - means) / stds
 
 
-def _fit(Xs, y):
+def _fit(Xs, y, C):
     return LogisticRegression(
-        C=_C, class_weight="balanced", max_iter=4000, solver="lbfgs",
-    ).fit(Xs, y)
+        C=C, class_weight="balanced", max_iter=5000, solver="lbfgs").fit(Xs, y)
+
+
+def _tune_C(X, y):
+    """Pick C by inner CV (f1_macro) on a leak-safe pipeline."""
+    pipe = Pipeline([("impute", SimpleImputer(strategy="mean")),
+                     ("scale", StandardScaler()),
+                     ("clf", LogisticRegression(class_weight="balanced",
+                                                max_iter=5000, solver="lbfgs"))])
+    gs = GridSearchCV(pipe, {"clf__C": _C_GRID}, scoring="f1_macro",
+                      cv=StratifiedKFold(5, shuffle=True, random_state=42),
+                      n_jobs=-1).fit(X, y)
+    return gs.best_params_["clf__C"]
 
 
 def main(commit: bool, activate: bool) -> int:
-    sb = get_client()
-    rows = (sb.table("scan_decisions").select("label, features")
-            .eq("event_type", "human_decision").execute().data or [])
-    X, y = [], []
-    for r in rows:
-        lab = (r.get("label") or "").strip().title()
-        if lab in _CLS_IDX and r.get("features"):
-            X.append(raw_vector(r["features"]))
-            y.append(_CLS_IDX[lab])
-    X = np.array(X, float); y = np.array(y, int)
+    ds = load()
+    X, y = ds.X, ds.y
     counts = Counter(CLASSES[c] for c in y.tolist())
     print(f"labeled decisions usable: {len(y)}  {dict(counts)}")
 
@@ -81,36 +94,56 @@ def main(commit: bool, activate: bool) -> int:
 
     k = len(CLASSES)
     labels = list(range(k))
+    C = _tune_C(X, y)
+    print(f"tuned C (CV f1_macro over {_C_GRID}): {C}")
 
-    # Stratified 5-fold CV (each fold refits scaler + model on its train split).
+    # Nested-style honest CV: each fold refits scaler + model on its train split.
     yp = np.empty_like(y)
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     for tr, te in skf.split(X, y):
         m, s = _impute_scale_fit(X[tr])
-        clf = _fit(_apply(X[tr], m, s), y[tr])
+        clf = _fit(_apply(X[tr], m, s), y[tr], C)
         yp[te] = clf.predict(_apply(X[te], m, s))
-    acc = accuracy_score(y, yp)
+    acc = (yp == y).mean()
     macro_f1 = f1_score(y, yp, labels=labels, average="macro", zero_division=0)
+    bal = balanced_accuracy_score(y, yp)
     recalls = recall_score(y, yp, labels=labels, average=None, zero_division=0)
     cm = confusion_matrix(y, yp, labels=labels)
     base = max(counts.values()) / len(y)
+
+    # Rule baseline (auto_recommendation vs human) — the bar to clear.
+    rule_idx = [i for i, mta in enumerate(ds.meta) if mta["auto_rec"] in CLASSES]
+    rule_f1 = None
+    if rule_idx:
+        yr = y[rule_idx]
+        yrp = np.array([CLASSES.index(ds.meta[i]["auto_rec"]) for i in rule_idx])
+        rule_f1 = float(f1_score(yr, yrp, average="macro", zero_division=0))
+
     cv = {"accuracy": round(float(acc), 3), "macro_f1": round(float(macro_f1), 3),
+          "balanced_accuracy": round(float(bal), 3),
           "per_class_recall": {CLASSES[c]: round(float(recalls[c]), 3) for c in range(k)},
-          "confusion": cm.tolist()}
-    print(f"\nCV (5-fold): accuracy {cv['accuracy']}  macro-F1 {cv['macro_f1']}  "
-          f"(majority baseline {base:.3f})")
+          "confusion": cm.tolist(),
+          "majority_baseline_acc": round(float(base), 3),
+          "rule_macro_f1": round(rule_f1, 3) if rule_f1 is not None else None,
+          "tuned_C": C}
+    print(f"\nCV (5-fold): macro-F1 {cv['macro_f1']}  balanced-acc "
+          f"{cv['balanced_accuracy']}  acc {cv['accuracy']}")
+    print(f"  baselines — majority acc {cv['majority_baseline_acc']}"
+          + (f", rule macro-F1 {cv['rule_macro_f1']}" if rule_f1 is not None else ""))
     print(f"  per-class recall: {cv['per_class_recall']}")
     print(f"  confusion [rows=true {list(CLASSES)}]: {cv['confusion']}")
+    beats = rule_f1 is None or macro_f1 > rule_f1
+    print(f"\nBeats rule baseline (macro-F1): {beats}"
+          + ("" if beats else "  → DON'T --activate yet; collect more labels."))
 
     # Final fit on ALL data → stored model. Export scaler params + coefficients
     # as W = [coef | intercept] (K x d+1) for the pure-python serving path.
     means, stds = _impute_scale_fit(X)
-    clf = _fit(_apply(X, means, stds), y)
-    # sklearn drops the per-class row for a binary problem; here k=3 so coef_ is k x d.
+    clf = _fit(_apply(X, means, stds), y, C)
     W = np.hstack([clf.coef_, clf.intercept_.reshape(-1, 1)])
     model = {
         "model_type": "sklearn_logreg_multinomial",
-        "sklearn_C": _C,
+        "sklearn_C": C,
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "n": int(len(y)),
         "class_counts": {c: int(counts.get(c, 0)) for c in CLASSES},
@@ -128,8 +161,7 @@ def main(commit: bool, activate: bool) -> int:
         return 0
     set_setting("decision_model", json.dumps(model), updated_by="train_decision_model")
     state = "ACTIVE (surfaced)" if activate else "SHADOW (active=False)"
-    print(f"\nStored decision_model in app_settings — {state}. "
-          f"beats baseline: {cv['accuracy'] > base}")
+    print(f"\nStored decision_model in app_settings — {state}.")
     return 0
 
 

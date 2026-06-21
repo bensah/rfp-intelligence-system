@@ -105,6 +105,28 @@ def _is_broad(term: str) -> bool:
     return (term or "").strip().lower() in _BROAD_TERMS
 
 
+# A LOOKUP query is a specific opportunity TITLE the user pasted (often from an
+# aggregator) to find its PRIMARY source — not a discovery keyword. Long/specific
+# strings combined with the RFP-framing + health-theme filters return 0 (the
+# filters are tuned for short discovery terms like "malaria"). For these we run a
+# phrase search and SKIP the discovery filters, so the primary source surfaces.
+_ACRONYM_RE = re.compile(r"\([A-Z][A-Za-z0-9]{1,9}\)")   # "(RSCG)"
+_YEAR_RE = re.compile(r"\b20\d{2}\b")
+
+
+def _is_lookup_query(term: str) -> bool:
+    t = (term or "").strip()
+    if not t or _is_broad(t):
+        return False
+    words = t.split()
+    if len(words) >= 5 or len(t) >= 40 or '"' in t:
+        return True
+    # A parenthetical acronym or a year on a multi-word phrase → a specific title.
+    if _ACRONYM_RE.search(t) and (len(words) >= 3 or _YEAR_RE.search(t)):
+        return True
+    return False
+
+
 # Admin-managed extra search terms (the "MeSH / keyword library"). Stored as a
 # JSON list in app_settings under SEARCH_PIVOTS_KEY and merged with the built-in
 # _HEALTH_PIVOTS, so a broad search fans out across these too. Editable in
@@ -152,6 +174,12 @@ def build_queries(user_terms: str, max_queries: int = 20) -> list[str]:
     No geo in the query (recall-first; region-wide calls rarely name a country).
     """
     term = (user_terms or "").strip()
+    if _is_lookup_query(term):
+        # Specific title → phrase search, NO RFP framing (it over-constrains and
+        # tanks recall on long strings). The lenient lookup filter in search()
+        # then surfaces the primary source.
+        q = term.strip('"').strip()
+        return [f'"{q}"', q]
     if _is_broad(term):
         topics = all_pivots()           # built-in + admin custom terms
         out = [f"{t} {_RFP_OR_GROUP}" for t in topics]
@@ -420,9 +448,9 @@ def _tavily_items(query: str, key: str, num: int) -> list[dict]:
         return []
 
 
-def _serper_items(query: str, key: str, num: int) -> list[dict]:
-    """One Serper (real Google) call → normalized [{url,title,content}].
-    Never raises. Serper returns organic[].{link,title,snippet}."""
+def _serper_raw(query: str, key: str, num: int) -> dict:
+    """One Serper (real Google) call → the FULL response dict (organic +
+    knowledgeGraph + sitelinks). Never raises; {} on error."""
     import httpx
     try:
         r = httpx.post(
@@ -431,13 +459,17 @@ def _serper_items(query: str, key: str, num: int) -> list[dict]:
             headers={"X-API-KEY": key, "Content-Type": "application/json"},
             timeout=15.0,
         )
-        if r.status_code != 200:
-            return []
-        return [{"url": x.get("link"), "title": x.get("title"),
-                 "content": x.get("snippet")}
-                for x in (r.json().get("organic") or [])]
+        return (r.json() or {}) if r.status_code == 200 else {}
     except Exception:
-        return []
+        return {}
+
+
+def _serper_items(query: str, key: str, num: int) -> list[dict]:
+    """One Serper (real Google) call → normalized [{url,title,content}].
+    Never raises. Serper returns organic[].{link,title,snippet}."""
+    return [{"url": x.get("link"), "title": x.get("title"),
+             "content": x.get("snippet")}
+            for x in (_serper_raw(query, key, num).get("organic") or [])]
 
 
 def _exa_items(query: str, key: str, num: int) -> list[dict]:
@@ -496,6 +528,7 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
     excluded = [t.lower() for t in (themes.get("excluded_any") or [])]
 
     queries = build_queries(user_terms)
+    lookup = _is_lookup_query(user_terms)   # specific-title → lenient, primary-first
     providers = [p for p, k in (("serper", ser), ("tavily", tav), ("exa", exa)) if k]
     per_query = max(1, min(int(num), 15))
 
@@ -540,11 +573,35 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
     from core import auto_scorer as A
     candidates: list[dict] = []
     dropped_geo = dropped_scholarship = dropped_offtopic = dropped_lang = 0
+    dropped_aggregator = 0
     for it in items:
         link = it.get("url") or ""
         title = _clean(it.get("title") or "")
         snippet = _clean(it.get("content") or "")
         if not link or blacklist.is_blacklisted(link):
+            continue
+        # LOOKUP mode (user pasted a specific title): maximize recall to the
+        # PRIMARY source — skip the theme/RFP-signal/scholarship/geo discovery
+        # gates; just drop junk URLs, non-English, and aggregators/blogs/listings
+        # (so the donor's own page surfaces, never a competitor aggregator).
+        if lookup:
+            rl = link.lower()
+            if any(p in rl for p in _URL_NOISE):
+                continue
+            cand = {"opportunity_title": title, "brief_description": snippet,
+                    "opportunity_link": link}
+            try:
+                from core import aggregators as _aggr
+                if _aggr.is_non_primary(link, title)[0]:
+                    dropped_aggregator += 1
+                    continue
+            except Exception:
+                pass
+            if not A.language_eligible(cand)[0]:
+                dropped_lang += 1
+                continue
+            candidates.append({"title": title, "link": link, "snippet": snippet,
+                               "domain": urlparse(link).netloc})
             continue
         if not _relevant(title, snippet, link, required, excluded):
             continue
@@ -600,25 +657,30 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
             dl = None
         pdate = sig.get("date") or _url_date(c["link"])
         future_dl = bool(dl and dl >= today)
-        # Confidently expired → out.
-        if dl and dl < today:
-            dropped_expired += 1
-            continue
-        # Very old page (>~18 mo) with no future deadline → out. Lenient on
-        # purpose so a recent call on an older-looking page survives.
-        if not future_dl and cutoff and pdate and pdate < cutoff:
-            dropped_old += 1
-            continue
-        # Body isn't a call (and not open via a future deadline) → out. Only
-        # when we actually fetched and validated the page.
-        if sig.get("fetched") and not future_dl and not sig.get("rfp_ok"):
-            dropped_notrfp += 1
-            continue
-        # Body geography clearly excludes us (the 'better read' — catches an
-        # Afghanistan/US-only call whose snippet looked clean).
-        if sig.get("fetched") and sig.get("geo") == "foreign":
-            dropped_geo += 1
-            continue
+        # In LOOKUP mode we keep everything that matched the title (incl. recently
+        # expired / older calls) — the user is finding a known opportunity's
+        # primary source, not discovering open calls. The discovery drops below
+        # only apply to keyword (discovery) searches.
+        if not lookup:
+            # Confidently expired → out.
+            if dl and dl < today:
+                dropped_expired += 1
+                continue
+            # Very old page (>~18 mo) with no future deadline → out. Lenient on
+            # purpose so a recent call on an older-looking page survives.
+            if not future_dl and cutoff and pdate and pdate < cutoff:
+                dropped_old += 1
+                continue
+            # Body isn't a call (and not open via a future deadline) → out. Only
+            # when we actually fetched and validated the page.
+            if sig.get("fetched") and not future_dl and not sig.get("rfp_ok"):
+                dropped_notrfp += 1
+                continue
+            # Body geography clearly excludes us (the 'better read' — catches an
+            # Afghanistan/US-only call whose snippet looked clean).
+            if sig.get("fetched") and sig.get("geo") == "foreign":
+                dropped_geo += 1
+                continue
         results.append({"title": c["title"], "link": c["link"],
                         "snippet": c["snippet"], "domain": c["domain"],
                         "deadline": dl.isoformat() if dl else "",
@@ -628,10 +690,12 @@ def search(user_terms: str, num: int = 10, max_age_days: int = 540) -> dict:
     results.sort(key=lambda r: _relevance_score(r, user_terms), reverse=True)
     return {"ok": True, "configured": True,
             "query": queries[0] if queries else "",
-            "queries": queries, "providers": providers,
+            "queries": queries, "providers": providers, "mode":
+            "lookup" if lookup else "discovery",
             "raw_count": len(items), "results": results[:30],
             "dropped_expired": dropped_expired, "dropped_old": dropped_old,
             "dropped_notrfp": dropped_notrfp, "dropped_geo": dropped_geo,
             "dropped_scholarship": dropped_scholarship,
             "dropped_offtopic": dropped_offtopic, "dropped_lang": dropped_lang,
+            "dropped_aggregator": dropped_aggregator,
             "error": None}

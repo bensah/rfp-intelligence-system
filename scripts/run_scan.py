@@ -100,6 +100,64 @@ def _seed_is_scannable(url: str) -> bool:
     return bool(_SEED_POS_RE.search(p.path + ("?" + p.query if p.query else "")))
 
 
+# Scrape-method richness — when the SAME url appears in both the yaml base list
+# and donor_sources (they overlap heavily), keep the richer one so each url is
+# scanned ONCE. Structured APIs > feeds > static HTML > JS render > manual stub.
+_METHOD_RANK = {"rest_json": 4, "rss": 3, "html": 2, "html_js": 1, "manual": 0}
+
+# Scan segregation (2026-06-20): the CURRENT scan covers donor RFPs/grants/tenders
+# only. A source tagged in donor_sources.opportunity_types EXCLUSIVELY with
+# career/job types is excluded so jobs/fellowships/etc. don't enter the donor
+# scan; UNTAGGED sources are treated as donor-RFP (backward compatible). The other
+# verticals get their own scans later (not built yet).
+_DONOR_RFP_TYPES = {"grant", "award", "rfp", "cfp", "rfi", "eoi", "tender",
+                    "procurement notice", "contract award",
+                    "cooperative agreement", "seed fund", "loi"}
+_CAREER_TYPES = {"job", "consultancy", "internship", "fellowship",
+                 "scholarship", "training"}
+
+
+def _is_donor_rfp_source(types) -> bool:
+    """True if a source belongs in the current donor-RFP scan. Untagged → yes
+    (default). Excluded only when tagged EXCLUSIVELY with career/job types."""
+    t = {str(x).strip().lower() for x in (types or []) if str(x).strip()}
+    if not t or (t & _DONOR_RFP_TYPES):
+        return True
+    return not (t <= _CAREER_TYPES)
+
+
+def _dedup_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse exact-URL duplicates across yaml + donor_sources + seeds, keeping
+    the entry with the richest scrape method. Non-destructive (touches neither the
+    yaml nor the DB); preserves first-seen order and any URL-less entries."""
+    winner: dict[str, dict[str, Any]] = {}
+    seq: list[tuple[str, dict[str, Any]]] = []
+    for s in sources:
+        key = _norm_url(s.get("url", ""))
+        if not key:
+            seq.append(("", s))
+            continue
+        seq.append((key, s))
+        cur = winner.get(key)
+        if cur is None or (_METHOD_RANK.get((s.get("method") or "").lower(), -1)
+                           > _METHOD_RANK.get((cur.get("method") or "").lower(), -1)):
+            winner[key] = s
+    out, seen = [], set()
+    for key, s in seq:
+        if not key:
+            out.append(s)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(winner[key])
+    dropped = len(sources) - len(out)
+    if dropped:
+        print(f"Deduped {dropped} exact-URL duplicate source(s) "
+              "(yaml ∩ donor_sources ∩ seeds).")
+    return out
+
+
 def _load_yaml_sources() -> list[dict[str, Any]]:
     with SOURCES_YAML.open(encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
@@ -109,21 +167,36 @@ def _load_yaml_sources() -> list[dict[str, Any]]:
 def _load_donor_sources(sb) -> list[dict[str, Any]]:
     res = sb.table("donor_sources").select("*").eq("is_active", True).execute()
     out = []
+    skipped = 0
     for r in res.data or []:
+        # Donor-RFP scan only: skip sources tagged exclusively as career/job.
+        if not _is_donor_rfp_source(r.get("opportunity_types")):
+            skipped += 1
+            continue
         # Use the FULL donor_name. Previously prefixed with donor_code
         # which is a short truncation ("Google" for "Google Alert — RFPs",
         # "Fondation" for "Fondation Pierre Fabre") — confusing in
         # scan_logs and unhelpful for users.
         donor_name = (r.get("donor_name") or "").strip() or "(unnamed donor)"
+        # Curated class drives scan routing: primary -> crawl+extract directly;
+        # aggregator -> crawl+resolve-to-primary before the gate (never rejected).
+        _sc = (r.get("source_class") or "").lower()
+        kind = ("aggregator" if "aggreg" in _sc
+                else "primary" if ("primary" in _sc or "procurement platform" in _sc)
+                else "")
         out.append(
             {
                 "name": f"{donor_name} — donor catalog",
                 "method": r["scrape_method"],
                 "url": r["rfp_listing_url"],
                 "donor_source_id": r["id"],
+                "source_class": kind,
                 "origin": "donor_sources",
             }
         )
+    if skipped:
+        print(f"Skipped {skipped} career/job-tagged donor source(s) — "
+              "current scan is donor-RFP only.")
     return out
 
 
@@ -185,6 +258,13 @@ def _scrape_one(source: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         results = []
         err = f"{type(exc).__name__}: {exc}"
+    # Stamp each candidate with its source's curated class so the ingest pipeline
+    # routes primaries (extract directly) vs aggregators (resolve→primary) and
+    # never rejects a configured primary as "non-primary".
+    _sc = source.get("source_class") or ""
+    if _sc:
+        for c in results:
+            c.setdefault("_source_class", _sc)
     return {
         "name": name,
         "source": source,
@@ -212,7 +292,7 @@ def run(
         seed_sources = _load_seed_sources(sb, _existing)
         if seed_sources:
             print(f"Donor-matrix seeds added as sources: {len(seed_sources)}")
-    all_sources = yaml_sources + donor_sources + seed_sources
+    all_sources = _dedup_sources(yaml_sources + donor_sources + seed_sources)
 
     if source_filter:
         all_sources = [s for s in all_sources if (s.get("name") or "") == source_filter]

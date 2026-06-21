@@ -21,6 +21,76 @@ from core import permissions, site_search, web_search
 user = st.session_state.get("app_user") or {}
 is_admin = permissions.is_admin(user)
 
+# Borderless, desaturated (colorless) feedback emoji buttons — they sit beside the
+# result title like a superscript rather than in boxes. The ➕ Track button keeps
+# its box and its own aligned column. Disabled (chosen) state stays greyed.
+st.markdown(
+    """<style>
+    [class*="st-key-fbgood"] button, [class*="st-key-fbneut"] button,
+    [class*="st-key-fbbad"] button {
+        border:none!important; background:transparent!important;
+        box-shadow:none!important; padding:0 .12rem!important; min-height:0!important;
+        line-height:1!important; filter:grayscale(1); font-size:1rem;
+    }
+    [class*="st-key-fbgood"] button:disabled, [class*="st-key-fbneut"] button:disabled,
+    [class*="st-key-fbbad"] button:disabled { opacity:.4; filter:grayscale(1); }
+    </style>""",
+    unsafe_allow_html=True)
+
+
+def _render_result_actions(wr: dict, *, key: str, user: dict, cols) -> None:
+    """Render the 👍/😐/👎 feedback + ➕ Track controls into the supplied column
+    objects (`cols` = [g, n, b, track]) so they sit on the SAME ROW as the result
+    text. Best-effort — a failure here never breaks the results list."""
+    from core import decision_log, found_loader
+
+    cand = found_loader.candidate_from_web_result(wr)
+    email = (user or {}).get("email")
+    # Per-result state keyed by the link so a rating / track survives paging and
+    # greys the chosen button (no accidental re-clicks).
+    link = (wr.get("link") or "").strip()
+    fb_done = st.session_state.setdefault("_srch_fb", {})
+    tracked = st.session_state.setdefault("_srch_tracked", set())
+    cur = fb_done.get(link)
+    is_tracked = link in tracked
+
+    c1, c2, c3, c4 = cols
+    # Feedback emojis render borderless + grayscale (CSS targets the st-key-fb*
+    # wrappers) so they read like a superscript beside the title, not boxed.
+    g = c1.button("✓👍" if cur == "good" else "👍", key=f"fbgood_{key}",
+                  disabled=cur == "good", help="Good — like a Proceed.")
+    n = c2.button("✓😐" if cur == "neutral" else "😐", key=f"fbneut_{key}",
+                  disabled=cur == "neutral", help="Neutral — like a Park.")
+    b = c3.button("✓👎" if cur == "bad" else "👎", key=f"fbbad_{key}",
+                  disabled=cur == "bad", help="Bad — like a Decline.")
+    track = c4.button("✓ Tracked" if is_tracked else "➕ Track", key=f"track_{key}",
+                      disabled=is_tracked,
+                      help="Load into Found Records as a scored candidate "
+                           "awaiting review.")
+    if g or n or b:
+        verdict = "good" if g else "neutral" if n else "bad"
+        try:
+            decision_log.log_feedback(cand, verdict, by=email,
+                                      reason="search-result")
+            fb_done[link] = verdict
+            st.toast("Thanks — that trains the scorer.", icon="🧠")
+        except Exception as exc:
+            st.toast(f"Couldn't record: {exc}", icon="⚠️")
+        st.rerun()
+    if track:
+        res = found_loader.load_candidate(cand, user, provenance="search")
+        if res["ok"]:
+            tracked.add(link)
+            st.toast(f"Tracked as {res['uid']} (auto-rec: {res['reason']}).",
+                     icon="➕")
+        elif res["skipped"]:
+            tracked.add(link)
+            st.toast("Already tracked — not re-added.", icon="ℹ️")
+        else:
+            st.toast(f"Couldn't track: {res['reason']}", icon="⚠️")
+        st.rerun()
+
+
 st.title("🔍 Search")
 
 # ── Query box (pre-filled, editable to refine) ──────────────────────────────
@@ -140,12 +210,27 @@ else:
             st.warning("Web search unavailable: "
                        f"{res.get('error') or 'unknown error'}")
         elif not res.get("results"):
-            st.caption(
-                f"No web results passed the RFP filter "
-                f"(checked {res.get('raw_count', 0)} hits). Try different "
-                f"keywords.")
+            if res.get("mode") == "lookup":
+                st.caption(
+                    f"No primary-source match for that exact title "
+                    f"(checked {res.get('raw_count', 0)} hits"
+                    + (f", skipped {res['dropped_aggregator']} aggregator/blog"
+                       if res.get("dropped_aggregator") else "")
+                    + "). The opportunity may only live on an aggregator, or the "
+                    "title wording differs on the donor's site — try trimming to "
+                    "the distinctive part of the title.")
+            else:
+                st.caption(
+                    f"No web results passed the RFP filter "
+                    f"(checked {res.get('raw_count', 0)} hits). Try different "
+                    f"keywords.")
         else:
+            if res.get("mode") == "lookup":
+                st.caption("🎯 **Title lookup** — searched the exact phrase and "
+                           "filtered to primary sources (aggregators hidden).")
             _msg = []
+            if res.get("dropped_aggregator"):
+                _msg.append(f"{res['dropped_aggregator']} aggregator/blog")
             if res.get("dropped_expired"):
                 _msg.append(f"{res['dropped_expired']} expired")
             if res.get("dropped_old"):
@@ -205,7 +290,11 @@ else:
             # Uniform cards: title clamped to 1 line, summary to exactly 2
             # lines (CSS line-clamp + a hard char cap) so every result is the
             # same height — no long paragraphs.
-            for wr in _page_results:
+            st.caption(
+                "Rate a result (👍/😐/👎) to feed the learning engine, or "
+                "**➕ Track** it into Found Records as a scored candidate for "
+                "review.")
+            for _ri, wr in enumerate(_page_results):
                 _title = html.escape((wr["title"] or "")[:140])
                 _dom = html.escape(wr["domain"] or "")
                 _snip = (wr["snippet"] or "")
@@ -223,8 +312,13 @@ else:
                              f"{html.escape(_pdate)}</span> · ")
                 else:
                     _lead = ""
-                st.markdown(
-                    "<div style='margin:0.1rem 0 0.55rem;'>"
+                # Row method: result text in a wide column, the 3 borderless
+                # feedback emojis right after it (superscript-like), and Track in
+                # its own aligned column. Center-aligned across the row.
+                _row = st.columns([7, 0.4, 0.4, 0.4, 1.1],
+                                  vertical_alignment="center")
+                _row[0].markdown(
+                    "<div style='margin:0.1rem 0 0.2rem;'>"
                     f"<a href='{_href}' target='_blank' rel='noopener' "
                     "style='font-weight:600;color:#1e3a8a;text-decoration:none;"
                     "display:block;white-space:nowrap;overflow:hidden;"
@@ -236,6 +330,8 @@ else:
                     f"{_lead}<span style='color:#94a3b8;'>{_dom}</span> — "
                     f"{_snip}</div></div>",
                     unsafe_allow_html=True)
+                _render_result_actions(wr, key=f"wr_{_pg}_{_ri}", user=user,
+                                       cols=_row[1:])
             _page_nav()   # hyperlinked page numbers at the tail (Google-style)
 
 # ── Related searches ────────────────────────────────────────────────────────

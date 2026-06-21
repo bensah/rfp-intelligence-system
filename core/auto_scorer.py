@@ -732,6 +732,13 @@ def us_domestic_only_reject(candidate: dict[str, Any], policies: dict[str, Any])
     text = _full_text(candidate) + " " + (candidate.get("notes") or "")
     if _has_inclusive_eligibility(text):
         return False, ""
+    # Structured signals from the grants.gov enricher (set on the candidate):
+    #   * _drop_us_only — eligibility text or applicant types were US-domestic.
+    #   * _applicant_types — re-check gov-only here so US-government-only opps that
+    #     arrive via OTHER paths (web search, listing-children) are caught too.
+    if candidate.get("_drop_us_only") \
+            or grants_gov_government_only(candidate.get("_applicant_types")):
+        return True, "US-domestic-only eligibility — out of scope for a non-US deployment"
     if _US_DOMESTIC_ONLY_PATTERN.search(text):
         return True, "US-domestic-only eligibility — out of scope for a non-US deployment"
     return False, ""
@@ -959,10 +966,11 @@ _RFP_STRONG_PHRASES = (
     "call for concept note", "call for concept notes",
     "request for concept note", "request for concept notes",
     "call for project", "call for projects", "calls for projects",
-    "call for nominations",
+    "call for nominations", "call for entries", "call for submissions",
     "notice of funding opportunity", "funding opportunity announcement",
     "notice of funding availability", "annual program statement",
     "broad agency announcement", "invitation to tender",
+    "request for tender", "tender notice", "invitation to bid",
     "call for tender", "call for tenders", "request for quotation",
     "grand challenge",
 )
@@ -981,6 +989,13 @@ _RFP_WEAK_PHRASES = (
     "apply now", "submit a proposal", "submit your proposal",
     "submit a concept note", "application deadline", "deadline to apply",
     "closing date",
+    # Awards / prizes are valid opportunity types (Zayed Sustainability Prize,
+    # etc.). Weak tier → accepted only WITH details (a deadline or an amount),
+    # so closed "contract award" pages still fall to the deadline/past gates.
+    "award", "awards", "prize", "prizes",
+    "opens applications", "applications now open", "submissions open",
+    "now accepting submissions", "accepting submissions",
+    "now open for submissions", "open for submissions",
 )
 # Process / informational / navigational PAGE-TYPE signals — NOT calls. These
 # are matched against the TITLE + URL only (the decisive page-type signal); a
@@ -1124,17 +1139,24 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
         return False, "URL lists / indexes calls, not a single call"
     if _LISTING_TITLE_RE.match((candidate.get("opportunity_title") or "").strip()):
         return False, "title is a generic calls-listing heading, not a single call"
-    # Aggregator detail links (DevelopmentAid, …) are a crawl SEED only — never
-    # stored. The pipeline resolves theme-relevant hits to the donor's own
-    # source URL first (then this link is the source). Anything still on an
-    # aggregator host here didn't resolve (or isn't relevant) → drop it.
-    try:
-        from core.source_resolver import is_aggregator as _is_aggr
-        if _is_aggr(link):
-            return False, ("aggregator listing link — used only to seed a source "
-                           "lookup, not stored directly")
-    except Exception:
-        pass
+    # Non-primary sources never get stored: competitor AGGREGATORS (DevelopmentAid,
+    # GrantBite, …) — a crawl SEED only; the pipeline resolves theme-relevant hits
+    # to the donor's OWN page first, so anything still on an aggregator host here
+    # didn't resolve → drop it — plus BLOG platforms (blogspot/wordpress/…, which
+    # let grants-gov.blogspot.com slip in) and bare LISTING/search pages. Human-
+    # confirmed registry hosts are authoritative. Fail-open (never blocks a scan).
+    # A candidate from a CONFIGURED PRIMARY source (curated catalogue) is trusted —
+    # we crawl + extract it directly and never apply the non-primary reject. The
+    # non-primary reject only fires for aggregator-class or web-discovered hits
+    # that didn't resolve to a primary.
+    if candidate.get("_source_class") != "primary":
+        try:
+            from core import aggregators as _aggr
+            _np, _why = _aggr.is_non_primary(link, candidate.get("opportunity_title"))
+            if _np:
+                return False, _why      # reason prefix = aggregator|blog|listing
+        except Exception:
+            pass
     # DevelopmentAid past-tense grant (Awarded / Closed). Set by the
     # bespoke enricher in scraper._enrich_developmentaid — those listings
     # show on the catalog but aren't open opportunities.
@@ -1176,9 +1198,6 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     rejected, reason = closed_call_hard_reject(candidate)
     if rejected:
         return False, reason
-    ok, reason = deadline_in_future(candidate)
-    if not ok:
-        return False, f"deadline: {reason}"
     rejected, reason = us_domestic_only_reject(candidate, policies)
     if rejected:
         return False, f"geography: {reason}"
@@ -1192,7 +1211,27 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     ok, reason = theme_eligible(candidate, policies)
     if not ok:
         return False, f"theme: {reason}"
+    # Deadline LAST: only attribute a "deadline" reject when the call is
+    # otherwise eligible (right geography / applicant type / country / theme) but
+    # expired. This stops a spurious "deadline" reason from masking the REAL
+    # disqualifier — an off-theme / off-geo call (or one whose deadline
+    # mis-parsed to a past date) is now rejected for the actual reason, and
+    # "deadline" only appears when the deadline is genuinely the blocker.
+    ok, reason = deadline_in_future(candidate)
+    if not ok:
+        return False, f"deadline: {reason}"
     return True, "eligible"
+
+
+def is_index_page(candidate: dict[str, Any]) -> bool:
+    """True if the candidate is a LISTING / index / search page (a crawl seed),
+    not a single opportunity — so the pipeline can walk it for child calls rather
+    than just reject it. Mirrors the listing checks in `is_eligible`."""
+    link = candidate.get("opportunity_link") or ""
+    title = (candidate.get("opportunity_title") or "").strip()
+    return bool(_SEARCH_URL_PATTERN_AS.search(link)
+                or _LISTING_URL_RE.search(link)
+                or (title and _LISTING_TITLE_RE.match(title)))
 
 
 # ---------------------------------------------------------------------------

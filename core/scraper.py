@@ -23,10 +23,11 @@ Scrapers themselves stay pure — they don't touch the DB.
 from __future__ import annotations
 
 import html
+import json
 import logging
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -907,6 +908,11 @@ def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
         return []
 
     try:
+        # UNGM: route to the dedicated handler regardless of configured method —
+        # the public /Public/Notice page is JS-loaded, but /Public/Notice/Search
+        # is a keyless POST endpoint that returns the notices directly.
+        if "ungm.org" in url.lower():
+            return _scan_ungm(name, url)
         # Theme/country filtering now happens in core.scan_pipeline (policy-
         # driven, admin-configurable). Scrapers return raw candidates.
         if method == "rss":
@@ -1201,11 +1207,23 @@ def _scan_google_alerts(name: str, url: str) -> list[dict[str, Any]]:
 def _scan_rest_json(name: str, url: str) -> list[dict[str, Any]]:
     if "api.grants.gov" in url:
         return _scan_grants_gov(name, url)
+    if "api.tech.ec.europa.eu/search-api" in url:
+        return _scan_eu_funding_tenders(name, url)
+    if "search.worldbank.org/api/v2/procnotices" in url:
+        return _scan_worldbank_procurement(name, url)
+    if "api.ted.europa.eu" in url:
+        return _scan_ted(name, url)
+    if "find-tender.service.gov.uk" in url:
+        return _scan_ocds(name, url,
+                          notice_base="https://www.find-tender.service.gov.uk/Notice/",
+                          geo="United Kingdom")
+    if "contractsfinder.service.gov.uk" in url:
+        return _scan_ocds(name, url,
+                          notice_base="https://www.contractsfinder.service.gov.uk/Notice/",
+                          geo="United Kingdom")
     # NOTE: The World Bank projects API (search.worldbank.org/api/v3/projects)
-    # returns ONGOING / COMPLETED projects, not open funding opportunities.
-    # Implementing-NGO deployments shouldn't pursue these via the scan pipeline — removed the
-    # handler. To restore proper World Bank RFP scanning, point a new
-    # handler at the procurement / business-opportunities endpoint instead.
+    # returns ONGOING / COMPLETED projects, not open funding opportunities — use
+    # the procnotices endpoint above for open procurement instead.
     log.info("REST JSON endpoint not specifically handled: %s — returning []", url)
     return []
 
@@ -1366,6 +1384,26 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
                 cand["currency"] = "USD"
                 break
 
+        # --- distinct award-scope fields (public-site reporting) ---
+        af = _coerce_money(syn.get("awardFloor"))
+        if af is not None:
+            cand["award_floor"] = af
+        ac = _coerce_money(syn.get("awardCeiling"))
+        if ac is not None:
+            cand["award_ceiling"] = ac
+        tot = _coerce_money(syn.get("estimatedFunding"))
+        if tot is not None:
+            cand["total_program_funding"] = tot
+        try:
+            na = int(str(syn.get("numberOfAwards")).strip())
+            if na > 0:
+                cand["expected_awards"] = na
+        except (TypeError, ValueError):
+            pass
+        fon = _clean(d.get("opportunityNumber") or "") or cand.get("opportunity_id")
+        if fon:
+            cand["funding_opportunity_number"] = fon
+
         # --- date fields (DB column is `date_posted`, not `date_posted`) ---
         dp = _parse_iso_date(syn.get("postingDate") or "")
         if dp:
@@ -1450,19 +1488,14 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
         if notes_parts:
             cand["notes"] = " | ".join(notes_parts)[:1800]
 
-    # Drop explicitly-US-only opportunities (flagged during enrichment) + the
-    # temporary id helper before returning.
-    _kept = []
-    _dropped_us = 0
+    # Keep US-only opportunities (the `_drop_us_only` / `_applicant_types` flags
+    # ride along) instead of silently dropping them at scrape time: the gate
+    # (`us_domestic_only_reject`) now rejects them as a logged `geography` reason,
+    # so they land in scan_decisions where they can be human-verified and feed the
+    # learning loop (capture-everything → P/P/D/R). Drop only the internal id key.
     for cand in deduped:
         cand.pop("_grants_gov_id", None)
-        if cand.pop("_drop_us_only", False):
-            _dropped_us += 1
-            continue
-        _kept.append(cand)
-    if _dropped_us:
-        log.info("Grants.gov: dropped %d explicitly US-only opportunities", _dropped_us)
-    return _kept
+    return deduped
 
 
 def _coerce_money(raw: Any) -> float | None:
@@ -1521,8 +1554,296 @@ def _scan_worldbank(name: str, url: str) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Open-data / public-sector APIs (free + permissive reuse licenses)
+# ---------------------------------------------------------------------------
+# All five below are free, key-less, and publish under reuse-permitting licenses
+# (EU reuse policy / World Bank CC-BY 4.0 / UK Open Government Licence v3 / EU
+# PSI), so candidates are safe to republish — unlike aggregator APIs whose ToS
+# forbid redistribution. Each returns the standard candidate dict; the per-org
+# eligibility gate (auto_scorer.is_eligible) decides theme/geo relevance, so the
+# handlers pull broadly and let the gate filter per tenant.
+
+def _wb_date(s: Any) -> date | None:
+    """World Bank emits noticedate as '19-Jun-2026'; submission_date as ISO."""
+    if not s:
+        return None
+    try:
+        return datetime.strptime(str(s).strip(), "%d-%b-%Y").date()
+    except (ValueError, TypeError):
+        return _parse_iso_date(str(s)[:10])
+
+
+def _scan_eu_funding_tenders(name: str, url: str) -> list[dict[str, Any]]:
+    """EU Funding & Tenders Portal (SEDIA search API). Free, key-less (apiKey
+    'SEDIA' is the public token). Pulls OPEN + FORTHCOMING grants & tenders. The
+    query body must be sent as a multipart part with an explicit application/json
+    content-type, else the API 500s with 'octet-stream not supported'."""
+    out: list[dict[str, Any]] = []
+    q = {"bool": {"must": [
+        {"terms": {"type": ["1", "2"]}},                  # 1=tender, 2=grant
+        {"terms": {"status": ["31094501", "31094502"]}},  # forthcoming, open
+    ]}}
+
+    def _first(md: dict, k: str) -> str:
+        v = md.get(k)
+        if isinstance(v, list):
+            return str(v[0]) if v else ""
+        return str(v) if v is not None else ""
+
+    for page in (1, 2):
+        try:
+            r = requests.post(
+                url,
+                params={"apiKey": "SEDIA", "text": "***",
+                        "pageSize": "50", "pageNumber": str(page)},
+                files={"query": ("query.json", json.dumps(q), "application/json"),
+                       "languages": ("languages.json", json.dumps(["en"]),
+                                     "application/json")},
+                headers={"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT)
+            r.raise_for_status()
+            results = (r.json() or {}).get("results") or []
+        except Exception as exc:
+            log.warning("EU F&T page=%s failed: %s", page, exc)
+            break
+        if not results:
+            break
+        for it in results:
+            md = it.get("metadata") or {}
+            title = _clean(_first(md, "title") or it.get("title") or "")
+            if not title:
+                continue
+            out.append({
+                "opportunity_title": title,
+                "opportunity_link": it.get("url"),
+                "opportunity_id": _clean(_first(md, "identifier")),
+                "funding_agency": "European Commission (EU Funding & Tenders)",
+                "brief_description": _clean(it.get("summary") or "")[:1800] or None,
+                "date_posted": _parse_iso_date(_first(md, "startDate")[:10]),
+                "submission_deadline": _parse_iso_date(_first(md, "deadlineDate")[:10]),
+                "geographic_scope": ["European Union"],
+                "_source_origin": f"{name} (status={_first(md, 'status')})",
+            })
+    return _dedup_by_link_or_title(out)
+
+
+def _scan_worldbank_procurement(name: str, url: str) -> list[dict[str, Any]]:
+    """World Bank procurement notices (procnotices API). Free; WB data is
+    CC-BY 4.0. Skips 'Contract Award' notices (already awarded) — keeps open bids
+    / EOIs / GPNs / RFQs. Country → geographic_scope so the geo gate can act."""
+    out: list[dict[str, Any]] = []
+    try:
+        r = requests.get(
+            url, params={"format": "json", "rows": 100},
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        notices = (r.json() or {}).get("procnotices") or []
+    except Exception as exc:
+        log.warning("World Bank procurement failed: %s", exc)
+        return []
+    for n in notices:
+        ntype = _clean(n.get("notice_type") or "")
+        if "award" in ntype.lower():
+            continue  # already awarded — not an open opportunity
+        proj = _clean(n.get("project_name") or "")
+        desc = _clean(n.get("bid_description") or "")
+        title = (f"{proj}: {desc}" if proj and desc else (desc or proj))[:300]
+        if not title:
+            continue
+        nid = _clean(n.get("id") or "")
+        ctry = _clean(n.get("project_ctry_name") or "")
+        out.append({
+            "opportunity_title": title,
+            "opportunity_link": (
+                f"https://projects.worldbank.org/en/projects-operations/"
+                f"procurement-detail/{nid}" if nid else
+                "https://projects.worldbank.org/en/projects-operations/procurement"),
+            "opportunity_id": _clean(n.get("bid_reference_no") or ""),
+            "funding_agency": f"World Bank ({ntype})" if ntype else "World Bank",
+            "brief_description": desc[:1800] or None,
+            "date_posted": _wb_date(n.get("noticedate")),
+            "submission_deadline": _parse_iso_date(str(n.get("submission_date") or "")[:10]),
+            "geographic_scope": [ctry] if ctry else None,
+            "_source_origin": name,
+        })
+    return _dedup_by_link_or_title(out)
+
+
+def _scan_ocds(name: str, url: str, *, notice_base: str, geo: str
+               ) -> list[dict[str, Any]]:
+    """Generic OCDS release-package reader — UK Find a Tender + Contracts Finder.
+    Both publish under the Open Government Licence v3 (declared in the package's
+    `license` field). Keeps active/planned tenders; skips awards/cancelled."""
+    out: list[dict[str, Any]] = []
+    try:
+        r = requests.get(
+            url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        releases = (r.json() or {}).get("releases") or []
+    except Exception as exc:
+        log.warning("OCDS %s failed: %s", name, exc)
+        return []
+    for rel in releases[:80]:
+        tags = {str(t).lower() for t in (rel.get("tag") or [])}
+        if tags & {"award", "awardupdate", "awardcancellation", "contract"}:
+            continue  # awarded / contract stage, not an open opportunity
+        t = rel.get("tender") or {}
+        if (t.get("status") or "").lower() in (
+                "complete", "cancelled", "unsuccessful", "withdrawn"):
+            continue
+        title = _clean(t.get("title") or "")
+        if not title:
+            continue
+        rid = _clean(rel.get("id") or rel.get("ocid") or "")
+        tp = t.get("tenderPeriod") or {}
+        out.append({
+            "opportunity_title": title,
+            "opportunity_link": f"{notice_base}{rid}" if rid else notice_base,
+            "opportunity_id": _clean(rel.get("ocid") or ""),
+            "funding_agency": _clean((rel.get("buyer") or {}).get("name") or "") or name,
+            "brief_description": _clean(t.get("description") or "")[:1800] or None,
+            "date_posted": _parse_iso_date(str(rel.get("date") or "")[:10]),
+            "submission_deadline": _parse_iso_date(str(tp.get("endDate") or "")[:10]),
+            "geographic_scope": [geo],
+            "_source_origin": name,
+        })
+    return _dedup_by_link_or_title(out)
+
+
+def _scan_ted(name: str, url: str) -> list[dict[str, Any]]:
+    """TED — EU public procurement notices (api.ted.europa.eu/v3). Free; TED data
+    is reusable (EU PSI). Scoped to health CPV (85*) + ACTIVE notices. Titles are
+    multilingual dicts — prefer English."""
+    out: list[dict[str, Any]] = []
+    # Recent + newest-first (scope=ACTIVE alone returned stale 2016 notices).
+    since = (datetime.now() - timedelta(days=120)).strftime("%Y%m%d")
+    body = {"query": f"classification-cpv=85* AND publication-date>={since} "
+                     "SORT BY publication-date DESC",
+            "fields": ["ND", "TI", "PD", "links", "CY", "publication-number",
+                       "deadline-receipt-tender-date-lot"],
+            "limit": 50}
+    try:
+        r = requests.post(
+            url, json=body,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        notices = (r.json() or {}).get("notices") or []
+    except Exception as exc:
+        log.warning("TED failed: %s", exc)
+        return []
+    for n in notices:
+        ti = n.get("TI")
+        if isinstance(ti, dict):
+            title = _clean(ti.get("eng") or next(iter(ti.values()), ""))
+        else:
+            title = _clean(ti or "")
+        if not title:
+            continue
+        num = _clean(n.get("publication-number") or n.get("ND") or "")
+        link = f"https://ted.europa.eu/en/notice/{num}" if num else None
+        dl = n.get("deadline-receipt-tender-date-lot")
+        if isinstance(dl, list) and dl:
+            deadline = _parse_iso_date(str(dl[0])[:10])
+        elif isinstance(dl, str):
+            deadline = _parse_iso_date(dl[:10])
+        else:
+            deadline = None
+        cy = n.get("CY")
+        out.append({
+            "opportunity_title": title,
+            "opportunity_link": link,
+            "opportunity_id": num,
+            "funding_agency": "EU public procurement (TED)",
+            "brief_description": None,
+            "date_posted": _parse_iso_date(str(n.get("PD") or "")[:10]),
+            "submission_deadline": deadline,
+            "geographic_scope": cy if isinstance(cy, list) else ([cy] if cy else None),
+            "_source_origin": name,
+        })
+    return _dedup_by_link_or_title(out)
+
+
+def _scan_ungm(name: str, url: str) -> list[dict[str, Any]]:
+    """UNGM (UN Global Marketplace) — the official developer API is gated, but the
+    public site's own search endpoint POST /Public/Notice/Search is keyless and
+    returns notice rows as HTML (data-noticeid + title/deadline/agency/type/country).
+    Reads only the FREE public listing (UNGM Pro features are paid + unused)."""
+    out: list[dict[str, Any]] = []
+    endpoint = "https://www.ungm.org/Public/Notice/Search"
+    hdrs = {"User-Agent": USER_AGENT, "Accept": "text/html",
+            "Content-Type": "application/json"}
+    for page in range(2):                       # 2 × 50 = up to 100 newest notices
+        body = {"PageIndex": page, "PageSize": 50, "Title": "", "Description": "",
+                "Reference": "", "PublishedFrom": "", "PublishedTo": "",
+                "DeadlineFrom": "", "DeadlineTo": "", "Countries": [],
+                "Agencies": [], "NoticeTypes": [], "UNSPSCs": [],
+                "SortField": "DatePublished", "SortAscending": False}
+        try:
+            r = requests.post(endpoint, data=json.dumps(body), headers=hdrs,
+                              timeout=HTTP_TIMEOUT)
+            r.raise_for_status()
+        except Exception as exc:
+            log.warning("UNGM page=%s failed: %s", page, exc)
+            break
+        rows = BeautifulSoup(r.text, "html.parser").select("div.dataRow[data-noticeid]")
+        if not rows:
+            break
+        for row in rows:
+            nid = row.get("data-noticeid")
+            tcell = row.select_one("div.resultTitle")
+            title = _clean(tcell.get_text(" ", strip=True)) if tcell else ""
+            title = title.replace("Open in a new window", "").strip()
+            if not nid or not title:
+                continue
+            deadline = None
+            dcell = row.select_one("div.resultInfo1.deadline")
+            if dcell:
+                m = re.search(r"\d{1,2}-[A-Za-z]{3}-\d{4}",
+                              dcell.get_text(" ", strip=True))
+                if m:
+                    deadline = _wb_date(m.group(0))
+            agency = ""
+            ag = row.select_one("div.resultAgency")
+            if ag:
+                agency = _clean(ag.get_text(strip=True))
+            ref = ""
+            for c in row.select("div.resultInfo1"):
+                if "deadline" not in (c.get("class") or []):
+                    ref = _clean(c.get_text(strip=True))
+                    break
+            cells = [_clean(c.get_text(" ", strip=True)) for c in row.select("div.tableCell")]
+            country = cells[-1] if cells else ""
+            out.append({
+                "opportunity_title": title,
+                "opportunity_link": f"https://www.ungm.org/Public/Notice/{nid}",
+                "opportunity_id": ref or None,
+                "funding_agency": f"UN — {agency}" if agency else "UN (UNGM)",
+                "brief_description": None,
+                "submission_deadline": deadline,
+                "geographic_scope": [country] if country else None,
+                "_source_origin": name,
+            })
+    return _dedup_by_link_or_title(out)
+
+
+# ---------------------------------------------------------------------------
 # HTML — generic best-effort anchor extraction
 # ---------------------------------------------------------------------------
+# Strong opportunity-path URLs — a link whose PATH clearly points at a specific
+# call (e.g. /apply/rfp, /calls-for-proposals/<slug>, /grants/<slug>) is accepted
+# even with a SHORT anchor text ("RFP", "Request for Proposals", "Apply"), which
+# the generic 25-char title floor would otherwise drop. Index roots (/grants,
+# /funding bare) are NOT strong — they need the granty+length heuristic.
+_STRONG_OPP_PATH = re.compile(
+    r"/(?:rfp|rfps|cfp|cfps|eoi|eois|rfi|loi"
+    r"|call[s]?-for-(?:proposal|application|tender|project)"
+    r"|request-for-(?:proposal|application|expression)"
+    r"|funding-opportunit|grant-opportunit|request-for-proposals"
+    r"|tender|procurement-notice)(?:/|s/|-|$)", re.I)
+
+
 def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[dict[str, Any]]:
     """Pure anchor-extraction logic — shared by `_scan_html` (requests) and
     `_scan_html_js` (Playwright-rendered). Takes pre-fetched HTML text;
@@ -1535,11 +1856,13 @@ def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[d
     for a in soup.find_all("a", href=True):
         text = _clean(a.get_text(" ", strip=True))
         href = a["href"].strip()
-        if not text or len(text) < 25 or len(text) > 220:
-            continue
         if href.startswith(("#", "javascript:", "mailto:", "tel:")):
             continue
         full = urljoin(url, href)
+        # A specific opportunity-path link bypasses the generic title-length floor.
+        strong = bool(_STRONG_OPP_PATH.search(urlsplit(full).path))
+        if not text or len(text) > 220 or (len(text) < 25 and not strong):
+            continue
         # Stay within the same domain to avoid scraping nav links to other sites.
         if urlsplit(full).netloc.lower() != base_host:
             continue
@@ -1560,8 +1883,9 @@ def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[d
         # … and by title fragment ("what we do and don't fund", etc.)
         if _BLOG_TITLE_RE.search(text):
             continue
-        # Heuristic: title OR url must mention something granty.
-        if not (_GRANTY_RE.search(text) or _GRANTY_RE.search(href)):
+        # Heuristic: title OR url must mention something granty (strong
+        # opportunity-path links already qualify).
+        if not (strong or _GRANTY_RE.search(text) or _GRANTY_RE.search(href)):
             continue
         if full in candidates:
             # Keep the longest title (typically the most descriptive)
@@ -1591,6 +1915,35 @@ def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[d
             log.info("enrich cap reached at %d candidates", ENRICH_MAX_PAGES)
             break
     return results + list(candidates.values())[ENRICH_MAX_PAGES:]
+
+
+def expand_listing(url: str, source_name: str = "listing") -> list[dict[str, Any]]:
+    """Walk a LISTING / aggregator index page and return its child opportunity
+    candidates (same-domain detail links, enriched) — so the actual calls get
+    evaluated instead of the index being dropped. Reuses the standard anchor
+    extraction; falls back to the Playwright render for JS-built indexes (e.g.
+    React aggregators) when available. Best-effort: [] on any failure.
+
+    Each child is tagged `_expanded_from` so provenance is traceable. Aggregator
+    children re-enter the pipeline and get resolved to their primary source; donor
+    listing children are the real calls and go straight to the gate."""
+    if not url:
+        return []
+    try:
+        cands = _scan_html(source_name, url)
+    except Exception as exc:
+        log.debug("expand_listing requests path failed for %s: %s", url, exc)
+        cands = []
+    if not cands:
+        try:
+            from core import deep_read
+            if deep_read.available():
+                cands = _scan_html_js(source_name, url)
+        except Exception as exc:
+            log.debug("expand_listing JS path failed for %s: %s", url, exc)
+    for c in cands:
+        c["_expanded_from"] = url
+    return cands
 
 
 def _scan_html(name: str, url: str) -> list[dict[str, Any]]:
