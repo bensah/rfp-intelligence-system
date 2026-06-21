@@ -27,6 +27,7 @@ import pandas as pd
 import streamlit as st
 
 from core import decision_log, found_loader, source_registry
+from core.type_detect import SOLICITATION_TYPES, INSTRUMENT_TYPES
 from db.supabase_client import get_client, safe_execute
 
 _PER_PAGE = 50   # batch-verify form: more rows/page = fewer Save+reload cycles
@@ -166,11 +167,9 @@ def _csv_roundtrip(*, key: str, rows: list[dict], id_header: str, id_fn,
 # Opportunity-type vocabulary — full Taadom scope (current the organisation use is the first
 # row: Grant…Tender). A human-set Type in the Verify tables is ground truth for the
 # type classifier, logged to scan_decisions (event_type 'type_label').
-_TYPE_OPTS = ["Grant", "Cooperative Agreement", "Award", "Seed Fund",
-              "RFP", "CFP", "RFI", "EOI", "LOI", "Tender",
-              "Procurement notice", "Contract award",
-              "Job", "Consultancy", "Internship", "Fellowship", "Scholarship",
-              "Training", "Other"]
+# The Verify human type-capture uses the SOLICITATION axis (how to apply) — the
+# instrument axis is auto-detected. Both vocabularies live in core.type_detect.
+_TYPE_OPTS = SOLICITATION_TYPES
 
 
 def _verify_table(*, user: dict, key: str, rows: list[dict],
@@ -220,7 +219,7 @@ def _verify_table(*, user: dict, key: str, rows: list[dict],
         code = code_map.get(vals.get("Verdict", "").strip())
         rc = ((reason_opts or {}).get(vals.get("Correct reason", "").strip())
               if reason_opts else None)
-        tv = (vals.get("Type", "").strip() if type_opts else "")
+        tv = (vals.get("Solicitation", "").strip() if type_opts else "")
         typed = bool(tv and tv != "—")
         if typed:
             decision_log.log_type_label(r, tv, by)
@@ -233,7 +232,7 @@ def _verify_table(*, user: dict, key: str, rows: list[dict],
     _ed = [("Verdict", list(label_map.values()), lambda r: label_map.get(
         db.get((r.get("opportunity_link") or "").strip()), ""))]
     if type_opts:
-        _ed.append(("Type", list(type_opts),
+        _ed.append(("Solicitation", list(type_opts),
                     lambda r: db_types.get((r.get("opportunity_link") or "").strip(), "")))
     if reason_opts:
         _ed.append(("Correct reason", list(reason_opts.keys()), None))
@@ -282,7 +281,7 @@ def _verify_table(*, user: dict, key: str, rows: list[dict],
     h[1].markdown("**Verdict**")
     _hi = 2
     if type_opts:
-        h[_hi].markdown("**Type**"); _hi += 1
+        h[_hi].markdown("**Solicitation**"); _hi += 1
     if reason_opts:
         h[_hi].markdown("**Correct reason**")
 
@@ -543,11 +542,13 @@ def _render_source_registry(user: dict) -> None:
                                   index=_ACCESS_OPTS.index("Free"))
             new_in = a5.selectbox("Method", _METHOD_OPTS,
                                   index=_METHOD_OPTS.index("Page crawl"))
-            new_ty = st.multiselect(
-                "Type(s) this source publishes — pick all that apply",
-                _TYPE_OPTS,
-                help="Keep grants and jobs on SEPARATE source URLs where possible; "
-                     "multi-select only when one platform genuinely mixes them.")
+            ty1, ty2 = st.columns(2)
+            new_sol = ty1.multiselect(
+                "Solicitation type(s) — how to apply", SOLICITATION_TYPES,
+                help="NOFO/RFP/CFP/CFA/EOI/Tender… (how the call is announced).")
+            new_inst = ty2.multiselect(
+                "Instrument type(s) — the contract", INSTRUMENT_TYPES,
+                help="Grant/Cooperative Agreement/Loan/Fellowship… (what's awarded).")
             new_notes = st.text_input("Notes (optional)")
             st.caption("Re-adding an existing host UPDATES it (use this to fix a "
                        "wrong listing URL).")
@@ -558,7 +559,8 @@ def _render_source_registry(user: dict) -> None:
                     "classification": _derive_class(new_sc),
                     "status": "confirmed" if new_vf in _VERIFIED else "pending",
                     "access_model": new_ac, "ingestion_method": new_in,
-                    "opportunity_types": new_ty or None,
+                    "solicitation_types": new_sol or None,
+                    "instrument_types": new_inst or None,
                     "sample_url": new_host if "/" in (new_host or "") else None,
                     "notes": new_notes or None,
                 }, by=email)
@@ -611,6 +613,14 @@ def _render_source_registry(user: dict) -> None:
             f["donor_code"] = vals["Code"]
         if vals.get("Host"):
             f["sample_url"] = vals["Host"]
+
+        def _multi(v):
+            return [t.strip() for t in (v or "").replace(",", ";").split(";")
+                    if t.strip()] or None
+        if "Solicitation types" in vals:
+            f["solicitation_types"] = _multi(vals.get("Solicitation types"))
+        if "Instrument types" in vals:
+            f["instrument_types"] = _multi(vals.get("Instrument types"))
         return source_registry.update_row(r["host"], f, by)
     _csv_roundtrip(
         key="srcreg_csv", rows=items, id_header="host",
@@ -623,7 +633,11 @@ def _render_source_registry(user: dict) -> None:
                   ("Verification", _VERIF_OPTS, _verif_of),
                   ("Access", _ACCESS_OPTS, lambda r: r.get("access_model") or "Unknown"),
                   ("Method", _METHOD_OPTS,
-                   lambda r: _norm_method(r.get("ingestion_method")))],
+                   lambda r: _norm_method(r.get("ingestion_method"))),
+                  ("Solicitation types", None,
+                   lambda r: "; ".join(r.get("solicitation_types") or [])),
+                  ("Instrument types", None,
+                   lambda r: "; ".join(r.get("instrument_types") or []))],
         apply_row=_sr_apply, user=user,
         aliases={"Source Name": ["Donor"], "Host": ["Listings URL", "Sample"],
                  "Method": ["Ingestion"]})
@@ -646,10 +660,11 @@ def _render_source_registry(user: dict) -> None:
     st.session_state["srcreg_pg"] = pg
     sl = items[(pg - 1) * PER: pg * PER]
 
-    W = [2.6, 1.8, 1.8, 1.2, 1.4, 2.0]
+    W = [2.4, 1.6, 1.5, 1.0, 1.2, 1.7, 1.7]
     hh = st.columns(W)
     for i, lbl in enumerate(["Source Name · Code · Host", "Source class",
-                             "Verification", "Access", "Method", "Type(s)"]):
+                             "Verification", "Access", "Method",
+                             "Solicitation", "Instrument"]):
         hh[i].markdown(f"**{lbl}**")
     dbrows = {r["host"]: r for r in rows}
     with st.form(f"srcreg_form_{pg}"):
@@ -672,10 +687,13 @@ def _render_source_registry(user: dict) -> None:
                 k = f"srcreg_{col}_{host}"
                 if k not in st.session_state:
                     st.session_state[k] = kfn(r) if kfn else dval
-            tk = f"srcreg_ty_{host}"
-            if tk not in st.session_state:
-                st.session_state[tk] = [t for t in (r.get("opportunity_types") or [])
-                                        if t in _TYPE_OPTS]
+            solk, instk = f"srcreg_sol_{host}", f"srcreg_inst_{host}"
+            if solk not in st.session_state:
+                st.session_state[solk] = [t for t in (r.get("solicitation_types") or [])
+                                          if t in SOLICITATION_TYPES]
+            if instk not in st.session_state:
+                st.session_state[instk] = [t for t in (r.get("instrument_types") or [])
+                                           if t in INSTRUMENT_TYPES]
             c[1].selectbox("sc", _SRC_OPTS, key=f"srcreg_sc_{host}",
                            label_visibility="collapsed")
             c[2].selectbox("vf", _VERIF_OPTS, key=f"srcreg_vf_{host}",
@@ -684,7 +702,10 @@ def _render_source_registry(user: dict) -> None:
                            label_visibility="collapsed")
             c[4].selectbox("in", _METHOD_OPTS, key=f"srcreg_in_{host}",
                            label_visibility="collapsed")
-            c[5].multiselect("ty", _TYPE_OPTS, key=tk, label_visibility="collapsed")
+            c[5].multiselect("sol", SOLICITATION_TYPES, key=solk,
+                             label_visibility="collapsed")
+            c[6].multiselect("inst", INSTRUMENT_TYPES, key=instk,
+                             label_visibility="collapsed")
         sr_submitted = st.form_submit_button(f"💾 Save page ({len(sl)})",
                                              type="primary")
 
@@ -701,8 +722,10 @@ def _render_source_registry(user: dict) -> None:
                 "status": "confirmed" if vl in _VERIFIED else "pending",
                 "access_model": st.session_state.get(f"srcreg_ac_{host}") or None,
                 "ingestion_method": st.session_state.get(f"srcreg_in_{host}") or None,
-                "opportunity_types":
-                    st.session_state.get(f"srcreg_ty_{host}") or None,
+                "solicitation_types":
+                    st.session_state.get(f"srcreg_sol_{host}") or None,
+                "instrument_types":
+                    st.session_state.get(f"srcreg_inst_{host}") or None,
                 "sample_url": st.session_state.get(f"srcreg_url_{host}") or None,
             }
             if (db.get("source_class") != fields["source_class"]
@@ -710,7 +733,8 @@ def _render_source_registry(user: dict) -> None:
                     or (db.get("status") or "pending") != fields["status"]
                     or db.get("access_model") != fields["access_model"]
                     or db.get("ingestion_method") != fields["ingestion_method"]
-                    or (db.get("opportunity_types") or []) != (fields["opportunity_types"] or [])
+                    or (db.get("solicitation_types") or []) != (fields["solicitation_types"] or [])
+                    or (db.get("instrument_types") or []) != (fields["instrument_types"] or [])
                     or (db.get("sample_url") or "") != (fields["sample_url"] or "")):
                 if source_registry.update_row(host, fields, by=email):
                     n += 1

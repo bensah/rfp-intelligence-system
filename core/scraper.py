@@ -915,6 +915,14 @@ def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
             return _scan_ungm(name, url)
         if "grantplus.unops.org" in url.lower():
             return _scan_unops(name, url)
+        if "grants.chinnova.aau.org" in url.lower():
+            return _scan_chinnova(name, url)
+        # World Bank "Business Opportunities" page is JS, but it's backed by the
+        # keyless procnotices API — route either URL to that handler.
+        if "worldbank.org" in url.lower() and ("opportunit" in url.lower()
+                                               or "procnotices" in url.lower()):
+            return _scan_worldbank_procurement(
+                name, "https://search.worldbank.org/api/v2/procnotices")
         # Theme/country filtering now happens in core.scan_pipeline (policy-
         # driven, admin-configurable). Scrapers return raw candidates.
         if method == "rss":
@@ -1877,6 +1885,55 @@ def _scan_unops(name: str, url: str) -> list[dict[str, Any]]:
     return _dedup_by_link_or_title(out)
 
 
+def _scan_chinnova(name: str, url: str) -> list[dict[str, Any]]:
+    """CHINNOVA (AAU) grants portal — static HTML, but each call is a card whose
+    LINK text is a generic 'Click to View Details' CTA (the title lives in the card
+    heading), so the generic anchor extractor misses it. Parse the gc-card-body
+    cards: title + 'Deadline: DD Month, YYYY' + grant-details.php?id=N."""
+    listing = "https://grants.chinnova.aau.org/pages/all-grants.php"
+    try:
+        r = requests.get(listing, headers={"User-Agent": USER_AGENT,
+                                           "Accept": "text/html"},
+                         timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+    except Exception as exc:
+        log.warning("CHINNOVA failed: %s", exc)
+        return []
+    out: list[dict[str, Any]] = []
+    for card in soup.select("div.gc-card-body"):
+        a = card.select_one("a[href*='grant-details.php']")
+        if not a:
+            continue
+        head = card.select_one("h1, h2, h3, h4, h5")
+        ctext = card.get_text(" ", strip=True)
+        title = _clean(head.get_text(" ", strip=True)) if head else ""
+        if not title:
+            t = re.sub(r"^(EXPIRED|OPEN|CLOSED)\s*", "", ctext, flags=re.I)
+            title = _clean(re.split(r"Deadline", t, 1)[0])
+        if not title:
+            continue
+        deadline = None
+        m = re.search(r"Deadline:\s*([0-9]{1,2}\s+[A-Za-z]+,?\s+20[0-9]{2})", ctext)
+        if m:
+            try:
+                deadline = datetime.strptime(
+                    m.group(1).replace(",", ""), "%d %B %Y").date()
+            except ValueError:
+                deadline = _parse_iso_date(m.group(1))
+        out.append({
+            "opportunity_title": title[:300],
+            # hrefs are root-relative ("pages/grant-details.php?id=N").
+            "opportunity_link": urljoin("https://grants.chinnova.aau.org/",
+                                        a["href"]),
+            "funding_agency": "CHINNOVA / Association of African Universities",
+            "brief_description": None,
+            "submission_deadline": deadline,
+            "_source_origin": name,
+        })
+    return _dedup_by_link_or_title(out)
+
+
 # Strong opportunity-path URLs — a link whose PATH clearly points at a specific
 # call (e.g. /apply/rfp, /calls-for-proposals/<slug>, /grants/<slug>) is accepted
 # even with a SHORT anchor text ("RFP", "Request for Proposals", "Apply"), which
@@ -1888,6 +1945,46 @@ _STRONG_OPP_PATH = re.compile(
     r"|request-for-(?:proposal|application|expression)"
     r"|funding-opportunit|grant-opportunit|request-for-proposals"
     r"|tender|procurement-notice)(?:/|s/|-|$)", re.I)
+
+# Anchors that are navigation chrome, NOT individual solicitations. These were
+# slipping through the _STRONG_OPP_PATH bypass (e.g. the "English" language
+# toggle and "2"/"3"/"4" pagination links on Unitaid's /calls-for-proposals/).
+_LANG_NAMES = {
+    "english", "français", "francais", "español", "espanol", "deutsch",
+    "português", "portugues", "italiano", "nederlands", "polski", "العربية",
+    "中文", "русский", "日本語", "한국어", "हिन्दी", "kiswahili", "عربي",
+}
+_NAV_TEXT = {
+    "next", "previous", "prev", "first", "last", "more", "read more",
+    "load more", "show more", "view all", "see all", "view more", "home",
+    "back", "apply", "apply now", "menu", "search", "skip to main content",
+    "subscribe", "newsletter", "contact", "contact us", "about", "about us",
+    "login", "log in", "sign in", "register", "donate", "donate now",
+}
+_PAGE_NUM_RE = re.compile(r"^(page\s*)?\d{1,3}$", re.I)
+_PAGINATION_QS_RE = re.compile(r"[?&](paged?|page|p|pg)=\d+", re.I)
+
+
+def _norm_loc(u: str) -> str:
+    s = urlsplit(u)
+    return (s.netloc.lower() + s.path.rstrip("/").lower())
+
+
+def _is_junk_anchor(text: str, full: str, listing_url: str) -> bool:
+    """True for nav chrome: language toggles, pagination, common nav verbs, and
+    links that just point back at the listing page itself (lang/pagination)."""
+    t = text.strip().lower()
+    if t in _LANG_NAMES or t in _NAV_TEXT:
+        return True
+    if _PAGE_NUM_RE.match(t):
+        return True
+    if _PAGINATION_QS_RE.search(full):
+        return True
+    # self-referential: same netloc+path as the listing (differs only by
+    # query/fragment) — that's a language/pagination/anchor link, not a call.
+    if _norm_loc(full) == _norm_loc(listing_url):
+        return True
+    return False
 
 
 def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[dict[str, Any]]:
@@ -1908,6 +2005,11 @@ def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[d
         # A specific opportunity-path link bypasses the generic title-length floor.
         strong = bool(_STRONG_OPP_PATH.search(urlsplit(full).path))
         if not text or len(text) > 220 or (len(text) < 25 and not strong):
+            continue
+        # Drop navigation chrome (language toggles, pagination, nav verbs,
+        # self-links) — applies even to strong-path links so "English"/"2"/"3"
+        # pagination on a /calls-for-proposals/ page no longer slip through.
+        if _is_junk_anchor(text, full, url):
             continue
         # Stay within the same domain to avoid scraping nav links to other sites.
         if urlsplit(full).netloc.lower() != base_host:

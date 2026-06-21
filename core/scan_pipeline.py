@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core import deep_read, source_resolver, live_check, seen_ledger
-from core import aggregators, source_registry, scraper, opportunity_type
+from core import aggregators, source_registry, scraper, type_detect
 from core.auto_scorer import (auto_score, is_eligible, is_index_page,
                               theme_eligible)
 from core.deduplicator import find_duplicates
@@ -146,7 +146,8 @@ def _build_row(
         "progress_status": "Not Started",
         "donor_decision": "Not submitted",
         "assigned_to": "TBD",
-        "opportunity_type": candidate.get("opportunity_type"),
+        "solicitation_type": candidate.get("solicitation_type"),
+        "instrument_type": candidate.get("instrument_type"),
     }
     row.update(auto_score(candidate, policies))
     # Carry over the donor's OWN structured fields. auto_score only emits the
@@ -352,17 +353,20 @@ def ingest_candidates(
                     source_resolver.resolve_and_enrich(cand)
             except Exception as exc:
                 log.debug("source resolve skipped: %s", exc)
-        # Detect the opportunity TYPE (Grant/RFP/CFP/Cooperative Agreement/…) from
-        # the donor's funding-instrument field + title/URL — carried onto both the
-        # inserted row and the reject record, and aggregated onto the source.
-        cand["opportunity_type"] = (cand.get("opportunity_type")
-                                    or opportunity_type.detect(cand))
+        # Classify on both axes — solicitation (how to apply: NOFO/RFP/CFA/EOI/…)
+        # and instrument (the contract: Grant/Cooperative Agreement/Loan/…). Carried
+        # onto the inserted row + the reject record, and aggregated onto the source.
+        cand["solicitation_type"] = (cand.get("solicitation_type")
+                                     or type_detect.detect_solicitation(cand))
+        cand["instrument_type"] = (cand.get("instrument_type")
+                                   or type_detect.detect_instrument(cand))
         # First-pass eligibility gate (cheap: URL/title/keyword/deadline/scope).
         ok, reason = is_eligible(cand, policies)
         _source_encounters.append({
             "url": _orig_link, "title": cand.get("opportunity_title"),
             "detected": _kind, "accepted": ok,
-            "opportunity_type": cand.get("opportunity_type")})
+            "solicitation_type": cand.get("solicitation_type"),
+            "instrument_type": cand.get("instrument_type")})
         if not ok:
             rejected += 1
             log.info("reject: %s — %s", cand.get("opportunity_title", "")[:60], reason)
