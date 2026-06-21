@@ -77,7 +77,8 @@ def clear_cache() -> None:
 _CORE_COLS = ("host,classification,status,source_class,access_model,"
               "ingestion_method,has_api,detected_as,hits,"
               "sample_url,sample_title,last_seen,verified_by")
-_EXTRA_COLS = ",opportunity_types,donor_name,donor_code"
+_EXTRA_COLS = (",opportunity_types,solicitation_types,instrument_types,"
+               "donor_name,donor_code,in_catalogue")
 
 
 def list_rows() -> list[dict]:
@@ -98,7 +99,8 @@ def list_rows() -> list[dict]:
 
 
 _EDITABLE = ("classification", "status", "source_class", "access_model",
-             "ingestion_method", "has_api", "opportunity_types", "sample_url",
+             "ingestion_method", "has_api", "opportunity_types",
+             "solicitation_types", "instrument_types", "sample_url",
              "donor_name", "donor_code")
 
 
@@ -233,6 +235,8 @@ def push_primaries(hosts: list[str], by: str | None = None) -> dict:
                 "access_model": r.get("access_model"),
                 "source_class": r.get("source_class"),
                 "opportunity_types": r.get("opportunity_types") or None,
+                "solicitation_types": r.get("solicitation_types") or None,
+                "instrument_types": r.get("instrument_types") or None,
                 "is_active": True,
             }
             if host in by_host:                      # UPDATE existing in place
@@ -251,11 +255,66 @@ def push_primaries(hosts: list[str], by: str | None = None) -> dict:
                 by_host[host] = "pending"            # avoid dup-insert within batch
         if inserts:
             sb.table("donor_sources").insert(inserts).execute()
+        # Mark pushed hosts as present in the catalogue so future pushes skip
+        # them (no duplicates across registry ↔ catalogue). Best-effort — needs
+        # migration 040; silently ignored if the column isn't there yet.
+        pushed = added + updated
+        if pushed:
+            try:
+                sb.table(_TABLE).update({"in_catalogue": True}).in_(
+                    "host", pushed).execute()
+                clear_cache()
+            except Exception:
+                pass
         return {"added": added, "updated": updated, "skipped": skipped,
                 "error": None}
     except Exception as exc:
         log.debug("source_registry.push_primaries failed: %s", exc)
         return {"added": [], "updated": [], "skipped": [], "error": str(exc)[:200]}
+
+
+def reconcile_in_catalogue() -> dict:
+    """Recompute the `in_catalogue` flag for every registry row by matching its
+    host (and sample_url host) BASE DOMAIN against the live donor_sources
+    catalogue. Sets True for hosts already in the catalogue, False otherwise, so
+    the registry's "not yet pushed" view and future pushes stay accurate.
+
+    Returns {marked, cleared, total, error}. Best-effort; needs migration 040."""
+    def _base(h: str | None) -> str:
+        p = (h or "").split(".")
+        return ".".join(p[-2:]) if len(p) >= 2 else (h or "")
+
+    try:
+        sb = get_client()
+        cat = (sb.table("donor_sources")
+               .select("rfp_listing_url,base_url").execute().data or [])
+        cat_bases = set()
+        for c in cat:
+            for u in (c.get("rfp_listing_url"), c.get("base_url")):
+                h = normalize_host(u)
+                if h:
+                    cat_bases.add(_base(h))
+        marked = cleared = 0
+        for r in list_rows():
+            host = r.get("host")
+            present = (_base(host) in cat_bases
+                       or _base(normalize_host(r.get("sample_url"))) in cat_bases)
+            current = bool(r.get("in_catalogue"))
+            if present == current:
+                continue
+            try:
+                sb.table(_TABLE).update({"in_catalogue": present}).eq(
+                    "host", host).execute()
+                marked += int(present)
+                cleared += int(not present)
+            except Exception:
+                pass
+        clear_cache()
+        return {"marked": marked, "cleared": cleared,
+                "total": marked + cleared, "error": None}
+    except Exception as exc:
+        log.debug("source_registry.reconcile_in_catalogue failed: %s", exc)
+        return {"marked": 0, "cleared": 0, "total": 0, "error": str(exc)[:200]}
 
 
 def record_encounters(encounters: list[dict]) -> int:
@@ -274,10 +333,12 @@ def record_encounters(encounters: list[dict]) -> int:
             continue
         a = agg.setdefault(host, {"count": 0, "detected": "unknown",
                                   "url": e.get("url"), "title": e.get("title"),
-                                  "types": set()})
+                                  "sols": set(), "instrs": set()})
         a["count"] += 1
-        if e.get("opportunity_type"):
-            a["types"].add(e["opportunity_type"])
+        if e.get("solicitation_type"):
+            a["sols"].add(e["solicitation_type"])
+        if e.get("instrument_type"):
+            a["instrs"].add(e["instrument_type"])
         det = (e.get("detected") or "unknown").lower()
         # Precedence: a detected aggregator/blog/listing STICKS (even if the
         # candidate was accepted — that means its resolved primary passed, not
@@ -316,7 +377,8 @@ def record_encounters(encounters: list[dict]) -> int:
                     "access_model": m.get("access_model"),
                     "ingestion_method": m.get("ingestion_method"),
                     "has_api": bool(m.get("has_api")),
-                    "opportunity_types": sorted(a["types"]) or None,
+                    "solicitation_types": sorted(a["sols"]) or None,
+                    "instrument_types": sorted(a["instrs"]) or None,
                 })
             else:
                 upd = {"hits": int(row.get("hits") or 0) + a["count"],
