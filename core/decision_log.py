@@ -88,6 +88,7 @@ def _base_record(cand: dict, *, event_type: str, label: str | None,
         "source": cand.get("source") or cand.get("_source_origin"),
         "geographic_scope": _scope_text(cand.get("geographic_scope")),
         "submission_deadline": _date_or_none(cand.get("submission_deadline")),
+        "opportunity_type": cand.get("opportunity_type"),
         "alignment_score": cand.get("alignment_score"),
         "features": _features(cand),
         "decided_by": by,
@@ -171,20 +172,144 @@ def log_decision(row: dict, decision: str, by: str | None = None) -> bool:
         return False
 
 
-def log_feedback(row: dict, verdict: str, by: str | None = None) -> bool:
+def log_feedback(row: dict, verdict: str, by: str | None = None,
+                 reason: str | None = None) -> bool:
     """Log reviewer feedback on a record: 'good' / 'neutral' / 'bad'.
 
     Three-way so it mirrors the decision classes without skewing the learning
     signal: Proceed→good, Park→neutral (intermediary, info-insufficient),
-    Decline→bad. Migrated baseline decisions map the same way."""
+    Decline→bad. Migrated baseline decisions map the same way. `reason` tags the
+    feedback's origin (e.g. 'search-result') so a web-search rating — which has
+    no rfp_uid yet — stays distinguishable from feedback on an inserted record."""
     v = (verdict or "").strip().lower()
     if not row or v not in ("good", "neutral", "bad"):
         return False
     try:
         rec = _base_record(row, event_type="feedback", label=v,
-                           reason=None, by=by)
+                           reason=reason, by=by)
         get_client().table(_TABLE).insert(rec).execute()
         return True
     except Exception as exc:
         log.debug("decision_log.log_feedback failed: %s", exc)
         return False
+
+
+# Reject-verification verdicts (Workstream A). Semantics are gate-quality, NOT
+# the Proceed/Park/Decline model: a human is judging whether the HARD GATE was
+# right to drop this candidate.
+#   valid_reject — the auto-reject was correct (confirm the gate)
+#   false_reject — the gate was WRONG; this should have entered (recoverable)
+#   unsure       — can't tell
+_REJECT_VERDICTS = ("valid_reject", "false_reject", "unsure")
+
+
+def log_reject_verification(reject: dict, verdict: str, by: str | None = None,
+                            corrected_reason: str | None = None) -> bool:
+    """Log a human verdict on an auto-rejected candidate (event_type
+    'reject_verification'). Distinct from `feedback` (which rates gate-SURVIVORS
+    for the P/P/D model) — this trains/tunes the hard GATE itself. `reject` is a
+    scan_decisions system_reject row.
+
+    `corrected_reason` (when given) is the reason the gate SHOULD have used —
+    stored in `reason`, overriding the system reason category, so a learning
+    pass (scripts/analyze_reject_feedback.py) can find systematic gate errors
+    ("system says not-an-rfp, human says deadline"). The system reason stays on
+    the original system_reject row for comparison.
+
+    Append-only, idempotent per link: a no-op when the latest verification
+    already carries the same verdict AND reason (re-saves don't pile up).
+    Best-effort — never raises."""
+    v = (verdict or "").strip().lower()
+    if not reject or v not in _REJECT_VERDICTS:
+        return False
+    link = (reject.get("opportunity_link") or "").strip()
+    reason_to_store = (corrected_reason or "").strip() or None
+    try:
+        sb = get_client()
+        if link:
+            try:
+                prev = (sb.table(_TABLE).select("label, reason")
+                        .eq("event_type", "reject_verification")
+                        .eq("opportunity_link", link)
+                        .order("created_at", desc=True).limit(1).execute().data or [])
+                if prev and (prev[0].get("label") or "").strip().lower() == v \
+                        and (prev[0].get("reason") or None) == reason_to_store:
+                    return True
+            except Exception:
+                pass
+        rec = _base_record(
+            reject, event_type="reject_verification", label=v,
+            reason=reason_to_store, by=by)
+        sb.table(_TABLE).insert(rec).execute()
+        return True
+    except Exception as exc:
+        log.debug("decision_log.log_reject_verification failed: %s", exc)
+        return False
+
+
+def log_type_label(row: dict, type_value: str, by: str | None = None) -> bool:
+    """Log a human-assigned opportunity TYPE (Grant / RFP / Tender / Job / …) —
+    ground truth for the type classifier (event_type 'type_label', label=type).
+    Stored on scan_decisions so it needs no new table and works for both rejected
+    and inserted rows (anything with an opportunity_link). Idempotent per link on
+    the same type; append-only otherwise. Best-effort — never raises."""
+    t = (type_value or "").strip()
+    if not row or not t or t == "—":
+        return False
+    link = (row.get("opportunity_link") or "").strip()
+    try:
+        sb = get_client()
+        if link:
+            try:
+                prev = (sb.table(_TABLE).select("label")
+                        .eq("event_type", "type_label").eq("opportunity_link", link)
+                        .order("created_at", desc=True).limit(1).execute().data or [])
+                if prev and (prev[0].get("label") or "").strip().lower() == t.lower():
+                    return True
+            except Exception:
+                pass
+        rec = _base_record(row, event_type="type_label", label=t,
+                           reason=None, by=by)
+        sb.table(_TABLE).insert(rec).execute()
+        return True
+    except Exception as exc:
+        log.debug("decision_log.log_type_label failed: %s", exc)
+        return False
+
+
+def latest_reasons(event_type: str) -> dict[str, str]:
+    """Map opportunity_link → latest stored `reason` for the given event_type
+    (e.g. the human-corrected reject reason). Lets the Verify UI re-display a
+    saved Correct reason after a reload. {} on any error."""
+    try:
+        rows = (get_client().table(_TABLE)
+                .select("opportunity_link, reason, created_at")
+                .eq("event_type", event_type)
+                .order("created_at", desc=True).limit(5000).execute().data or [])
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for r in rows:                       # newest-first → first wins
+        link = (r.get("opportunity_link") or "").strip()
+        if link and link not in out and (r.get("reason") or "").strip():
+            out[link] = r["reason"].strip()
+    return out
+
+
+def latest_verifications(event_type: str) -> dict[str, str]:
+    """Map opportunity_link → latest verdict label for the given event_type
+    ('reject_verification' or 'feedback'). Powers the verification UI so each row
+    shows its current human verdict. {} on any error."""
+    try:
+        rows = (get_client().table(_TABLE)
+                .select("opportunity_link, label, created_at")
+                .eq("event_type", event_type)
+                .order("created_at", desc=True).limit(5000).execute().data or [])
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for r in rows:                       # rows are newest-first → first wins
+        link = (r.get("opportunity_link") or "").strip()
+        if link and link not in out:
+            out[link] = (r.get("label") or "").strip()
+    return out
