@@ -37,7 +37,7 @@ _DISPATCH = {"api": "rest_json", "rss": "rss", "page crawl": "html",
 _TYPE_RULES = [
     ("expression of interest", "EOI"), ("request for information", "RFI"),
     ("request for proposal", "RFP"), ("call for proposal", "CFP"),
-    ("call for application", "Grant"), ("letter of inten", "LOI"),
+    ("call for application", "CFA"), ("letter of inten", "LOI"),
     ("procurement", "Procurement notice"), ("contract award", "Contract award"),
     ("invitation to bid", "Tender"), ("tender", "Tender"), ("solicitation", "Tender"),
     ("fellowship", "Fellowship"), ("scholarship", "Scholarship"),
