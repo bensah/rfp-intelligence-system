@@ -646,6 +646,42 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
             print(f"  rfp_submissions: {len(_new)} NEW inserted · "
                   f"{_skip} existing skipped (not overwritten)")
 
+    # --- Seed source_registry from the Opportunity Link column. Adds only NEW
+    # hosts (deduped against the existing registry), as status='pending' so Bernard
+    # verifies/corrects the actual Host / listing URL manually afterwards.
+    print("[Form1 Opportunity Link -> source_registry]")
+    if dry_run:
+        print("  source_registry (dry-run): would seed new hosts from Opportunity Link")
+    elif sb is not None and rfp_rows:
+        try:
+            from core.source_registry import normalize_host
+            existing_hosts = {
+                r.get("host") for r in
+                (sb.table("source_registry").select("host").execute().data or [])}
+            seen_h: set[str] = set()
+            seed_rows: list[dict[str, Any]] = []
+            for r in rfp_rows:
+                link = (r.get("opportunity_link") or "").strip()
+                if not link.lower().startswith("http"):
+                    continue
+                h = normalize_host(link)
+                if not h or h in existing_hosts or h in seen_h:
+                    continue        # don't add duplicates
+                seen_h.add(h)
+                seed_rows.append({
+                    "host": h, "classification": "unknown", "status": "pending",
+                    "detected_as": "migration", "sample_url": link[:600],
+                    "sample_title": (r.get("opportunity_title") or "")[:300] or None,
+                    "verified_by": "excel-migration",
+                })
+            for i in range(0, len(seed_rows), 200):
+                sb.table("source_registry").upsert(
+                    seed_rows[i:i + 200], on_conflict="host").execute()
+            print(f"  source_registry: seeded {len(seed_rows)} NEW host(s) "
+                  "(pending manual verify of Host / listing URL)")
+        except Exception as _e:
+            print(f"  (source_registry seed skipped: {_e})")
+
     # --- meeting_logs (Meeting_Log) — header auto-detected
     print("[Meeting_Log -> meeting_logs]")
     ws_m = wb["Meeting_Log"]
