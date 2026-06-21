@@ -53,9 +53,9 @@ def _purge_seen_ledger(sb, deleted_rows) -> int:
         return 0
 
 (tab_settings, tab_users, tab_access, tab_data, tab_sources,
- tab_scan, tab_blacklist, tab_verify, tab_learning) = st.tabs(
+ tab_scan, tab_blacklist, tab_learning) = st.tabs(
     ["Setup", "Manage Users", "User Access", "Records", "Sources",
-     "Manual Scan", "Blacklist", "Verify", "Learning data"]
+     "Manual Scan", "Blacklist", "Learning data"]
 )
 
 # User administration tabs — moved here from the old User page in the
@@ -114,7 +114,10 @@ with tab_settings:
     render_org_setup(user, sb)
 
 with tab_data:
-    _dtab, _rtab = st.tabs(["Data", "Reset"])
+    _dtab, _vtab, _rtab = st.tabs(["Data", "Verify", "Reset"])
+    with _vtab:
+        from views.verification import render_verification
+        render_verification(user, sb)
     with _dtab:
         st.subheader("Data — view, filter, edit, delete, share")
         st.caption(
@@ -1438,12 +1441,8 @@ with tab_blacklist:
             st.error(f"Save failed: {exc}")
 
 
-# -----------------------------------------------------------------------------
-# Tab 8 — Verify (Workstream A: human verification + feedback over the scan)
-# -----------------------------------------------------------------------------
-with tab_verify:
-    from views.verification import render_verification
-    render_verification(user, sb)
+# Verify (human verification + feedback over the scan) now lives as a sub-tab
+# under Records → Data | Verify | Reset (see `with tab_data:` above).
 
 
 # -----------------------------------------------------------------------------

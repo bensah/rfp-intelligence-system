@@ -31,6 +31,25 @@ _CARRY = (
 )
 
 
+def _gate_class(reason: str) -> str:
+    """Classify an is_eligible rejection reason for the search-Track flow:
+      source — a listing/aggregator/search page (route to Sources registry)
+      hard   — clearly not an RFP (news/error/wrong type/blacklist) → reject
+      soft   — theme/geo/country/deadline/language/feasibility/eligibility →
+               allow as a human override, but note it."""
+    r = (reason or "").lower()
+    # Hard checks FIRST — a not-an-rfp reason can mention "blog"/"news" in its
+    # text ("news / press / blog page") and must not be mistaken for a source.
+    if any(k in r for k in ("not-an-rfp", "not an rfp", "type:", "blacklist",
+                            "past-tense", "error", "unavailable")):
+        return "hard"
+    if any(k in r for k in ("aggregator", "blog", "listing", "lists / indexes",
+                            "indexes calls", "calls-listing", "generic calls",
+                            "search / filter")):
+        return "source"
+    return "soft"
+
+
 def _parse_deadline(v: Any) -> str | None:
     if not v:
         return None
@@ -88,6 +107,43 @@ def load_candidate(candidate: dict, user: dict | None = None, *,
             policies = get_policies()
         except Exception:
             pass
+
+        # GATE search-Tracks before they reach Found Records (the final RFP store).
+        # A listing/source page → route to the Sources registry to be CRAWLED; a
+        # clear non-RFP (news, error, wrong type) → reject; soft misses (theme /
+        # geo / deadline) are allowed through as a human override but noted.
+        # reject-recovery is exempt — there the human is overriding the gate.
+        _gate_note = None
+        if provenance == "search":
+            try:
+                from core.auto_scorer import is_eligible
+                _ok, _reason = is_eligible(candidate, policies)
+            except Exception:
+                _ok, _reason = True, ""
+            if not _ok:
+                cls = _gate_class(_reason)
+                link = candidate.get("opportunity_link") or ""
+                if cls == "source":
+                    try:
+                        from core import source_registry as _sr, aggregators as _ag
+                        _k = _ag.classify(link)[0] if link else "unknown"
+                        _sr.add_row(link, {
+                            "classification": _k if _k in ("primary", "aggregator")
+                            else "unknown", "status": "pending",
+                            "sample_title": title[:300]},
+                            by=(user or {}).get("email") or "web-track")
+                    except Exception:
+                        pass
+                    return {"ok": False, "uid": None, "skipped": False,
+                            "routed": "registry",
+                            "reason": "source/listing page — added to the Sources "
+                                      "registry to crawl (not a single RFP)."}
+                if cls == "hard":
+                    return {"ok": False, "uid": None, "skipped": False,
+                            "rejected": True,
+                            "reason": f"not a valid RFP — {_reason}"}
+                _gate_note = _reason          # soft miss → allow but record why
+
         scored = {}
         try:
             scored = auto_score(candidate, policies) or {}
@@ -114,7 +170,8 @@ def load_candidate(candidate: dict, user: dict | None = None, *,
             "review_week": review_week_label(),
             # provenance marker (the column is a free-text note) so these stay
             # identifiable as web/recovery loads in later analysis.
-            "notes": f"loaded via {provenance}",
+            "notes": (f"loaded via {provenance}"
+                      + (f" · soft-gate: {_gate_note}" if _gate_note else "")),
             "decision": None,                   # awaiting human review — NO label
         }
         for k in _CARRY:
