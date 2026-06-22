@@ -49,6 +49,15 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# Force UTF-8 stdout/stderr. When launched as a subprocess on Windows the child
+# inherits a cp1252 stream, so a single non-ASCII print (e.g. the "∩" in the dedup
+# summary) raises UnicodeEncodeError and crashes the whole scan with exit code 1.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 from core.scraper import scan_source  # noqa: E402
 from core.scan_pipeline import ingest_candidates  # noqa: E402
 from core.page_monitor import check_manual_sources, summarize_change_events  # noqa: E402
