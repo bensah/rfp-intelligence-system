@@ -670,6 +670,54 @@ def _enrich_developmentaid(cand: dict[str, Any]) -> dict[str, Any] | None:
     return cand
 
 
+# Award-amount extraction. Requires an explicit currency marker so bare numbers
+# (years, counts, phone parts) never match. Used to fill estimated_value for HTML
+# donor pages (e.g. Stanford seed funding) where the amount sits in the body.
+_AMOUNT_RE = re.compile(
+    r"(?P<cur>US\$|USD|\$|€|EUR|£|GBP|CHF|CAD|AUD)\s?"
+    r"(?P<num>\d{1,3}(?:[,\s]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+    r"\s?(?P<mag>billion|bn|million|mn|m|thousand|k)?\b", re.I)
+_AMOUNT_MAG = {"billion": 1e9, "bn": 1e9, "million": 1e6, "mn": 1e6, "m": 1e6,
+               "thousand": 1e3, "k": 1e3}
+_AMOUNT_CUR = {"us$": "USD", "usd": "USD", "$": "USD", "€": "EUR", "eur": "EUR",
+               "£": "GBP", "gbp": "GBP", "chf": "CHF", "cad": "CAD", "aud": "AUD"}
+# Award-context words near a figure that mark it as the grant size (not some
+# unrelated dollar figure on the page).
+_AMOUNT_CTX_RE = re.compile(
+    r"(up to|award|grant|funding|value|budget|maximum|max\b|each|per "
+    r"(?:grant|award|project|year)|total|prize|stipend|amount)", re.I)
+
+
+def _one_amount(m: "re.Match") -> tuple[float | None, str | None]:
+    try:
+        num = float(m.group("num").replace(",", "").replace(" ", ""))
+    except (TypeError, ValueError):
+        return None, None
+    num *= _AMOUNT_MAG.get((m.group("mag") or "").lower(), 1.0)
+    cur = _AMOUNT_CUR.get((m.group("cur") or "").lower())
+    return num, cur
+
+
+def _extract_amount(title: str, text: str) -> tuple[float | None, str | None]:
+    """Best-effort grant size. Title first (high precision, e.g. '$5,000 Propel
+    Grant'); else the LARGEST body figure sitting next to an award-context word.
+    Requires a currency marker, and floors un-magnitude'd figures at 1000 so a
+    '$50 fee' style number can't masquerade as the award."""
+    for m in _AMOUNT_RE.finditer(title or ""):
+        v, c = _one_amount(m)
+        if v and (m.group("mag") or v >= 1000):
+            return v, c
+    best_v, best_c = None, None
+    for m in _AMOUNT_RE.finditer(text or ""):
+        ctx = text[max(0, m.start() - 40):m.end() + 25]   # award word either side
+        if not _AMOUNT_CTX_RE.search(ctx):
+            continue
+        v, c = _one_amount(m)
+        if v and (m.group("mag") or v >= 1000) and (best_v is None or v > best_v):
+            best_v, best_c = v, c
+    return best_v, best_c
+
+
 def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
     """Fetch the candidate's detail page and fill in missing fields.
 
@@ -819,6 +867,15 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
                 desc = stripped[:600]
         if desc:
             cand["brief_description"] = desc
+
+    # Award amount — fill estimated_value from the title or body when the source
+    # didn't provide one (Stanford seed funding et al. bury it in the page text).
+    if cand.get("estimated_value") in (None, "", 0):
+        amt, cur = _extract_amount(cand.get("opportunity_title") or "", text or "")
+        if amt is not None:
+            cand["estimated_value"] = amt
+            if cur and not cand.get("currency"):
+                cand["currency"] = cur
 
     # Eligibility — append to brief_description so the country gate in
     # auto_scorer.country_eligible() sees it. (The gate scans
