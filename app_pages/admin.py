@@ -1048,7 +1048,10 @@ with tab_sources:
         # Friendly Method label (matches the Verify registry vocabulary).
         ddf["method_label"] = ddf["scrape_method"].map(
             lambda m: _METHOD_TO_LABEL.get(m, m))
-        base_cols = ["donor_name", "donor_code", "rfp_listing_url", "method_label"]
+        # source_uid (migration 043) leads the table when present.
+        uid_col = ["source_uid"] if "source_uid" in ddf.columns else []
+        base_cols = uid_col + ["donor_name", "donor_code", "rfp_listing_url",
+                               "method_label"]
         # Access + Source class (migration 037) shown when present.
         extra = [c for c in ("source_class", "access_model") if c in ddf.columns]
         disp = ddf[base_cols + extra + ["is_active", "last_scraped_at",
@@ -1058,6 +1061,7 @@ with tab_sources:
             disp, hide_index=True, width='stretch',
             selection_mode="multi-row", on_select="rerun", key="ds_table",
             column_config={
+                "source_uid": st.column_config.NumberColumn("ID", width="small"),
                 "donor_name": st.column_config.TextColumn("Source Name"),
                 "donor_code": st.column_config.TextColumn("Code", width="small"),
                 "rfp_listing_url": st.column_config.LinkColumn("Host"),
