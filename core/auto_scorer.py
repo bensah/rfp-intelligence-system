@@ -410,15 +410,21 @@ _PLACE_RE = re.compile(
 
 
 def _org_geo_set(policies: dict[str, Any]) -> set[str]:
-    """The org's in-scope COUNTRY set, derived from policy: eligible countries +
-    any selected REGION broad-terms (income tiers like LMIC are excluded — they
-    are inclusive keepers, not region definers). Lowercased. e.g. Cameroon/Mali +
-    'Sub-Saharan Africa' → every SSA country."""
+    """The org's geographic ANCHOR — the countries a call's scope must include to
+    be in-scope. Country-precise: when eligible countries are set we anchor on
+    THEM (not a broad-region expansion), so a Cameroon/Mali org accepts calls
+    scoped to West/Central Africa, Sub-Saharan Africa or Africa-wide (each
+    contains Cameroon or Mali) but rejects East-/Southern-/North-Africa-only calls
+    (which don't). Only when no specific country is configured do we fall back to
+    the selected region broad-terms. Income tiers (LMIC) never anchor — they're
+    inclusive keepers handled separately."""
     countries = policies.get("countries", {}) or {}
     eligible = [c for c in (countries.get("eligible") or []) if c]
+    if eligible:
+        return geo.expand(eligible)            # countries expand to themselves
     region_broad = [b for b in (countries.get("broad_terms") or [])
                     if b and b not in geo.INCOME_TIERS]
-    return geo.expand(eligible + region_broad)
+    return geo.expand(region_broad)
 
 
 def _place_in_org(place: str, org_set: set[str]) -> bool:
@@ -460,9 +466,16 @@ def geographic_exclusion_reject(candidate: dict[str, Any],
         return False, ""
 
     # 3. Defined scope intersection. call_set = countries named + members of any
-    # region the call scopes to. Overlap with org → keep; disjoint → reject.
-    call_set = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
-    for region in geo.regions_in_text(text):
+    # region the call scopes to. Country spans are blanked BEFORE region detection
+    # so a country like "South Africa" / "South Sudan" doesn't let its inner
+    # "africa"/"sudan" register a whole continent/region. Overlap with org → keep;
+    # disjoint → reject.
+    call_countries = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
+    clean = text
+    for c in sorted(call_countries, key=len, reverse=True):
+        clean = re.sub(r"\b" + re.escape(c) + r"\b", " ", clean)
+    call_set = set(call_countries)
+    for region in geo.regions_in_text(clean):
         call_set |= geo.expand([region])
     if not call_set:
         return False, ""                       # silent → let country_eligible park
