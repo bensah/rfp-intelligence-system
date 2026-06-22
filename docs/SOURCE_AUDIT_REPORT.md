@@ -310,6 +310,12 @@ have a unique `source_uid`; donors resolved via `core.donor_intel.match_donor`
 **36/75** registry. The 3 colliding hosts (`google.com`, `who.my.site.com`,
 `projects.worldbank.org`) correctly received `host-<hash>` uids.
 
+**Column display order:** `source_uid` is added last by `041`, so it appears at the
+far right in the Supabase Table Editor. Migration `042_reorder_source_uid_first.sql`
+rebuilds both tables (temp-table swap, atomic, preserves PK/CHECK/FK/indexes/RLS/
+grants/trigger) to move `source_uid` to the **first** column. Validated by
+execute-then-rollback against the live schema; run it in Supabase when ready.
+
 **Unmatched (31 catalogue sources) — donor absent from `donor_intel`.** These are
 left `NULL` (honest — no fabricated links) and are the follow-up backlog for
 extending the mapping table (add the donor row or an alias, then re-run the
