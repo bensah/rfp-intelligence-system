@@ -16,20 +16,15 @@ from pathlib import Path
 
 import streamlit as st
 
-_SOURCES_YAML = Path(__file__).resolve().parent.parent / "config" / "sources.yaml"
-
 
 def scannable_source_count() -> int:
-    """Exact count of auto-scannable catalogued sources in config/sources.yaml
-    (every entry whose method is NOT 'manual'). Used by the scan banners so the
-    figure is real and updates with the file — never a hardcoded guess. Returns
-    0 if the file can't be read."""
+    """Exact count of the sources a scan will actually scrape — the non-manual
+    rows of the ACTIVE donor_sources catalogue, live from the DB so it tracks
+    every add/remove. Delegates to run_scan.count_scannable_sources so the banner
+    figure can never drift from the real scan set. Returns 0 on error."""
     try:
-        import yaml
-        with open(_SOURCES_YAML, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        return sum(1 for s in (cfg.get("sources") or [])
-                   if (s.get("method") or "").lower() != "manual")
+        from scripts.run_scan import count_scannable_sources
+        return count_scannable_sources()
     except Exception:
         return 0
 

@@ -1,8 +1,8 @@
 """Scanner orchestrator.
 
-Iterates over the configured RFP sources (config/sources.yaml + active rows
-in donor_sources), calls the scraper for each, and writes one scan_logs
-row per source.
+Iterates over the ACTIVE rows of the donor_sources catalogue (the single source
+of truth — config/sources.yaml and donor_matrix seeds are no longer folded in),
+calls the scraper for each, and writes one scan_logs row per source.
 
 Used by:
   * The Friday GitHub Actions cron (triggered_by='cron')
@@ -236,6 +236,28 @@ def _load_seed_sources(sb, existing_urls: set[str]) -> list[dict[str, Any]]:
     return out
 
 
+def build_scan_sources(sb) -> list[dict[str, Any]]:
+    """The exact set of sources a scan processes: active donor_sources (donor-RFP
+    only — career/job-tagged rows excluded), de-duplicated by URL. Single source of
+    truth shared by run() and the banner count so the two can never drift.
+
+    Catalogue-only by design: the curated donor_sources catalogue is the single
+    point of entry (managed in Verify → Source registry → pushed to the catalogue).
+    The legacy config/sources.yaml keyword list and donor_matrix seeds are NOT
+    folded in — add or remove a catalogue row and the scan set changes 1:1."""
+    return _dedup_sources(_load_donor_sources(sb))
+
+
+def count_scannable_sources() -> int:
+    """How many sources a scan will actually scrape (non-manual) — live from the
+    active catalogue, so it tracks every add/remove. Returns 0 on error."""
+    try:
+        srcs = build_scan_sources(get_client())
+    except Exception:
+        return 0
+    return sum(1 for s in srcs if (s.get("method") or "").lower() != "manual")
+
+
 def _log_scan(sb, *, source: str, triggered_by: str,
               found: int, new: int, dup: int, rejected: int,
               duration: float, errors: str | None = None) -> None:
@@ -290,18 +312,11 @@ def run(
     workers: int = DEFAULT_WORKERS,
 ) -> dict:
     """Orchestrate a full scan. Returns aggregate counts dict."""
-    sb = None if dry_run else get_client()
-    yaml_sources = _load_yaml_sources()
-    donor_sources = [] if dry_run else _load_donor_sources(sb)
-    if dry_run or not INCLUDE_SEEDS:
-        seed_sources: list[dict[str, Any]] = []
-    else:
-        _existing = {_norm_url(s.get("url", "")) for s in (yaml_sources + donor_sources)
-                     if s.get("url")}
-        seed_sources = _load_seed_sources(sb, _existing)
-        if seed_sources:
-            print(f"Donor-matrix seeds added as sources: {len(seed_sources)}")
-    all_sources = _dedup_sources(yaml_sources + donor_sources + seed_sources)
+    # Catalogue-only scan: the active donor_sources rows ARE the scan set (the
+    # legacy sources.yaml keyword list + donor_matrix seeds are no longer folded
+    # in). A read-only client is fine on dry-run — writes stay gated on dry_run.
+    sb = get_client()
+    all_sources = build_scan_sources(sb)
 
     if source_filter:
         all_sources = [s for s in all_sources if (s.get("name") or "") == source_filter]
