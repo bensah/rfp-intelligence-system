@@ -74,7 +74,7 @@ def clear_cache() -> None:
 # Pre-037 columns (always present) + the 037 additions (opportunity_types /
 # donor_name / donor_code). list_rows tries the full set, falls back to core so
 # the registry stays viewable before migration 037 runs.
-_CORE_COLS = ("host,classification,status,source_class,access_model,"
+_CORE_COLS = ("source_uid,host,classification,status,source_class,access_model,"
               "ingestion_method,has_api,detected_as,hits,"
               "sample_url,sample_title,last_seen,verified_by")
 _EXTRA_COLS = (",opportunity_types,solicitation_types,instrument_types,"

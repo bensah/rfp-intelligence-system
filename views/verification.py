@@ -625,7 +625,8 @@ def _render_source_registry(user: dict) -> None:
     _csv_roundtrip(
         key="srcreg_csv", rows=items, id_header="host",
         id_fn=lambda r: r.get("host"),
-        context_cols=[("Hits", lambda r: r.get("hits") or 0)],
+        context_cols=[("ID", lambda r: r.get("source_uid")),
+                      ("Hits", lambda r: r.get("hits") or 0)],
         editable=[("Source Name", None, lambda r: r.get("donor_name") or ""),
                   ("Code", None, lambda r: r.get("donor_code") or ""),
                   ("Host", None, lambda r: r.get("sample_url") or ""),
