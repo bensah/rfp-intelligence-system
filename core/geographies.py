@@ -133,6 +133,94 @@ _REGION_MEMBERS: dict[str, list[str]] = {
 }
 
 
+# ── Non-African region members (so the geo gate can test, policy-driven, whether
+# a call's region contains the org's country — e.g. Cameroon ∉ EU/Mediterranean).
+_EU = [
+    "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Denmark",
+    "Estonia", "Finland", "France", "Germany", "Greece", "Hungary", "Ireland",
+    "Italy", "Latvia", "Lithuania", "Luxembourg", "Malta", "Netherlands",
+    "Poland", "Portugal", "Romania", "Slovakia", "Slovenia", "Spain", "Sweden",
+]
+_EUROPE = sorted(set(_EU + [
+    "Albania", "Andorra", "Belarus", "Bosnia and Herzegovina", "Iceland",
+    "Kosovo", "Liechtenstein", "Moldova", "Monaco", "Montenegro",
+    "North Macedonia", "Norway", "Russia", "San Marino", "Serbia",
+    "Switzerland", "Ukraine", "United Kingdom",
+]))
+_NORTHERN_AMERICA = ["Canada", "United States"]
+_CENTRAL_AMERICA = ["Belize", "Costa Rica", "El Salvador", "Guatemala",
+                    "Honduras", "Mexico", "Nicaragua", "Panama"]
+_SOUTH_AMERICA = ["Argentina", "Bolivia", "Brazil", "Chile", "Colombia",
+                  "Ecuador", "Guyana", "Paraguay", "Peru", "Suriname",
+                  "Uruguay", "Venezuela"]
+_CARIBBEAN = ["Antigua and Barbuda", "Bahamas", "Barbados", "Cuba", "Dominica",
+              "Dominican Republic", "Grenada", "Haiti", "Jamaica",
+              "Saint Kitts and Nevis", "Saint Lucia",
+              "Saint Vincent and the Grenadines", "Trinidad and Tobago"]
+_LATAM = sorted(set(_CENTRAL_AMERICA + _SOUTH_AMERICA + _CARIBBEAN))
+_NORTH_AMERICA_ALL = sorted(set(_NORTHERN_AMERICA + _CENTRAL_AMERICA + _CARIBBEAN))
+_EASTERN_ASIA = ["China", "Japan", "Mongolia", "North Korea", "South Korea",
+                 "Taiwan"]
+_SE_ASIA = ["Brunei", "Cambodia", "Indonesia", "Laos", "Malaysia", "Myanmar",
+            "Philippines", "Singapore", "Thailand", "Timor-Leste", "Vietnam"]
+_SOUTHERN_ASIA = ["Afghanistan", "Bangladesh", "Bhutan", "India", "Iran",
+                  "Maldives", "Nepal", "Pakistan", "Sri Lanka"]
+_CENTRAL_ASIA = ["Kazakhstan", "Kyrgyzstan", "Tajikistan", "Turkmenistan",
+                 "Uzbekistan"]
+_WESTERN_ASIA = ["Armenia", "Azerbaijan", "Bahrain", "Cyprus", "Georgia",
+                 "Iraq", "Israel", "Jordan", "Kuwait", "Lebanon", "Oman",
+                 "Palestine", "Qatar", "Saudi Arabia", "Syria", "Türkiye",
+                 "United Arab Emirates", "Yemen"]
+_ASIA = sorted(set(_EASTERN_ASIA + _SE_ASIA + _SOUTHERN_ASIA + _CENTRAL_ASIA
+                   + _WESTERN_ASIA))
+_OCEANIA = ["Australia", "Fiji", "Kiribati", "Marshall Islands", "Micronesia",
+            "Nauru", "New Zealand", "Palau", "Papua New Guinea", "Samoa",
+            "Solomon Islands", "Tonga", "Tuvalu", "Vanuatu"]
+# The Mediterranean basin — Southern Europe + North Africa + the Levant. Notably
+# does NOT include Sub-Saharan Africa (Cameroon/Mali), so it excludes that org.
+_MEDITERRANEAN = ["Albania", "Algeria", "Bosnia and Herzegovina", "Croatia",
+                  "Cyprus", "Egypt", "France", "Greece", "Israel", "Italy",
+                  "Lebanon", "Libya", "Malta", "Monaco", "Montenegro", "Morocco",
+                  "Palestine", "Slovenia", "Spain", "Syria", "Tunisia", "Türkiye"]
+
+_REGION_MEMBERS.update({
+    "europe": _EUROPE,
+    "european union": _EU,
+    "northern europe": ["Denmark", "Estonia", "Finland", "Iceland", "Ireland",
+                        "Latvia", "Lithuania", "Norway", "Sweden",
+                        "United Kingdom"],
+    "western europe": ["Austria", "Belgium", "France", "Germany",
+                       "Liechtenstein", "Luxembourg", "Monaco", "Netherlands",
+                       "Switzerland"],
+    "southern europe": ["Albania", "Andorra", "Bosnia and Herzegovina",
+                        "Croatia", "Greece", "Italy", "Malta", "Montenegro",
+                        "North Macedonia", "Portugal", "San Marino", "Serbia",
+                        "Slovenia", "Spain"],
+    "eastern europe": ["Belarus", "Bulgaria", "Czechia", "Hungary", "Moldova",
+                       "Poland", "Romania", "Russia", "Slovakia", "Ukraine"],
+    "americas": sorted(set(_NORTHERN_AMERICA + _LATAM)),
+    "northern america": _NORTHERN_AMERICA,
+    "north america": _NORTH_AMERICA_ALL,
+    "latin america and the caribbean": _LATAM,
+    "central america": _CENTRAL_AMERICA,
+    "south america": _SOUTH_AMERICA,
+    "caribbean": _CARIBBEAN,
+    "asia": _ASIA,
+    "eastern asia": _EASTERN_ASIA,
+    "south-eastern asia": _SE_ASIA,
+    "southern asia": _SOUTHERN_ASIA,
+    "central asia": _CENTRAL_ASIA,
+    "western asia": _WESTERN_ASIA,
+    "oceania": _OCEANIA,
+    "mediterranean": _MEDITERRANEAN,
+})
+
+# Region labels the geo gate scans for in a call's text (UN regions + the two
+# common non-M49 scopes). Income tiers + the global tier are deliberately
+# EXCLUDED — those are inclusive ("LMIC", "global"), handled as keepers upstream.
+REGION_TERMS = UN_REGIONS + ["European Union", "Mediterranean"]
+
+
 def expand(selection) -> set[str]:
     """Expand a list of region/tier/country labels into a lowercased set of all
     implied geographies (the labels themselves + any member countries), so a
@@ -195,6 +283,54 @@ SYNONYMS: dict[str, list[str]] = {
     "Small Island Developing States (SIDS)": ["small island developing states",
                                               "sids", "small island states"],
 }
+
+
+SYNONYMS.update({
+    "Europe": ["europe", "european"],
+    "European Union": ["european union", "eu", "eu member states",
+                       "eu member state", "horizon europe", "the eu", "eu's"],
+    "Northern Europe": ["northern europe"],
+    "Western Europe": ["western europe"],
+    "Southern Europe": ["southern europe"],
+    "Eastern Europe": ["eastern europe"],
+    "Americas": ["the americas"],
+    "Northern America": ["northern america"],
+    "North America": ["north america", "north american"],
+    "Asia": ["asia", "asian"],
+    "Oceania": ["oceania", "pacific islands"],
+    "Mediterranean": ["mediterranean", "mediterranean region",
+                      "mediterranean basin", "the mediterranean"],
+})
+
+# "EU" alone is high-precision as an uppercase token but noisy lowercased, so it
+# is matched separately (word-boundary, case-sensitive) by callers, not here.
+
+
+def _region_name_variants(term: str) -> list[str]:
+    """A region's LABEL + SYNONYMS only (NOT its member countries — those are
+    detected separately as countries). Longest first for span consumption."""
+    out = {term.lower()}
+    out.update(s.lower() for s in SYNONYMS.get(term, []))
+    return sorted((v for v in out if v), key=len, reverse=True)
+
+
+def regions_in_text(text_lower: str) -> set[str]:
+    """Region labels (from REGION_TERMS) named in the already-lowercased text.
+    Matches region NAMES/synonyms only, longest-phrase-first with span
+    consumption — so "sub-Saharan Africa" registers as Sub-Saharan Africa and the
+    inner "africa" does NOT also register the whole continent. Used by the geo
+    gate to learn a call's scope."""
+    pairs = sorted(
+        ((v, term) for term in REGION_TERMS for v in _region_name_variants(term)),
+        key=lambda p: len(p[0]), reverse=True)
+    found: set[str] = set()
+    work = text_lower
+    for v, term in pairs:
+        pat = r"\b" + re.escape(v) + r"\b"
+        if re.search(pat, work):
+            found.add(term)
+            work = re.sub(pat, " ", work)   # consume so a parent term can't re-match
+    return found
 
 
 def variants(term: str) -> list[str]:
