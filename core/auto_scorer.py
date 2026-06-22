@@ -652,6 +652,9 @@ _CLOSURE_PHRASE_RE = re.compile(
     r"|check back (?:later|in)"
     r"|on (?:hold|pause)"
     r"|closed for (?:new\s+)?applications?"
+    # Title/snippet shorthand: "(2026, now closed)", "(closed)", "— now closed".
+    r"|\bnow\s+closed\b"
+    r"|\(\s*closed\s*\)"
     # Past-tense "this round is over" language (Global Affairs Canada case:
     # "the assessment of the proposals … has concluded and applicants have
     # been informed of their results").
@@ -1120,11 +1123,21 @@ def rfp_signal_gate(candidate: dict[str, Any]) -> tuple[bool, str]:
 
 # News / press / blog / story pages ABOUT an opportunity are not the call itself
 # (e.g. zayedsustainabilityprize.com/en/news). Reject as not-an-rfp.
+# Boundary allows "-" so a hyphenated section slug like "/news-resources-search/"
+# (MMV's news hub) and "/interview-..." (interview write-ups) are caught, not just
+# "/news/". These are pages ABOUT a call/grantee, never the call's own page.
 _NEWS_URL_RE = re.compile(
-    r"/(news|press|press-release|media|newsroom|blog|stories|story|article)(?:/|$|\?|\.)",
+    r"/(news|press|press-release|media|newsroom|blog|stories|story|article"
+    r"|interview|interviews)(?:/|-|$|\?|\.)",
     re.IGNORECASE)
 _NEWS_TITLE_RE = re.compile(
-    r"^\s*(news|press release|blog|in the news|newsroom)\b[\s\-:|]", re.IGNORECASE)
+    r"^\s*(news|press release|blog|in the news|newsroom|interview)\b[\s\-:|]",
+    re.IGNORECASE)
+# Archive / past-call URL paths — a specific PAST call's detail page (not a listing).
+# e.g. GACD /funding/past-calls-for-applications/<slug>. Always closed.
+_PAST_CALL_URL_RE = re.compile(
+    r"/(past[-_]call|closed[-_]call|calls?[-_]archive|past[-_]opportunit"
+    r"|past[-_]funding|past[-_]grant)", re.IGNORECASE)
 
 
 def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
@@ -1152,6 +1165,9 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     # News / press / blog page about an opportunity — not the call itself.
     if _NEWS_URL_RE.search(link) or _NEWS_TITLE_RE.match(_t):
         return False, "not-an-rfp: news / press / blog page, not a call"
+    # Archive / past-call detail page (URL path) — always a closed call.
+    if _PAST_CALL_URL_RE.search(link):
+        return False, "not-an-rfp: past / closed call (archive path)"
     # Non-primary sources never get stored: competitor AGGREGATORS (DevelopmentAid,
     # GrantBite, …) — a crawl SEED only; the pipeline resolves theme-relevant hits
     # to the donor's OWN page first, so anything still on an aggregator host here
