@@ -292,8 +292,8 @@ uniquely and triangulated to donors.
 
 | Column | `donor_sources` | `source_registry` | Meaning |
 |---|:--:|:--:|---|
-| `source_uid` | ✓ | ✓ | Stable, unique, human-readable key. Host-based; a 6-char URL hash is appended only when a host carries >1 catalogue row. In the registry it equals the host. |
-| `host` | ✓ | (PK) | Normalised netloc (strip `www.`). **Join key** between the URL-keyed catalogue and the host-keyed registry. |
+| `source_uid` | ✓ | ✓ | **Sequential numeric id** (`bigint`, sequence-backed default so new rows auto-number; migration 043). First column in each table. Existing rows numbered 1..N by age. |
+| `host` | ✓ | (PK) | Normalised netloc (strip `www.`). The readable string + **join key** between the URL-keyed catalogue and the host-keyed registry. |
 | `donor_intel_id` | ✓ | ✓ | FK → `donor_intel(id)` (`ON DELETE SET NULL`). The donor this source belongs to. |
 | `donor_key` | ✓ | ✓ | Snapshot of `donor_intel.canonical_key` — the human-readable triangulation key. |
 
@@ -304,17 +304,22 @@ donor_sources.donor_intel_id ──► donor_intel.id          (source ↔ donor
 donor_sources.donor_key      ──► donor_intel.canonical_key
 ```
 
-**Backfill** (`scripts/backfill_source_uids.py`, idempotent): all **75 + 75** rows
-have a unique `source_uid`; donors resolved via `core.donor_intel.match_donor`
-(canonical_key / donor / donor_short / aliases). Linked: **44/75** catalogue +
-**36/75** registry. The 3 colliding hosts (`google.com`, `who.my.site.com`,
-`projects.worldbank.org`) correctly received `host-<hash>` uids.
+**Migrations:**
+- `041_source_uid_and_donor_link.sql` — adds the columns (source_uid was initially a
+  host string).
+- `042_reorder_source_uid_first.sql` — rebuilds both tables (temp-table swap) so
+  `source_uid` is the **first** column in the Supabase Table Editor.
+- `043_source_uid_numeric.sql` — converts `source_uid` from the host string to a
+  **sequential `bigint`** (each table owns a sequence; new rows auto-number; existing
+  rows numbered 1..N by age). `host` remains the readable string + join key.
 
-**Column display order:** `source_uid` is added last by `041`, so it appears at the
-far right in the Supabase Table Editor. Migration `042_reorder_source_uid_first.sql`
-rebuilds both tables (temp-table swap, atomic, preserves PK/CHECK/FK/indexes/RLS/
-grants/trigger) to move `source_uid` to the **first** column. Validated by
-execute-then-rollback against the live schema; run it in Supabase when ready.
+All three are atomic and were validated by execute-then-rollback against the live
+schema before being run in Supabase.
+
+**Backfill** (`scripts/backfill_source_uids.py`, idempotent): populates `host` +
+donor links only (`source_uid` is DB-generated). Donors resolved via
+`core.donor_intel.match_donor` (canonical_key / donor / donor_short / aliases).
+Linked: **44/75** catalogue + **36/75** registry.
 
 **Unmatched (31 catalogue sources) — donor absent from `donor_intel`.** These are
 left `NULL` (honest — no fabricated links) and are the follow-up backlog for
