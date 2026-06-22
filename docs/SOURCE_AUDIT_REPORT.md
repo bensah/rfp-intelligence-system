@@ -280,8 +280,49 @@ DOM/endpoint parser. Recommend one focused session per site (pattern: `probe_api
 if no API, render + parse card elements → wire host intercept → re-test with
 `inspect_source`).
 
-### 3d. Follow-up hygiene
+---
+
+## 4. Source identity & donor linkage (migration 041)
+
+Every source row in **both** tables now carries a stable unique identifier and a
+link to the Donor Intelligence Mapping table, so sources can be identified
+uniquely and triangulated to donors.
+
+**Columns added** (`db/migrations/041_source_uid_and_donor_link.sql`):
+
+| Column | `donor_sources` | `source_registry` | Meaning |
+|---|:--:|:--:|---|
+| `source_uid` | ✓ | ✓ | Stable, unique, human-readable key. Host-based; a 6-char URL hash is appended only when a host carries >1 catalogue row. In the registry it equals the host. |
+| `host` | ✓ | (PK) | Normalised netloc (strip `www.`). **Join key** between the URL-keyed catalogue and the host-keyed registry. |
+| `donor_intel_id` | ✓ | ✓ | FK → `donor_intel(id)` (`ON DELETE SET NULL`). The donor this source belongs to. |
+| `donor_key` | ✓ | ✓ | Snapshot of `donor_intel.canonical_key` — the human-readable triangulation key. |
+
+**The three-way triangulation:**
+```
+source_registry.host  ──►  donor_sources.host            (curation ↔ scan catalogue)
+donor_sources.donor_intel_id ──► donor_intel.id          (source ↔ donor)
+donor_sources.donor_key      ──► donor_intel.canonical_key
+```
+
+**Backfill** (`scripts/backfill_source_uids.py`, idempotent): all **75 + 75** rows
+have a unique `source_uid`; donors resolved via `core.donor_intel.match_donor`
+(canonical_key / donor / donor_short / aliases). Linked: **44/75** catalogue +
+**36/75** registry. The 3 colliding hosts (`google.com`, `who.my.site.com`,
+`projects.worldbank.org`) correctly received `host-<hash>` uids.
+
+**Unmatched (31 catalogue sources) — donor absent from `donor_intel`.** These are
+left `NULL` (honest — no fabricated links) and are the follow-up backlog for
+extending the mapping table (add the donor row or an alias, then re-run the
+backfill). Notable: CHINNOVA, GACD, MMV, Stanford, Pfizer, UNOPS, UNGM, grants.gov,
+Pierre Fabre, IDRC, ReliefWeb, gov.uk, SciDevNet, GCGH, Nestlé, plus near-misses
+that just need an alias (`worldbank.org`→"World Bank Group", `Netherlands MFA`→
+"Government of the Netherlands"). Aggregator hosts in the registry (grantbite,
+opportunitysquare, etc.) are correctly unlinked — they aren't donors.
+
+## 5. Follow-up hygiene
 
 - Per `docs/EXTENDING_SOURCES.md`, add `config/donor_field_map.yaml` sections for the
   new donors (Grand Challenges, RVO, Packard) so dedup signals and field mappings stay
   in sync, and drop smoke tests asserting the promised fields.
+- Extend `donor_intel` for the 31 unlinked catalogue donors (§4), then re-run
+  `python scripts/backfill_source_uids.py` to pick up the new links (idempotent).
