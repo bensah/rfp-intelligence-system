@@ -378,6 +378,77 @@ _GLOBAL_TIER_LOWER = {"global / worldwide", "global", "globally", "worldwide",
                       "world wide", "international"}
 
 
+# Scope framed around a region that EXCLUDES a Sub-Saharan-Africa / LMIC-Africa
+# org (Cameroon, Mali). These are scope-DEFINING mentions (EU resilience, the
+# Mediterranean basin) — not passing references — so they reject on their own.
+_EXCLUDING_REGION_RE = re.compile(
+    r"\b(?:"
+    r"european union|eu member states?|the eu\b|within the eu|across the eu"
+    r"|eu(?:'s)?\s+(?:resilience|strategic autonomy|competitiveness|priorities|industry)"
+    r"|horizon europe"
+    r"|mediterranean region|mediterranean basin|the mediterranean\b"
+    r"|north america(?:n)?|the americas"
+    r")\b", re.I)
+
+# Demonyms / country names whose EXCLUSIVE scoping excludes our org. Paired with
+# an exclusivity phrase below so a passing mention never triggers a reject.
+_FOREIGN_PLACE_RE = re.compile(
+    r"\b(india|indian|canada|canadian|china|chinese|united states|u\.?s\.?a?|american"
+    r"|united kingdom|u\.?k\.?|british|australia|australian|europe|european|the eu"
+    r"|japan|japanese|germany|german|france|french|spain|spanish|italy|italian"
+    r"|korea|korean|singapore|switzerland|swiss)\b", re.I)
+# Eligibility tied EXCLUSIVELY to a place: "X-based … only", "open only to X",
+# "restricted/limited to X", "must be based in X", "specific to X".
+_EXCLUSIVITY_RE = re.compile(
+    r"(only (?:open |available )?to|open only to|restricted to|limited to"
+    r"|reserved for|exclusively (?:for|to|open)|specific to"
+    r"|must be (?:based|located|registered|headquartered|incorporated|established) in"
+    r"|applicants? must be (?:from|based in|located in)|eligibility is limited to"
+    r"|-based\s+(?:researchers?|institutions?|organi[sz]ations?|applicants?|entities|"
+    r"companies|teams)[^.]{0,25}?\bonly)", re.I)
+
+
+def _excluding_geo(text: str) -> str | None:
+    """Return a reason when the text scopes the call to a geography that excludes
+    our org, else None. Two independent signals:
+      1. A region that doesn't target Africa (EU / Mediterranean / North America).
+      2. An exclusivity phrase ('only to', 'specific to', 'X-based … only',
+         'must be based in') next to a non-eligible place (India / Canada / …).
+    Callers run this only AFTER inclusive-eligibility + eligible-country checks,
+    so a genuinely international or in-region call is never caught here."""
+    m = _EXCLUDING_REGION_RE.search(text)
+    if m:
+        return f"scoped to {m.group(0).strip()} (excludes eligible region)"
+    for em in _EXCLUSIVITY_RE.finditer(text):
+        window = text[max(0, em.start() - 25): em.end() + 50]
+        fm = _FOREIGN_PLACE_RE.search(window)
+        if fm:
+            return f"eligibility restricted to {fm.group(0)} only"
+    return None
+
+
+def geographic_exclusion_reject(candidate: dict[str, Any],
+                                policies: dict[str, Any]) -> tuple[bool, str]:
+    """Hard-reject calls explicitly scoped to a geography that excludes the org —
+    EU/Mediterranean/North-America scope, or eligibility restricted to a specific
+    non-eligible country (India-only, Canada-only, …). Precedence: a genuinely
+    inclusive call (international / LMIC / Africa / global) or one naming an
+    eligible country is kept — so e.g. a CIHR call open beyond Canada survives,
+    but a Canada-only one is dropped."""
+    text = _geo_text(candidate)
+    if _has_inclusive_eligibility(text):
+        return False, ""
+    countries = policies.get("countries", {}) or {}
+    eligible = {c.lower() for c in (countries.get("eligible") or [])
+                if c and c.lower() not in _GEO_REGION_TIER}
+    if {m.lower() for m in _COUNTRY_PATTERN.findall(text)} & eligible:
+        return False, ""
+    reason = _excluding_geo(text)
+    if reason:
+        return True, f"geography: {reason}"
+    return False, ""
+
+
 def _geo_strength(candidate: dict[str, Any], policies: dict[str, Any]) -> str:
     """How well the candidate's geography matches our scope:
        'strong'   — names an eligible COUNTRY, or opens to international applicants
@@ -1230,6 +1301,13 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     rejected, reason = us_domestic_only_reject(candidate, policies)
     if rejected:
         return False, f"geography: {reason}"
+    # Region/country-exclusive scope that leaves our org out (EU / Mediterranean /
+    # India-only / Canada-only …). Runs before the lenient regional/silent gate so
+    # an exclusive call isn't parked just because it also name-drops an in-region
+    # country (e.g. GCGH "India-based … only" that also mentions South Africa).
+    rejected, reason = geographic_exclusion_reject(candidate, policies)
+    if rejected:
+        return False, reason
     # Applicant-type match — does the call admit the deploying org's type at all?
     rejected, reason = applicant_type_mismatch_reject(candidate, policies)
     if rejected:

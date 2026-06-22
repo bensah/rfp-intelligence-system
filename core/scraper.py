@@ -673,14 +673,25 @@ def _enrich_developmentaid(cand: dict[str, Any]) -> dict[str, Any] | None:
 # Award-amount extraction. Requires an explicit currency marker so bare numbers
 # (years, counts, phone parts) never match. Used to fill estimated_value for HTML
 # donor pages (e.g. Stanford seed funding) where the amount sits in the body.
+_NUM = r"(?P<num>\d{1,3}(?:[,\s]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+_MAGS = r"(?P<mag>billion|bn|million|mn|m|thousand|k)?"
+# Currency BEFORE the number ($50,000 / USD 1.2 million / €50k).
 _AMOUNT_RE = re.compile(
-    r"(?P<cur>US\$|USD|\$|€|EUR|£|GBP|CHF|CAD|AUD)\s?"
-    r"(?P<num>\d{1,3}(?:[,\s]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
-    r"\s?(?P<mag>billion|bn|million|mn|m|thousand|k)?\b", re.I)
+    r"(?P<cur>US\$|USD|\$|€|EUR|£|GBP|CHF|CAD|AUD)\s?" + _NUM + r"\s?" + _MAGS + r"\b",
+    re.I)
+# Currency AFTER the number (5 million USD / 50,000 euros / 1.2m dollars).
+_AMOUNT_RE2 = re.compile(
+    _NUM + r"\s?" + _MAGS +
+    r"\s?(?P<cur>US dollars?|dollars?|USD|euros?|EUR|pounds?(?: sterling)?|GBP|CHF|CAD|AUD)\b",
+    re.I)
 _AMOUNT_MAG = {"billion": 1e9, "bn": 1e9, "million": 1e6, "mn": 1e6, "m": 1e6,
                "thousand": 1e3, "k": 1e3}
-_AMOUNT_CUR = {"us$": "USD", "usd": "USD", "$": "USD", "€": "EUR", "eur": "EUR",
-               "£": "GBP", "gbp": "GBP", "chf": "CHF", "cad": "CAD", "aud": "AUD"}
+_AMOUNT_CUR = {"us$": "USD", "usd": "USD", "$": "USD", "us dollars": "USD",
+               "us dollar": "USD", "dollars": "USD", "dollar": "USD",
+               "€": "EUR", "eur": "EUR", "euros": "EUR", "euro": "EUR",
+               "£": "GBP", "gbp": "GBP", "pounds": "GBP", "pound": "GBP",
+               "pounds sterling": "GBP", "pound sterling": "GBP",
+               "chf": "CHF", "cad": "CAD", "aud": "AUD"}
 # Award-context words near a figure that mark it as the grant size (not some
 # unrelated dollar figure on the page).
 _AMOUNT_CTX_RE = re.compile(
@@ -703,16 +714,21 @@ def _extract_amount(title: str, text: str) -> tuple[float | None, str | None]:
     Grant'); else the LARGEST body figure sitting next to an award-context word.
     Requires a currency marker, and floors un-magnitude'd figures at 1000 so a
     '$50 fee' style number can't masquerade as the award."""
-    for m in _AMOUNT_RE.finditer(title or ""):
+    def _matches(s):
+        return list(_AMOUNT_RE.finditer(s or "")) + list(_AMOUNT_RE2.finditer(s or ""))
+
+    for m in _matches(title):
         v, c = _one_amount(m)
         if v and (m.group("mag") or v >= 1000):
             return v, c
     best_v, best_c = None, None
-    for m in _AMOUNT_RE.finditer(text or ""):
+    for m in _matches(text):
         ctx = text[max(0, m.start() - 40):m.end() + 25]   # award word either side
         if not _AMOUNT_CTX_RE.search(ctx):
             continue
         v, c = _one_amount(m)
+        # Take the LARGEST award-context figure — handles ranges like
+        # "$50,000 to $100,000" (keeps the ceiling).
         if v and (m.group("mag") or v >= 1000) and (best_v is None or v > best_v):
             best_v, best_c = v, c
     return best_v, best_c
