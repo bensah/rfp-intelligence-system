@@ -65,6 +65,30 @@ def _title_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+# Ultra-generic grant vocabulary + stopwords — shared across most calls, so they
+# carry no disambiguating power. Excluded when counting "distinctive" overlap.
+_GENERIC_TOKENS = {
+    "call", "calls", "proposal", "proposals", "for", "the", "of", "a", "an",
+    "and", "to", "in", "on", "is", "are", "now", "open", "until", "grant",
+    "grants", "fund", "funds", "funding", "rfp", "rfa", "cfp", "eoi", "rfq",
+    "application", "applications", "apply", "round", "programme", "program",
+    "project", "projects", "award", "awards", "scheme", "new", "research",
+}
+
+
+def _distinctive_tokens(title: str) -> set[str]:
+    """Meaningful, disambiguating tokens of a normalised title (drop generic
+    grant vocabulary + bare years + 1-2 char noise)."""
+    out = set()
+    for tok in title.split():
+        if tok in _GENERIC_TOKENS or len(tok) < 3:
+            continue
+        if tok.isdigit() and len(tok) == 4:      # bare year (2026) — not distinctive
+            continue
+        out.add(tok)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -115,7 +139,29 @@ def find_duplicates(
             matches.append({**row, "_reason": f"title similarity {sim:.0%}"})
             continue
 
-        # 4. Funder + deadline + value triple
+        # 4. Same funder + same deadline + meaningful title overlap.
+        # Value-INDEPENDENT (most calls carry no published amount). A single
+        # funder rarely runs two DISTINCT calls closing the same day on the same
+        # topic, so funder+deadline plus either a moderate title similarity OR
+        # >=2 shared distinctive tokens collapses the "same call, different
+        # title/URL from two sources" case (e.g. MMV's "9th African Call for
+        # proposals … open until 29 Aug" vs "Malaria drug discovery: 9th African
+        # call for proposals now open" — same funder, same 2026-08-29 deadline).
+        if (
+            cand_agency
+            and cand_deadline
+            and (row.get("funding_agency") or "").strip().lower() == cand_agency
+            and str(row.get("submission_deadline") or "").strip() == cand_deadline
+        ):
+            shared = (_distinctive_tokens(cand_title)
+                      & _distinctive_tokens(_norm_title(row.get("opportunity_title"))))
+            if sim >= 0.55 or len(shared) >= 2:
+                matches.append({**row, "_reason":
+                                f"funder + deadline + title overlap "
+                                f"(sim={sim:.0%}, shared={sorted(shared)[:4]})"})
+                continue
+
+        # 5. Funder + deadline + value triple (kept: exact-value corroboration).
         if (
             cand_agency
             and cand_deadline
