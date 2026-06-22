@@ -10,6 +10,7 @@ re-renders with any newly-inserted RFPs.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -63,7 +64,19 @@ def run_scan_now(triggered_by: str = "manual", timeout_sec: int = 900) -> bool:
             return False
 
     ok = proc.returncode == 0
-    if ok:
+    # Report THIS run's own totals (parsed from its stdout summary line) rather
+    # than re-reading scan_logs — otherwise an automated 'cron' scan that happens
+    # to overlap can hijack the "last scan" figure and show 0 for your run.
+    m = re.search(
+        r"Scan done\D*(\d+) source\(s\)\D+(\d+) found\D+(\d+) new\D+(\d+) dup"
+        r"\D+(\d+) declined", proc.stdout or "")
+    if ok and m:
+        s, f, nw, dp, dc = m.groups()
+        st.success(
+            f"✓ Scan complete — **{s}** sources · {f} found · **{nw} new** · "
+            f"{dp} duplicate · {dc} declined by the eligibility policy."
+        )
+    elif ok:
         st.success("✓ Scan complete. Refreshing page…")
     else:
         st.error(f"Scan exited with errors (code {proc.returncode}).")
