@@ -21,6 +21,7 @@ All actions are best-effort (telemetry must never break the page) and assistive.
 from __future__ import annotations
 
 import html
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -90,6 +91,9 @@ def _csv_roundtrip(*, key: str, rows: list[dict], id_header: str, id_fn,
     import pandas as pd
     email = (user or {}).get("email")
     valid = [r for r in rows if id_fn(r)]
+    # Download filename: drop the cosmetic "_csv"/"-csv" suffix from the widget key
+    # and stamp the download time, e.g. rejv_20260621-153045.csv.
+    base = key.removesuffix("_csv").removesuffix("-csv")
     with st.expander(f"⬇⬆ Bulk edit via CSV (Excel) — fastest for many rows "
                      f"({len(valid)})"):
         st.caption("Download → fill the editable column(s) in Excel/Sheets (leave "
@@ -110,7 +114,8 @@ def _csv_roundtrip(*, key: str, rows: list[dict], id_header: str, id_fn,
         c1, c2 = st.columns([1, 2])
         c1.download_button(f"⬇ Download {len(df)} rows (CSV)",
                            df.to_csv(index=False).encode("utf-8"),
-                           file_name=f"{key}.csv", mime="text/csv",
+                           file_name=f"{base}_{datetime.now():%Y%m%d-%H%M%S}.csv",
+                           mime="text/csv",
                            key=f"{key}_dl", width='stretch')
         up = c2.file_uploader("Upload edited CSV", type=["csv"], key=f"{key}_up",
                               label_visibility="collapsed")
@@ -161,6 +166,11 @@ def _csv_roundtrip(*, key: str, rows: list[dict], id_header: str, id_fn,
                 return
             st.success(f"✅ Applied {n} of {matched} matched row(s)."
                        + (f"  ({err} errored)" if err else ""))
+            # Drop this table's cached inline-grid widget state so the rows
+            # re-seed from the DB and show the just-uploaded values.
+            for k in [k for k in list(st.session_state)
+                      if isinstance(k, str) and k.startswith(f"{base}_")]:
+                del st.session_state[k]
             st.rerun()
 
 
@@ -235,7 +245,11 @@ def _verify_table(*, user: dict, key: str, rows: list[dict],
         _ed.append(("Solicitation", list(type_opts),
                     lambda r: db_types.get((r.get("opportunity_link") or "").strip(), "")))
     if reason_opts:
-        _ed.append(("Correct reason", list(reason_opts.keys()), None))
+        # current_fn pulls the saved correction so a download round-trips the value
+        # (code -> display via rev_reason); previously None → always blank in CSV.
+        _ed.append(("Correct reason", list(reason_opts.keys()),
+                    lambda r: rev_reason.get(
+                        db_reasons.get((r.get("opportunity_link") or "").strip()), "")))
     _csv_roundtrip(
         key=f"{key}_csv", rows=[t[0] for t in items],
         id_header="opportunity_link",
