@@ -917,6 +917,19 @@ def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
             return _scan_unops(name, url)
         if "grants.chinnova.aau.org" in url.lower():
             return _scan_chinnova(name, url)
+        # Grand Challenges family (Gates + GCGH): the /grant-opportunities page is
+        # a Next.js app whose calls are embedded as __NEXT_DATA__ JSON — parse it
+        # directly rather than rendering, regardless of configured method.
+        if "grandchallenges.org" in url.lower() and "grant-opportunit" in url.lower():
+            return _scan_grandchallenges(name, url)
+        # RVO (Netherlands) — route the human subsidies page or the API to the
+        # keyless JSON search endpoint.
+        if "english.rvo.nl" in url.lower():
+            return _scan_rvo(name, url)
+        # Packard — JS-rendered cards backed by the WordPress REST custom
+        # post type `funding-opportunity`.
+        if "packard.org" in url.lower():
+            return _scan_packard(name, url)
         # World Bank "Business Opportunities" page is JS, but it's backed by the
         # keyless procnotices API — route either URL to that handler.
         if "worldbank.org" in url.lower() and ("opportunit" in url.lower()
@@ -1931,6 +1944,140 @@ def _scan_chinnova(name: str, url: str) -> list[dict[str, Any]]:
             "submission_deadline": deadline,
             "_source_origin": name,
         })
+    return _dedup_by_link_or_title(out)
+
+
+def _ts_to_date(ts: Any) -> date | None:
+    """Coerce a UNIX epoch (seconds) to a date. None on any failure."""
+    try:
+        return datetime.fromtimestamp(int(ts)).date()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
+def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
+    """Grand Challenges family (grandchallenges.org + gcgh.grandchallenges.org).
+    The /grant-opportunities listing is a Next.js app that server-side-embeds the
+    current calls in <script id="__NEXT_DATA__"> at
+    props.pageProps.initialData.listing.data — each item carries the detail URL,
+    title, HTML description, funder (initiative_title), launch + closing dates
+    (UNIX seconds) and a coming_soon flag. Parsing that JSON directly is more
+    reliable than the generic anchor crawler (the cards render client-side) and
+    yields the real submission deadline. No Playwright needed."""
+    try:
+        r = requests.get(url, headers={"User-Agent": USER_AGENT,
+                                       "Accept": "text/html"}, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
+        if not m:
+            log.warning("Grand Challenges %s: no __NEXT_DATA__ block", url)
+            return []
+        data = ((json.loads(m.group(1)).get("props") or {}).get("pageProps") or {}
+                ).get("initialData", {}).get("listing", {}).get("data") or []
+    except Exception as exc:
+        log.warning("Grand Challenges %s failed: %s", url, exc)
+        return []
+    base = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
+    out: list[dict[str, Any]] = []
+    for it in data:
+        if it.get("hidden"):
+            continue
+        title = _clean(it.get("main_title") or "")
+        rel = it.get("url") or ""
+        if not title or not rel:
+            continue
+        desc = re.sub(r"<[^>]+>", " ", html.unescape(it.get("opportunity_description") or ""))
+        out.append({
+            "opportunity_title": title[:300],
+            "opportunity_link": urljoin(base + "/", rel.lstrip("/")),
+            "funding_agency": _clean(it.get("initiative_title") or "")
+                              or _funder_from_source_name(name),
+            "brief_description": _clean(desc)[:1800] or None,
+            "date_posted": _ts_to_date(it.get("date")),
+            "submission_deadline": _ts_to_date(it.get("date_end")),
+            "_source_origin": f"{name}{' (coming soon)' if it.get('coming_soon') else ''}",
+        })
+    return _dedup_by_link_or_title(out)
+
+
+def _scan_packard(name: str, url: str) -> list[dict[str, Any]]:
+    """Packard Foundation — the /grantees/funding-opportunties/ page renders its
+    cards client-side, but WordPress exposes the same content via the REST custom
+    post type `funding-opportunity`. Keyless GET; clean title/link/date/excerpt."""
+    api = "https://www.packard.org/wp-json/wp/v2/funding-opportunity?per_page=30"
+    try:
+        r = requests.get(api, headers={"User-Agent": USER_AGENT,
+                                       "Accept": "application/json"}, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        items = r.json() or []
+    except Exception as exc:
+        log.warning("Packard WP REST failed: %s", exc)
+        return []
+    out: list[dict[str, Any]] = []
+    for it in (items if isinstance(items, list) else []):
+        title = _clean(html.unescape((it.get("title") or {}).get("rendered") or ""))
+        link = it.get("link") or ""
+        if not title or not link:
+            continue
+        excerpt = re.sub(r"<[^>]+>", " ",
+                         html.unescape((it.get("excerpt") or {}).get("rendered") or ""))
+        out.append({
+            "opportunity_title": title[:300],
+            "opportunity_link": link,
+            "funding_agency": "Packard Foundation",
+            "brief_description": _clean(excerpt)[:1800] or None,
+            "date_posted": _parse_iso_date(str(it.get("date") or "")[:10]),
+            "submission_deadline": None,
+            "_source_origin": name,
+        })
+    return _dedup_by_link_or_title(out)
+
+
+def _scan_rvo(name: str, url: str) -> list[dict[str, Any]]:
+    """Netherlands Enterprise Agency (RVO) — english.rvo.nl subsidy search JSON
+    API (keyless GET). Returns searchResults[] with title / url / summary / intro /
+    subsidyStatusName. Keep only 'Open for application'; paginate via pager.page.
+    Replaces the human /subsidies-programmes page which the generic crawler can't
+    read. (The MFA's development subsidies are administered through RVO.)"""
+    out: list[dict[str, Any]] = []
+    api = "https://english.rvo.nl/api/rvo/v1/search-subsidies"
+    page = 0
+    while page < 4:
+        try:
+            r = requests.get(api, params=({"page": page} if page else None),
+                             headers={"User-Agent": USER_AGENT,
+                                      "Accept": "application/json"},
+                             timeout=HTTP_TIMEOUT)
+            r.raise_for_status()
+            j = r.json() or {}
+        except Exception as exc:
+            log.warning("RVO page=%s failed: %s", page, exc)
+            break
+        results = j.get("searchResults") or []
+        if not results:
+            break
+        for it in results:
+            if (it.get("subsidyStatusName") or "").strip().lower() != "open for application":
+                continue
+            title = _clean(it.get("title") or "")
+            rel = it.get("url") or ""
+            if not title or not rel:
+                continue
+            summary = re.sub(r"<[^>]+>", " ",
+                             html.unescape(it.get("summary") or it.get("intro") or ""))
+            out.append({
+                "opportunity_title": title[:300],
+                "opportunity_link": urljoin("https://english.rvo.nl/", rel.lstrip("/")),
+                "funding_agency": "Netherlands Enterprise Agency (RVO)",
+                "brief_description": _clean(summary)[:1800] or None,
+                "submission_deadline": None,
+                "_source_origin": name,
+            })
+        pager = j.get("pager") or {}
+        nxt = pager.get("nextPage")
+        if nxt is None or nxt <= page:
+            break
+        page = nxt
     return _dedup_by_link_or_title(out)
 
 

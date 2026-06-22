@@ -31,6 +31,8 @@ TARGETS = {
     "Hewlett": "https://hewlett.org/grants/",
     "Packard": "https://www.packard.org/grantees/funding-opportunties/",
     "GoogleOrg": "https://www.google.org/impact-challenges/",
+    "NIHR": "https://www.nihr.ac.uk/funding-opportunities",
+    "GlobalFundTenders": "https://www.theglobalfund.org/en/business-opportunities/open-tenders/",
 }
 
 SKIP = ("google-analytics", "googletagmanager", "doubleclick", "facebook",
