@@ -146,25 +146,30 @@ def _csv_roundtrip(*, key: str, rows: list[dict], id_header: str, id_fn,
             rmap = {str(id_fn(r)).strip().lower(): r for r in valid}
             colmap = {c: _col(c) for c, _, _ in editable}
             n = err = matched = 0
-            for _, u in udf.iterrows():
-                r = rmap.get(str(u.get(idcol, "")).strip().lower())
-                if not r:
-                    continue
-                matched += 1
-                vals = {c: (str(u.get(cm, "")).strip() if cm else "")
-                        for c, cm in colmap.items()}
-                if not any(vals.values()):
-                    continue
-                try:
-                    if apply_row(r, vals, email):
-                        n += 1
-                except Exception:
-                    err += 1
+            # Each apply_row hits the DB, so a large CSV is a slow loop — show a
+            # spinner so the greyed-out page reads as "working", not "hung".
+            with st.spinner(f"Applying {len(udf)} uploaded row(s)…"):
+                for _, u in udf.iterrows():
+                    r = rmap.get(str(u.get(idcol, "")).strip().lower())
+                    if not r:
+                        continue
+                    matched += 1
+                    vals = {c: (str(u.get(cm, "")).strip() if cm else "")
+                            for c, cm in colmap.items()}
+                    if not any(vals.values()):
+                        continue
+                    try:
+                        if apply_row(r, vals, email):
+                            n += 1
+                    except Exception:
+                        err += 1
             if matched == 0:
                 st.error(f"0 rows matched on **{id_header}** — check that column's "
                          "values match the registry hosts. Nothing applied.")
                 return
-            st.success(f"✅ Applied {n} of {matched} matched row(s)."
+            # _flash_set (not st.success) so the result survives the st.rerun() and
+            # shows OUTSIDE this expander, which collapses on rerun.
+            _flash_set(base, f"✅ Applied {n} of {matched} matched row(s)."
                        + (f"  ({err} errored)" if err else ""))
             # Drop this table's cached inline-grid widget state so the rows
             # re-seed from the DB and show the just-uploaded values.
