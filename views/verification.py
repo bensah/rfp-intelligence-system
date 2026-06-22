@@ -663,7 +663,7 @@ def _render_source_registry(user: dict) -> None:
 
     W = [2.4, 1.6, 1.5, 1.0, 1.2, 1.7, 1.7]
     hh = st.columns(W)
-    for i, lbl in enumerate(["Source Name · Code · Host", "Source class",
+    for i, lbl in enumerate(["ID · Source Name · Code · Host", "Source class",
                              "Verification", "Access", "Method",
                              "Solicitation", "Instrument"]):
         hh[i].markdown(f"**{lbl}**")
@@ -674,7 +674,8 @@ def _render_source_registry(user: dict) -> None:
             c = st.columns(W)
             sample = r.get("sample_url") or ""
             donor = r.get("donor_name") or host
-            c[0].caption(f"**{donor}** · {r.get('donor_code') or '—'} · `{host}`")
+            c[0].caption(f"`#{r.get('source_uid')}` · **{donor}** · "
+                         f"{r.get('donor_code') or '—'} · `{host}`")
             uk = f"srcreg_url_{host}"
             if uk not in st.session_state:
                 st.session_state[uk] = sample
