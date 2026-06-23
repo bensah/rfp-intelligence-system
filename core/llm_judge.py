@@ -55,7 +55,12 @@ _DEFAULT_MODEL = "gpt-4o-mini"
 # can take 30-90s, so make it tunable via LLM_JUDGE_TIMEOUT (seconds).
 _DEFAULT_TIMEOUT = 60
 _MAX_INPUT_CHARS = 6000     # ~1.5K tokens of body — keeps cost bounded
-_MAX_OUTPUT_TOKENS = 500
+# Reasoning models (gpt-oss, deepseek-r1, o-series) spend completion tokens on
+# an internal reasoning pass BEFORE emitting `content`; a tight cap gets eaten by
+# reasoning and the JSON never finishes (finish_reason="length", empty content).
+# 2000 leaves room for reasoning + the ~250-token JSON. Harmless for plain models
+# (gpt-4o-mini stops at "stop" ~250 tokens — this is only a ceiling, not a target).
+_MAX_OUTPUT_TOKENS = 2000
 
 # Per-process cache: key = sha1(model + text) -> Judgment. Avoids re-paying for
 # the same page within/across scans in one worker. Cleared on restart.
