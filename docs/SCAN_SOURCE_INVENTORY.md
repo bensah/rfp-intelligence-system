@@ -3,6 +3,18 @@
 _Generated 2026-06-21. Historical: before the catalogue-only change, the scan unioned these three pools (deduped) = 133 non-manual sources. **Now the scan runs POOL 2 only** (active `donor_sources`). Pools 1 and 3 are documented here so you can decide whether any belong in the catalogue._
 
 
+## Migrated to the catalogue (2026-06-23)
+
+Verified yaml-only sources moved into `donor_sources` + flagged `in_catalogue` in
+`source_registry` (script: `scripts/migrate_verified_yaml_sources.py`):
+**TED (EU)**, **UK Find a Tender**, **UK Contracts Finder** (all `rest_json`, real
+handlers), **ResearchNet/CIHR** (`rss`; items stamped default `Canada` scope so
+the geo gate keeps only beyond-Canada calls). Catalogue 75 → 79 (active 48 → 52).
+
+NOT migrated: **World Bank Procurement Notices** (duplicate of the `worldbank.org`
+catalogue row), **Pierre Fabre — ODESS** (covered by the active Pierre Fabre row),
+**Global South Opportunities** (aggregator blog, not a primary source).
+
 ## POOL 1 — `config/sources.yaml` (legacy keyword list, file-based)
 
 54 entries (35 non-manual). NOT scanned anymore.

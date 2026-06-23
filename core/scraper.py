@@ -1157,6 +1157,12 @@ def _scan_researchnet(name: str, url: str) -> list[dict[str, Any]]:
             "brief_description": brief[:1500] or None,
             "date_posted": published,
             "submission_deadline": deadline,
+            # CIHR funds Canadian institutions by default; the "Canadian" cue lives
+            # in the funder name (excluded from geo detection), so stamp Canada as
+            # the default scope. The geo gate then drops Canada-only calls and
+            # keeps only those whose text opens beyond Canada (international / LMIC
+            # / a named in-scope region) — the "scope beyond Canada" rule.
+            "geographic_scope": ["Canada"],
             "_source_origin": f"{name} (RSS)",
         })
     return out
