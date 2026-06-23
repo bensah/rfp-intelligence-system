@@ -461,15 +461,18 @@ def geographic_exclusion_reject(candidate: dict[str, Any],
         if pm and not _place_in_org(pm.group(1), org_set):
             return True, f"geography: eligibility restricted to {pm.group(1)} (outside org scope)"
 
-    # 2. Inclusive override (don't reject genuinely open/LMIC/global/in-region).
-    if _has_inclusive_eligibility(text):
+    # 2. Inclusive override — genuinely open calls. Either an explicit
+    # international-eligibility phrase, OR a worldwide/global scope.
+    if _has_inclusive_eligibility(text) or geo.text_matches_term(text, "Global / worldwide"):
         return False, ""
 
     # 3. Defined scope intersection. call_set = countries named + members of any
-    # region the call scopes to. Country spans are blanked BEFORE region detection
-    # so a country like "South Africa" / "South Sudan" doesn't let its inner
-    # "africa"/"sudan" register a whole continent/region. Overlap with org → keep;
-    # disjoint → reject.
+    # region OR income tier the call scopes to. Income tiers (LMIC, Global South,
+    # LDC) expand to their member countries — so an "open to low- and middle-income
+    # countries" CIHR call includes Cameroon/Mali and is kept, even though the
+    # source stamped a default 'Canada' scope. Country spans are blanked BEFORE
+    # region detection so "South Africa"/"South Sudan" can't register a continent.
+    # Overlap with org → keep; defined-but-disjoint → reject.
     call_countries = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
     clean = text
     for c in sorted(call_countries, key=len, reverse=True):
@@ -477,6 +480,9 @@ def geographic_exclusion_reject(candidate: dict[str, Any],
     call_set = set(call_countries)
     for region in geo.regions_in_text(clean):
         call_set |= geo.expand([region])
+    for tier in geo.INCOME_TIERS:
+        if geo.text_matches_term(clean, tier):
+            call_set |= geo.expand([tier])
     if not call_set:
         return False, ""                       # silent → let country_eligible park
     if call_set & org_set:
