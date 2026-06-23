@@ -60,11 +60,17 @@ HEALTH_KEYWORDS = [
 ]
 
 # HTML anchors whose href / text look like opportunity / grant pages.
+# Extraction filter — broad on purpose (high recall); the eligibility gate trims
+# noise downstream. Recognises every solicitation form by ACRONYM and FULL wording.
 _GRANTY_RE = re.compile(
-    r"(grant|funding|fund|rfp|rfa|call|propos|award|opportunity|"
-    r"challenge|tender|notice|solicit|innovation|"
-    # procurement-notice abbreviations (AfDB & other dev-bank portals):
-    r"spn|gpn|eoi|rfq|procure|prequalif|expression of interest)",
+    r"(grant|funding|fund|propos|applic|award|opportunit|challenge|innovation|"
+    r"solicit|tender|bid\b|notice|procure|prequalif|"
+    # acronyms
+    r"rfp|rfa|rfq|rfi|rfei|cfp|cfa|cfn|nofo|nofa|foa|baa|aps|eoi|reoi|ceoi|"
+    r"loi|itb|ifb|itt|spn|gpn|"
+    # full wordings / phrases
+    r"call for|request for|expression of interest|invitation to|invitation for|"
+    r"letter of intent|notice of funding|quotation)",
     re.IGNORECASE,
 )
 
