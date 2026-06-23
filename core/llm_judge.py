@@ -51,7 +51,9 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "gpt-4o-mini"
-_TIMEOUT_SECONDS = 20
+# Per-call timeout. Hosted models answer in 1-3s; a local CPU model (Ollama)
+# can take 30-90s, so make it tunable via LLM_JUDGE_TIMEOUT (seconds).
+_DEFAULT_TIMEOUT = 60
 _MAX_INPUT_CHARS = 6000     # ~1.5K tokens of body — keeps cost bounded
 _MAX_OUTPUT_TOKENS = 500
 
@@ -155,10 +157,15 @@ def judge(candidate: dict[str, Any], policies: dict[str, Any],
 
     try:
         from openai import OpenAI  # noqa: WPS433 (lazy, optional dep)
+        try:
+            timeout = float(os.environ.get("LLM_JUDGE_TIMEOUT", _DEFAULT_TIMEOUT))
+        except ValueError:
+            timeout = _DEFAULT_TIMEOUT
         client = OpenAI(
             base_url=os.environ["LLM_JUDGE_BASE_URL"],
             api_key=os.environ["LLM_JUDGE_API_KEY"],
-            timeout=_TIMEOUT_SECONDS,
+            timeout=timeout,
+            max_retries=0,          # one shot — we fall back to regex on failure
         )
         resp = client.chat.completions.create(
             model=chosen,
