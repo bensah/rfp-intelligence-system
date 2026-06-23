@@ -423,7 +423,13 @@ def run(
                 totals["errors"] += 1
 
         duration = batch["duration"]
-        found = len(batch["results"])
+        # "Found" = every candidate the pipeline EVALUATED = new + duplicate +
+        # rejected. Not len(batch["results"]): when a listing/aggregator page is
+        # expanded into child calls, those children are gated too, so counting
+        # only the top-level results made rejected exceed found (e.g.
+        # DevelopmentAid 40 top-level but 85 evaluated). This keeps the breakdown
+        # internally consistent (found >= rejected, found = new + dup + rejected).
+        found = new + dup + rejected
         totals["found"] += found
         totals["new"] += new
         totals["duplicate"] += dup
