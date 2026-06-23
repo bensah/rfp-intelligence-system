@@ -14,6 +14,7 @@ app and the headless scan subprocess (it only uses the plain Supabase client).
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Iterable
 
 from db.supabase_client import get_client
@@ -96,33 +97,68 @@ def _base_record(cand: dict, *, event_type: str, label: str | None,
     }
 
 
+def _reject_keys(link: str, title: str, funder: str) -> tuple[str, str]:
+    """Two dedup keys for a reject: a normalised link (lowercased, no fragment /
+    trailing slash — but query KEPT, since some portals key the opportunity by a
+    query param like ResearchNet ?prog=N) and a title+funder identity (catches the
+    SAME opportunity whose link drifts between scans)."""
+    lk = (link or "").strip().lower().split("#", 1)[0].rstrip("/")
+    tk = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    fk = re.sub(r"[^a-z0-9]+", " ", (funder or "").lower()).strip()
+    return lk, (f"{tk}|{fk}" if tk else "")
+
+
 def log_rejects(records: Iterable[dict]) -> int:
     """Bulk-log scan-gate rejects. Each `record` is a candidate dict plus a
-    '_reject_reason' key. Dedupes against links already logged as system_reject
-    so the table holds each rejected opportunity once. Returns rows written."""
+    '_reject_reason' key. Dedupes against opportunities already logged as
+    system_reject — by normalised LINK and by TITLE+FUNDER — so a reject that
+    recurs (even with a drifted URL) never lands twice. Also pre-fills the
+    solicitation type ('Other' for not-an-rfp, else detected from title+body) so
+    the Verify UI's Solicitation column comes ready-labelled. Returns rows written."""
     recs = [r for r in (records or []) if r]
     if not recs:
         return 0
     try:
+        from core import type_detect
         sb = get_client()
-        # Skip links already captured as a system_reject (keep it to unique opps).
-        seen: set[str] = set()
+        seen_link: set[str] = set()
+        seen_id: set[str] = set()
         try:
-            existing = (sb.table(_TABLE).select("opportunity_link")
+            existing = (sb.table(_TABLE)
+                        .select("opportunity_link,opportunity_title,funding_agency")
                         .eq("event_type", "system_reject").execute().data or [])
-            seen = {(e.get("opportunity_link") or "") for e in existing}
+            for e in existing:
+                lk, idk = _reject_keys(e.get("opportunity_link") or "",
+                                       e.get("opportunity_title") or "",
+                                       e.get("funding_agency") or "")
+                if lk:
+                    seen_link.add(lk)
+                if idk:
+                    seen_id.add(idk)
         except Exception:
-            seen = set()
-        rows, batch_seen = [], set()
+            pass
+        rows = []
         for r in recs:
-            link = (r.get("opportunity_link") or "").strip()
-            key = link or (r.get("opportunity_title") or "")
-            if not key or key in seen or key in batch_seen:
+            lk, idk = _reject_keys(r.get("opportunity_link") or "",
+                                   r.get("opportunity_title") or "",
+                                   r.get("funding_agency") or "")
+            if not lk and not idk:
                 continue
-            batch_seen.add(key)
+            if (lk and lk in seen_link) or (idk and idk in seen_id):
+                continue                       # already rejected before → discard
+            if lk:
+                seen_link.add(lk)
+            if idk:
+                seen_id.add(idk)
             reason = r.get("_reject_reason")
+            # Pre-fill solicitation: not-an-rfp → Other; otherwise the detected
+            # type (title + body + link), falling back to any value already set.
+            if _reason_category(reason) == "not-an-rfp":
+                sol = "Other"
+            else:
+                sol = r.get("solicitation_type") or type_detect.detect_solicitation(r)
             rows.append(_base_record(
-                r, event_type="system_reject",
+                {**r, "solicitation_type": sol}, event_type="system_reject",
                 label=_reason_category(reason), reason=reason, by=None))
         for i in range(0, len(rows), 200):
             sb.table(_TABLE).insert(rows[i:i + 200]).execute()

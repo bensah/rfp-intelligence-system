@@ -324,7 +324,11 @@ def _verify_table(*, user: dict, key: str, rows: list[dict],
             if type_opts:
                 tk = f"{key}_t_{rid}"
                 if tk not in st.session_state:
-                    dt = db_types.get(link, "")
+                    # Default the Solicitation dropdown to a human label if one
+                    # exists, else the auto-detected type stored on the row
+                    # (scan-time: 'Other' for not-an-rfp, else NOFO/RFP/CFP/… from
+                    # title+body). Saves the reviewer pre-clicking the obvious one.
+                    dt = db_types.get(link) or r.get("solicitation_type") or ""
                     st.session_state[tk] = dt if dt in t_opts else "—"
                 c[ci].selectbox("t", t_opts, key=tk, label_visibility="collapsed")
                 ci += 1
@@ -396,7 +400,8 @@ def _render_reject_log(user: dict) -> None:
         rows = safe_execute(
             get_client().table("scan_decisions")
             .select("id,created_at,label,reason,opportunity_title,"
-                    "opportunity_link,funding_agency,submission_deadline")
+                    "opportunity_link,funding_agency,submission_deadline,"
+                    "solicitation_type")
             .eq("event_type", "system_reject")
             .order("created_at", desc=True).limit(3000)).data or []
     except Exception as exc:
