@@ -415,6 +415,19 @@ _WORLDWIDE_RE = re.compile(
     r"\b(globally|world\s?wide|any country|all countries|across the (?:globe|world)"
     r"|open to all|all eligible countries|regardless of (?:country|location)"
     r"|international applicants?)\b", re.IGNORECASE)
+# Development tiers an org's country can BELONG to (so a call open to one of these
+# includes the org). Excludes the pure worldwide tier (handled by _WORLDWIDE_RE).
+_DEV_TIERS = [t for t in geo.INCOME_TIERS if t != "Global / worldwide"]
+
+
+def _dev_tier_mentioned(text: str) -> bool:
+    """True if the text NAMES a development tier (LMIC / developing / Global South /
+    LDC / low-/middle-income …). Matches the tier's label+synonyms ONLY, never its
+    member countries — otherwise any African country name (an LMIC member) would
+    falsely register the tier (e.g. 'Senegal health grant')."""
+    tl = (text or "").lower()
+    return any(re.search(r"\b" + re.escape(v), tl)
+               for t in _DEV_TIERS for v in geo._region_name_variants(t))
 
 
 def _org_geo_set(policies: dict[str, Any]) -> set[str]:
@@ -469,36 +482,44 @@ def geographic_exclusion_reject(candidate: dict[str, Any],
         if pm and not _place_in_org(pm.group(1), org_set):
             return True, f"geography: eligibility restricted to {pm.group(1)} (outside org scope)"
 
-    # 2. Inclusive override — genuinely open calls. An explicit international-
-    # eligibility phrase OR a worldwide scope. NB: deliberately NOT the bare word
-    # "global" — it appears in unit/programme names ("IOM Global Office", "Global
-    # Fund", "Global Health …") and would wrongly wave through off-region calls.
-    if _has_inclusive_eligibility(text) or _WORLDWIDE_RE.search(text):
-        return False, ""
-
-    # 3. Defined scope intersection. call_set = countries named + members of any
-    # region OR income tier the call scopes to. Income tiers (LMIC, Global South,
-    # LDC) expand to their member countries — so an "open to low- and middle-income
-    # countries" CIHR call includes Cameroon/Mali and is kept, even though the
-    # source stamped a default 'Canada' scope. Country spans are blanked BEFORE
+    # Detect named countries + specific regions. Country spans are blanked before
     # region detection so "South Africa"/"South Sudan" can't register a continent.
-    # Overlap with org → keep; defined-but-disjoint → reject.
     call_countries = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
     clean = text
     for c in sorted(call_countries, key=len, reverse=True):
         clean = re.sub(r"\b" + re.escape(c) + r"\b", " ", clean)
-    call_set = set(call_countries)
-    for region in geo.regions_in_text(clean):
-        call_set |= geo.expand([region])
-    for tier in geo.INCOME_TIERS:
-        if geo.text_matches_term(clean, tier):
-            call_set |= geo.expand([tier])
-    if not call_set:
-        return False, ""                       # silent → let country_eligible park
-    if call_set & org_set:
-        return False, ""                       # call's scope includes the org
-    sample = ", ".join(sorted(call_set)[:3])
-    return True, f"geography: scope ({sample}…) excludes org countries/region"
+    specific_regions = geo.regions_in_text(clean)   # UN regions + EU + Mediterranean
+
+    # 2. A specific REGION is the hardest scope signal (it CONSTRAINS the call —
+    # a development-tier word alongside is only a qualifier, e.g. "LMICs in Asia"
+    # is Asia-scoped). Keep iff that region (or a named country) includes the org.
+    if specific_regions:
+        region_set = set()
+        for region in specific_regions:
+            region_set |= geo.expand([region])
+        if (region_set | call_countries) & org_set:
+            return False, ""
+        sample = ", ".join(sorted(specific_regions)[:3])
+        return True, f"geography: scope ({sample}) excludes the org's country/region"
+
+    # 3. No specific region. Keep when the call is open to the org's DEVELOPMENT
+    # TIER (LMIC / Global South / developing / LDC / low-/middle-income), worldwide,
+    # or to international applicants — the org's country qualifies. A bare foreign
+    # country mention (e.g. ResearchNet's funder-country 'Canada' stamp) does NOT
+    # override an LMIC-open call.
+    if _has_inclusive_eligibility(text) or _WORLDWIDE_RE.search(text) \
+            or _dev_tier_mentioned(text):
+        return False, ""
+
+    # 4. No region, no tier, no worldwide — specific COUNTRIES constrain the scope.
+    if call_countries:
+        if call_countries & org_set:
+            return False, ""
+        sample = ", ".join(sorted(call_countries)[:3])
+        return True, f"geography: scope ({sample}) excludes the org's country"
+
+    # 5. No geography at all → defer (country_eligible parks it).
+    return False, ""
 
 
 def _geo_strength(candidate: dict[str, Any], policies: dict[str, Any]) -> str:
@@ -1113,14 +1134,17 @@ _RFP_STRONG_PHRASES = (
     "request for tender", "tender notice", "invitation to bid",
     "call for tender", "call for tenders", "request for quotation",
     "grand challenge",
+    # Stand-alone full wordings (not only the "request/call for …" prefixed forms).
+    "expression of interest", "expressions of interest",
+    "letter of intent", "letters of intent", "tender notice", "tenders",
     # Dev-bank procurement notices (AfDB / World Bank style).
     "specific procurement notice", "general procurement notice",
     "procurement notice", "invitation for bids", "prequalification",
 )
 # Whole UPPERCASE acronyms only (RFPs/NOFOs plural handled by the regex).
 _RFP_ACRONYMS = frozenset({
-    "RFP", "RFA", "RFI", "RFQ", "EOI", "REOI", "CEOI",
-    "CFP", "CFA", "NOFO", "NOFA", "FOA", "APS", "BAA", "ITT",
+    "RFP", "RFA", "RFI", "RFQ", "EOI", "REOI", "CEOI", "LOI",
+    "CFP", "CFA", "NOFO", "NOFA", "FOA", "APS", "BAA", "ITT", "ITB",
     "SPN", "GPN", "IFB",          # specific/general procurement notice, inv. for bids
 })
 _ACRONYM_TOKEN_RE = re.compile(r"\b([A-Z]{2,6})s?\b")
