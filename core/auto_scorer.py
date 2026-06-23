@@ -720,13 +720,17 @@ def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tup
         if permissive:
             return True, "geo: none mentioned (permissive)"
         return False, "geo: none mentioned (strict)"
-    # strength == "foreign": geography IS defined and excludes our scope —
-    # specific non-eligible countries, no region/tier (SSA / LMIC / Africa)
-    # that contains Cameroon or Mali, no eligible country named. A clearly-
-    # defined scope that leaves us out (e.g. a Ukraine/China-only call, or the
-    # Canada Fund's per-country list) is REJECTED. Undefined geo still slips in
-    # via the 'silent' branch above.
-    return False, "geo: defined scope excludes eligible countries / region"
+    # strength == "foreign": the legacy detector saw a non-eligible country, but
+    # it's blind to broad containing regions stated by name (a call scoped to
+    # "Africa, Latin America" reads as foreign here even though Africa contains
+    # Cameroon/Mali). Defer the verdict to the authoritative, policy-driven
+    # geographic_exclusion_reject — it rejects a scope that genuinely excludes the
+    # org and keeps one that includes an in-region area. This reconciles the two
+    # gates so e.g. Grand Challenges Canada's Africa/LatAm/Caribbean call is kept.
+    rej, reason = geographic_exclusion_reject(candidate, policies)
+    if rej:
+        return False, reason
+    return True, "geo: mixed scope includes an in-region area (parked)"
 
 
 def theme_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
@@ -1298,6 +1302,10 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     # Archive / past-call detail page (URL path) — always a closed call.
     if _PAST_CALL_URL_RE.search(link):
         return False, "not-an-rfp: past / closed call (archive path)"
+    # Section "see-more" navigation links — a heading like "Current calls »" or a
+    # /redirect-pages/ URL points at a listing, not a single call (AHPSR case).
+    if _t.rstrip().endswith(("»", "›", "→", "≫")) or "/redirect-pages/" in link.lower():
+        return False, "not-an-rfp: section navigation / 'see more' link, not a call"
     # Resource-mobilisation / "invest in the donor" page — not a grant call.
     if _DONOR_INVEST_URL_RE.search(link) or _DONOR_INVEST_TITLE_RE.search(_t):
         return False, "not-an-rfp: donor investment / resource-mobilisation page, not a call"
