@@ -78,8 +78,11 @@ def _match(blob: str, rules: list[tuple[str, str]]) -> str | None:
 
 
 def detect_solicitation(candidate: dict[str, Any]) -> str | None:
-    """How the call is announced / applied to (NOFO/RFP/CFA/EOI/Tender/…)."""
+    """How the call is announced / applied to (NOFO/RFP/CFA/EOI/Tender/…).
+    Reads title + description + link — the solicitation type often appears only in
+    the body (a generically-titled call whose text says "request for proposals")."""
     blob = (f"{candidate.get('opportunity_title') or ''} "
+            f"{candidate.get('brief_description') or ''} "
             f"{candidate.get('opportunity_link') or ''}")
     return _match(blob, _SOLICITATION_RULES)
 
