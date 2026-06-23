@@ -62,7 +62,9 @@ HEALTH_KEYWORDS = [
 # HTML anchors whose href / text look like opportunity / grant pages.
 _GRANTY_RE = re.compile(
     r"(grant|funding|fund|rfp|rfa|call|propos|award|opportunity|"
-    r"challenge|tender|notice|solicit|innovation)",
+    r"challenge|tender|notice|solicit|innovation|"
+    # procurement-notice abbreviations (AfDB & other dev-bank portals):
+    r"spn|gpn|eoi|rfq|procure|prequalif|expression of interest)",
     re.IGNORECASE,
 )
 
