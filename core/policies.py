@@ -42,15 +42,45 @@ DEFAULT_POLICIES: dict[str, Any] = {
         "permissive_when_silent": True,
     },
     "themes": {
-        # Candidate must mention at least one of these to be admitted.
+        # Candidate must mention at least one of these to be admitted. Broad
+        # health vocabulary — terms, synonyms and related concepts — so health
+        # procurement/supply and broadly-titled calls aren't missed. Matched
+        # word-aware (see auto_scorer._theme_hit): short tokens/acronyms need a
+        # whole-word boundary, longer terms match as a stem prefix.
         "required_any": [
-            "health", "disease", "infection", "epidemic", "pandemic",
-            "HIV", "AIDS", "tuberculosis", "TB", "malaria",
-            "vaccine", "immuni", "AMR", "antimicrobial",
-            "maternal", "newborn", "child health", "nutrition",
-            "global health", "primary care", "NCD", "non-communicable",
-            "diagnostic", "treatment", "therapeutic", "outbreak",
-            "essential medicine", "tropical", "neglected disease",
+            # health systems & care delivery
+            "health", "healthcare", "health care", "health system",
+            "health systems", "health service", "health services",
+            "health facility", "public health", "global health", "primary care",
+            "universal health coverage", "UHC", "health financing",
+            "health workforce", "health worker", "community health",
+            "digital health", "one health", "medical", "medicine", "medicines",
+            "clinical", "clinic", "hospital", "nursing", "physician",
+            "surgical", "surgery", "pharmaceutical", "medical equipment",
+            "medical supplies", "medical device", "laboratory", "point-of-care",
+            "biomedical", "health research",
+            # infectious disease
+            "disease", "infection", "infectious", "epidemic", "pandemic",
+            "outbreak", "HIV", "AIDS", "antiretroviral", "tuberculosis", "TB",
+            "malaria", "hepatitis", "cholera", "ebola", "measles", "polio",
+            "dengue", "COVID", "coronavirus", "influenza", "meningitis",
+            "pneumonia", "diarrhoeal", "diarrheal", "sepsis", "schistosomiasis",
+            "neglected disease", "neglected tropical", "NTD", "tropical",
+            "sexually transmitted",
+            # NCDs & mental health
+            "NCD", "non-communicable", "chronic disease", "cancer", "oncology",
+            "cardiovascular", "hypertension", "diabetes", "mental health",
+            # MNCH / SRHR / nutrition
+            "maternal", "newborn", "child health", "child mortality",
+            "maternal mortality", "paediatric", "pediatric", "adolescent health",
+            "reproductive health", "sexual health", "SRHR", "family planning",
+            "contraception", "antenatal", "obstetric", "nutrition",
+            "malnutrition", "stunting",
+            # prevention / cross-cutting
+            "vaccine", "vaccination", "immuni", "immunization", "immunisation",
+            "AMR", "antimicrobial", "diagnostic", "treatment", "therapeutic",
+            "therapy", "essential medicine", "surveillance", "epidemiolog",
+            "water and sanitation", "sanitation and hygiene", "safe water",
         ],
         # Hard reject at scan time if ANY of these appear in title/body.
         # Implementing-NGO deployments typically don't pursue early-phase

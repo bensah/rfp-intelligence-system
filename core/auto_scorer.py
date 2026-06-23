@@ -765,13 +765,16 @@ def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tup
 
 
 def _theme_hit(kw: str, text: str) -> bool:
-    """Whole-word(-prefix) match, NOT a bare substring. A substring check let the
-    acronym 'TB' match inside 'I-TB' (Invitation To Bid), 'AMR' inside words, etc.
-    — so off-theme procurement falsely matched a health theme. Anchor a word
-    boundary at the START (so stems like 'immuni' still match 'immunization', but
-    'tb' no longer matches 'itb')."""
+    """Word-aware keyword match (NOT a bare substring — that let 'TB' match inside
+    'I-TB'). Short tokens & acronyms (<=5 chars or ALL-CAPS, e.g. TB, STI, flu,
+    UHC) require a WHOLE-word boundary so they don't fire inside a longer word
+    ('still', 'fluid', 'itb'). Longer lowercase terms match as a PREFIX so stems
+    still work ('immuni'→'immunization', 'diagnostic'→'diagnostics')."""
     kw = (kw or "").strip()
-    return bool(kw and re.search(r"\b" + re.escape(kw), text, re.IGNORECASE))
+    if not kw:
+        return False
+    end = r"\b" if (len(kw) <= 5 or kw.isupper()) else ""
+    return bool(re.search(r"\b" + re.escape(kw) + end, text, re.IGNORECASE))
 
 
 def theme_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
