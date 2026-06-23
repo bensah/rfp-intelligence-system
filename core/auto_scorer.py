@@ -409,6 +409,14 @@ _PLACE_RE = re.compile(
     r"\b(" + "|".join(re.escape(p) for p in _PLACE_TOKENS) + r")\b", re.I)
 
 
+# Worldwide / open-to-all eligibility — a genuine global scope. Excludes bare
+# "global" on purpose (too many unit/programme names contain it).
+_WORLDWIDE_RE = re.compile(
+    r"\b(globally|world\s?wide|any country|all countries|across the (?:globe|world)"
+    r"|open to all|all eligible countries|regardless of (?:country|location)"
+    r"|international applicants?)\b", re.IGNORECASE)
+
+
 def _org_geo_set(policies: dict[str, Any]) -> set[str]:
     """The org's geographic ANCHOR — the countries a call's scope must include to
     be in-scope. Country-precise: when eligible countries are set we anchor on
@@ -461,9 +469,11 @@ def geographic_exclusion_reject(candidate: dict[str, Any],
         if pm and not _place_in_org(pm.group(1), org_set):
             return True, f"geography: eligibility restricted to {pm.group(1)} (outside org scope)"
 
-    # 2. Inclusive override — genuinely open calls. Either an explicit
-    # international-eligibility phrase, OR a worldwide/global scope.
-    if _has_inclusive_eligibility(text) or geo.text_matches_term(text, "Global / worldwide"):
+    # 2. Inclusive override — genuinely open calls. An explicit international-
+    # eligibility phrase OR a worldwide scope. NB: deliberately NOT the bare word
+    # "global" — it appears in unit/programme names ("IOM Global Office", "Global
+    # Fund", "Global Health …") and would wrongly wave through off-region calls.
+    if _has_inclusive_eligibility(text) or _WORLDWIDE_RE.search(text):
         return False, ""
 
     # 3. Defined scope intersection. call_set = countries named + members of any
@@ -733,17 +743,27 @@ def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tup
     return True, "geo: mixed scope includes an in-region area (parked)"
 
 
+def _theme_hit(kw: str, text: str) -> bool:
+    """Whole-word(-prefix) match, NOT a bare substring. A substring check let the
+    acronym 'TB' match inside 'I-TB' (Invitation To Bid), 'AMR' inside words, etc.
+    — so off-theme procurement falsely matched a health theme. Anchor a word
+    boundary at the START (so stems like 'immuni' still match 'immunization', but
+    'tb' no longer matches 'itb')."""
+    kw = (kw or "").strip()
+    return bool(kw and re.search(r"\b" + re.escape(kw), text, re.IGNORECASE))
+
+
 def theme_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
     themes = policies.get("themes", {}) or {}
     required = themes.get("required_any") or []
     excluded = themes.get("excluded_any") or []
     text = _full_text(candidate)
 
-    if excluded and any(e.lower() in text for e in excluded if e):
-        return False, f"matches excluded theme"
+    if excluded and any(_theme_hit(e, text) for e in excluded if e):
+        return False, "matches excluded theme"
     if not required:
         return True, "no theme requirements set"
-    if any(kw.lower() in text for kw in required if kw):
+    if any(_theme_hit(kw, text) for kw in required if kw):
         return True, "matches required theme keyword"
     return False, "no required theme keyword matched"
 
@@ -1093,11 +1113,15 @@ _RFP_STRONG_PHRASES = (
     "request for tender", "tender notice", "invitation to bid",
     "call for tender", "call for tenders", "request for quotation",
     "grand challenge",
+    # Dev-bank procurement notices (AfDB / World Bank style).
+    "specific procurement notice", "general procurement notice",
+    "procurement notice", "invitation for bids", "prequalification",
 )
 # Whole UPPERCASE acronyms only (RFPs/NOFOs plural handled by the regex).
 _RFP_ACRONYMS = frozenset({
     "RFP", "RFA", "RFI", "RFQ", "EOI", "REOI", "CEOI",
     "CFP", "CFA", "NOFO", "NOFA", "FOA", "APS", "BAA", "ITT",
+    "SPN", "GPN", "IFB",          # specific/general procurement notice, inv. for bids
 })
 _ACRONYM_TOKEN_RE = re.compile(r"\b([A-Z]{2,6})s?\b")
 # Generic / ambiguous wording — a call MIGHT be here; accept only WITH details.
