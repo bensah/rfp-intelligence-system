@@ -27,6 +27,11 @@ playwright>=1.40.0
 # (`core/llm_extractor.py`). Activated only if ANTHROPIC_API_KEY is set
 # in .env (gitignored). Falls back gracefully to regex if absent.
 anthropic>=0.34.0
+# Optional — OpenAI-compatible client powers the vendor-neutral LLM judge
+# (`core/llm_judge.py`). Works with OpenAI, OpenRouter, Together, Groq,
+# DeepInfra, or a local Ollama/vLLM endpoint via LLM_JUDGE_BASE_URL. Activated
+# only when LLM_JUDGE_* env vars are set; falls back to the regex gates if absent.
+openai>=1.40.0
 # Optional — word cloud on the Report dashboard (Section 1 — keyword
 # cloud expander). Falls back to a top-keywords table when missing.
 wordcloud>=1.9.0
