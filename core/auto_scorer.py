@@ -1251,6 +1251,23 @@ _NEWS_TITLE_RE = re.compile(
 _PAST_CALL_URL_RE = re.compile(
     r"/(past[-_]call|closed[-_]call|calls?[-_]archive|past[-_]opportunit"
     r"|past[-_]funding|past[-_]grant)", re.IGNORECASE)
+# Resource-mobilisation / "invest IN us" donor pages — the org is being asked to
+# fund the donor, the OPPOSITE of a grant call. e.g. gavi.org/investing-gavi/...
+# "Gavi's Investment Opportunity 2026-2030". Not a solicitation.
+_DONOR_INVEST_URL_RE = re.compile(
+    r"/(investing[-_]\w+|resource[-_]mobili[sz]ation|our[-_]donors"
+    r"|donor[-_]profile|funding[-_]overview|investment[-_]case)", re.IGNORECASE)
+_DONOR_INVEST_TITLE_RE = re.compile(
+    r"\b(investment opportunity|investment case|resource mobili[sz]ation"
+    r"|donor profile|funding overview|invest in (?:gavi|us|our))\b", re.IGNORECASE)
+# Internal / off-mission award types — course (teaching) grants, core/shared
+# research-facility & instrumentation support, "academy award" staff/faculty
+# programmes (e.g. Stanford "Cardinal Course Grants", "C-ShaRP Academy Award").
+# These are not health-PROGRAMME solicitations an external org can pursue; they
+# slip the theme gate because the host portal's boilerplate mentions health.
+_OFF_MISSION_AWARD_RE = re.compile(
+    r"\b(course grants?|core facilit|shared facilit|instrumentation grant"
+    r"|academy award|curriculum grant|teaching grant)\b", re.IGNORECASE)
 
 
 def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
@@ -1281,6 +1298,12 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     # Archive / past-call detail page (URL path) — always a closed call.
     if _PAST_CALL_URL_RE.search(link):
         return False, "not-an-rfp: past / closed call (archive path)"
+    # Resource-mobilisation / "invest in the donor" page — not a grant call.
+    if _DONOR_INVEST_URL_RE.search(link) or _DONOR_INVEST_TITLE_RE.search(_t):
+        return False, "not-an-rfp: donor investment / resource-mobilisation page, not a call"
+    # Internal course / facility / academy award — not a programme solicitation.
+    if _OFF_MISSION_AWARD_RE.search(_t):
+        return False, "not-an-rfp: internal course / facility / academy award (off-mission)"
     # Non-primary sources never get stored: competitor AGGREGATORS (DevelopmentAid,
     # GrantBite, …) — a crawl SEED only; the pipeline resolves theme-relevant hits
     # to the donor's OWN page first, so anything still on an aggregator host here
