@@ -2169,8 +2169,8 @@ _STRONG_OPP_PATH = re.compile(
     r"/(?:rfp|rfps|cfp|cfps|eoi|eois|rfi|loi"
     r"|call[s]?-for-(?:proposal|application|tender|project)"
     r"|request-for-(?:proposal|application|expression)"
-    r"|funding-opportunit|grant-opportunit|request-for-proposals"
-    r"|tender|procurement-notice)(?:/|s/|-|$)", re.I)
+    r"|funding-opportunit(?:y|ies)?|grant-opportunit(?:y|ies)?|request-for-proposals"
+    r"|funding-opportunity|tender|procurement-notice)(?:/|s/|-|$)", re.I)
 
 # Anchors that are navigation chrome, NOT individual solicitations. These were
 # slipping through the _STRONG_OPP_PATH bypass (e.g. the "English" language
