@@ -999,6 +999,10 @@ def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
         # keyless JSON search endpoint.
         if "english.rvo.nl" in url.lower():
             return _scan_rvo(name, url)
+        # Grand Challenges Canada — card-based listing (parse heading/body/deadline,
+        # not the generic "View full details" button text).
+        if "grandchallenges.ca" in url.lower():
+            return _scan_grandchallenges_ca(name, url)
         # Packard — JS-rendered cards backed by the WordPress REST custom
         # post type `funding-opportunity`.
         if "packard.org" in url.lower():
@@ -2020,6 +2024,69 @@ def _scan_chinnova(name: str, url: str) -> list[dict[str, Any]]:
                                         a["href"]),
             "funding_agency": "CHINNOVA / Association of African Universities",
             "brief_description": None,
+            "submission_deadline": deadline,
+            "_source_origin": name,
+        })
+    return _dedup_by_link_or_title(out)
+
+
+_GCC_CA_DATE_RE = re.compile(r"\bby\s+([A-Z][a-z]+\.?\s+\d{1,2},?\s+\d{4})", re.I)
+
+
+def _scan_grandchallenges_ca(name: str, url: str) -> list[dict[str, Any]]:
+    """Grand Challenges Canada — the /apply-for-funding/ page lists each open call
+    as a CARD: a heading ("Nexa Funding Opportunity: …"), a health blurb, an
+    "Apply by <date>" line, and a generic "View full details" button. The generic
+    anchor crawler keyed off the button text (title "View full details") and the
+    page's French meta description, so the call read as off-theme. Parse the card
+    instead: heading → title, card body → description, "by <date>" → deadline."""
+    try:
+        r = requests.get(url, headers={"User-Agent": USER_AGENT,
+                                       "Accept": "text/html"}, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+    except Exception as exc:
+        log.warning("Grand Challenges Canada failed: %s", exc)
+        return []
+    base = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for a in soup.find_all("a", href=True):
+        full = urljoin(base, a["href"])
+        path = urlsplit(full).path.lower()
+        # individual call detail pages; skip the listing + archive/past links.
+        # (prefix match so the singular "/funding-opportunity-<slug>" is caught).
+        if not re.search(r"/funding-opportunit|/rfp-", path):
+            continue
+        if any(x in path for x in ("archive", "/past", "apply-for-funding")):
+            continue
+        # The card's title is the heading immediately BEFORE the button in document
+        # order; the card body is the smallest ancestor containing both (climbing
+        # to "the first heading" wrongly grabbed a neighbouring card's heading).
+        head = a.find_previous(["h2", "h3", "h4", "h5"])
+        if not head:
+            continue
+        title = _clean(head.get_text(" ", strip=True))
+        if not title or full in seen:
+            continue
+        seen.add(full)
+        card = a
+        while card is not None and head not in list(card.descendants):
+            card = card.parent
+        ctext = _clean((card or a.parent).get_text(" ", strip=True))
+        deadline = None
+        m = _GCC_CA_DATE_RE.search(ctext)
+        if m:
+            try:
+                deadline = datetime.strptime(
+                    m.group(1).replace(",", "").replace(".", ""), "%B %d %Y").date()
+            except ValueError:
+                deadline = _parse_iso_date(m.group(1))
+        out.append({
+            "opportunity_title": title[:300],
+            "opportunity_link": full,
+            "funding_agency": "Grand Challenges Canada",
+            "brief_description": ctext[:1800] or None,
             "submission_deadline": deadline,
             "_source_origin": name,
         })
