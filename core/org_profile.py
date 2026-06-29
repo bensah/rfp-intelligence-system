@@ -97,18 +97,18 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "trusted_academic_institutions": [],    # universities / research orgs (free-add, codified)
 
     # --- cofinancing & compliance (MUST 5) ---
-    "cofinancing_capacity": "limited",      # none | limited | moderate | strong
+    "org_cofinancing_capacity": "limited",      # none | limited | moderate | strong
     # Hard pre-acquire compliance credentials the org ALREADY holds — each gates a
     # donor requirement of the same name (org lacks it + donor requires it -> 0).
-    "has_audited_financials": False,        # recent independently audited financials
-    "has_audit_report": False,              # a formal external audit report on file
-    "has_safeguarding_policy": False,       # safeguarding / PSEA policy in place
-    "has_partner_mou": False,               # signed MOU(s) with implementing partner(s)
-    "has_govt_mou": False,                  # signed MOU with host-government authority
-    "has_govt_endorsement": False,          # can secure a government endorsement letter
+    "org_has_audited_financials": False,        # recent independently audited financials
+    "org_has_audit_report": False,              # a formal external audit report on file
+    "org_has_safeguarding_policy": False,       # safeguarding / PSEA policy in place
+    "org_has_partner_mou": False,               # signed MOU(s) with implementing partner(s)
+    "org_has_govt_mou": False,                  # signed MOU with host-government authority
+    "org_has_govt_endorsement": False,          # can secure a government endorsement letter
     # Donors we have ALREADY obtained an authorized-signatory sign-off from — matched
     # by name to a call's donor when it requires authorized-signatory sign-off.
-    "authorized_signatory_donors": [],
+    "org_authorized_signatory_donors": [],
     # Funding ROUTES the org can RECEIVE through (tokens: grant | procurement | loan |
     # subrecipient | govt_ccm | direct). Matched (≥1 overlap) to the call/donor routes.
     "org_funding_routes": ["grant", "subrecipient"],
@@ -132,7 +132,7 @@ LIST_FIELDS: tuple[str, ...] = (
     "trusted_partners", "trusted_for_profit_partners",
     "trusted_academic_institutions", "org_domain_expertise", "org_priority_areas",
     "org_funder_history", "org_active_donors", "proposal_languages",
-    "authorized_signatory_donors", "org_funding_routes",
+    "org_authorized_signatory_donors", "org_funding_routes",
 )
 
 COFINANCING_LEVELS: tuple[str, ...] = ("none", "limited", "moderate", "strong")
@@ -214,6 +214,15 @@ _RENAMED_KEYS = {
     "has_established_pi": "org_has_established_pi",
     "active_donors": "org_active_donors",
     "funder_history": "org_funder_history",
+    # Cofinancing & compliance (axis 5)
+    "cofinancing_capacity": "org_cofinancing_capacity",
+    "has_audited_financials": "org_has_audited_financials",
+    "has_audit_report": "org_has_audit_report",
+    "has_safeguarding_policy": "org_has_safeguarding_policy",
+    "has_partner_mou": "org_has_partner_mou",
+    "has_govt_mou": "org_has_govt_mou",
+    "has_govt_endorsement": "org_has_govt_endorsement",
+    "authorized_signatory_donors": "org_authorized_signatory_donors",
 }
 
 

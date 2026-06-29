@@ -147,7 +147,7 @@ with st.container(border=True):
     c = st.columns(4)
     _kv(c[0], "Annual budget", _money(prof.get("org_annual_budget")))
     _kv(c[1], "Largest grant managed", _money(prof.get("org_largest_grant")))
-    _kv(c[2], "Co-financing capacity", (prof.get("cofinancing_capacity") or "—").title())
+    _kv(c[2], "Co-financing capacity", (prof.get("org_cofinancing_capacity") or "—").title())
     _kv(c[3], "Org stage", (prof.get("org_stage") or "—").title())
     c2 = st.columns(4)
     _kv(c2[0], "Funding target — low", _money(prof.get("org_min_target")))

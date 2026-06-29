@@ -147,7 +147,7 @@ except Exception:
 # (real match) is kept only for the "no funder profile" note.
 import json as _json
 try:
-    _rfp_flags = _json.loads(row.get("compliance_flags") or "{}")
+    _rfp_flags = _json.loads(row.get("call_compliance_flags") or "{}")
     if not isinstance(_rfp_flags, dict):
         _rfp_flags = {}
 except Exception:

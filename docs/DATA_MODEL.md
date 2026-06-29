@@ -89,7 +89,7 @@ Use = which criterion consumes it.**
 | `donor_prior_beneficiary_rule` | donor.`prior_beneficiary_rule` | eligible / ineligible_current/previous/any · donor · M1 prior-beneficiary |
 | `donor_ngo_eligible` / `donor_for_profit_eligible` | donor.`ngo_eligible`/`for_profit_eligible` | Applicant-type eligibility · donor · M1 applicant type, route |
 
-### 2.5 Cofinancing & compliance  → MUST-5
+### 2.5 Cofinancing & compliance  → MUST-5   ✅ MIGRATED (migration 058)
 | New name | Old name | Def · Src · Use |
 |---|---|---|
 | `org_cofinancing_capacity` | org.`cofinancing_capacity` | none/limited/moderate/strong · org · M5 cofinance |
@@ -100,10 +100,10 @@ Use = which criterion consumes it.**
 | `org_has_partner_mou` / `org_has_govt_mou` / `org_has_govt_endorsement` | org.`has_partner_mou`/`has_govt_mou`/`has_govt_endorsement` | MOUs / endorsement on hand · org · M5 |
 | `org_funding_routes` | org.`org_funding_routes` | Routes org can receive through (grant/procurement/loan/subrecipient/govt-ccm/direct) · org · M5 route |
 | `org_has_local_board` | settings.`org_has_local_board` | Has a local board · org · M5 local board |
-| `don_*_required` family | donor.`cost_sharing_match_required`, `audited_financials_required`, `audit_report_required`, `sam_uei_registration_required`, `tax_exempt_status_required`, `safeguarding_policy_required`, `authorized_signatory_signoff_required`, `welcome_registration_required`, `partner_mou_required`, `govt_mou_required`, `govt_endorsement_letter_required`, `local_board_required`, `partnership_mandatory`, `funding_platform_registration_required` | Each = a compliance gate the donor imposes · donor · M5 (prefix all with `don_`, keep stem so org counterpart is obvious) |
-| `don_*_route` family | donor.`grant_route`, `procurement_tender_route`, `loan_dev_finance_route`, `subrecipient_partner_possible`, `direct_local_org_eligible`, `govt_or_ccm_route_required` | Routes the donor offers · donor · M5 route match vs `org_funding_routes` |
-| `don_submission_portal_url` | donor.`submission_portal_url` | Portal to register on · donor · M5 platform-reg vs `org_donor_registrations` |
-| `cal_compliance_flags` | call.`compliance_flags` | Call-stated requirements (LLM) merged into the donor gates · call · M5/M1 |
+| `donor_*_required` family | donor.`cost_sharing_match_required`, `audited_financials_required`, `audit_report_required`, `sam_uei_registration_required`, `tax_exempt_status_required`, `safeguarding_policy_required`, `authorized_signatory_signoff_required`, `welcome_registration_required`, `partner_mou_required`, `govt_mou_required`, `govt_endorsement_letter_required`, `local_board_required`, `partnership_mandatory`, `funding_platform_registration_required` | Each = a compliance gate the donor imposes · donor · M5 (prefix all with `don_`, keep stem so org counterpart is obvious) |
+| `donor_*_route` family | donor.`grant_route`, `procurement_tender_route`, `loan_dev_finance_route`, `subrecipient_partner_possible`, `direct_local_org_eligible`, `govt_or_ccm_route_required` | Routes the donor offers · donor · M5 route match vs `org_funding_routes` |
+| `donor_submission_portal_url` | donor.`submission_portal_url` | Portal to register on · donor · M5 platform-reg vs `org_donor_registrations` |
+| `call_compliance_flags` | call.`compliance_flags` | Call-stated requirements (LLM) merged into the donor gates · call · M5/M1 |
 
 ### 2.6 Relationship · competitiveness · bid-effort  → PREFER-7/8/9
 | New name | Old name | Def · Src · Use |
@@ -135,10 +135,10 @@ Use = which criterion consumes it.**
 
 ## 5. Open questions for you
 1. **`score_*` outputs** — rename the 9 criterion columns + `alignment_score`/`auto_recommendation` to `score_*`, or keep the familiar bare names? (They're outputs, not comparison inputs.) -> keep as-is
-2. **`don_*_required` stem alignment** — keep each gate's existing stem (e.g. `don_safeguarding_policy_required`) so it visibly pairs with `org_has_safeguarding_policy`? (Recommended.) -> keep but change the don_ to donor_ as indicated in the prompt
+2. **`donor_*_required` stem alignment** — keep each gate's existing stem (e.g. `don_safeguarding_policy_required`) so it visibly pairs with `org_has_safeguarding_policy`? (Recommended.) -> keep but change the don_ to donor_ as indicated in the prompt
 3. **Naming nits**: `org_geographic_scope` doesn't fit (org has *registered* + *operating*, two distinct geos) — I used `org_registered_countries` / `org_operating_countries`. OK? -> this is okay, that's distinctive, if we later ever create donor intel side of registered_countries, we will have donor_registered_countries so we don't conflate the two. 
 
 ---
 
 ## 6. Execution plan (after sign-off)
-Per-axis, each a single reviewable PR-style step: **(1) Geography ✅ done (migration 054) → (2) Program areas ✅ done (migration 055) → (3) Award/funding ✅ done (migration 056) → (4) Eligibility ✅ done (migration 057) → (5) Compliance → (6) Relationship/competitiveness/bid-effort → (7) Workflow/outputs → (8) Non-comparison families.** Each step = `ALTER TABLE RENAME COLUMN` migration (idempotent) + JSON-key migration for org_profile + code update (criteria_derive, matching, features, scan_pipeline, llm_synthesis, views, scripts) + verify, with this doc's per-field one-liners filled in for that axis. ML feature names (`core/features`, `decision_model`) updated in lockstep.
+Per-axis, each a single reviewable PR-style step: **(1) Geography ✅ done (migration 054) → (2) Program areas ✅ done (migration 055) → (3) Award/funding ✅ done (migration 056) → (4) Eligibility ✅ done (migration 057) → (5) Compliance ✅ done (migration 058) → (6) Relationship/competitiveness/bid-effort → (7) Workflow/outputs → (8) Non-comparison families.** Each step = `ALTER TABLE RENAME COLUMN` migration (idempotent) + JSON-key migration for org_profile + code update (criteria_derive, matching, features, scan_pipeline, llm_synthesis, views, scripts) + verify, with this doc's per-field one-liners filled in for that axis. ML feature names (`core/features`, `decision_model`) updated in lockstep.

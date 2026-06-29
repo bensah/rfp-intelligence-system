@@ -245,7 +245,7 @@ def render_org_setup(user, sb):
             value=int(_prof["founding_year"]) if _prof.get("founding_year") else 2000,
             step=1, help="Track-record length (strategic fit).")
         _cofin_opts = list(_orgp.COFINANCING_LEVELS)
-        _cofin_cur = _prof.get("cofinancing_capacity", "limited")
+        _cofin_cur = _prof.get("org_cofinancing_capacity", "limited")
         cofin = fp4.selectbox(
             "Co-financing capacity", _cofin_opts,
             index=_cofin_opts.index(_cofin_cur) if _cofin_cur in _cofin_opts else 1,
@@ -332,30 +332,30 @@ def render_org_setup(user, sb):
                          "tax-exempt above are part of the same set.")
         cc1, cc2, cc3 = st.columns(3)
         has_audited_financials = cc1.checkbox(
-            "Audited financials", value=bool(_prof.get("has_audited_financials", False)),
+            "Audited financials", value=bool(_prof.get("org_has_audited_financials", False)),
             key="orgp_has_audited_financials",
             help="Recent independently audited financial statements available.")
         has_audit_report = cc2.checkbox(
-            "Audit report on file", value=bool(_prof.get("has_audit_report", False)),
+            "Audit report on file", value=bool(_prof.get("org_has_audit_report", False)),
             key="orgp_has_audit_report",
             help="A formal external audit report can be provided.")
         has_safeguarding_policy = cc3.checkbox(
             "Safeguarding / PSEA policy",
-            value=bool(_prof.get("has_safeguarding_policy", False)),
+            value=bool(_prof.get("org_has_safeguarding_policy", False)),
             key="orgp_has_safeguarding_policy",
             help="A safeguarding / PSEA policy is in place.")
         cc4, cc5, cc6 = st.columns(3)
         has_partner_mou = cc4.checkbox(
-            "Partner MOU(s)", value=bool(_prof.get("has_partner_mou", False)),
+            "Partner MOU(s)", value=bool(_prof.get("org_has_partner_mou", False)),
             key="orgp_has_partner_mou",
             help="Signed MOU(s) with implementing partner(s) in place.")
         has_govt_mou = cc5.checkbox(
-            "Government MOU", value=bool(_prof.get("has_govt_mou", False)),
+            "Government MOU", value=bool(_prof.get("org_has_govt_mou", False)),
             key="orgp_has_govt_mou",
             help="Signed MOU with the host-government authority in place.")
         has_govt_endorsement = cc6.checkbox(
             "Govt endorsement letter",
-            value=bool(_prof.get("has_govt_endorsement", False)),
+            value=bool(_prof.get("org_has_govt_endorsement", False)),
             key="orgp_has_govt_endorsement",
             help="A host-government endorsement / support letter can be obtained "
                  "when a donor requires it.")
@@ -364,7 +364,7 @@ def render_org_setup(user, sb):
         # if its donor is in this list (e.g. Wellcome Trust).
         authorized_signatory_donors = _ms(
             st, "Authorized signatory obtained from (donors)", _donor_names,
-            "authorized_signatory_donors",
+            "org_authorized_signatory_donors",
             help="Donors you have already secured an authorized-signatory sign-off "
                  "from. Matched by name to a call that requires one (MUST-5).")
         # Funding routes the org can RECEIVE through — matched (≥1 overlap) to the
@@ -528,7 +528,7 @@ def render_org_setup(user, sb):
                 "org_legal_type": legal_type,
                 "org_entity_type": entity_type,
                 "founding_year": int(founding_year) or None,
-                "cofinancing_capacity": cofin,
+                "org_cofinancing_capacity": cofin,
                 "org_annual_budget": int(annual_budget) or None,
                 "org_largest_grant": int(largest_grant) or None,
                 "org_lowest_grant": int(lowest_grant) or None,
@@ -541,13 +541,13 @@ def render_org_setup(user, sb):
                 "org_tax_exempt": bool(org_tax_exempt),
                 "org_stage": org_stage,
                 "org_has_established_pi": bool(has_pi),
-                "has_audited_financials": bool(has_audited_financials),
-                "has_audit_report": bool(has_audit_report),
-                "has_safeguarding_policy": bool(has_safeguarding_policy),
-                "has_partner_mou": bool(has_partner_mou),
-                "has_govt_mou": bool(has_govt_mou),
-                "has_govt_endorsement": bool(has_govt_endorsement),
-                "authorized_signatory_donors": authorized_signatory_donors,
+                "org_has_audited_financials": bool(has_audited_financials),
+                "org_has_audit_report": bool(has_audit_report),
+                "org_has_safeguarding_policy": bool(has_safeguarding_policy),
+                "org_has_partner_mou": bool(has_partner_mou),
+                "org_has_govt_mou": bool(has_govt_mou),
+                "org_has_govt_endorsement": bool(has_govt_endorsement),
+                "org_authorized_signatory_donors": authorized_signatory_donors,
                 "org_funding_routes": org_funding_routes,
                 "partners": partners_struct,
                 "org_domain_expertise": domains_sel,
