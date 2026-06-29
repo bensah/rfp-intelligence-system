@@ -242,7 +242,7 @@ def render_org_setup(user, sb):
         fp3, fp4 = st.columns(2)
         founding_year = fp3.number_input(
             "Founding year", min_value=1800, max_value=2100,
-            value=int(_prof["founding_year"]) if _prof.get("founding_year") else 2000,
+            value=int(_prof["org_founding_year"]) if _prof.get("org_founding_year") else 2000,
             step=1, help="Track-record length (strategic fit).")
         _cofin_opts = list(_orgp.COFINANCING_LEVELS)
         _cofin_cur = _prof.get("org_cofinancing_capacity", "limited")
@@ -518,7 +518,7 @@ def render_org_setup(user, sb):
             help="Pick from the Donor Intelligence catalog (or type to add) — "
                  "past / current funders (funder relationship).")
         donor_regs_sel = _ms(fr2, "Donor portal registration active",
-            _portals, "donor_registrations",
+            _portals, "org_donor_registrations",
             help="Donor portals where your registration is active (e.g. Grants.gov, "
                  "SAM.gov, wellcome.org) — each one listed is true for that donor. "
                  "Pick or type to add (qualification).")
@@ -527,7 +527,7 @@ def render_org_setup(user, sb):
             _orgp.set_profile({
                 "org_legal_type": legal_type,
                 "org_entity_type": entity_type,
-                "founding_year": int(founding_year) or None,
+                "org_founding_year": int(founding_year) or None,
                 "org_cofinancing_capacity": cofin,
                 "org_annual_budget": int(annual_budget) or None,
                 "org_largest_grant": int(largest_grant) or None,
@@ -563,7 +563,7 @@ def render_org_setup(user, sb):
                 "trusted_for_profit_partners": [],
                 "trusted_academic_institutions": [],
                 "org_registered_countries": registrations_sel,
-                "donor_registrations": donor_regs_sel,
+                "org_donor_registrations": donor_regs_sel,
                 "org_funder_history": funders_sel,
                 "org_active_donors": active_donors_sel,
                 "proposal_languages": langs_sel,
