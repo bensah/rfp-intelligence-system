@@ -58,17 +58,17 @@ def _money(v: Any) -> str:
 def _org_block(org: dict) -> str:
     if not org:
         return "(org profile unavailable)"
-    pa = org.get("priority_areas") or org.get("domains") or []
-    funders = org.get("funder_history") or []
+    pa = org.get("org_priority_areas") or org.get("org_domain_expertise") or []
+    funders = org.get("org_funder_history") or []
     return (
-        f"- Operates in: {', '.join(org.get('countries_of_operation') or []) or '—'}\n"
-        f"- Annual budget managed: {_money(org.get('annual_budget_usd'))}/yr; "
-        f"largest single grant ever: {_money(org.get('largest_grant_usd'))}; "
-        f"# grants managed: {org.get('number_of_grants_managed') or '—'}; "
+        f"- Operates in: {', '.join(org.get('org_operating_countries') or []) or '—'}\n"
+        f"- Annual budget managed: {_money(org.get('org_annual_budget'))}/yr; "
+        f"largest single grant ever: {_money(org.get('org_largest_grant'))}; "
+        f"# grants managed: {org.get('org_grants_count') or '—'}; "
         f"founded: {org.get('founding_year') or '—'}\n"
-        f"- Preferred award range: {_money(org.get('funding_target_low'))}–"
-        f"{_money(org.get('funding_target_max'))} (sweet spot {_money(org.get('funding_target_mid'))})\n"
-        f"- Co-financing capacity: {org.get('cofinancing_capacity') or '—'}\n"
+        f"- Preferred award range: {_money(org.get('org_min_target'))}–"
+        f"{_money(org.get('org_max_target'))} (sweet spot {_money(org.get('org_mid_target'))})\n"
+        f"- Co-financing capacity: {org.get('org_cofinancing_capacity') or '—'}\n"
         f"- Priority areas: {', '.join(str(x) for x in pa[:12]) or '—'}\n"
         f"- Past/known funders: {', '.join(str(x) for x in funders[:12]) or '—'}"
     )
@@ -113,9 +113,9 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "ORG CONTEXT:\n" + _org_block(org) + "\n\n"
         f"OPPORTUNITY:\n- Title: {title}\n"
         f"- Funder: {candidate.get('funding_agency') or '—'}\n"
-        f"- Geography: {candidate.get('geographic_scope') or '—'}; "
+        f"- Geography: {candidate.get('call_geographic_scope') or '—'}; "
         f"Deadline: {candidate.get('submission_deadline') or '—'}; "
-        f"Value: {_money(candidate.get('estimated_value'))} "
+        f"Value: {_money(candidate.get('call_award_value'))} "
         f"{candidate.get('currency') or ''}\n"
         f"- FULL TEXT:\n<<<\n{body}\n>>>\n\n"
         "SYSTEM ASSESSMENT (already computed — EXPLAIN it, do not recompute):\n"
@@ -133,7 +133,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "for each RFP so it never reads like a robotic fill-in-the-blank. Ground every "
         "statement in the text; if a detail (e.g. the amount) is not stated, OMIT it "
         "rather than inventing one. MAX 1000 characters.\n"
-        '  "program_areas": array of 1-3 best-fit areas chosen ONLY from this '
+        '  "call_domain_areas": array of 1-3 best-fit areas chosen ONLY from this '
         f"list (verbatim): {options}\n"
         '  "key_risks": ONE sentence naming the single most material risk of THIS '
         "org pursuing THIS RFP, grounded in the org context — e.g. no prior "
@@ -153,7 +153,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "due-diligence, SAM.gov/UEI, tax-exempt status, etc. One per line as "
         '"• …" with the specifics. "None stated" if the call imposes none. This '
         "protects applicants from a hidden hard-gate discovered near the deadline.\n"
-        '  "compliance_flags": a STRUCTURED object — set a key to true ONLY for each '
+        '  "call_compliance_flags": a STRUCTURED object — set a key to true ONLY for each '
         "requirement the RFP EXPLICITLY imposes, choosing from exactly these keys: "
         "cost_sharing_match_required, local_registration_required, "
         "partnership_mandatory, audit_report_required, "
@@ -217,16 +217,16 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         return None
 
     valid = set(options)
-    pas = [p for p in (parsed.get("program_areas") or []) if p in valid][:3]
+    pas = [p for p in (parsed.get("call_domain_areas") or []) if p in valid][:3]
     out = {
         "brief_description": _clip(parsed.get("brief_description"), _BRIEF_MAX),
-        "program_areas": pas or None,
+        "call_domain_areas": pas or None,
         "key_risks": _clip(parsed.get("key_risks"), 300),
         "decision_rationale": _clip(parsed.get("decision_rationale"), 400),
         "how_to_apply": _clip(parsed.get("how_to_apply"), 1500),
         "compliance_requirements": _clip(parsed.get("compliance_requirements"), 1200),
-        "compliance_flags": (parsed.get("compliance_flags")
-                             if isinstance(parsed.get("compliance_flags"), dict) else {}),
+        "call_compliance_flags": (parsed.get("call_compliance_flags")
+                             if isinstance(parsed.get("call_compliance_flags"), dict) else {}),
         "_llm_model": chosen,
     }
     # Fold the grounded MUST-1 requirement signals INTO compliance_flags so they ride
@@ -234,7 +234,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
     # preserves valued keys; booleans stay boolean).
     _m1 = parsed.get("must1_requirements")
     if isinstance(_m1, dict):
-        out["compliance_flags"] = {**out["compliance_flags"], **_sanitize_must1(_m1)}
+        out["call_compliance_flags"] = {**out["call_compliance_flags"], **_sanitize_must1(_m1)}
     _CACHE[ckey] = out
     return out
 
@@ -242,9 +242,9 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
 # Allowed enum values for the LLM-extracted MUST-1 requirements (anything else is
 # dropped — grounded, no fabrication).
 _MUST1_ENUMS = {
-    "pi_country_scope": {"in_scope", "foreign"},
-    "entity_type_required": {"grassroot_local", "multi_country", "individual"},
-    "prior_beneficiary_rule": {"eligible", "ineligible_current",
+    "donor_pi_country_scope": {"in_scope", "foreign"},
+    "donor_entity_type_required": {"grassroot_local", "multi_country", "individual"},
+    "donor_prior_beneficiary_rule": {"eligible", "ineligible_current",
                                "ineligible_previous", "ineligible_any"},
     "experience_required": {"significant", "moderate"},   # MUST-3 capacity
     "org_stage_required": {"early-stage", "established"},  # MUST-3 org stage (only if RESTRICTED)
@@ -255,21 +255,21 @@ def _sanitize_must1(d: dict) -> dict:
     """Keep only valid, grounded MUST-1 requirement keys/values from the LLM output;
     coerce requires_pi to a boolean flag; bound free-text country/region length."""
     clean: dict[str, Any] = {}
-    if str(d.get("requires_pi") or "").strip().lower() in ("yes", "true", "1"):
-        clean["requires_pi"] = True
+    if str(d.get("donor_requires_pi") or "").strip().lower() in ("yes", "true", "1"):
+        clean["donor_requires_pi"] = True
     for key, allowed in _MUST1_ENUMS.items():
         v = str(d.get(key) or "").strip().lower()
         if v in allowed:
             clean[key] = v
-    hq = str(d.get("hq_country_required") or "").strip()
+    hq = str(d.get("donor_hq_country_required") or "").strip()
     if hq and len(hq) <= 60:
-        clean["hq_country_required"] = hq
-    rr = d.get("registration_region")
+        clean["donor_hq_country_required"] = hq
+    rr = d.get("donor_registration_region")
     if isinstance(rr, list):
         rr = ", ".join(str(x).strip() for x in rr if str(x).strip())
     rr = str(rr or "").strip()
     if rr and len(rr) <= 120:
-        clean["registration_region"] = rr
+        clean["donor_registration_region"] = rr
     return clean
 
 

@@ -223,14 +223,14 @@ def _harvest(candidate: dict, text: str, soup) -> None:
             candidate["submission_deadline"] = d
     # Award amount — 'Grant Size $100,000', 'up to $100,000', etc. (capacity +
     # funding_quality both need it; was previously never harvested from HTML).
-    if not candidate.get("estimated_value"):
+    if not candidate.get("call_award_value"):
         amt = _amount_from_text(text)
         if amt:
-            candidate["estimated_value"] = amt
+            candidate["call_award_value"] = amt
             candidate.setdefault("currency", "USD")
     # Eligibility / geography prose → fold into the description so the country
     # gate (which reads brief_description) can judge scope without us guessing a
-    # synonym-expanded geographic_scope list.
+    # synonym-expanded call_geographic_scope list.
     try:
         elig = _extract_eligibility_from_text(text)
     except Exception:

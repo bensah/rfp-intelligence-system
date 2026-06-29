@@ -9,10 +9,10 @@ one DB, key the blob by org_id instead.
 
 Every field is tagged with the bid/no-bid criterion it feeds:
 
-  qualification        legal_type, donor_registrations, countries_registered
+  qualification        legal_type, donor_registrations, org_registered_countries
   strategic_fit        founding_year, domains, priority_areas
   capacity             annual_budget_usd, largest_grant_usd
-  geographic_fit       countries_of_operation, trusted_partners
+  geographic_fit       org_operating_countries, trusted_partners
   cofinancing          cofinancing_capacity
   funder_relationship  funder_history
   bid_effort           proposal_languages
@@ -41,28 +41,28 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "founding_year": None,                  # int — track-record length (strategic_fit)
 
     # --- qualification (can we formally apply?) ---
-    "legal_type": "nonprofit",              # canonical bucket (see core.auto_scorer
+    "org_legal_type": "nonprofit",              # canonical bucket (see core.auto_scorer
                                             # applicant buckets): nonprofit / government /
                                             # higher_ed / for_profit / individual / tribal
-    "entity_type": "",                      # MUST-1 item B — grassroot_local |
+    "org_entity_type": "",                      # MUST-1 item B — grassroot_local |
                                             # multi_country | individual. SINGLE source of
                                             # truth; on save it derives the legacy
                                             # org_is_grassroot / org_is_multi_country settings.
                                             # Validation: legal_type=individual ⇒ individual.
     "donor_registrations": [],              # e.g. "SAM.gov", "EU PADOR/PIC", "UNGM"
-    "countries_registered": [],             # jurisdictions where legally registered
+    "org_registered_countries": [],             # jurisdictions where legally registered
 
     # --- capacity (can we deliver?) — multi-factorial MUST-3 inputs ---
-    "annual_budget_usd": None,              # number — org size / financial-capacity bar
-    "largest_grant_usd": None,              # number — biggest grant ever managed
-    "lowest_grant_usd": None,               # number — smallest grant managed (range awareness)
-    "number_of_grants_managed": None,       # int — track-record depth (raises the stretch)
+    "org_annual_budget": None,              # number — org size / financial-capacity bar
+    "org_largest_grant": None,              # number — biggest grant ever managed
+    "org_lowest_grant": None,               # number — smallest grant managed (range awareness)
+    "org_grants_count": None,       # int — track-record depth (raises the stretch)
     # (founding_year + org_stage, defined elsewhere, also feed the capacity stretch)
 
     # --- funding_quality (PREFER 6) — org's preferred award-size band (USD) ---
-    "funding_target_low": None,             # floor of interest
-    "funding_target_mid": None,             # sweet spot
-    "funding_target_max": None,             # ceiling of interest
+    "org_min_target": None,             # floor of interest
+    "org_mid_target": None,             # sweet spot
+    "org_max_target": None,             # ceiling of interest
     # Bands use GEOMETRIC midpoints: cut1=sqrt(low*mid), cut2=sqrt(mid*max);
     # RFP value <=cut1 Low(0) / <=cut2 Moderate(1) / >cut2 High(2).
 
@@ -71,7 +71,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "org_has_sam_uei": False,               # holds SAM.gov / UEI registration
     "org_tax_exempt": False,                # tax-exempt (501c3 or non-US equivalent)
     "org_stage": "established",             # "early-stage" | "established"
-    "has_established_pi": False,            # MUST-1 item E — has a well-established
+    "org_has_established_pi": False,            # MUST-1 item E — has a well-established
                                             # Principal Investigator (satisfies an
                                             # in-scope-country PI requirement)
     # Partners WITH type + country (for named-partner conditions, e.g. NIHR -> UK
@@ -79,17 +79,17 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "partners": [],
 
     # --- strategic_fit + competitiveness (priorities vs track record) ---
-    "domains": [],                          # areas of demonstrated expertise / experience
-    "domain_ratings": {},                   # {child key: 0-5} TRACK-RECORD strength per
+    "org_domain_expertise": [],                          # areas of demonstrated expertise / experience
+    "org_domain_ratings": {},                   # {child key: 0-5} TRACK-RECORD strength per
                                             # domain — feeds COMPETITIVENESS (how well-placed
                                             # we are to win an RFP in that exact area)
-    "priority_areas": [],                   # declared strategic priorities (may have no footprint yet)
-    "program_area_ratings": {},             # {child key: 0-5} STRATEGY priority per area —
+    "org_priority_areas": [],                   # declared strategic priorities (may have no footprint yet)
+    "org_priority_ratings": {},             # {child key: 0-5} STRATEGY priority per area —
                                             # feeds STRATEGIC FIT (MUST-2), correlated with
                                             # donor_intel.program_area_ratings
 
     # --- geographic_fit (presence) ---
-    "countries_of_operation": [],           # where we operate directly
+    "org_operating_countries": [],           # where we operate directly
     # Partners we can apply / form a consortium with, split by type:
     "trusted_partners": [],                 # non-profit: bilaterals / multilaterals
                                             # / INGOs / philanthropies (core.partners)
@@ -97,27 +97,27 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "trusted_academic_institutions": [],    # universities / research orgs (free-add, codified)
 
     # --- cofinancing & compliance (MUST 5) ---
-    "cofinancing_capacity": "limited",      # none | limited | moderate | strong
+    "org_cofinancing_capacity": "limited",      # none | limited | moderate | strong
     # Hard pre-acquire compliance credentials the org ALREADY holds — each gates a
     # donor requirement of the same name (org lacks it + donor requires it -> 0).
-    "has_audited_financials": False,        # recent independently audited financials
-    "has_audit_report": False,              # a formal external audit report on file
-    "has_safeguarding_policy": False,       # safeguarding / PSEA policy in place
-    "has_partner_mou": False,               # signed MOU(s) with implementing partner(s)
-    "has_govt_mou": False,                  # signed MOU with host-government authority
-    "has_govt_endorsement": False,          # can secure a government endorsement letter
+    "org_has_audited_financials": False,        # recent independently audited financials
+    "org_has_audit_report": False,              # a formal external audit report on file
+    "org_has_safeguarding_policy": False,       # safeguarding / PSEA policy in place
+    "org_has_partner_mou": False,               # signed MOU(s) with implementing partner(s)
+    "org_has_govt_mou": False,                  # signed MOU with host-government authority
+    "org_has_govt_endorsement": False,          # can secure a government endorsement letter
     # Donors we have ALREADY obtained an authorized-signatory sign-off from — matched
     # by name to a call's donor when it requires authorized-signatory sign-off.
-    "authorized_signatory_donors": [],
+    "org_authorized_signatory_donors": [],
     # Funding ROUTES the org can RECEIVE through (tokens: grant | procurement | loan |
     # subrecipient | govt_ccm | direct). Matched (≥1 overlap) to the call/donor routes.
     "org_funding_routes": ["grant", "subrecipient"],
 
     # --- funder_relationship ---
-    "funder_history": [],                   # funders we are/were funded by
+    "org_funder_history": [],                   # funders we are/were funded by
     # MUST-1 item I — donors CURRENTLY funding us (a current-grant exclusion in a
     # call disqualifies us; distinct from funder_history = past/previous grants).
-    "active_donors": [],
+    "org_active_donors": [],
 
     # --- bid_effort ---
     "proposal_languages": ["English"],      # languages we can write a competitive bid in
@@ -128,11 +128,11 @@ PROFILE_FIELDS: tuple[str, ...] = tuple(DEFAULT_PROFILE.keys())
 
 # Free-text "tag list" fields (one value per line in the UI).
 LIST_FIELDS: tuple[str, ...] = (
-    "donor_registrations", "countries_registered", "countries_of_operation",
+    "donor_registrations", "org_registered_countries", "org_operating_countries",
     "trusted_partners", "trusted_for_profit_partners",
-    "trusted_academic_institutions", "domains", "priority_areas",
-    "funder_history", "active_donors", "proposal_languages",
-    "authorized_signatory_donors", "org_funding_routes",
+    "trusted_academic_institutions", "org_domain_expertise", "org_priority_areas",
+    "org_funder_history", "org_active_donors", "proposal_languages",
+    "org_authorized_signatory_donors", "org_funding_routes",
 )
 
 COFINANCING_LEVELS: tuple[str, ...] = ("none", "limited", "moderate", "strong")
@@ -187,6 +187,53 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return out
 
 
+# Data-model rename ledger (owner 2026-06-29). The org profile is a stored JSON blob,
+# so renamed KEYS are migrated on read (old → new) — a profile saved before the rename
+# still loads correctly, and set_profile() then persists the new keys. Append one entry
+# per renamed org key as each axis migrates.
+_RENAMED_KEYS = {
+    # Geography (axis 1)
+    "countries_registered": "org_registered_countries",
+    "countries_of_operation": "org_operating_countries",
+    # Program areas (axis 2)
+    "priority_areas": "org_priority_areas",
+    "program_area_ratings": "org_priority_ratings",
+    "domains": "org_domain_expertise",
+    "domain_ratings": "org_domain_ratings",
+    # Award / funding (axis 3)
+    "funding_target_low": "org_min_target",
+    "funding_target_mid": "org_mid_target",
+    "funding_target_max": "org_max_target",
+    "largest_grant_usd": "org_largest_grant",
+    "annual_budget_usd": "org_annual_budget",
+    "lowest_grant_usd": "org_lowest_grant",
+    "number_of_grants_managed": "org_grants_count",
+    # Legal status & eligibility (axis 4)
+    "legal_type": "org_legal_type",
+    "entity_type": "org_entity_type",
+    "has_established_pi": "org_has_established_pi",
+    "active_donors": "org_active_donors",
+    "funder_history": "org_funder_history",
+    # Cofinancing & compliance (axis 5)
+    "cofinancing_capacity": "org_cofinancing_capacity",
+    "has_audited_financials": "org_has_audited_financials",
+    "has_audit_report": "org_has_audit_report",
+    "has_safeguarding_policy": "org_has_safeguarding_policy",
+    "has_partner_mou": "org_has_partner_mou",
+    "has_govt_mou": "org_has_govt_mou",
+    "has_govt_endorsement": "org_has_govt_endorsement",
+    "authorized_signatory_donors": "org_authorized_signatory_donors",
+}
+
+
+def _migrate_keys(overlay: dict) -> dict:
+    """Rename legacy org-profile keys to their current names (see _RENAMED_KEYS)."""
+    for old, new in _RENAMED_KEYS.items():
+        if old in overlay and new not in overlay:
+            overlay[new] = overlay.pop(old)
+    return overlay
+
+
 def get_profile() -> dict[str, Any]:
     """Active org profile (admin overrides merged onto defaults)."""
     raw = get_setting(ORG_PROFILE_KEY)
@@ -195,7 +242,7 @@ def get_profile() -> dict[str, Any]:
     try:
         overlay = json.loads(raw)
         if isinstance(overlay, dict):
-            return _deep_merge(DEFAULT_PROFILE, overlay)
+            return _deep_merge(DEFAULT_PROFILE, _migrate_keys(overlay))
     except (ValueError, TypeError):
         pass
     return copy.deepcopy(DEFAULT_PROFILE)
@@ -215,5 +262,5 @@ def is_configured() -> bool:
     country of operation AND one domain or priority). Used to nudge setup
     before relying on the matching profile."""
     p = get_profile()
-    return bool((p.get("countries_of_operation") or [])
-                and ((p.get("domains") or []) or (p.get("priority_areas") or [])))
+    return bool((p.get("org_operating_countries") or [])
+                and ((p.get("org_domain_expertise") or []) or (p.get("org_priority_areas") or [])))
