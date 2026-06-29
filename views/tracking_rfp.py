@@ -241,7 +241,7 @@ with st.container(border=True):
     d2.markdown(f"**Proposal lead(s)**  \n{row.get('all_leads') or '—'}")
     d2.markdown(f"**Stage**  \n{row.get('stage') or '—'}")
     d3.markdown(f"**Progress status**  \n{row.get('progress_status') or '—'}")
-    d3.markdown(f"**Geography**  \n{', '.join(row.get('geographic_scope') or []) or '—'}")
+    d3.markdown(f"**Geography**  \n{', '.join(row.get('call_geographic_scope') or []) or '—'}")
 
     # ----- Meeting-log review week selector for this RFP -----
     st.markdown("---")
@@ -491,7 +491,7 @@ def _view_rfp(r: dict) -> None:
 
     # ── At-a-glance fields ─────────────────────────────────────────────────
     g1, g2 = st.columns(2)
-    g1.markdown(f"**🌍 Geography**  \n{', '.join(r.get('geographic_scope') or []) or '—'}")
+    g1.markdown(f"**🌍 Geography**  \n{', '.join(r.get('call_geographic_scope') or []) or '—'}")
     g1.markdown(f"**👥 Proposal lead(s)**  \n{r.get('all_leads') or r.get('proposal_lead') or '—'}")
     g2.markdown(f"**🎯 Focus areas**  \n{', '.join(r.get('program_area') or []) or '—'}")
     g2.markdown(f"**⏱ Duration**  \n{r.get('project_duration') or '—'}")

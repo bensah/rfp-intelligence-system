@@ -73,15 +73,17 @@
 <body>
 <div class="wrap">
   <h1>RFPIS — Requirements (RFP ⊕ Donor) → Org match → Decision</h1>
-  <p class="sub">Source of truth: criteria_derive.py · scoring_weights.yaml · matching.py · auto_scorer. Updated 2026-06-26.</p>
+  <p class="sub">Source of truth: criteria_derive.py · scoring_weights.yaml · matching.py · auto_scorer · scorer.py · decision_model.py. Updated 2026-06-29.</p>
 
   <div class="legend">
     <span class="lg"><i class="d r"></i>RFP (the call)</span>
     <span class="lg"><i class="d o"></i>Donor profile</span>
     <span class="lg"><i class="d g"></i>Org (you)</span>
-    <span class="lg">score per criterion: <b>2 / 1 / 0</b></span>
+    <span class="lg">component: <b>1 / 0.5 / 0</b></span>
+    <span class="lg">criterion: <b>2 / 1 / 0</b> · <b>Not sure → 1 (Park)</b></span>
   </div>
-  <div class="note"><b>Two different splits — don't conflate.</b> The <b>80 / 20</b> Bid-Strength weight is <i>opportunity-fit (A) vs funder-fit (B)</i>, NOT RFP vs Donor. By requirement <i>source</i>, the RFP⊕Donor denominator is ≈ <b>48% RFP / 52% Donor</b> (RFP-primary on fit criteria, Donor-primary on the gates) — so we keep 80/20 and don't add a separate RFP:Donor knob (it would double-count).</div>
+  <div class="note"><b>ACTIVE-ONLY scoring (2026-06-29).</b> A component is scored ONLY when the call/donor imposes it, or a proxy applies (e.g. registration via the call's geo-scope). An undetected component is <b>"Not sure"</b> — excluded from that criterion's denominator, never a permissive pass. A criterion with NO active component resolves to <b>"Not sure" → value 1 (Park)</b>: an unknown routes to manual review, it never auto-passes and never auto-Declines. A clearly DETECTED failure still scores 0 and gates.</div>
+  <div class="note"><b>Bid Strength = the 9 weighted criteria (100%).</b> The funder's requirements and the call's requirements are matched against the org INSIDE the 9 criteria (each criterion blends RFP + Donor sources — see the source tags below). There is no separate "funder-fit" add-on: the old 20% extras duplicated MUST-2 / MUST-4 / MUST-5-route / PREFER-7, so they were dropped (2026-06-29) to avoid double-counting.</div>
 
   <!-- INPUT CARDS: denominator vs numerator -->
   <div class="cards">
@@ -114,44 +116,46 @@
 
   <!-- MAPPING LATTICE: requirement → criterion ← org -->
   <div class="map">
-    <div class="mrow must"><div class="req"><b>Eligible types · HQ · registration</b><span class="src d">D</span> · individual-PI<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M1</span>Legal status &amp; qualification</div><div class="w">w .15 · 🔒 fatal</div></div><div class="arrow">←</div><div class="org"><b>legal_type · HQ · countries_registered</b></div></div>
+    <div class="mrow must"><div class="req"><b>Eligible types · entity type · HQ · registration (geo-scope proxy)</b><span class="src d">D</span> · individual-PI · prior-beneficiary<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M1</span>Legal status &amp; qualification</div><div class="w">w .15 · 6 items · 🔒 fatal</div></div><div class="arrow">←</div><div class="org"><b>legal_type · entity_type · HQ · countries_registered · established-PI · funder_history</b></div></div>
 
-    <div class="mrow must"><div class="req">priority_program_areas<span class="src d">D</span> · program_area<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M2</span>Strategic fit</div><div class="w">w .15 · 📏</div></div><div class="arrow">←</div><div class="org"><b>priority_areas + ratings</b></div></div>
+    <div class="mrow must"><div class="req">program areas + priority 0–5 — donor graded · call (LLM → default 5)<span class="src d">D</span><span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M2</span>Strategic fit</div><div class="w">w .15 · 📏 · min(org band, call band)</div></div><div class="arrow">←</div><div class="org"><b>priority_areas + program_area_ratings (0–5)</b></div></div>
 
-    <div class="mrow must"><div class="req">award_ceiling / value<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M3</span>Implementation capacity</div><div class="w">w .15 · 📏</div></div><div class="arrow">←</div><div class="org"><b>largest_grant · target_max · experience</b></div></div>
+    <div class="mrow must"><div class="req">org stage · budget &amp; prior-grant ceilings<span class="src d">D</span> · experience · award value<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M3</span>Implementation capacity</div><div class="w">w .15 · 📏</div></div><div class="arrow">←</div><div class="org"><b>largest_grant · annual_budget · target_max · founding year · stage</b></div></div>
 
-    <div class="mrow must"><div class="req">geographic_scope<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M4</span>Geographic fit</div><div class="w">w .10 · 🔒 fatal at 0</div></div><div class="arrow">←</div><div class="org"><b>countries_of_operation · partners</b></div></div>
+    <div class="mrow must"><div class="req">geographic_scope · US-only / grants.gov inference<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M4</span>Geographic fit</div><div class="w">w .10 · 🔒 fatal at 0</div></div><div class="arrow">←</div><div class="org"><b>countries_registered · countries_of_operation · partners · is_us_entity</b></div></div>
 
-    <div class="mrow must"><div class="req">cost-share · SAM · tax · partner · audit<span class="src d">D</span> · compliance_flags<span class="src r">R</span> · stage/budget/track floors<span class="src d">D</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M5</span>Cofinancing &amp; compliance</div><div class="w">w .10 · ⚙ + 🔒 floors</div></div><div class="arrow">←</div><div class="org"><b>cofinancing_capacity · registrations · partners · stage · budget</b></div></div>
+    <div class="mrow must"><div class="req">cost-share/pre-finance · audited financials · audit · SAM/UEI · tax · safeguarding · authorized-signatory · partner/govt MOU · govt endorsement · local board · partnership · portal reg · funding route<span class="src d">D</span> · compliance_flags<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M5</span>Cofinancing &amp; compliance</div><div class="w">w .10 · ⚙ · 🔒 route only</div></div><div class="arrow">←</div><div class="org"><b>cofinancing_capacity · has_* credentials · authorized_signatory_donors · partners · org_funding_routes · donor_registrations</b></div></div>
 
     <div class="mrow pref"><div class="req">award value<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P6</span>Funding quality</div><div class="w">w .08 · 📏</div></div><div class="arrow">←</div><div class="org"><b>funding_target band</b></div></div>
 
     <div class="mrow pref"><div class="req">funders_collaborators<span class="src d">D</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P7</span>Donor relationship</div><div class="w">w .08</div></div><div class="arrow">←</div><div class="org"><b>funder_history · partners</b></div></div>
 
-    <div class="mrow pref"><div class="req">grassroots / board / multi-country reqs<span class="src d">D</span> · program_area<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P8</span>Competitiveness</div><div class="w">w .10 · 📏</div></div><div class="arrow">←</div><div class="org"><b>domain ratings · age · HQ match</b></div></div>
+    <div class="mrow pref"><div class="req">grassroots · multi_country_encouraged · HQ-match<span class="src d">D</span> · program_area<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P8</span>Competitiveness</div><div class="w">w .10 · 📏</div></div><div class="arrow">←</div><div class="org"><b>domain ratings · age · entity_type (MCO) · HQ</b></div></div>
 
-    <div class="mrow pref"><div class="req">submission_deadline<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P9</span>Bid effort</div><div class="w">w .09</div></div><div class="arrow">←</div><div class="org"><b>org_has_bd_team</b></div></div>
+    <div class="mrow pref"><div class="req">time to submission deadline<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P9</span>Bid effort</div><div class="w">w .09 · feasibility = time × capacity</div></div><div class="arrow">←</div><div class="org"><b>org_has_bd_team</b></div></div>
 
-    <div class="mrow pref" style="border-left:3px solid #d97706"><div class="req">priorities · scope · route · funders<span class="src d">D</span></div><div class="arrow">→</div><div class="crit"><div class="nm">Funder-fit (4 extras)</div><div class="w">the 20% · B</div></div><div class="arrow">←</div><div class="org"><b>priorities · countries · type · history</b></div></div>
   </div>
 
   <div class="arrowdown">▼</div>
 
   <!-- AGGREGATION -->
-  <div class="agg">
-    <div class="box a"><h4>A · Criteria score (opportunity-fit)</h4><div class="f">Σ (weight × value⁄2) × 100</div><div class="small">The 9 criteria above. MUST weights .65 + PREFER .35 = 1.0.</div></div>
-    <div class="box b"><h4>B · Funder-fit score</h4><div class="f">mean(4 extras) × 100</div><div class="small">thematic · geographic · route · relationship (each 0 / .5 / 1).</div></div>
+  <div class="agg" style="grid-template-columns:1fr">
+    <div class="box a"><h4>Criteria score = Bid Strength</h4><div class="f">Σ (weight × value⁄2) × 100</div><div class="small">Over the 9 criteria above (active components only). MUST weights .65 + PREFER .35 = 1.0. A "Not sure" criterion contributes value 1 (the Park midpoint).</div></div>
   </div>
 
-  <div class="composite">Bid Strength = <b>0.80 × A</b> (opportunity-fit) + <b>0.20 × B</b> (funder-fit)</div>
+  <div class="composite">Bid Strength = <b>Σ (weight × criterion value ⁄ 2) × 100</b> — the 9 criteria (no funder-fit add-on)</div>
 
   <div class="arrowdown">▼</div>
 
   <div class="decision">
-    <div class="dgate">🚦 <b>Fatal-factor gate:</b> if the org <u>explicitly fails</u> any 🔒 non-dynamic factor (legal identity · no geographic reach · a donor stage/budget/track-record floor · inaccessible funding route) → <span class="pill decline">Decline</span> <span class="small">(can't be fixed before the deadline)</span></div>
-    <div class="dbands"><span class="small">else band the composite (⚙ dynamic gaps Park, not Decline):</span>
+    <div class="dgate">🚦 <b>Fatal-factor gate:</b> if the org <u>explicitly fails</u> an ACTIVE 🔒 non-dynamic factor — a <b>M1 identity gate</b> · <b>no geographic reach</b> (M4 = 0) · an <b>inaccessible M5 funding route</b> → <span class="pill decline">Decline</span> <span class="small">(structural — can't be fixed before the deadline)</span></div>
+    <div class="dbands"><span class="small">else band the composite (⚙ dynamic gaps — SAM, MOUs, ceilings — and "Not sure" criteria Park, not Decline):</span>
       <span class="pill proceed">≥ 90 Proceed</span><span class="pill park">70–89 Park</span><span class="pill decline">&lt; 70 Decline</span></div>
   </div>
+
+  <div class="arrowdown">▼</div>
+
+  <div class="note" style="margin-top:0"><b>Assistive ML (shadow).</b> A multinomial-logistic <b>decision_model</b> predicts Decline / Park / Proceed from the same 9 criteria <i>plus every component sub-factor</i> (<code>cmp_*</code>) captured in <code>scan_decisions.features</code>. Recommendation only — never auto-applied — gated by <code>active</code> until validated on accumulated human decisions.</div>
 
   <div class="arrowdown">▼</div>
 

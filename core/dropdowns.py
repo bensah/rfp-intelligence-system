@@ -63,7 +63,7 @@ def get(key: str, default: list | None = None) -> list:
             return [s for subs in _pa.TAXONOMY.values() for s in subs]
         except Exception:
             pass
-    if key == "geographic_scope":
+    if key == "call_geographic_scope":
         try:
             from core import geographies as _geo
             return list(_geo.GEO_OPTIONS)

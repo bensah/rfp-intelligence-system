@@ -9,10 +9,10 @@ one DB, key the blob by org_id instead.
 
 Every field is tagged with the bid/no-bid criterion it feeds:
 
-  qualification        legal_type, donor_registrations, countries_registered
+  qualification        legal_type, donor_registrations, org_registered_countries
   strategic_fit        founding_year, domains, priority_areas
   capacity             annual_budget_usd, largest_grant_usd
-  geographic_fit       countries_of_operation, trusted_partners
+  geographic_fit       org_operating_countries, trusted_partners
   cofinancing          cofinancing_capacity
   funder_relationship  funder_history
   bid_effort           proposal_languages
@@ -50,7 +50,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
                                             # org_is_grassroot / org_is_multi_country settings.
                                             # Validation: legal_type=individual ⇒ individual.
     "donor_registrations": [],              # e.g. "SAM.gov", "EU PADOR/PIC", "UNGM"
-    "countries_registered": [],             # jurisdictions where legally registered
+    "org_registered_countries": [],             # jurisdictions where legally registered
 
     # --- capacity (can we deliver?) — multi-factorial MUST-3 inputs ---
     "annual_budget_usd": None,              # number — org size / financial-capacity bar
@@ -89,7 +89,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
                                             # donor_intel.program_area_ratings
 
     # --- geographic_fit (presence) ---
-    "countries_of_operation": [],           # where we operate directly
+    "org_operating_countries": [],           # where we operate directly
     # Partners we can apply / form a consortium with, split by type:
     "trusted_partners": [],                 # non-profit: bilaterals / multilaterals
                                             # / INGOs / philanthropies (core.partners)
@@ -128,7 +128,7 @@ PROFILE_FIELDS: tuple[str, ...] = tuple(DEFAULT_PROFILE.keys())
 
 # Free-text "tag list" fields (one value per line in the UI).
 LIST_FIELDS: tuple[str, ...] = (
-    "donor_registrations", "countries_registered", "countries_of_operation",
+    "donor_registrations", "org_registered_countries", "org_operating_countries",
     "trusted_partners", "trusted_for_profit_partners",
     "trusted_academic_institutions", "domains", "priority_areas",
     "funder_history", "active_donors", "proposal_languages",
@@ -187,6 +187,25 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return out
 
 
+# Data-model rename ledger (owner 2026-06-29). The org profile is a stored JSON blob,
+# so renamed KEYS are migrated on read (old → new) — a profile saved before the rename
+# still loads correctly, and set_profile() then persists the new keys. Append one entry
+# per renamed org key as each axis migrates.
+_RENAMED_KEYS = {
+    # Geography (axis 1)
+    "countries_registered": "org_registered_countries",
+    "countries_of_operation": "org_operating_countries",
+}
+
+
+def _migrate_keys(overlay: dict) -> dict:
+    """Rename legacy org-profile keys to their current names (see _RENAMED_KEYS)."""
+    for old, new in _RENAMED_KEYS.items():
+        if old in overlay and new not in overlay:
+            overlay[new] = overlay.pop(old)
+    return overlay
+
+
 def get_profile() -> dict[str, Any]:
     """Active org profile (admin overrides merged onto defaults)."""
     raw = get_setting(ORG_PROFILE_KEY)
@@ -195,7 +214,7 @@ def get_profile() -> dict[str, Any]:
     try:
         overlay = json.loads(raw)
         if isinstance(overlay, dict):
-            return _deep_merge(DEFAULT_PROFILE, overlay)
+            return _deep_merge(DEFAULT_PROFILE, _migrate_keys(overlay))
     except (ValueError, TypeError):
         pass
     return copy.deepcopy(DEFAULT_PROFILE)
@@ -215,5 +234,5 @@ def is_configured() -> bool:
     country of operation AND one domain or priority). Used to nudge setup
     before relying on the matching profile."""
     p = get_profile()
-    return bool((p.get("countries_of_operation") or [])
+    return bool((p.get("org_operating_countries") or [])
                 and ((p.get("domains") or []) or (p.get("priority_areas") or [])))
