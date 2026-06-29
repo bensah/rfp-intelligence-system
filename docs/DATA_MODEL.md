@@ -67,14 +67,14 @@ Use = which criterion consumes it.**
 | `org_largest_grant` | org.`largest_grant_usd` | Biggest single grant ever managed · org input · M3 absorption anchor |
 | `org_annual_budget` | org.`annual_budget_usd` | Annual funds managed (throughput) · org input · M3 budget-ceiling check |
 | `org_lowest_grant` / `org_grants_count` | org.`lowest_grant_usd` / `number_of_grants_managed` | Range + track depth · org input · M3 stretch factor |
-| `cal_award_value` | call.`estimated_value` (+`currency`) | Award size stated by the call · call · P6, M3 ask |
-| `cal_award_ceiling` / `cal_award_floor` | call.`award_ceiling` / `award_floor` | Per-award max/min · call · M3 ask |
-| `don_max_annual_budget` | donor.`max_annual_budget_usd` | Eligibility CEILING on org annual budget · donor · M3 budget ceiling |
-| `don_max_prior_grant` | donor.`max_prior_grant_usd` | Eligibility CEILING on largest prior grant · donor · M3 grant ceiling |
-| `don_min_track_record` | donor.`min_track_record_usd` | Floor on largest grant managed · donor · M3 (track) |
-| `don_award_low` / `don_award_high` | donor.`award_low_usd` / `award_high_usd` | Donor's typical award range · donor · P6 fallback |
+| `call_award_value` | call.`estimated_value` (+`currency`) | Award size stated by the call · call · P6, M3 ask |
+| `call_award_ceiling` / `call_award_floor` | call.`award_ceiling` / `award_floor` | Per-award max/min · call · M3 ask |
+| `donor_max_annual_budget` | donor.`max_annual_budget_usd` | Eligibility CEILING on org annual budget · donor · M3 budget ceiling |
+| `donor_max_prior_grant` | donor.`max_prior_grant_usd` | Eligibility CEILING on largest prior grant · donor · M3 grant ceiling |
+| `donor_min_track_record` | donor.`min_track_record_usd` | Floor on largest grant managed · donor · M3 (track) |
+| `donor_award_low` / `donor_award_high` | donor.`award_low_usd` / `award_high_usd` | Donor's typical award range · donor · P6 fallback |
 
-### 2.4 Legal status & eligibility  → MUST-1
+### 2.4 Legal status & eligibility  → MUST-1   ✅ MIGRATED (migration 057)
 | New name | Old name | Def · Src · Use |
 |---|---|---|
 | `org_legal_type` | org.`legal_type` | nonprofit/govt/academic/for-profit/individual · org · M1 applicant type |
@@ -82,12 +82,12 @@ Use = which criterion consumes it.**
 | `org_hq_country` | settings.`org_hq_country`/`org_country` | Org HQ country · org · M1 HQ |
 | `org_has_established_pi` | org.`has_established_pi` | Can field a well-established PI · org · M1 individual-PI |
 | `org_active_donors` / `org_funder_history` | org.`active_donors` / `funder_history` | Current / past funders · org · M1 prior-beneficiary, P7 relationship |
-| `don_entity_type_required` | donor.`entity_type_required` | Required entity type · donor · M1 entity |
-| `don_hq_country_required` | donor.`hq_country_required` | Required HQ country · donor · M1 HQ |
-| `don_registration_region` | donor.`registration_region` | Required registration zone (else geo-proxy) · donor · M1 registration |
-| `don_requires_pi` / `don_pi_country_scope` | donor.`requires_pi` / `pi_country_scope` | Individual-PI gate + base country · donor · M1 PI |
-| `don_prior_beneficiary_rule` | donor.`prior_beneficiary_rule` | eligible / ineligible_current/previous/any · donor · M1 prior-beneficiary |
-| `don_ngo_eligible` / `don_for_profit_eligible` | donor.`ngo_eligible`/`for_profit_eligible` | Applicant-type eligibility · donor · M1 applicant type, route |
+| `donor_entity_type_required` | donor.`entity_type_required` | Required entity type · donor · M1 entity |
+| `donor_hq_country_required` | donor.`hq_country_required` | Required HQ country · donor · M1 HQ |
+| `donor_registration_region` | donor.`registration_region` | Required registration zone (else geo-proxy) · donor · M1 registration |
+| `donor_requires_pi` / `donor_pi_country_scope` | donor.`requires_pi` / `pi_country_scope` | Individual-PI gate + base country · donor · M1 PI |
+| `donor_prior_beneficiary_rule` | donor.`prior_beneficiary_rule` | eligible / ineligible_current/previous/any · donor · M1 prior-beneficiary |
+| `donor_ngo_eligible` / `donor_for_profit_eligible` | donor.`ngo_eligible`/`for_profit_eligible` | Applicant-type eligibility · donor · M1 applicant type, route |
 
 ### 2.5 Cofinancing & compliance  → MUST-5
 | New name | Old name | Def · Src · Use |
@@ -141,4 +141,4 @@ Use = which criterion consumes it.**
 ---
 
 ## 6. Execution plan (after sign-off)
-Per-axis, each a single reviewable PR-style step: **(1) Geography ✅ done (migration 054) → (2) Program areas ✅ done (migration 055) → (3) Award/funding ✅ done (migration 056) → (4) Eligibility → (5) Compliance → (6) Relationship/competitiveness/bid-effort → (7) Workflow/outputs → (8) Non-comparison families.** Each step = `ALTER TABLE RENAME COLUMN` migration (idempotent) + JSON-key migration for org_profile + code update (criteria_derive, matching, features, scan_pipeline, llm_synthesis, views, scripts) + verify, with this doc's per-field one-liners filled in for that axis. ML feature names (`core/features`, `decision_model`) updated in lockstep.
+Per-axis, each a single reviewable PR-style step: **(1) Geography ✅ done (migration 054) → (2) Program areas ✅ done (migration 055) → (3) Award/funding ✅ done (migration 056) → (4) Eligibility ✅ done (migration 057) → (5) Compliance → (6) Relationship/competitiveness/bid-effort → (7) Workflow/outputs → (8) Non-comparison families.** Each step = `ALTER TABLE RENAME COLUMN` migration (idempotent) + JSON-key migration for org_profile + code update (criteria_derive, matching, features, scan_pipeline, llm_synthesis, views, scripts) + verify, with this doc's per-field one-liners filled in for that axis. ML feature names (`core/features`, `decision_model`) updated in lockstep.

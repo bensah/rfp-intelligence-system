@@ -213,7 +213,7 @@ def render_org_setup(user, sb):
         fp1, fp2 = st.columns(2)
         _legal_opts = ["nonprofit", "government", "higher_ed", "for_profit",
                        "individual", "tribal"]
-        _legal_cur = _prof.get("legal_type", "nonprofit")
+        _legal_cur = _prof.get("org_legal_type", "nonprofit")
         legal_type = fp1.selectbox(
             "Legal type", _legal_opts,
             index=_legal_opts.index(_legal_cur) if _legal_cur in _legal_opts else 0,
@@ -228,7 +228,7 @@ def render_org_setup(user, sb):
             _entity_cur = "individual"
         else:
             _entity_opts = ["", "grassroot_local", "multi_country"]
-            _entity_cur = _prof.get("entity_type", "") or ""
+            _entity_cur = _prof.get("org_entity_type", "") or ""
             if _entity_cur not in _entity_opts:
                 _entity_cur = ""
         entity_type = fp2.selectbox(
@@ -316,7 +316,7 @@ def render_org_setup(user, sb):
             help="Some funders fund early-stage organisations only (e.g. DRK).")
         has_pi = st.checkbox(
             "Has a well-established PI (Principal Investigator)",
-            value=bool(_prof.get("has_established_pi", False)),
+            value=bool(_prof.get("org_has_established_pi", False)),
             key="orgp_has_established_pi",
             help="Check if the org can field a well-established PI. Satisfies a call "
                  "that requires an individual / PI based in an in-scope country "
@@ -505,7 +505,7 @@ def render_org_setup(user, sb):
         # Active Donors — current grantee relationships (MUST-1 item I). Same donor
         # vocabulary as the funder history below so values match donor intel directly.
         active_donors_sel = _ms(st, "Active Donors — donors currently funding us",
-            _donor_names, "active_donors",
+            _donor_names, "org_active_donors",
             help="Donors with an OPEN/active grant to the org right now. If a call bars "
                  "CURRENT grantees, listing the donor here disqualifies us "
                  "(qualification, MUST-1 item I). Past/closed grants go under "
@@ -514,7 +514,7 @@ def render_org_setup(user, sb):
         # ── Funders & donor registrations (registrations swapped to here) ────
         fr1, fr2 = st.columns(2)
         funders_sel = _ms(fr1, "Donors we've already won grants / awards from",
-            _donor_names, "funder_history",
+            _donor_names, "org_funder_history",
             help="Pick from the Donor Intelligence catalog (or type to add) — "
                  "past / current funders (funder relationship).")
         donor_regs_sel = _ms(fr2, "Donor portal registration active",
@@ -525,8 +525,8 @@ def render_org_setup(user, sb):
 
         if st.button("💾 Save fit profile", type="primary", key="save_org_fit_profile"):
             _orgp.set_profile({
-                "legal_type": legal_type,
-                "entity_type": entity_type,
+                "org_legal_type": legal_type,
+                "org_entity_type": entity_type,
                 "founding_year": int(founding_year) or None,
                 "cofinancing_capacity": cofin,
                 "org_annual_budget": int(annual_budget) or None,
@@ -540,7 +540,7 @@ def render_org_setup(user, sb):
                 "org_has_sam_uei": bool(org_sam_uei),
                 "org_tax_exempt": bool(org_tax_exempt),
                 "org_stage": org_stage,
-                "has_established_pi": bool(has_pi),
+                "org_has_established_pi": bool(has_pi),
                 "has_audited_financials": bool(has_audited_financials),
                 "has_audit_report": bool(has_audit_report),
                 "has_safeguarding_policy": bool(has_safeguarding_policy),
@@ -564,8 +564,8 @@ def render_org_setup(user, sb):
                 "trusted_academic_institutions": [],
                 "org_registered_countries": registrations_sel,
                 "donor_registrations": donor_regs_sel,
-                "funder_history": funders_sel,
-                "active_donors": active_donors_sel,
+                "org_funder_history": funders_sel,
+                "org_active_donors": active_donors_sel,
                 "proposal_languages": langs_sel,
             }, updated_by=user.get("email"))
             # Competitiveness inputs live in org settings (partial upsert — set_org

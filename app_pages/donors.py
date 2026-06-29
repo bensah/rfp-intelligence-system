@@ -124,7 +124,7 @@ _LABEL_OVERRIDES = {
     "gaps_risks": "Common pitfalls & disqualifiers",
     "recommended_approach": "How to position a competitive application",
     "funders_collaborators": "Funders & Collaborators",
-    "hq_country_required": "Applicant must be HQ'd in",
+    "donor_hq_country_required": "Applicant must be HQ'd in",
     "org_stage_required": "Org stage required",
     "donor_max_annual_budget": "Max annual budget (eligibility ceiling)",
     "donor_min_track_record": "Min largest grant managed (floor)",
@@ -135,12 +135,12 @@ _LABEL_OVERRIDES = {
     "independent_entity_required": "Independent entity required (no INGO affiliates)",
     "welcome_registration_required": "Pre-registration / senior-leadership approval required",
     # MUST-1 rework (migration 049)
-    "entity_type_required": "Entity type required",
-    "registration_region": "Registration region/country required",
-    "requires_pi": "Requires an individual / PI",
-    "pi_country_scope": "PI base-country scope",
+    "donor_entity_type_required": "Entity type required",
+    "donor_registration_region": "Registration region/country required",
+    "donor_requires_pi": "Requires an individual / PI",
+    "donor_pi_country_scope": "PI base-country scope",
     "donor_max_prior_grant": "Max prior grant/award (eligibility ceiling)",
-    "prior_beneficiary_rule": "Prior-beneficiary rule",
+    "donor_prior_beneficiary_rule": "Prior-beneficiary rule",
 }
 
 # Partner-type vocabulary — shared with the org fit profile so a donor's
@@ -375,13 +375,13 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
             "submission_portal_url", "strategic_fit_notes", "gaps_risks",
             "recommended_approach", "donor_priority_ratings", "funders_collaborators",
             # Hard eligibility conditions (migration 032) — VALUED (not flags).
-            "hq_country_required", "org_stage_required", "donor_max_annual_budget",
+            "donor_hq_country_required", "org_stage_required", "donor_max_annual_budget",
             "donor_min_track_record", "required_partner_type", "required_partner_country",
             "max_request_pct_of_budget", "min_cofinancing_secured_pct",
             # MUST-1 rework conditions (migration 049) — VALUED text, not flags.
-            "entity_type_required", "registration_region",
-            "requires_pi", "pi_country_scope", "donor_max_prior_grant",
-            "prior_beneficiary_rule"]
+            "donor_entity_type_required", "donor_registration_region",
+            "donor_requires_pi", "donor_pi_country_scope", "donor_max_prior_grant",
+            "donor_prior_beneficiary_rule"]
 # Columns kept for backward-compat but no longer surfaced anywhere (not edited,
 # not shown in View, not in share/PDF). verification_level already captures data
 # confidence, so the free-text "verification caveats" was redundant + confusing.
@@ -393,7 +393,7 @@ _NON_FLAG = (set(_META) | set(_SHORT_TEXT) | set(_LONG_TEXT)
 
 _FLAGS = [c for c in df.columns if c not in _NON_FLAG]
 _ELIG = [
-    "ngo_eligible", "for_profit_eligible", "govt_or_ccm_route_required",
+    "donor_ngo_eligible", "donor_for_profit_eligible", "govt_or_ccm_route_required",
     "grant_route", "procurement_tender_route", "loan_dev_finance_route",
     "subrecipient_partner_possible", "open_call_unsolicited",
     "invitation_solicited", "two_stage_application", "online_portal_submission",
@@ -497,7 +497,7 @@ def _cell(v):
 _LIST_FIELDS = {"donor_geographic_scope", "donor_priority_areas",
                 "funding_mechanism", "funders_collaborators",
                 # MUST-1 multi-selects (migration 049) — stored as JSON lists.
-                "hq_country_required", "registration_region", "required_partner_type",
+                "donor_hq_country_required", "donor_registration_region", "required_partner_type",
                 "required_partner_country"}
 
 # Unified partner/funder options for the "Funders & collaborators" picker — the
@@ -783,7 +783,7 @@ def _summary_lines(row: dict) -> list[str]:
         ("Recent activity", _disp(row.get("recent_activity"))),
         (_label("eligibility_notes"), _disp(row.get("eligibility_notes"))),
         (_label("selection_criteria"), _disp(row.get("selection_criteria"))),
-        (_label("hq_country_required"), listf("hq_country_required")),
+        (_label("donor_hq_country_required"), listf("donor_hq_country_required")),
         (_label("org_stage_required"), _disp(row.get("org_stage_required"))),
         (_label("donor_max_annual_budget"), _disp_field(row, "donor_max_annual_budget")),
         (_label("donor_min_track_record"), _disp_field(row, "donor_min_track_record")),
@@ -791,12 +791,12 @@ def _summary_lines(row: dict) -> list[str]:
         (_label("required_partner_country"), listf("required_partner_country")),
         (_label("max_request_pct_of_budget"), _disp(row.get("max_request_pct_of_budget"))),
         (_label("min_cofinancing_secured_pct"), _disp(row.get("min_cofinancing_secured_pct"))),
-        (_label("entity_type_required"), choice("entity_type_required")),
-        (_label("registration_region"), listf("registration_region")),
-        (_label("requires_pi"), choice("requires_pi")),
-        (_label("pi_country_scope"), choice("pi_country_scope")),
+        (_label("donor_entity_type_required"), choice("donor_entity_type_required")),
+        (_label("donor_registration_region"), listf("donor_registration_region")),
+        (_label("donor_requires_pi"), choice("donor_requires_pi")),
+        (_label("donor_pi_country_scope"), choice("donor_pi_country_scope")),
         (_label("donor_max_prior_grant"), _disp_field(row, "donor_max_prior_grant")),
-        (_label("prior_beneficiary_rule"), choice("prior_beneficiary_rule")),
+        (_label("donor_prior_beneficiary_rule"), choice("donor_prior_beneficiary_rule")),
     ])
 
     projects = _past_projects(row)
@@ -1207,9 +1207,9 @@ def _edit_dialog(row: dict) -> None:
                     "Leave blank if the donor doesn't impose them.")
         _hs1, _hs2 = st.columns(2)
         with _hs1:
-            edited["hq_country_required"] = json.dumps(_multi_with_options(
-                _label("hq_country_required"), ["Any"] + list(_geo.COUNTRIES),
-                row.get("hq_country_required"), key=f"hqreq_{ck}",
+            edited["donor_hq_country_required"] = json.dumps(_multi_with_options(
+                _label("donor_hq_country_required"), ["Any"] + list(_geo.COUNTRIES),
+                row.get("donor_hq_country_required"), key=f"hqreq_{ck}",
                 help="Countries the applicant may be HQ'd in — pick one or several, or "
                      "'Any' if HQ location is unrestricted. e.g. 'United States' for "
                      "US-501c3-only funders."))
@@ -1256,18 +1256,18 @@ def _edit_dialog(row: dict) -> None:
         # Eligible legal TYPE is captured by the existing NGO / for-profit
         # eligibility checkboxes above (Eligibility & routes) — not duplicated here.
         _ent_opts = ["", "grassroot_local", "multi_country", "individual"]
-        _cur_ent = str(row.get("entity_type_required") or "").strip()
+        _cur_ent = str(row.get("donor_entity_type_required") or "").strip()
         _req_pi_opts = ["", "yes", "no"]
-        _cur_rpi = str(row.get("requires_pi") or "").strip().lower()
+        _cur_rpi = str(row.get("donor_requires_pi") or "").strip().lower()
         _et1, _et2 = st.columns(2)
-        edited["entity_type_required"] = _et1.selectbox(
-            _label("entity_type_required"), _ent_opts,
+        edited["donor_entity_type_required"] = _et1.selectbox(
+            _label("donor_entity_type_required"), _ent_opts,
             index=_ent_opts.index(_cur_ent) if _cur_ent in _ent_opts else 0,
             format_func=_pretty_choice, key=f"entreq_{ck}",
             help="Requires a grassroots/local vs multi-country vs individual applicant. "
                  "(Distinct from the broader 'multi-country scope' funding flag.)")
-        edited["requires_pi"] = _et2.selectbox(
-            _label("requires_pi"), _req_pi_opts,
+        edited["donor_requires_pi"] = _et2.selectbox(
+            _label("donor_requires_pi"), _req_pi_opts,
             index=_req_pi_opts.index(_cur_rpi) if _cur_rpi in _req_pi_opts else 0,
             format_func=_pretty_choice, key=f"reqpi_{ck}",
             help="Does the call require a named individual / Principal Investigator "
@@ -1276,20 +1276,20 @@ def _edit_dialog(row: dict) -> None:
                           or (list(getattr(_geo, "UN_REGIONS", []))
                               + list(getattr(_geo, "INCOME_TIERS", []))))
         _pi_scope_opts = ["", "in_scope", "foreign"]
-        _cur_pis = str(row.get("pi_country_scope") or "").strip()
+        _cur_pis = str(row.get("donor_pi_country_scope") or "").strip()
         _rr1, _rr2 = st.columns(2)
         with _rr1:
-            edited["registration_region"] = json.dumps(_multi_with_options(
-                _label("registration_region"),
+            edited["donor_registration_region"] = json.dumps(_multi_with_options(
+                _label("donor_registration_region"),
                 ["Any"] + _broad_geo + list(_geo.COUNTRIES),
-                row.get("registration_region"), key=f"regreg_{ck}",
+                row.get("donor_registration_region"), key=f"regreg_{ck}",
                 help="Where the applicant must be REGISTERED — pick broad terms (LMIC, "
                      "Sub-Saharan Africa, …) and/or specific countries, or 'Any'. Same "
                      "vocabulary as the org fit profile; blank → falls back to the call's "
                      "geographic scope, matched against the org's Countries registered / "
                      "operation."))
-        edited["pi_country_scope"] = _rr2.selectbox(
-            _label("pi_country_scope"), _pi_scope_opts,
+        edited["donor_pi_country_scope"] = _rr2.selectbox(
+            _label("donor_pi_country_scope"), _pi_scope_opts,
             index=_pi_scope_opts.index(_cur_pis) if _cur_pis in _pi_scope_opts else 0,
             format_func=_pretty_choice, key=f"piscope_{ck}",
             help="in_scope = PI based in the implementation country (our own "
@@ -1303,9 +1303,9 @@ def _edit_dialog(row: dict) -> None:
                  "(e.g. '500000'). A CEILING — distinct from the track-record floor.")
         _pbr_opts = ["", "eligible", "ineligible_current", "ineligible_previous",
                      "ineligible_any"]
-        _cur_pbr = str(row.get("prior_beneficiary_rule") or "").strip()
-        edited["prior_beneficiary_rule"] = _ps2.selectbox(
-            _label("prior_beneficiary_rule"), _pbr_opts,
+        _cur_pbr = str(row.get("donor_prior_beneficiary_rule") or "").strip()
+        edited["donor_prior_beneficiary_rule"] = _ps2.selectbox(
+            _label("donor_prior_beneficiary_rule"), _pbr_opts,
             index=_pbr_opts.index(_cur_pbr) if _cur_pbr in _pbr_opts else 0,
             format_func=_pretty_choice, key=f"pbr_{ck}",
             help="eligible = prior grantees explicitly welcome (no penalty); "
@@ -1853,7 +1853,7 @@ def _view_dialog(row: dict) -> None:
                        (_label("application_deadlines"), "application_deadlines"),
                        (_label("submission_portal_url"), "submission_portal_url"),
                        ("Recent activity", "recent_activity"),
-                       (_label("hq_country_required"), "hq_country_required"),
+                       (_label("donor_hq_country_required"), "donor_hq_country_required"),
                        (_label("org_stage_required"), "org_stage_required"),
                        (_label("donor_max_annual_budget"), "donor_max_annual_budget"),
                        (_label("donor_min_track_record"), "donor_min_track_record"),
@@ -1861,19 +1861,19 @@ def _view_dialog(row: dict) -> None:
                        (_label("required_partner_country"), "required_partner_country"),
                        (_label("max_request_pct_of_budget"), "max_request_pct_of_budget"),
                        (_label("min_cofinancing_secured_pct"), "min_cofinancing_secured_pct"),
-                       (_label("entity_type_required"), "entity_type_required"),
-                       (_label("registration_region"), "registration_region"),
-                       (_label("requires_pi"), "requires_pi"),
-                       (_label("pi_country_scope"), "pi_country_scope"),
+                       (_label("donor_entity_type_required"), "donor_entity_type_required"),
+                       (_label("donor_registration_region"), "donor_registration_region"),
+                       (_label("donor_requires_pi"), "donor_requires_pi"),
+                       (_label("donor_pi_country_scope"), "donor_pi_country_scope"),
                        (_label("donor_max_prior_grant"), "donor_max_prior_grant"),
-                       (_label("prior_beneficiary_rule"), "prior_beneficiary_rule")):
+                       (_label("donor_prior_beneficiary_rule"), "donor_prior_beneficiary_rule")):
         if _col in _LIST_FIELDS:
             _vals = _to_list(row.get(_col))
             v = ", ".join(_vals) if _vals else None
         else:
             v = _md(row.get(_col)) or _disp(row.get(_col))
-            if v and _col in ("prefinance_required", "entity_type_required", "requires_pi",
-                              "pi_country_scope", "prior_beneficiary_rule"):
+            if v and _col in ("prefinance_required", "donor_entity_type_required", "donor_requires_pi",
+                              "donor_pi_country_scope", "donor_prior_beneficiary_rule"):
                 v = _pretty_choice(v)
         if v:
             _elig_kv.append((_lbl, _col, v))
@@ -2068,7 +2068,7 @@ if areas_f and "donor_priority_areas" in fdf.columns:
     fdf = fdf[fdf["donor_priority_areas"].apply(
         lambda v: bool(_pa.expand(_to_list(v)) & _want_pa))]
 # Applicant-type filter (OR across selected types) using existing eligibility flags.
-_APPL_FLAG = {"NGO": "ngo_eligible", "For-profit / private": "for_profit_eligible",
+_APPL_FLAG = {"NGO": "donor_ngo_eligible", "For-profit / private": "donor_for_profit_eligible",
               "Sub-recipient / partner": "subrecipient_partner_possible"}
 _appl_flags = [_APPL_FLAG[a] for a in appl if _APPL_FLAG.get(a) in fdf.columns]
 if _appl_flags:
