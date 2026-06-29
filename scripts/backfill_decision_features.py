@@ -43,7 +43,7 @@ def main() -> int:
 
     rows = (sb.table(_TABLE)
             .select("id,rfp_uid,created_at,opportunity_link,funding_agency,"
-                    "source,geographic_scope,submission_deadline,alignment_score")
+                    "source,call_geographic_scope,submission_deadline,alignment_score")
             .is_("features", "null")
             .execute().data or [])
     if not rows:
@@ -75,7 +75,7 @@ def main() -> int:
                 "opportunity_link": r.get("opportunity_link"),
                 "funding_agency": r.get("funding_agency"),
                 "source": r.get("source"),
-                "geographic_scope": r.get("geographic_scope"),
+                "call_geographic_scope": r.get("call_geographic_scope"),
                 "submission_deadline": r.get("submission_deadline"),
                 "alignment_score": r.get("alignment_score"),
             }

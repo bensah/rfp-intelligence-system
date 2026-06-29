@@ -191,8 +191,8 @@ with st.container(border=True):
 with st.container(border=True):
     st.markdown("#### 🌍 Geography & partners")
     _gc = st.columns(2)
-    _kv(_gc[0], "Countries registered", ", ".join(prof.get("countries_registered") or []) or "—")
-    _kv(_gc[1], "Countries of operation", ", ".join(prof.get("countries_of_operation") or []) or "—")
+    _kv(_gc[0], "Countries registered", ", ".join(prof.get("org_registered_countries") or []) or "—")
+    _kv(_gc[1], "Countries of operation", ", ".join(prof.get("org_operating_countries") or []) or "—")
     _partners = prof.get("partners") or []
     if _partners:
         st.markdown("**Affiliated partners & collaborators**")

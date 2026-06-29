@@ -182,7 +182,7 @@ def render_org_setup(user, sb):
 
         # Controlled vocabularies — SAME lists the Donor Intelligence profiles use,
         # so org values match donor values directly (no fuzzy mapping):
-        #   geography      -> geographies.GEO_OPTIONS  (donor funding_scope_geographic)
+        #   geography      -> geographies.GEO_OPTIONS  (donor donor_geographic_scope)
         #   program areas  -> program_area_classifier  (donor priority_program_areas)
         #   funders/portal -> the donor_intel catalog (donor + website)
         #   non-profit partners -> core.partners.NONPROFIT_PARTNERS
@@ -385,10 +385,10 @@ def render_org_setup(user, sb):
         # ── Geography & languages (moved up, right after the eligibility facts) ──
         geo1, geo2 = st.columns(2)
         registrations_sel = _ms(geo1, "Countries registered", _geo.COUNTRIES,
-            "countries_registered",
+            "org_registered_countries",
             help="Legal-registration jurisdictions (qualification).")
         countries_op_sel = _ms(geo2, "Countries of operation", _geo.GEO_OPTIONS,
-            "countries_of_operation",
+            "org_operating_countries",
             help="Where you operate directly — same geo vocabulary as donor scope "
                  "(geographic fit).")
         langs_sel = _ms(st, "Proposal languages", _LANGS, "proposal_languages",
@@ -554,7 +554,7 @@ def render_org_setup(user, sb):
                 "domain_ratings": domain_ratings,
                 "priority_areas": priorities_sel,
                 "program_area_ratings": priority_ratings,
-                "countries_of_operation": countries_op_sel,
+                "org_operating_countries": countries_op_sel,
                 # Partners now live in the single `partners` table above. The flat
                 # lists are kept (consolidated) only for back-compat readers:
                 # trusted_partners = every partner name (geographic 'via a partner'
@@ -562,7 +562,7 @@ def render_org_setup(user, sb):
                 "trusted_partners": [p["name"] for p in partners_struct],
                 "trusted_for_profit_partners": [],
                 "trusted_academic_institutions": [],
-                "countries_registered": registrations_sel,
+                "org_registered_countries": registrations_sel,
                 "donor_registrations": donor_regs_sel,
                 "funder_history": funders_sel,
                 "active_donors": active_donors_sel,

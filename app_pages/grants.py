@@ -137,7 +137,7 @@ h2.markdown(
     unsafe_allow_html=True,
 )
 
-_geo = r.get("geographic_scope")
+_geo = r.get("call_geographic_scope")
 if isinstance(_geo, (list, tuple)):
     _geo_str = ", ".join(str(g) for g in _geo if g) or "—"
 else:
