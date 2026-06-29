@@ -9,7 +9,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core.render_view import render_view
-from core.scan_runner import run_scan_now, scan_banner
+from core.scan_runner import run_screening_now
 from views.submit_form import render_submit_form
 
 user = st.session_state["app_user"]
@@ -33,27 +33,27 @@ with _title_col:
     st.title("Discovered Opportunities Pipeline")
 with _btn_col:
     st.write("")  # nudge the button down to the title baseline
-    if st.button("🔄 Scan now", type="primary", width='stretch',
-                 key="pipelines_scan_now",
-                 help="Run the donor-source scanner now. New RFPs are inserted "
-                      "and appear on the Screen tab after the run completes."):
-        # Lock nav while the long scan subprocess blocks the script, so the
-        # user can't switch tabs into a half-rendered/grayed-out view.
-        st.markdown(
-            """
-            <style>
-              [data-testid="stTabs"] [role="tablist"],
-              [data-testid="stSidebarNav"] {
-                pointer-events: none !important; opacity: 0.45 !important;
-              }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
+    # "Scan now" (tenant-facing) = screen the platform's curated/extracted store
+    # against THIS org's eligibility. Fast (no web crawl) — the heavy extraction
+    # crawl is a separate admin job (Settings → Manual Scan → Run Extraction).
+    # Label kept as "Scan now" on purpose; flips to a disabled "running" state.
+    _scan_slot = st.empty()
+    _go = _scan_slot.button(
+        "🔄 Scan now", type="primary", width='stretch', key="pipelines_scan_now",
+        help="Find the funding your organisation is potentially eligible for, from "
+             "the platform's curated store — runs in seconds (no web crawl). New "
+             "eligible opportunities appear on the Screen tab.")
+    if _go:
+        _scan_slot.button("⏳ Selecting eligible funding…", disabled=True,
+                          width='stretch', key="pipelines_scan_running")
         _who = user.get("name") or user.get("email") or "unknown"
-        st.info(scan_banner(_who))
-        run_scan_now(triggered_by=f"manual:{_who}")
+        run_screening_now(triggered_by=f"match:{_who}")
         st.rerun()
+
+# Outcome banner from the last run (survives the post-run rerun).
+_pipe_banner = st.session_state.pop("admin_scan_banner", None)
+if _pipe_banner:
+    (st.success if _pipe_banner.get("ok") else st.error)(_pipe_banner["msg"])
 
 tab_screen, tab_review, tab_tracking, tab_summary = st.tabs(
     ["Screen", "Review", "Tracking", "Summary"]

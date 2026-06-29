@@ -76,7 +76,15 @@ def _ensure_browser():
         return None
     try:
         pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=True)
+        # Route the headless browser through a proxy when configured, so crawling
+        # doesn't expose / get the host IP rate-limited. (requests-based fetches
+        # honour HTTPS_PROXY automatically; Playwright needs it passed explicitly.)
+        _px = (os.environ.get("RFPIS_PROXY") or os.environ.get("HTTPS_PROXY")
+               or os.environ.get("HTTP_PROXY"))
+        _launch = {"headless": True}
+        if _px:
+            _launch["proxy"] = {"server": _px}
+        browser = pw.chromium.launch(**_launch)
     except Exception as exc:
         # Chromium binary missing (e.g. Streamlit Cloud) or launch failure.
         log.info("deep_read: chromium unavailable (%s) — deep reads skipped", exc)

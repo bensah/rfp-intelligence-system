@@ -16,6 +16,47 @@ from supabase import Client, create_client
 load_dotenv()
 
 
+def _force_http1_transport() -> None:
+    """Work around an httpx HTTP/2 socket bug that surfaces as
+    ``httpx.ReadError: [WinError 10035] A non-blocking socket operation could not
+    be completed immediately`` on EVERY Supabase call (seen on Python 3.14 +
+    httpx 0.28 on Windows). postgrest hard-codes ``Client(..., http2=True)`` (see
+    postgrest/_sync/client.py) and supabase rebuilds that client on auth-state
+    changes, so a one-off session swap wouldn't stick. Each sub-package imports
+    the httpx client as a module-level ``from httpx import Client``; we replace
+    that symbol with an HTTP/1.1 subclass so every session they build (now and on
+    rebuild) negotiates HTTP/1.1. Idempotent and fully defensive — never block
+    client creation if an internal layout changes."""
+    try:
+        import httpx
+    except Exception:
+        return
+
+    class _Http1Client(httpx.Client):
+        def __init__(self, *args, **kwargs):
+            kwargs["http2"] = False          # force HTTP/1.1
+            super().__init__(*args, **kwargs)
+
+    for modname in (
+        "postgrest._sync.client",
+        "storage3._sync.client",
+        "supabase_functions._sync.functions_client",
+        "supabase_auth._sync.gotrue_base_api",
+        "supabase_auth._sync.gotrue_admin_api",
+        "supabase_auth._sync.gotrue_client",
+    ):
+        try:
+            mod = __import__(modname, fromlist=["Client"])
+        except Exception:
+            continue
+        # Only patch the genuine httpx.Client (skip if already wrapped on a rerun).
+        if getattr(mod, "Client", None) is httpx.Client:
+            mod.Client = _Http1Client
+
+
+_force_http1_transport()
+
+
 def _read_secret(name: str) -> str | None:
     val = os.environ.get(name)
     if val:

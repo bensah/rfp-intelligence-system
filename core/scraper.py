@@ -35,6 +35,8 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 
+from core import http as _http  # polite shared session: per-host throttle + 429 backoff + TTL cache
+
 log = logging.getLogger(__name__)
 
 # Network defaults — keep per-request timeout aggressive so the orchestrator
@@ -473,7 +475,7 @@ def _try_pdf_guide_deadline(pdf_url: str) -> tuple[date | None, str | None]:
     Returns (None, None) on any failure. Heavily bounded — same caps as
     the main PDF enrichment path."""
     try:
-        r = requests.get(
+        r = _http.get(
             pdf_url,
             headers={"User-Agent": USER_AGENT, "Accept": "application/pdf, */*"},
             timeout=ENRICH_TIMEOUT,
@@ -565,7 +567,7 @@ def _follow_companion_for_deadline(soup: "BeautifulSoup | None", base_url: str) 
     early-but-dateless nav link can't shadow the real external calendar."""
     for link in _find_companion_call_links(soup, base_url)[:3]:
         try:
-            r = requests.get(
+            r = _http.get(
                 link, headers={"User-Agent": USER_AGENT, "Accept": "text/html"},
                 timeout=ENRICH_TIMEOUT,
             )
@@ -616,7 +618,7 @@ def _enrich_developmentaid(cand: dict[str, Any]) -> dict[str, Any] | None:
     if "developmentaid.org/grants/view/" not in link:
         return cand
     try:
-        r = requests.get(link, headers={"User-Agent": USER_AGENT},
+        r = _http.get(link, headers={"User-Agent": USER_AGENT},
                          timeout=HTTP_TIMEOUT, allow_redirects=True)
         r.raise_for_status()
     except Exception as exc:
@@ -792,7 +794,7 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
     is_pdf = link.lower().split("?", 1)[0].endswith(".pdf")
 
     try:
-        r = requests.get(
+        r = _http.get(
             link,
             headers={
                 "User-Agent": USER_AGENT,
@@ -1011,6 +1013,12 @@ def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
         # not the generic "View full details" button text).
         if "grandchallenges.ca" in url.lower():
             return _scan_grandchallenges_ca(name, url)
+        # Coefficient Giving (ex-Open Philanthropy) — /funds/ lists ~14 fund pages
+        # whose "Research & Updates" sections mix post types (Request for Proposals
+        # / Blog / Cause Investigation / News). Crawl each fund page and keep ONLY
+        # the RFP-type cards. Server-rendered HTML (needs a real browser UA).
+        if "coefficientgiving.org" in url.lower():
+            return _scan_coefficient_giving(name, url)
         # Packard — JS-rendered cards backed by the WordPress REST custom
         # post type `funding-opportunity`.
         if "packard.org" in url.lower():
@@ -1021,6 +1029,13 @@ def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
                                                or "procnotices" in url.lower()):
             return _scan_worldbank_procurement(
                 name, "https://search.worldbank.org/api/v2/procnotices")
+        # Global Health EDCTP3 JU — the RSS feed carries title+link only (no budget
+        # /deadline). Route to the SEDIA API filtered to EDCTP3 so we get structured
+        # budget + deadline + identifier. (Per-source handler — DATA_SCHEMA_ETL §5.2.)
+        if "global-health-edctp3.europa.eu" in url.lower() or "edctp3" in name.lower():
+            return _scan_eu_funding_tenders(
+                name, "https://api.tech.ec.europa.eu/search-api/prod/rest/search",
+                text="EDCTP3")
         # Theme/country filtering now happens in core.scan_pipeline (policy-
         # driven, admin-configurable). Scrapers return raw candidates.
         if method == "rss":
@@ -1061,7 +1076,7 @@ def _scan_rss(name: str, url: str) -> list[dict[str, Any]]:
     # browser-like headers, then hand the bytes to feedparser — which is more
     # forgiving with bytes input than with a URL it fetched itself.
     try:
-        r = requests.get(
+        r = _http.get(
             url,
             headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml"},
             timeout=HTTP_TIMEOUT,
@@ -1125,7 +1140,7 @@ _RNET_DEADLINE_NOISE_RE = re.compile(
 
 def _scan_researchnet(name: str, url: str) -> list[dict[str, Any]]:
     try:
-        r = requests.get(
+        r = _http.get(
             url,
             headers={"User-Agent": USER_AGENT,
                      "Accept": "application/rss+xml, application/xml, text/xml"},
@@ -1264,7 +1279,7 @@ def _scan_google_alerts(name: str, url: str) -> list[dict[str, Any]]:
     eligibility + scoring pipeline like any other source.
     """
     try:
-        r = requests.get(
+        r = _http.get(
             url,
             headers={
                 "User-Agent": USER_AGENT,
@@ -1370,7 +1385,7 @@ def _fetch_grants_gov_details(numeric_id: str) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         return None
     try:
-        r = requests.post(
+        r = _http.post(
             "https://api.grants.gov/v1/api/fetchOpportunity",
             json={"opportunityId": opp_id_int},
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
@@ -1406,7 +1421,7 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
             "sortBy": "openDate|desc",
         }
         try:
-            r = requests.post(
+            r = _http.post(
                 url, json=body,
                 headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
                 timeout=HTTP_TIMEOUT,
@@ -1586,6 +1601,21 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
                     cand["_drop_us_only"] = True
             except Exception:
                 pass
+        # grants.gov is the US FEDERAL portal — default each call to US-domestic
+        # geography (persisted so SCREENING can reject it for a non-US org) UNLESS
+        # its eligibility explicitly welcomes foreign / international applicants.
+        # That exception is exactly when global-health calls (CDC-global, Fogarty,
+        # USAID) survive — they keep whatever geography the synopsis names, and the
+        # geo gate then decides on the real scope. Don't override a richer scope the
+        # synopsis already produced (e.g. a named region).
+        _foreign_ok = any(k in (elig_text or "").lower() for k in (
+            "foreign", "international", "non-u.s", "non-us",
+            "outside the united states", "low- and middle-income", "lmic",
+            "developing countr", "any country", "worldwide", "globally"))
+        if not _foreign_ok and not cand.get("geographic_scope"):
+            cand["geographic_scope"] = ["United States"]
+        if cand.get("_applicant_types"):
+            cand["eligibility_applicant_types"] = cand["_applicant_types"]
         cs = syn.get("costSharing")
         if cs is not None and str(cs).lower() not in ("none", ""):
             notes_parts.append(f"Cost sharing required: {cs}")
@@ -1639,7 +1669,7 @@ def _scan_worldbank(name: str, url: str) -> list[dict[str, Any]]:
         "status_exact": "Active",
     }
     try:
-        r = requests.get(
+        r = _http.get(
             url, params=params,
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
             timeout=HTTP_TIMEOUT,
@@ -1687,11 +1717,54 @@ def _wb_date(s: Any) -> date | None:
         return _parse_iso_date(str(s)[:10])
 
 
-def _scan_eu_funding_tenders(name: str, url: str) -> list[dict[str, Any]]:
+# Identifier-prefix → funder name for EU Joint Undertakings worth attributing
+# distinctly (the rest stay generic "European Commission").
+_EU_JU_FUNDERS = {
+    "EDCTP3": "Global Health EDCTP3 Joint Undertaking",
+    "IHI": "Innovative Health Initiative",
+}
+
+
+def _eu_budget(bo_str: str) -> tuple[float | None, str | None]:
+    """Parse a SEDIA `budgetOverview` JSON blob → (total amount, currency). Sums
+    every action's per-year budget. EU budgets are EUR (the blob omits currency)."""
+    try:
+        b = json.loads(bo_str) if bo_str else {}
+    except (ValueError, TypeError):
+        return None, None
+    tot, cur = 0.0, None
+    for actions in (b.get("budgetTopicActionMap") or {}).values():
+        if not isinstance(actions, list):
+            continue
+        for a in actions:
+            cur = cur or a.get("currency")
+            for v in (a.get("budgetYearMap") or {}).values():
+                try:
+                    tot += float(v)
+                except (TypeError, ValueError):
+                    pass
+    return (tot or None), (cur or ("EUR" if tot else None))
+
+
+def _eu_funder(identifier: str) -> str:
+    u = (identifier or "").upper()
+    for key, fname in _EU_JU_FUNDERS.items():
+        if key in u:
+            return fname
+    return "European Commission (EU Funding & Tenders)"
+
+
+def _scan_eu_funding_tenders(name: str, url: str, *,
+                             text: str = "***") -> list[dict[str, Any]]:
     """EU Funding & Tenders Portal (SEDIA search API). Free, key-less (apiKey
-    'SEDIA' is the public token). Pulls OPEN + FORTHCOMING grants & tenders. The
-    query body must be sent as a multipart part with an explicit application/json
-    content-type, else the API 500s with 'octet-stream not supported'."""
+    'SEDIA' is the public token). `text` filters the free-text search ("***" = all;
+    "EDCTP3" restricts to the Global Health EDCTP3 JU — the generic query buries
+    EDCTP3 under thousands of mainstream Horizon calls). Pulls OPEN + FORTHCOMING
+    grants & tenders and maps
+    the STRUCTURED metadata — budget (budgetOverview), deadline, identifier, type —
+    into our schema. Geography is captured from the call text downstream (NOT
+    hardcoded EU: EDCTP3 / Global-Health JUs target sub-Saharan Africa). The query
+    body must be a multipart part with explicit application/json, else the API 500s."""
     out: list[dict[str, Any]] = []
     q = {"bool": {"must": [
         {"terms": {"type": ["1", "2"]}},                  # 1=tender, 2=grant
@@ -1706,9 +1779,9 @@ def _scan_eu_funding_tenders(name: str, url: str) -> list[dict[str, Any]]:
 
     for page in (1, 2):
         try:
-            r = requests.post(
+            r = _http.post(
                 url,
-                params={"apiKey": "SEDIA", "text": "***",
+                params={"apiKey": "SEDIA", "text": text,
                         "pageSize": "50", "pageNumber": str(page)},
                 files={"query": ("query.json", json.dumps(q), "application/json"),
                        "languages": ("languages.json", json.dumps(["en"]),
@@ -1726,16 +1799,30 @@ def _scan_eu_funding_tenders(name: str, url: str) -> list[dict[str, Any]]:
             title = _clean(_first(md, "title") or it.get("title") or "")
             if not title:
                 continue
+            ident = _clean(_first(md, "identifier"))
+            amt, cur = _eu_budget(_first(md, "budgetOverview"))
+            action = _first(md, "typesOfAction").lower()
+            is_prize = "prize" in action
+            status = _first(md, "status")
+            # status 31094501 = forthcoming (future) → announcement, not a live call.
+            opp_type = ("announcement" if status == "31094501"
+                        else "award" if is_prize else "grant")
             out.append({
                 "opportunity_title": title,
                 "opportunity_link": it.get("url"),
-                "opportunity_id": _clean(_first(md, "identifier")),
-                "funding_agency": "European Commission (EU Funding & Tenders)",
+                "opportunity_id": ident,
+                "funding_opportunity_number": ident,
+                "funding_agency": _eu_funder(ident),
                 "brief_description": _clean(it.get("summary") or "")[:1800] or None,
                 "date_posted": _parse_iso_date(_first(md, "startDate")[:10]),
                 "submission_deadline": _parse_iso_date(_first(md, "deadlineDate")[:10]),
-                "geographic_scope": ["European Union"],
-                "_source_origin": f"{name} (status={_first(md, 'status')})",
+                "estimated_value": amt,
+                "currency": cur,
+                "solicitation_type": "Prize" if is_prize else None,
+                "instrument_type": "Award" if is_prize else (
+                    "Grant" if _first(md, "type") == "2" else "Contract"),
+                "opportunity_type": opp_type,
+                "_source_origin": f"{name} (status={status})",
             })
     return _dedup_by_link_or_title(out)
 
@@ -1746,7 +1833,7 @@ def _scan_worldbank_procurement(name: str, url: str) -> list[dict[str, Any]]:
     / EOIs / GPNs / RFQs. Country → geographic_scope so the geo gate can act."""
     out: list[dict[str, Any]] = []
     try:
-        r = requests.get(
+        r = _http.get(
             url, params={"format": "json", "rows": 100},
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
             timeout=HTTP_TIMEOUT)
@@ -1790,7 +1877,7 @@ def _scan_ocds(name: str, url: str, *, notice_base: str, geo: str
     `license` field). Keeps active/planned tenders; skips awards/cancelled."""
     out: list[dict[str, Any]] = []
     try:
-        r = requests.get(
+        r = _http.get(
             url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
             timeout=HTTP_TIMEOUT)
         r.raise_for_status()
@@ -1838,7 +1925,7 @@ def _scan_ted(name: str, url: str) -> list[dict[str, Any]]:
                        "deadline-receipt-tender-date-lot"],
             "limit": 50}
     try:
-        r = requests.post(
+        r = _http.post(
             url, json=body,
             headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
             timeout=HTTP_TIMEOUT)
@@ -1895,7 +1982,7 @@ def _scan_ungm(name: str, url: str) -> list[dict[str, Any]]:
                 "Agencies": [], "NoticeTypes": [], "UNSPSCs": [],
                 "SortField": "DatePublished", "SortAscending": False}
         try:
-            r = requests.post(endpoint, data=json.dumps(body), headers=hdrs,
+            r = _http.post(endpoint, data=json.dumps(body), headers=hdrs,
                               timeout=HTTP_TIMEOUT)
             r.raise_for_status()
         except Exception as exc:
@@ -1953,7 +2040,7 @@ def _scan_unops(name: str, url: str) -> list[dict[str, Any]]:
     api = ("https://grantplus.unops.org/api/external/funding-opportunity"
            "?pageIndex=0&pageSize=100&ascending=true")
     try:
-        r = requests.get(api, headers={"User-Agent": USER_AGENT,
+        r = _http.get(api, headers={"User-Agent": USER_AGENT,
                                        "Accept": "application/json"},
                          timeout=HTTP_TIMEOUT)
         r.raise_for_status()
@@ -1996,7 +2083,7 @@ def _scan_chinnova(name: str, url: str) -> list[dict[str, Any]]:
     cards: title + 'Deadline: DD Month, YYYY' + grant-details.php?id=N."""
     listing = "https://grants.chinnova.aau.org/pages/all-grants.php"
     try:
-        r = requests.get(listing, headers={"User-Agent": USER_AGENT,
+        r = _http.get(listing, headers={"User-Agent": USER_AGENT,
                                            "Accept": "text/html"},
                          timeout=HTTP_TIMEOUT)
         r.raise_for_status()
@@ -2049,7 +2136,7 @@ def _scan_grandchallenges_ca(name: str, url: str) -> list[dict[str, Any]]:
     page's French meta description, so the call read as off-theme. Parse the card
     instead: heading → title, card body → description, "by <date>" → deadline."""
     try:
-        r = requests.get(url, headers={"User-Agent": USER_AGENT,
+        r = _http.get(url, headers={"User-Agent": USER_AGENT,
                                        "Accept": "text/html"}, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
@@ -2101,6 +2188,134 @@ def _scan_grandchallenges_ca(name: str, url: str) -> list[dict[str, Any]]:
     return _dedup_by_link_or_title(out)
 
 
+# ---------------------------------------------------------------------------
+# Coefficient Giving (ex-Open Philanthropy)
+# ---------------------------------------------------------------------------
+# Each fund page (e.g. /funds/global-health-wellbeing-opportunities/) carries a
+# "Research & Updates" section of cards. Every card is tagged with a post-type
+# label in `<p class="text-sans-sm …">…</p>` — Request for Proposals, Blog,
+# Cause Investigation, News, … — followed (within the same card) by the title
+# heading and the detail link. We keep ONLY the RFP-type cards and reject the
+# rest. The label→title→link association is parsed off the raw HTML within a
+# bounded window after each label (verified reliable: each label's window holds
+# its own title + own detail link first).
+_CG_HOST = "coefficientgiving.org"
+# Post-type labels that ARE funding solicitations (everything else is editorial).
+_CG_RFP_LABEL_RE = re.compile(
+    r"request for (?:proposals|applications|expressions?|information)"
+    r"|call for (?:proposals|applications|expressions?|concept)"
+    r"|funding opportunit|grant opportunit|notice of funding"
+    r"|open (?:call|solicitation)|\brfp\b|\brfa\b|\beoi\b",
+    re.I,
+)
+
+
+def _cg_page(url: str, headers: dict[str, str]) -> tuple[str, str]:
+    """(title, readable-text) of a Coefficient Giving page. ('','') on failure.
+    The text feeds downstream deadline/closure/value/eligibility extraction, so a
+    sub-page's "This RFP closed on …" notice reaches the gates."""
+    try:
+        r = _http.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        h1 = soup.find("h1")
+        title = _clean(h1.get_text(" ", strip=True)) if h1 else ""
+        for t in soup(["script", "style", "nav", "header", "footer", "noscript"]):
+            t.decompose()
+        main = soup.find("main") or soup.find("article") or soup.body or soup
+        return title, _clean(main.get_text(" ", strip=True))
+    except Exception as exc:  # pragma: no cover — best-effort enrichment
+        log.debug("Coefficient Giving page fetch failed (%s): %s", url, exc)
+        return "", ""
+
+
+def _cg_page_text(url: str, headers: dict[str, str]) -> str:
+    """Readable text of a Coefficient Giving detail page (back-compat shim)."""
+    return _cg_page(url, headers)[1]
+
+
+# RFP sub-page tabs that live UNDER a fund (e.g. /funds/<slug>/request-for-
+# proposals-biosecurity/). The real call + its "closed on …" notice live here,
+# not on the fund landing page — so we must drill in.
+_CG_SUBPAGE_RE = re.compile(
+    r"(request-for-proposals|requests?-for-applications|call-for-proposals|"
+    r"call-for-applications|funding-opportunit|grant-opportunit|/rfp|/rfa|/eoi)",
+    re.I,
+)
+
+
+def _scan_coefficient_giving(name: str, url: str) -> list[dict[str, Any]]:
+    """Coefficient Giving /funds/. Crawl the fund index → each fund page → keep
+    only the RFP-type "Research & Updates" cards, rejecting Blog / Cause
+    Investigation / News. If `url` is a single fund page, crawl just that one."""
+    headers = {"User-Agent": USER_AGENT, "Accept": "text/html"}
+    base = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
+    try:
+        r = _http.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+    except Exception as exc:
+        log.warning("Coefficient Giving fetch failed (%s): %s", url, exc)
+        return []
+
+    path0 = urlsplit(url).path.lower().rstrip("/")
+    # Index page (/funds) → every fund page; a specific fund page → just itself.
+    if path0 in ("/funds", ""):
+        idx = BeautifulSoup(r.text, "html.parser")
+        fund_urls = sorted({
+            urljoin(base, a["href"]) for a in idx.find_all("a", href=True)
+            if re.match(r"^/funds/[a-z0-9-]+/?$",
+                        urlsplit(urljoin(base, a["href"])).path)
+        })
+    else:
+        fund_urls = [url]
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for furl in fund_urls:
+        try:
+            fhtml = r.text if furl == url else _http.get(
+                furl, headers=headers, timeout=HTTP_TIMEOUT).text
+        except Exception as exc:
+            log.warning("Coefficient Giving fund page failed (%s): %s", furl, exc)
+            continue
+        fsoup = BeautifulSoup(fhtml, "html.parser")
+        fh1 = fsoup.find("h1")
+        fund_area = _clean(fh1.get_text(" ", strip=True)) if fh1 else None
+        fund_path = urlsplit(furl).path.rstrip("/").lower()
+
+        # (A) RFP SUB-PAGE TABS under this fund — the real call (and its
+        # "closed on …" notice) lives here, not on the fund landing page. Drill in
+        # so the deadline/closure gate sees the actual RFP text.
+        for a in fsoup.find_all("a", href=True):
+            sub = urljoin(base, a["href"])
+            sp = urlsplit(sub).path.rstrip("/").lower()
+            if (_CG_HOST in sub and sp.startswith(fund_path + "/")
+                    and _CG_SUBPAGE_RE.search(sp) and sub not in seen):
+                seen.add(sub)
+                s_title, s_text = _cg_page(sub, headers)
+                if not s_text:
+                    continue
+                title = s_title or (f"{fund_area} — Request for Proposals"
+                                    if fund_area else "Request for Proposals")
+                out.append({
+                    "opportunity_title": title[:300],
+                    "opportunity_link": sub,
+                    "funding_agency": "Coefficient Giving",
+                    "brief_description": (s_text[:1800] or None),
+                    "_page_text": (s_text[:20000] or None),
+                    "_fund_area": fund_area,
+                    "_source_origin": name,
+                })
+
+        # NOTE: a Coefficient Giving fund PARENT page (/funds/<slug>/) only
+        # describes what they fund — it is NOT an open call. A real RFP exists
+        # ONLY as a tabbed sub-page (captured in (A)). So a fund with no RFP tab
+        # yields no candidate, and the parent page is never emitted. (The old
+        # "Research & Updates" card path was dropped 2026-06-26 — it surfaced
+        # parent/research pages as false RFPs.)
+    return _dedup_by_link_or_title(out)
+
+
 def _ts_to_date(ts: Any) -> date | None:
     """Coerce a UNIX epoch (seconds) to a date. None on any failure."""
     try:
@@ -2119,7 +2334,7 @@ def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
     reliable than the generic anchor crawler (the cards render client-side) and
     yields the real submission deadline. No Playwright needed."""
     try:
-        r = requests.get(url, headers={"User-Agent": USER_AGENT,
+        r = _http.get(url, headers={"User-Agent": USER_AGENT,
                                        "Accept": "text/html"}, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
@@ -2160,7 +2375,7 @@ def _scan_packard(name: str, url: str) -> list[dict[str, Any]]:
     post type `funding-opportunity`. Keyless GET; clean title/link/date/excerpt."""
     api = "https://www.packard.org/wp-json/wp/v2/funding-opportunity?per_page=30"
     try:
-        r = requests.get(api, headers={"User-Agent": USER_AGENT,
+        r = _http.get(api, headers={"User-Agent": USER_AGENT,
                                        "Accept": "application/json"}, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         items = r.json() or []
@@ -2198,7 +2413,7 @@ def _scan_rvo(name: str, url: str) -> list[dict[str, Any]]:
     page = 0
     while page < 4:
         try:
-            r = requests.get(api, params=({"page": page} if page else None),
+            r = _http.get(api, params=({"page": page} if page else None),
                              headers={"User-Agent": USER_AGENT,
                                       "Accept": "application/json"},
                              timeout=HTTP_TIMEOUT)
@@ -2399,7 +2614,7 @@ def _scan_html(name: str, url: str) -> list[dict[str, Any]]:
     """Generic HTML listing-page scraper using `requests` (no JS).
     Suitable for static / server-rendered donor pages."""
     try:
-        r = requests.get(
+        r = _http.get(
             url,
             headers={"User-Agent": USER_AGENT, "Accept": "text/html"},
             timeout=HTTP_TIMEOUT,
@@ -2432,7 +2647,12 @@ def _scan_html_js(name: str, url: str) -> list[dict[str, Any]]:
     html_text: str | None = None
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            _px = (os.environ.get("RFPIS_PROXY") or os.environ.get("HTTPS_PROXY")
+                   or os.environ.get("HTTP_PROXY"))
+            _launch = {"headless": True}
+            if _px:
+                _launch["proxy"] = {"server": _px}   # hide/rotate the crawl IP
+            browser = p.chromium.launch(**_launch)
             try:
                 ctx = browser.new_context(user_agent=USER_AGENT)
                 page = ctx.new_page()

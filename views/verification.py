@@ -29,6 +29,7 @@ import streamlit as st
 
 from core import decision_log, found_loader, source_registry
 from core.type_detect import SOLICITATION_TYPES, INSTRUMENT_TYPES
+from core.records import clean_df
 from db.supabase_client import get_client, safe_execute
 
 _PER_PAGE = 50   # batch-verify form: more rows/page = fewer Save+reload cycles
@@ -110,7 +111,7 @@ def _csv_roundtrip(*, key: str, rows: list[dict], id_header: str, id_fn,
             for col, _opts, curfn in editable:
                 row[col] = curfn(r) if curfn else ""
             recs.append(row)
-        df = pd.DataFrame(recs)
+        df = clean_df(pd.DataFrame(recs))
         c1, c2 = st.columns([1, 2])
         c1.download_button(f"⬇ Download {len(df)} rows (CSV)",
                            df.to_csv(index=False).encode("utf-8"),
