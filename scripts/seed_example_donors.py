@@ -190,7 +190,7 @@ NIHR = {
     ]),
     # Flags (yes only — blanks stay 'not documented'). Program areas now live in
     # priority_program_areas + program_area_ratings, NOT the deprecated *_fit flags.
-    "ngo_eligible": "no", "for_profit_eligible": "no",
+    "donor_ngo_eligible": "no", "donor_for_profit_eligible": "no",
     "subrecipient_partner_possible": "yes", "grant_route": "yes",
     "open_call_unsolicited": "yes", "two_stage_application": "yes",
     "online_portal_submission": "yes", "lmic_africa_focus": "yes",
@@ -406,7 +406,7 @@ DIV = {
          "link": "https://www.div.fund/portfolio"},
     ]),
     # Flags. Program areas now live in priority_program_areas + program_area_ratings.
-    "ngo_eligible": "yes", "for_profit_eligible": "yes",
+    "donor_ngo_eligible": "yes", "donor_for_profit_eligible": "yes",
     "subrecipient_partner_possible": "yes", "grant_route": "yes",
     "open_call_unsolicited": "yes", "online_portal_submission": "yes",
     "lmic_africa_focus": "yes", "global_multi_country_scope": "yes",
@@ -450,7 +450,7 @@ COEFFICIENT_GIVING = {
     "verification_level": "medium",
     "evidence_summary": "From coefficientgiving.org and reporting on the 2025 Open Philanthropy → Coefficient Giving rebrand.",
     "source_urls": "https://www.coefficientgiving.org\nhttps://en.wikipedia.org/wiki/Coefficient_Giving",
-    "ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
+    "donor_ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
     "open_call_unsolicited": "no",
 }
 
@@ -486,7 +486,7 @@ GIVEWELL = {
     "verification_level": "high",
     "evidence_summary": "From givewell.org (How We Work, Top Charities Fund) and public profiles.",
     "source_urls": "https://www.givewell.org\nhttps://www.givewell.org/how-we-work",
-    "ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
+    "donor_ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
 }
 
 LIVELIHOOD_IMPACT_FUND = {
@@ -520,7 +520,7 @@ LIVELIHOOD_IMPACT_FUND = {
     "verification_level": "medium",
     "evidence_summary": "From DevelopmentAid and BFA Global profiles of the Livelihood Impact Fund.",
     "source_urls": "https://bfaglobal.com/livelihood-impact-fund/",
-    "ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
+    "donor_ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
 }
 
 CRI_FOUNDATION = {
@@ -558,7 +558,7 @@ CRI_FOUNDATION = {
     "verification_level": "medium",
     "evidence_summary": "From crifoundation.org (Collaboratives, CRI-DIV) and public foundation profiles.",
     "source_urls": "https://crifoundation.org\nhttps://crifoundation.org/cri-div/",
-    "ngo_eligible": "yes", "grant_route": "yes", "prior_track_record_required": "yes",
+    "donor_ngo_eligible": "yes", "grant_route": "yes", "prior_track_record_required": "yes",
     "invitation_solicited": "yes",
 }
 
@@ -597,7 +597,7 @@ GLOBAL_DEV_INCUBATOR = {
     "verification_level": "medium",
     "evidence_summary": "From globaldevincubator.org and the Devex organisation profile.",
     "source_urls": "https://globaldevincubator.org\nhttps://www.devex.com/organizations/global-development-incubator-gdi-56305",
-    "ngo_eligible": "yes", "subrecipient_partner_possible": "yes", "grant_route": "yes",
+    "donor_ngo_eligible": "yes", "subrecipient_partner_possible": "yes", "grant_route": "yes",
 }
 
 
