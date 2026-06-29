@@ -612,7 +612,7 @@ def _has_required_partner(org: dict, rfp: dict, donor: dict) -> bool:
     partner' with no explicit country falls back to the call's geographic scope)."""
     req_types = {t.lower() for t in _as_list(donor.get("required_partner_type")) if t.lower() != "any"}
     req_ctrys = {c.lower() for c in _as_list(donor.get("required_partner_country")) if c.lower() != "any"}
-    if _truthy(donor.get("local_partner_required")) and not req_ctrys:
+    if _truthy(donor.get("donor_local_partner_required")) and not req_ctrys:
         req_ctrys = {c.lower() for c in _as_list(rfp.get("call_geographic_scope"))}
     for p in (org.get("partners") or []):
         if not isinstance(p, dict):
@@ -630,12 +630,12 @@ def _has_required_partner(org: dict, rfp: dict, donor: dict) -> bool:
 # Funding-route vocabulary — donor flag → canonical route token. The org declares
 # which of these it can RECEIVE through (org_profile.org_funding_routes, same tokens).
 _ROUTE_FLAG_TOKENS = {
-    "grant_route": "grant",
-    "procurement_tender_route": "procurement",
-    "loan_dev_finance_route": "loan",
-    "subrecipient_partner_possible": "subrecipient",
-    "govt_or_ccm_route_required": "govt_ccm",
-    "direct_local_org_eligible": "direct",
+    "donor_grant_route": "grant",
+    "donor_procurement_tender_route": "procurement",
+    "donor_loan_dev_finance_route": "loan",
+    "donor_subrecipient_partner_possible": "subrecipient",
+    "donor_govt_or_ccm_route_required": "govt_ccm",
+    "donor_direct_local_org_eligible": "direct",
 }
 # (token, human label) — shared with the org setup multi-select.
 ROUTE_OPTIONS = [
@@ -669,7 +669,7 @@ def _org_route_set(org: dict) -> set[str]:
 def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
     """True when THIS call's donor is in the org's list of donors it has already
     obtained an authorized-signatory sign-off from (org.authorized_signatory_donors)."""
-    have = _name_set(org.get("authorized_signatory_donors"))
+    have = _name_set(org.get("org_authorized_signatory_donors"))
     if not have:
         return False
     targets = _name_set([donor.get("donor"), donor.get("donor_short"),
@@ -705,12 +705,12 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     #    signal (match %, secured-cofinancing %, reimbursement-only, or a cost-share
     #    clause in the call). cofinancing_capacity → strong/moderate 1 · limited 0.5 ·
     #    none 0. (cost_share + prefinance were redundant → merged.)
-    cap = str(org.get("cofinancing_capacity") or "").strip().lower()
+    cap = str(org.get("org_cofinancing_capacity") or "").strip().lower()
     cap_sc = (1.0 if cap in ("strong", "moderate")
               else 0.5 if cap == "limited"
               else 0.0 if cap in ("weak", "none", "no") else 0.5)
-    a_cofin = bool(_need("cost_sharing_match_required", "min_cofinancing_secured_pct")
-                   or str(donor.get("prefinance_required") or "").strip().lower() == "reimbursement_only"
+    a_cofin = bool(_need("donor_cost_sharing_match_required", "donor_min_cofinancing_secured_pct")
+                   or str(donor.get("donor_prefinance_required") or "").strip().lower() == "reimbursement_only"
                    or _cost_share_required(rfp))
     items.append(_qfactor("cofinance", "Co-financing / pre-finance capacity",
                           active=a_cofin, score=cap_sc, hard=False))
@@ -720,23 +720,23 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     _sam_ok = bool(org.get("org_has_sam_uei")) or any(
         "sam" in str(r).lower() for r in (org.get("donor_registrations") or []))
     _hard = [
-        ("audited_financials", "Audited financials", _need("audited_financials_required"),
-         bool(org.get("has_audited_financials"))),
-        ("audit_report", "Audit report", _need("audit_report_required"),
-         bool(org.get("has_audit_report"))),
+        ("audited_financials", "Audited financials", _need("donor_audited_financials_required"),
+         bool(org.get("org_has_audited_financials"))),
+        ("audit_report", "Audit report", _need("donor_audit_report_required"),
+         bool(org.get("org_has_audit_report"))),
         ("sam_uei", "SAM.gov / UEI registration",
-         _need("sam_uei_registration_required") or _is_us_federal(rfp), _sam_ok),
-        ("tax_exempt", "Tax-exempt status", _need("tax_exempt_status_required"),
+         _need("donor_sam_uei_registration_required") or _is_us_federal(rfp), _sam_ok),
+        ("tax_exempt", "Tax-exempt status", _need("donor_tax_exempt_status_required"),
          bool(org.get("org_tax_exempt"))),
-        ("safeguarding", "Safeguarding policy", _need("safeguarding_policy_required"),
-         bool(org.get("has_safeguarding_policy"))),
-        ("partner_mou", "Partner MOU", _need("partner_mou_required"),
-         bool(org.get("has_partner_mou"))),
-        ("govt_mou", "Government MOU", _need("govt_mou_required"),
-         bool(org.get("has_govt_mou"))),
-        ("govt_endorsement", "Govt endorsement letter", _need("govt_endorsement_letter_required"),
-         bool(org.get("has_govt_endorsement"))),
-        ("local_board", "Local board", _need("local_board_required"),
+        ("safeguarding", "Safeguarding policy", _need("donor_safeguarding_policy_required"),
+         bool(org.get("org_has_safeguarding_policy"))),
+        ("partner_mou", "Partner MOU", _need("donor_partner_mou_required"),
+         bool(org.get("org_has_partner_mou"))),
+        ("govt_mou", "Government MOU", _need("donor_govt_mou_required"),
+         bool(org.get("org_has_govt_mou"))),
+        ("govt_endorsement", "Govt endorsement letter", _need("donor_govt_endorsement_letter_required"),
+         bool(org.get("org_has_govt_endorsement"))),
+        ("local_board", "Local board", _need("donor_local_board_required"),
          str(os.get("org_has_local_board", "")).lower() == "yes"),
     ]
     for key, name, active, ok in _hard:
@@ -745,7 +745,7 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
 
     # Authorized-signatory — matched to the org's list of donors it has ALREADY
     # obtained an authorized signatory from (not a generic checkbox).
-    a_sig = _need("authorized_signatory_signoff_required", "welcome_registration_required")
+    a_sig = _need("donor_authorized_signatory_signoff_required", "donor_welcome_registration_required")
     items.append(_qfactor("authorized_signatory", "Authorized signatory (this donor)",
                           active=a_sig,
                           score=(1.0 if _signatory_donor_match(org, donor, rfp) else 0.0),
@@ -754,12 +754,12 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     # Partnership mandatory — org has an Implementing/Collaborator partner. (The
     # 'local partner' requirement is NOT repeated here — it's covered by MUST-1 Entity
     # type = grassroot/local.)
-    a_part = _need("partnership_mandatory")
+    a_part = _need("donor_partnership_mandatory")
     items.append(_qfactor("partnership", "Mandatory partnership", active=a_part,
                           score=(1.0 if _has_qualifying_partner(org) else 0.0), hard=True))
     # Funding-platform registration — donor's submission portal in the org's active
     # registrations (donor.submission_portal_url ∩ org.donor_registrations).
-    a_plat = _truthy(donor.get("funding_platform_registration_required"))
+    a_plat = _truthy(donor.get("donor_funding_platform_registration_required"))
     items.append(_qfactor("platform_reg", "Funding-platform registration", active=a_plat,
                           score=(1.0 if _registered_on_portal(org, rfp, donor) else 0.0),
                           hard=True))
@@ -857,7 +857,7 @@ def _registered_on_portal(org: dict, rfp: dict, donor: dict | None) -> bool:
         return False
     d = donor or {}
     portals = {clean_portal_url(x) for x in
-               (d.get("submission_portal_url"), d.get("website"),
+               (d.get("donor_submission_portal_url"), d.get("website"),
                 rfp.get("opportunity_link")) if x}
     return bool(regs & {p for p in portals if p})
 
@@ -935,9 +935,9 @@ def derive_bid_effort(rfp: dict, org_settings: dict | None = None) -> str | None
 
 # Real donor_intel requirement columns (migration 020). Values are text
 # (Yes/No/Required/…) → _truthy. Absent/blank flags simply skip that factor.
-_GRASSROOT_FLAGS = ("local_registration_required", "local_partner_required")
-_BOARD_FLAGS = ("local_board_required",)
-_COFIN_FLAGS = ("cost_sharing_match_required", "prefinance_required")
+_GRASSROOT_FLAGS = ("donor_local_registration_required", "donor_local_partner_required")
+_BOARD_FLAGS = ("donor_local_board_required",)
+_COFIN_FLAGS = ("donor_cost_sharing_match_required", "donor_prefinance_required")
 # multi_country_encouraged (migration 053) = the call EXPLICITLY encourages
 # multi-country proposals → matched to org Entity type = Multi-country Organization
 # (org_is_multi_country). global_multi_country_scope kept as a weaker legacy cue.
@@ -998,7 +998,7 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
             score += 0.5 if has_board else -1.0
         if _flag(donor, _COFIN_FLAGS):
             signals += 1
-            strong = str(org.get("cofinancing_capacity") or "").lower() == "strong"
+            strong = str(org.get("org_cofinancing_capacity") or "").lower() == "strong"
             score += 0.5 if strong else -0.5
         if _flag(donor, _MULTI_FLAGS):
             signals += 1

@@ -68,7 +68,7 @@ def _org_block(org: dict) -> str:
         f"founded: {org.get('founding_year') or '—'}\n"
         f"- Preferred award range: {_money(org.get('org_min_target'))}–"
         f"{_money(org.get('org_max_target'))} (sweet spot {_money(org.get('org_mid_target'))})\n"
-        f"- Co-financing capacity: {org.get('cofinancing_capacity') or '—'}\n"
+        f"- Co-financing capacity: {org.get('org_cofinancing_capacity') or '—'}\n"
         f"- Priority areas: {', '.join(str(x) for x in pa[:12]) or '—'}\n"
         f"- Past/known funders: {', '.join(str(x) for x in funders[:12]) or '—'}"
     )
@@ -153,7 +153,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "due-diligence, SAM.gov/UEI, tax-exempt status, etc. One per line as "
         '"• …" with the specifics. "None stated" if the call imposes none. This '
         "protects applicants from a hidden hard-gate discovered near the deadline.\n"
-        '  "compliance_flags": a STRUCTURED object — set a key to true ONLY for each '
+        '  "call_compliance_flags": a STRUCTURED object — set a key to true ONLY for each '
         "requirement the RFP EXPLICITLY imposes, choosing from exactly these keys: "
         "cost_sharing_match_required, local_registration_required, "
         "partnership_mandatory, audit_report_required, "
@@ -225,8 +225,8 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "decision_rationale": _clip(parsed.get("decision_rationale"), 400),
         "how_to_apply": _clip(parsed.get("how_to_apply"), 1500),
         "compliance_requirements": _clip(parsed.get("compliance_requirements"), 1200),
-        "compliance_flags": (parsed.get("compliance_flags")
-                             if isinstance(parsed.get("compliance_flags"), dict) else {}),
+        "call_compliance_flags": (parsed.get("call_compliance_flags")
+                             if isinstance(parsed.get("call_compliance_flags"), dict) else {}),
         "_llm_model": chosen,
     }
     # Fold the grounded MUST-1 requirement signals INTO compliance_flags so they ride
@@ -234,7 +234,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
     # preserves valued keys; booleans stay boolean).
     _m1 = parsed.get("must1_requirements")
     if isinstance(_m1, dict):
-        out["compliance_flags"] = {**out["compliance_flags"], **_sanitize_must1(_m1)}
+        out["call_compliance_flags"] = {**out["call_compliance_flags"], **_sanitize_must1(_m1)}
     _CACHE[ckey] = out
     return out
 
