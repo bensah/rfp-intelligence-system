@@ -66,6 +66,16 @@ _MAX_OUTPUT_TOKENS = 2000
 # the same page within/across scans in one worker. Cleared on restart.
 _CACHE: dict[str, dict[str, Any]] = {}
 
+# Per-process LLM call cap — bounds extraction time. gpt-oss:120b runs ~7-15s/call,
+# so an uncapped scan with hundreds of gap-candidates can run 20+ minutes on the LLM
+# alone (and brush the subprocess timeout). After the cap, judge() returns None →
+# the caller falls back to regex. Cache hits do NOT count. Tunable via env.
+try:
+    _MAX_CALLS = int(os.environ.get("LLM_JUDGE_MAX_CALLS", "60") or 60)
+except ValueError:
+    _MAX_CALLS = 60
+_calls = 0
+
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -126,8 +136,14 @@ def _build_messages(candidate: dict[str, Any], policies: dict[str, Any]) -> list
         '  "submission_deadline": final closing date as "YYYY-MM-DD", or null if '
         "none / rolling / clearly past.\n"
         '  "is_closed": true if the page says the call is closed/concluded/past.\n'
-        '  "estimated_value": numeric award amount (no symbols), or null.\n'
+        '  "estimated_value": numeric award amount (no symbols), or null. READ '
+        "amounts written in prose too — e.g. 'up to $200,000', 'grants of EUR 1–3 "
+        "million', 'maximum award US$2M'. For staged calls use the LARGEST tier.\n"
         '  "currency": ISO code (USD/EUR/GBP…) or null.\n'
+        '  "funding_tiers": array of {"stage","amount_min","amount_max","currency"} '
+        "when the call funds in STAGES with different ceilings (e.g. 'Proof of "
+        "Concept up to $200,000' + 'Transition to Scale up to $2,000,000' -> two "
+        "objects). [] for a single-amount call. amounts numeric, no symbols.\n"
         '  "geographic_scope": array of countries/regions/tiers the call targets '
         "(e.g. [\"Sub-Saharan Africa\"], [\"India\"], [\"LMICs\"]); [] if none.\n"
         '  "country_eligible": true if the org\'s eligible country qualifies under '
@@ -159,6 +175,11 @@ def judge(candidate: dict[str, Any], policies: dict[str, Any],
     ).hexdigest()
     if ckey in _CACHE:
         return _CACHE[ckey]
+
+    global _calls
+    if _calls >= _MAX_CALLS:          # per-process budget exhausted → regex fallback
+        return None
+    _calls += 1
 
     try:
         from openai import OpenAI  # noqa: WPS433 (lazy, optional dep)
@@ -211,6 +232,8 @@ def _normalise(p: dict[str, Any], model: str) -> dict[str, Any]:
     scope = [str(s) for s in scope if s] if isinstance(scope, list) else []
     areas = p.get("matched_areas")
     areas = [str(s) for s in areas if s] if isinstance(areas, list) else []
+    tiers = p.get("funding_tiers")
+    tiers = [t for t in tiers if isinstance(t, dict)] if isinstance(tiers, list) else []
     return {
         "is_open_call": bool(p.get("is_open_call")),
         "is_closed": bool(p.get("is_closed")),
@@ -219,6 +242,7 @@ def _normalise(p: dict[str, Any], model: str) -> dict[str, Any]:
         "submission_deadline": dl,
         "estimated_value": val,
         "currency": _s(p.get("currency")),
+        "funding_tiers": tiers,
         "geographic_scope": scope,
         "country_eligible": _tri(p.get("country_eligible")),
         "theme_relevant": bool(p.get("theme_relevant")),

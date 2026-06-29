@@ -12,6 +12,7 @@ confirmation. Share modal: Download CSV / Send via Resend / Copy markdown.
 """
 from __future__ import annotations
 
+import html as _html
 from datetime import date, datetime, timezone
 from io import StringIO
 
@@ -19,8 +20,12 @@ import pandas as pd
 import streamlit as st
 
 from core import dropdowns
+from core.currency import format_money
 from core.mailer import MailerNotConfigured, send_email
-from core.scorer import score_submission
+from core.pipeline import days_to_deadline, usd_value
+from core.records import clean_record, clean_df
+from core.scorer import (score_submission, criterion_score,
+                         CRITERION_RESPONSES, default_response)
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -58,13 +63,19 @@ def _fetch_all() -> pd.DataFrame:
         .order("submitted_at", desc=True)
         .execute()
     )
-    return pd.DataFrame(res.data or [])
+    return clean_df(pd.DataFrame(res.data or []))
 
 
 df = _fetch_all()
 if df.empty:
     st.info("No RFPs yet. Submit one via the Submit page or trigger a scan from Admin.")
     st.stop()
+
+# Newest first by Search date (recently-found RFPs on top). search_date is an ISO
+# string/datetime; parse for a correct chronological sort (NaT/blank sink to the
+# bottom). This is the table's primary order regardless of insertion order.
+df["_search_dt"] = pd.to_datetime(df.get("search_date"), errors="coerce", format="ISO8601")
+df = df.sort_values("_search_dt", ascending=False, na_position="last").reset_index(drop=True)
 
 
 # -----------------------------------------------------------------------------
@@ -74,7 +85,7 @@ if df.empty:
 from core.pipeline import prob_tier as _prob_tier_shared
 df["_prob"] = df["alignment_score"].apply(lambda s: _prob_tier_shared(s, short=True))
 
-with st.expander("Filters", expanded=True):
+with st.expander("Filters", expanded=False):
     fc1, fc2, fc3, fc4, fc5 = st.columns(5)
     f_source = fc1.multiselect("Source", sorted(df["source"].dropna().unique().tolist()))
     f_dec = fc2.multiselect("Decision", sorted(df["decision"].dropna().unique().tolist()))
@@ -247,6 +258,14 @@ if "_value_usd" in table.columns:
            else [None] * len(table))
     table["_value_usd"] = [_usd_display(a, c) for a, c in zip(list(_ev), list(_cc))]
 
+# Decision is the HUMAN's call — show "Pending" until a reviewer sets it (a blank
+# decision means un-reviewed, NOT a decline). The system's suggestion is shown
+# separately in the Auto-decision column.
+if "decision" in table.columns:
+    table["decision"] = (table["decision"].astype("object")
+                         .where(table["decision"].notna(), None)
+                         .map(lambda v: v if (isinstance(v, str) and v.strip()) else "Pending"))
+
 # Backend columns are snake_case (consistent); the DISPLAY shows friendly,
 # underscore-free labels. Curated key columns keep concise custom labels; every
 # other column (incl. audit mode) is auto-labelled from its snake_case name so
@@ -293,7 +312,7 @@ _explicit_cfg = {
     "_value_usd": st.column_config.TextColumn("Value (USD)", width="medium"),
     "alignment_score": st.column_config.NumberColumn("Score", format="%.1f"),
     "_prob": st.column_config.TextColumn("Probability", width="small"),
-    "auto_recommendation": st.column_config.TextColumn("Auto recommendation"),
+    "auto_recommendation": st.column_config.TextColumn("Auto-decision"),
     "decision": st.column_config.TextColumn("Decision"),
     "stage": st.column_config.TextColumn("Stage"),
     "progress_status": st.column_config.TextColumn("Progress status"),
@@ -329,7 +348,7 @@ if not selected_rows:
 # unfiltered df so column subsets / pagination don't truncate fields).
 selected_uids = [view_df.iloc[r]["uid"] for r in selected_rows]
 selected_full_rows = [
-    df[df["uid"] == uid].iloc[0].to_dict()
+    clean_record(df[df["uid"] == uid].iloc[0].to_dict())
     for uid in selected_uids
     if not df[df["uid"] == uid].empty
 ]
@@ -353,6 +372,7 @@ if is_multi:
     ab2, ab3, _ = st.columns([1, 1, 6])
     edit_clicked = False
     blacklist_clicked = False
+    view_clicked = False
     delete_clicked = ab2.button(
         f"🗑 Delete {len(selected_full_rows)} RFPs",
         width='stretch', disabled=not is_admin,
@@ -363,8 +383,11 @@ if is_multi:
         width='stretch',
     )
 else:
-    ab1, ab2, ab3, ab4, ab5, ab6, ab7, _ = st.columns(
-        [1, 1, 1, 1.3, 0.6, 0.6, 0.6, 1.9])
+    ab0, ab1, ab2, ab3, ab4, ab5, ab6, ab7, _ = st.columns(
+        [1, 1, 1, 1, 1.3, 0.6, 0.6, 0.6, 0.9])
+    view_clicked = ab0.button("👁 View", width='stretch',
+                              help="Read-only: see every field of this RFP "
+                                   "(filled + blank) in one window.")
     edit_clicked = ab1.button("✏ Edit", width='stretch', disabled=not can_edit)
     delete_clicked = ab2.button(
         "🗑 Delete", width='stretch', disabled=not is_admin,
@@ -401,12 +424,203 @@ else:
 # -----------------------------------------------------------------------------
 # Modal: Edit
 # -----------------------------------------------------------------------------
+def _rv_esc(v) -> str:
+    s = "" if v is None else str(v)
+    s = s.strip()
+    return _html.escape(s if (s and s.lower() != "nan") else "—")
+
+
+def _rv_meta_card(label: str, value: str, sub: str = "") -> str:
+    """One compact metric tile for the View dialog (matches the Tracking design)."""
+    return (
+        f"<div style='flex:1 1 22%;min-width:128px;background:#f8fafc;"
+        f"border:1px solid #e2e8f0;border-radius:8px;padding:8px 11px'>"
+        f"<div style='font-size:.68rem;color:#64748b;text-transform:uppercase;"
+        f"letter-spacing:.04em;font-weight:600'>{_rv_esc(label)}</div>"
+        f"<div style='font-size:.96rem;font-weight:700;color:#0f172a;"
+        f"line-height:1.25;margin-top:2px'>{_rv_esc(value)}</div>"
+        + (f"<div style='font-size:.7rem;color:#94a3b8;margin-top:1px'>{_rv_esc(sub)}</div>"
+           if sub and sub != "—" else "")
+        + "</div>"
+    )
+
+
+# Decision → pill colour for the banner.
+_DECISION_PILL = {
+    "proceed": ("#15803d", "#dcfce7"), "proceed as sub": ("#15803d", "#dcfce7"),
+    "park": ("#b45309", "#fef3c7"), "decline": ("#b91c1c", "#fee2e2"),
+}
+
+
+@st.dialog("View RFP", width="large")
+def view_dialog(row: dict) -> None:
+    """Polished read-only view of one RFP — gradient header, key-metric tiles, the
+    high-level MUST/PREFER eligibility outcome, narrative, then the full operational /
+    team / award fields (grouped, every field filled or '—'). No edits here."""
+    _title = row.get("opportunity_title") if isinstance(row.get("opportunity_title"), str) else ""
+    _dec_raw = row.get("decision")
+    _dec = _dec_raw if (isinstance(_dec_raw, str) and _dec_raw.strip()) else "Pending"
+    _auto = row.get("auto_recommendation") or "—"
+    _sc = row.get("alignment_score")
+    _val = format_money(row.get("estimated_value"), row.get("currency"))
+    try:
+        _usd = usd_value(row.get("estimated_value"), row.get("currency"))
+    except Exception:
+        _usd = None
+    _dtd = days_to_deadline(row.get("submission_deadline"))
+    _pfg, _pbg = _DECISION_PILL.get(str(_dec).strip().lower(), ("#475569", "#e2e8f0"))
+
+    def _disp(v) -> str:
+        if v is None:
+            return "—"
+        if isinstance(v, (list, tuple)):
+            s = ", ".join(str(x) for x in v if str(x).strip())
+        else:
+            s = str(v).strip()
+        if not s or s.lower() == "nan":
+            return "—"
+        # Escape "$" so Streamlit markdown doesn't read "$2.3 million … $5" as a
+        # LaTeX math block (&#36; renders as "$" without triggering LaTeX).
+        return s.replace("$", "&#36;")
+
+    # ── Header banner ──────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='background:linear-gradient(95deg,#0f766e,#0d9488);color:#fff;"
+        "padding:15px 18px;border-radius:11px'>"
+        f"<div style='font-size:1.2rem;font-weight:700;line-height:1.3'>{_rv_esc(_title)}</div>"
+        f"<div style='opacity:.92;margin-top:3px;font-size:.95rem'>{_rv_esc(row.get('funding_agency'))}</div>"
+        "<div style='margin-top:9px;display:flex;gap:7px;flex-wrap:wrap;align-items:center'>"
+        f"<span style='background:{_pbg};color:{_pfg};padding:3px 11px;border-radius:20px;"
+        f"font-size:.78rem;font-weight:700'>Decision: {_rv_esc(_dec)}</span>"
+        "<span style='background:rgba(255,255,255,.22);padding:3px 11px;border-radius:20px;"
+        f"font-size:.78rem;font-weight:600'>Auto: {_rv_esc(_auto)}</span>"
+        f"<span style='opacity:.85;font-size:.76rem;font-family:monospace'>{_rv_esc(row.get('uid'))}</span>"
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Metric tiles ───────────────────────────────────────────────────────
+    tiles = []
+    if _sc not in (None, ""):
+        tiles.append(("Bid strength", f"{_sc}/100", ""))
+    tiles += [
+        ("Value", _val, (f"≈ ${_usd:,.0f} USD" if _usd else "")),
+        ("Days to deadline", f"{int(_dtd):+d}" if _dtd is not None else "—", ""),
+        ("Deadline", row.get("submission_deadline") or "—", ""),
+        ("Funding window", row.get("funding_window") or "—", ""),
+        ("Solicitation type", row.get("solicitation_type") or "—", ""),
+        ("Duration", row.get("project_duration") or "—", ""),
+        ("Source", row.get("source") or "—", ""),
+    ]
+    st.markdown(
+        "<div style='display:flex;flex-wrap:wrap;gap:8px;margin:11px 0 4px'>"
+        + "".join(_rv_meta_card(*t) for t in tiles) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── At-a-glance ────────────────────────────────────────────────────────
+    g1, g2 = st.columns(2)
+    g1.markdown(f"**🌍 Geography**  \n{_disp(row.get('geographic_scope'))}")
+    g1.markdown(f"**👥 Proposal lead(s)**  \n{_disp(row.get('proposal_lead'))}")
+    g2.markdown(f"**🎯 Focus areas**  \n{_disp(row.get('program_area'))}")
+    g2.markdown(f"**📌 Stage / Progress**  \n{_disp(row.get('stage'))} · {_disp(row.get('progress_status'))}")
+
+    # ── Eligibility outcome — high-level MUST/PREFER labels only ───────────
+    st.divider()
+    st.markdown("**🧮 Eligibility outcome**")
+    _elig = [
+        ("qualification", "MUST 1 · Legal status & qualification"),
+        ("strategic_fit", "MUST 2 · Strategic fit"),
+        ("capacity", "MUST 3 · Implementation capacity"),
+        ("geographic_fit", "MUST 4 · Geographic fit"),
+        ("cofinancing", "MUST 5 · Cofinancing & compliance"),
+        ("funding_quality", "PREFER 6 · Funding quality"),
+        ("funder_relationship", "PREFER 7 · Donor relationship"),
+        ("competitiveness", "PREFER 8 · Competitiveness"),
+        ("bid_effort", "PREFER 9 · Bid effort"),
+    ]
+    _palette = {2: ("#15803d", "#f0fdf4"), 1: ("#b45309", "#fffbeb"),
+                0: ("#b91c1c", "#fef2f2")}
+    _rows = []
+    for _k, _name in _elig:
+        _v = row.get(_k)
+        _fg, _bg = _palette.get(criterion_score(_v), ("#b45309", "#fffbeb"))  # None→amber (Park)
+        _rows.append(
+            f"<div style='flex:1 1 46%;min-width:210px;border-left:4px solid {_fg};"
+            f"background:{_bg};border-radius:6px;padding:6px 11px'>"
+            f"<div style='font-size:.68rem;color:#64748b;font-weight:600'>{_rv_esc(_name)}</div>"
+            f"<div style='font-size:.9rem;font-weight:700;color:{_fg}'>"
+            f"{_rv_esc(_v if _v not in (None, '') else 'Not sure')}</div></div>")
+    st.markdown(
+        "<div style='display:flex;flex-wrap:wrap;gap:7px;margin-top:4px'>"
+        + "".join(_rows) + "</div>", unsafe_allow_html=True)
+
+    # ── Narrative sections (only render what exists) ───────────────────────
+    def _section(title: str, body) -> None:
+        b = ("" if body is None else str(body)).strip()
+        if b and b.lower() != "nan":
+            st.markdown(f"**{title}**")
+            st.markdown(b.replace("$", "\\$"))
+
+    st.divider()
+    _section("📋 Brief description", row.get("brief_description"))
+    _section("🧭 Why this decision", row.get("decision_note"))
+    _section("⚠️ Key risks", row.get("key_risks"))
+    _section("✅ Compliance requirements", row.get("compliance_requirements"))
+    _section("📝 How to apply", row.get("how_to_apply"))
+    _link = row.get("opportunity_link")
+    if isinstance(_link, str) and _link.strip():
+        st.markdown(f"📄 [Access opportunity here]({_link})")
+
+    # ── Full operational / team / award fields (every field, filled or '—') ─
+    st.divider()
+    _GROUPS = [
+        ("Decision & pipeline", [
+            ("Decision", "decision"), ("Decision date", "decision_date"),
+            ("Decision rationale", "decision_note"), ("Stage", "stage"),
+            ("Progress status", "progress_status"), ("Applicant role", "applicant_role"),
+            ("Lead applicant", "lead_applicant"), ("Sub applicant", "sub_applicant"),
+            ("Next action", "next_action"), ("Assigned to", "assigned_to"),
+            ("Action deadline", "action_deadline"), ("Donor decision", "donor_decision"),
+            ("Decline flags present", "decline_flags_present"),
+            ("Feasibility", "feasibility"), ("Remarks", "remarks")]),
+        ("Team", [
+            ("Proposal lead", "proposal_lead"), ("Contributors", "contributors"),
+            ("Reviewers", "reviewers"), ("Support", "support_roles"),
+            ("Submitted by", "submitted_by"), ("Submitted by email", "submitted_by_email")]),
+        ("Award & post-award", [
+            ("Amount requested", "amount_requested"), ("Date of approval", "date_of_approval"),
+            ("Amount secured", "amount_secured"), ("Currency secured", "currency_secured"),
+            ("Donor program officer", "donor_program_officer"), ("Next step", "next_step"),
+            ("Kick-off date", "kickoff_date"), ("Expected award date", "expected_award_date"),
+            ("Time to award", "time_to_award"), ("Date completed", "date_completed"),
+            ("Submissions", "submissions")]),
+        ("Other opportunity fields", [
+            ("Instrument", "instrument_type"), ("Focus theme", "focus_theme"),
+            ("Date posted", "date_posted"), ("Currency", "currency"),
+            ("Estimated value", "estimated_value"), ("Search date", "search_date")]),
+    ]
+    for _gname, _fields in _GROUPS:
+        _filled = sum(1 for _, k in _fields if _disp(row.get(k)) != "—")
+        with st.expander(f"{_gname}  ·  {_filled}/{len(_fields)} filled",
+                         expanded=(_gname == "Decision & pipeline")):
+            for _lab, _key in _fields:
+                if _key == "decision":
+                    st.markdown(f"**{_lab}:** {_dec}")
+                else:
+                    st.markdown(f"**{_lab}:** {_disp(row.get(_key))}")
+
+
 @st.dialog("Edit RFP", width="large")
 def edit_dialog(row: dict) -> None:
     st.markdown(f"**`{row['uid']}`** — {row.get('opportunity_title') if isinstance(row.get('opportunity_title'), str) else ''}")
     # Provenance line — who submitted this and when, so an editor can reach out.
-    _sub_by = (row.get("submitted_by") or "").strip() or "—"
-    _sub_email = (row.get("submitted_by_email") or "").strip()
+    # Guard on type: a blank cell arrives as NaN (a float), which `or ""` won't
+    # catch (NaN is truthy) and .strip() then breaks (AttributeError on float).
+    _sb = row.get("submitted_by")
+    _se = row.get("submitted_by_email")
+    _sub_by = (_sb if isinstance(_sb, str) else "").strip() or "—"
+    _sub_email = (_se if isinstance(_se, str) else "").strip()
     _sd = pd.to_datetime(row.get("search_date"), errors="coerce")
     _sd_str = _sd.strftime("%d %b %Y, %H:%M") if pd.notna(_sd) else "date unknown"
     _who = f"**{_sub_by}**" + (f" · {_sub_email}" if _sub_email else "")
@@ -526,11 +740,16 @@ def edit_dialog(row: dict) -> None:
             return "False"
         return "Partial"
 
-    def _elig(label, key, current):
-        elig_list = list(dropdowns.get("eligibility_values"))
-        coerced = _coerce_elig_edit(current)
-        idx = elig_list.index(coerced) if coerced in elig_list else 0
-        return st.selectbox(label, elig_list, index=idx, key=f"edit_{key}_{row['uid']}")
+    def _elig(label, key, criterion, current):
+        # Per-criterion RICH responses — the SAME single source the Submit form
+        # uses (core.scorer.CRITERION_RESPONSES), so Edit RFP matches it exactly.
+        # default_response maps any stored value (legacy True/Partial/False OR a
+        # rich label) to the matching option, so existing rows pre-select correctly.
+        opts = CRITERION_RESPONSES.get(criterion) or list(dropdowns.get("eligibility_values"))
+        default = (default_response(criterion, current)
+                   if criterion in CRITERION_RESPONSES else _coerce_elig_edit(current))
+        idx = opts.index(default) if default in opts else 0
+        return st.selectbox(label, opts, index=idx, key=f"edit_{key}_{row['uid']}")
 
     with tab_elig:
         fcol, _spacer = st.columns([1, 3])
@@ -538,16 +757,16 @@ def edit_dialog(row: dict) -> None:
             feas_in = _opt("Feasibility", "feas", dropdowns.get("feasibility"), row.get("feasibility"))
         gl, gr = st.columns(2)
         with gl:
-            m1 = _elig("MUST 1 — Organisational qualification", "m1", row.get("qualification"))
-            m2 = _elig("MUST 2 — Strategic fit", "m2", row.get("strategic_fit"))
-            m3 = _elig("MUST 3 — Implementation capacity", "m3", row.get("capacity"))
-            m4 = _elig("MUST 4 — Geographic fit", "m4", row.get("geographic_fit"))
-            m5 = _elig("MUST 5 — Cofinancing & compliance", "m5", row.get("cofinancing"))
+            m1 = _elig("MUST 1 — Legal status & qualification", "m1", "qualification", row.get("qualification"))
+            m2 = _elig("MUST 2 — Strategic fit", "m2", "strategic_fit", row.get("strategic_fit"))
+            m3 = _elig("MUST 3 — Implementation capacity", "m3", "capacity", row.get("capacity"))
+            m4 = _elig("MUST 4 — Geographic fit", "m4", "geographic_fit", row.get("geographic_fit"))
+            m5 = _elig("MUST 5 — Cofinancing & compliance", "m5", "cofinancing", row.get("cofinancing"))
         with gr:
-            p6 = _elig("PREFER 6 — Funding quality", "p6", row.get("funding_quality"))
-            p7 = _elig("PREFER 7 — Funder relationship", "p7", row.get("funder_relationship"))
-            p8 = _elig("PREFER 8 — Competitiveness", "p8", row.get("competitiveness"))
-            p9 = _elig("PREFER 9 — Bid effort", "p9", row.get("bid_effort"))
+            p6 = _elig("PREFER 6 — Funding quality", "p6", "funding_quality", row.get("funding_quality"))
+            p7 = _elig("PREFER 7 — Donor relationship", "p7", "funder_relationship", row.get("funder_relationship"))
+            p8 = _elig("PREFER 8 — Competitiveness", "p8", "competitiveness", row.get("competitiveness"))
+            p9 = _elig("PREFER 9 — Bid effort", "p9", "bid_effort", row.get("bid_effort"))
         decline_in = st.radio(
             "Decline flags present?", ["No", "Yes"], horizontal=True,
             index=1 if row.get("decline_flags_present") else 0, key=f"e_decline_{row['uid']}",
@@ -555,7 +774,7 @@ def edit_dialog(row: dict) -> None:
         risks_in = st.text_area("Key risks", value=_str(row.get("key_risks")), height=90, key=f"e_risks_{row['uid']}")
         st.caption(
             f"Stored alignment score: **{_num(row.get('alignment_score')):.1f}** · "
-            f"auto-recommendation: **{_str(row.get('auto_recommendation')) or '—'}**. "
+            f"Auto-decision: **{_str(row.get('auto_recommendation')) or '—'}**. "
             "Save will recompute these from the values above."
         )
 
@@ -567,10 +786,11 @@ def edit_dialog(row: dict) -> None:
         c_sub, c_stage, c_prog = st.columns([1, 1, 1])
         submissions_in = c_sub.number_input(
             "Submissions",
-            min_value=1, step=1,
-            value=int(_num(row.get("submissions") or 1)),
+            min_value=0, step=1,
+            value=int(_num(row.get("submissions")) or 0),
             key=f"e_subs_{row['uid']}",
-            help="How many times this RFP was actually submitted to the donor. Default 1.",
+            help="How many times this RFP was actually submitted to the donor. "
+                 "0 until submitted; only a Completed (submitted) RFP should read 1+.",
         )
         with c_stage:
             stage_in = _opt("Stage", "stage", dropdowns.get("stages"), row.get("stage"))
@@ -814,8 +1034,8 @@ def _markdown_summary(row: dict) -> str:
         f"- **Geography:** {', '.join(row.get('geographic_scope') or []) or '—'}\n"
         f"- **Program area:** {', '.join(row.get('program_area') or []) or '—'}\n"
         f"- **Alignment score:** {row.get('alignment_score') or 0:.1f} / 100\n"
-        f"- **Auto-recommendation:** {row.get('auto_recommendation') or '—'}\n"
-        f"- **Decision:** {row.get('decision') or '—'}\n"
+        f"- **Auto-decision:** {row.get('auto_recommendation') or '—'}\n"
+        f"- **Decision:** {row.get('decision') if (isinstance(row.get('decision'), str) and row.get('decision').strip()) else 'Pending'}\n"
         f"- **Link:** {row.get('opportunity_link') or '—'}\n\n"
         f"## Brief\n{row.get('brief_description') or '_(no description)_'}\n\n"
         f"## Key risks\n{row.get('key_risks') or '_(none recorded)_'}\n"
@@ -860,7 +1080,7 @@ def share_dialog(rows: list[dict]) -> None:
         st.caption(
             f"Download {'this RFP' if n == 1 else f'all {n} RFPs'} as CSV."
         )
-        df_all = pd.DataFrame(rows)
+        df_all = clean_df(pd.DataFrame(rows))
         buf = StringIO()
         df_all.to_csv(buf, index=False)
         from datetime import date as _date
@@ -982,6 +1202,8 @@ def blacklist_dialog(row: dict) -> None:
 # -----------------------------------------------------------------------------
 # Wire button clicks to modals
 # -----------------------------------------------------------------------------
+if view_clicked and not is_multi:
+    view_dialog(selected_full_rows[0])
 if edit_clicked and not is_multi:
     edit_dialog(selected_full_rows[0])
 if delete_clicked:

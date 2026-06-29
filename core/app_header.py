@@ -712,12 +712,10 @@ def render_app_header() -> None:
         """
         <style>
           [data-testid="stSidebarNav"] a[href$="/profile" i],
-          [data-testid="stSidebarNav"] a[href$="/submit-new-rfp" i],
           [data-testid="stSidebarNav"] a[href$="/help" i],
           [data-testid="stSidebarNav"] a[href$="/search" i],
           [data-testid="stSidebarNav"] a[href$="/settings" i],
           section[data-testid="stSidebar"] a[href$="/profile" i],
-          section[data-testid="stSidebar"] a[href$="/submit-new-rfp" i],
           section[data-testid="stSidebar"] a[href$="/help" i],
           section[data-testid="stSidebar"] a[href$="/search" i],
           section[data-testid="stSidebar"] a[href$="/settings" i] {
