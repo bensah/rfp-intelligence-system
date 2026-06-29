@@ -150,25 +150,74 @@ def _thematic_fit(org: dict, donor: dict) -> float:
     return 1.0 if (_pa.expand(org_pa) & _pa.expand(don_pa)) else 0.0
 
 
-def _geographic_fit(org: dict, donor: dict) -> float:
+def _geographic_fit(org: dict, donor: dict, rfp: dict | None = None) -> float:
     org_geo = org.get("countries_of_operation") or []
-    don_geo = _as_list(donor.get("funding_scope_geographic"))
-    if not org_geo or not don_geo:
+    # The funder's geography for THIS opportunity = the donor's profile scope PLUS
+    # the RFP's own stated geography (the RFP is the most specific signal, e.g.
+    # "Africa, Latin America, the Caribbean").
+    scope = (_as_list(donor.get("funding_scope_geographic"))
+             + _as_list((rfp or {}).get("geographic_scope")))
+    if not org_geo or not scope:
         return 0.5
-    ea, eb = set(_geo.expand(list(org_geo))), set(_geo.expand(list(don_geo)))
-    return 1.0 if (ea & eb) else 0.0
+    if set(_geo.expand(list(org_geo))) & set(_geo.expand(scope)):
+        return 1.0                       # direct / region-member overlap (SSA→Cameroon)
+    # Inclusive tier (LMIC / global / developing) that covers the org's countries.
+    try:
+        from core.criteria_derive import _is_inclusive_geo
+        if _is_inclusive_geo(scope):
+            return 1.0
+    except Exception:
+        pass
+    return 0.0
 
 
 def _route_fit(org: dict, donor: dict, org_settings: dict) -> float:
-    """1.0 by default; 0.0 only when the donor clearly requires a local board /
-    registration the org doesn't have. Neutral 0.5 when the donor is unknown."""
+    """CAN-WE-BE-FUNDED (2026-06-25): can this org RECEIVE money through the
+    donor's funding mechanism? org-type × donor instrument/route × recipient
+    eligibility — NOT the application process (that's "How to apply") nor
+    co-financing timing (that's MUST-5).
+      1.0 = directly fundable (NGO/local-org eligible, grant route);
+      0.5 = only as a sub-recipient / via a partner, or a local-board barrier we
+            can clear with a partner;
+      0.0 = channel the org can't access (explicitly NGO-ineligible with no
+            sub-route, or sovereign-only loan/dev-finance);
+      0.5 = donor unknown.
+    """
     if not donor:
         return 0.5
-    needs_board = any(_truthy(donor.get(f)) for f in _LOCAL_BOARD_FLAGS)
-    if not needs_board:
+    org_np = str(org.get("legal_type") or "nonprofit").lower() in (
+        "nonprofit", "non-profit", "ngo", "charity")
+    ngo_elig = donor.get("ngo_eligible")
+    direct = _truthy(donor.get("direct_local_org_eligible"))
+    sub_only = _truthy(donor.get("subrecipient_partner_possible"))
+    grant = _truthy(donor.get("grant_route"))
+    loan = _truthy(donor.get("loan_dev_finance_route"))
+    proc = _truthy(donor.get("procurement_tender_route"))
+    has_partner = bool(org.get("partners") or org.get("trusted_partners"))
+
+    # Explicitly NGO-ineligible and we're a nonprofit → only via a direct-local
+    # exception or a partner; otherwise not accessible.
+    if org_np and ngo_elig is not None and not _truthy(ngo_elig):
+        if direct:
+            return 1.0
+        return 0.5 if (sub_only and has_partner) else 0.0
+    # Directly eligible to receive (NGO / local org) → fully accessible.
+    if _truthy(ngo_elig) or direct:
         return 1.0
-    has_board = str((org_settings or {}).get("org_has_local_board", "")).lower() == "yes"
-    return 1.0 if has_board else 0.0
+    # Sovereign loan / dev-finance only (no grant or procurement route) → an NGO
+    # can't take it directly; partner-able at best.
+    if loan and not grant and not proc:
+        return 0.5 if (sub_only and has_partner) else 0.0
+    # Only a sub-recipient pathway flagged (no direct grant route) → via a partner.
+    if sub_only and not grant:
+        return 0.5 if has_partner else 0.0
+    # A local board/registration the org lacks — clearable with a local partner.
+    if any(_truthy(donor.get(f)) for f in _LOCAL_BOARD_FLAGS):
+        has_board = str((org_settings or {}).get("org_has_local_board", "")).lower() == "yes"
+        if not has_board:
+            return 1.0 if has_partner else 0.0
+    # Default: a grant-making donor with no explicit barrier → accessible.
+    return 1.0
 
 
 def _norm_name(s: Any) -> str:
@@ -207,13 +256,14 @@ def _relationship_fit(org: dict, donor: dict, org_settings: dict) -> float:
 
 
 def donor_org_extras(org: dict | None, donor: dict | None,
-                     org_settings: dict | None = None) -> dict[str, float]:
+                     org_settings: dict | None = None,
+                     rfp: dict | None = None) -> dict[str, float]:
     """The donor-org relationship sub-scores (each 0.0 / 0.5 / 1.0)."""
     org = org or {}
     donor = donor or {}
     return {
         "donor_thematic_fit": _thematic_fit(org, donor),
-        "donor_geographic_fit": _geographic_fit(org, donor),
+        "donor_geographic_fit": _geographic_fit(org, donor, rfp),
         "donor_route_fit": _route_fit(org, donor, org_settings or {}),
         "donor_relationship_fit": _relationship_fit(org, donor, org_settings or {}),
     }
@@ -227,7 +277,7 @@ def composite_match(rfp: dict, org: dict | None = None, donor: dict | None = Non
     thresholds (≥70 Proceed / ≥45 Park / else Decline)."""
     crit_vals = {k: (rfp or {}).get(k) for k in CRITERIA}
     crit_score = alignment_score(crit_vals)                 # 0–100
-    extras = donor_org_extras(org, donor, org_settings)
+    extras = donor_org_extras(org, donor, org_settings, rfp)
     extras_score = (sum(extras.values()) / len(extras)) if extras else 0.5  # 0–1
     composite = CRITERIA_WEIGHT * crit_score + EXTRAS_WEIGHT * extras_score * 100.0
 

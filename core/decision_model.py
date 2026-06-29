@@ -29,11 +29,20 @@ _CRITERIA = (
 _GEO_ORDINAL = {"strong": 1.0, "regional": 0.6, "silent": 0.4, "foreign": 0.0}
 _CHANNELS = ("grants.gov", "web", "aggregator-resolved", "rss")
 
-# Expanded feature-vector layout (order is the model's contract).
+# Component sub-factor features (numeric 1/0.5/0/NaN) — the same components wired
+# under each criterion, captured by core.features. Imported so the two stay in sync.
+try:
+    from core.features import COMPONENT_FEATURE_NAMES as _COMPONENT_FEATURES
+except Exception:                                   # pragma: no cover - defensive
+    _COMPONENT_FEATURES = ()
+
+# Expanded feature-vector layout (order is the model's contract). Components are
+# appended LAST so an older stored model (whose feature_names predate them) keeps
+# working — predict() only reads its own feature_names; retraining picks these up.
 FEATURE_NAMES: tuple[str, ...] = _CRITERIA + (
     "alignment_score", "geo_strength", "has_deadline", "days_to_deadline",
     "decline_flags_present", "funder_is_usg", "log_value_usd", "text_len",
-) + tuple(f"channel={c}" for c in _CHANNELS)
+) + tuple(f"channel={c}" for c in _CHANNELS) + _COMPONENT_FEATURES
 
 CLASSES = ("Decline", "Park", "Proceed")
 _MODEL_KEY = "decision_model"
@@ -69,6 +78,9 @@ def raw_vector(features: dict | None) -> list[float]:
     chan = str(f.get("channel") or "").lower()
     for c in _CHANNELS:
         vec.append(1.0 if chan == c else 0.0)
+    # Component sub-factors (1 / 0.5 / 0 / NaN), in FEATURE_NAMES order.
+    for name in _COMPONENT_FEATURES:
+        vec.append(_f(f.get(name)))
     return vec
 
 

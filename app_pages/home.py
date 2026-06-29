@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from core import excel_sync
+from core.records import clean_df
 from db.supabase_client import get_client
 
 # Home-specific block-container padding only — global theme (headings,
@@ -133,7 +134,7 @@ def _kpis() -> dict:
     def _in_this_year(d):
         return d is not None and date(today.year, 1, 1) <= d <= today
 
-    df = pd.DataFrame(rfps)
+    df = clean_df(pd.DataFrame(rfps))
     total_submissions = int(len(df))
     if not df.empty:
         dup_count = int(df["is_duplicate"].fillna(False).sum())

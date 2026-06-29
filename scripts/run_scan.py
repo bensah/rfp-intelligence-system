@@ -49,6 +49,14 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# Load .env so the scan subprocess has LLM_JUDGE_* (and other) creds — without
+# this the LLM extraction fallback (core.extract) silently stays disabled in scans.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except Exception:
+    pass
+
 # Force UTF-8 stdout/stderr. When launched as a subprocess on Windows the child
 # inherits a cp1252 stream, so a single non-ASCII print (e.g. the "∩" in the dedup
 # summary) raises UnicodeEncodeError and crashes the whole scan with exit code 1.
@@ -310,8 +318,13 @@ def run(
     dry_run: bool = False,
     source_filter: str | None = None,
     workers: int = DEFAULT_WORKERS,
+    extract_only: bool = False,
 ) -> dict:
-    """Orchestrate a full scan. Returns aggregate counts dict."""
+    """Orchestrate a full scan. Returns aggregate counts dict.
+
+    extract_only=True → PURE extraction: crawl + extract into the global store, NO
+    per-tenant Screened insert/scoring (geography off the gate). That screening is
+    the separate "My eligible funding" run (core.scan_pipeline.run_screening)."""
     # Catalogue-only scan: the active donor_sources rows ARE the scan set (the
     # legacy sources.yaml keyword list + donor_matrix seeds are no longer folded
     # in). A read-only client is fine on dry-run — writes stay gated on dry_run.
@@ -416,7 +429,7 @@ def run(
         if batch["results"]:
             try:
                 new, dup, rejected = ingest_candidates(
-                    batch["results"], dry_run=dry_run,
+                    batch["results"], dry_run=dry_run, extract_only=extract_only,
                 )
             except Exception as exc:
                 err = (err + " | " if err else "") + f"ingest: {type(exc).__name__}: {exc}"
@@ -444,9 +457,13 @@ def run(
         )
 
         if not dry_run:
-            _log_scan(sb, source=name, triggered_by=triggered_by,
-                      found=found, new=new, dup=dup, rejected=rejected,
-                      duration=duration, errors=err)
+            try:
+                _log_scan(sb, source=name, triggered_by=triggered_by,
+                          found=found, new=new, dup=dup, rejected=rejected,
+                          duration=duration, errors=err)
+            except Exception as _le:           # telemetry must never crash the scan
+                print(f"  (scan_logs insert failed for {name}: {_le})",
+                      file=sys.stderr)
 
     wall = time.time() - wall_start
     serial_estimate = sum(b["duration"] for b in scraped)
@@ -471,6 +488,9 @@ def main() -> None:
              "'startup', 'test'.",
     )
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--extract-only", action="store_true",
+                    help="Pure extraction: crawl + extract into the global store, "
+                         "no per-tenant Screened insert (screening is a separate run).")
     ap.add_argument("--source", default=None, help="Restrict to one source name")
     ap.add_argument(
         "--workers", type=int, default=DEFAULT_WORKERS,
@@ -486,7 +506,17 @@ def main() -> None:
         dry_run=args.dry_run,
         source_filter=args.source,
         workers=args.workers,
+        extract_only=args.extract_only,
     )
+    # The scan COMPLETED (per-source errors are already caught + counted above).
+    # Flush, then HARD-exit 0 so a flaky native-lib teardown (Playwright /
+    # asyncio) or atexit hook can't raise during interpreter shutdown and set a
+    # non-zero exit code — which was tripping the "Extraction exited with errors"
+    # banner on otherwise-clean runs. If run() itself failed it raised above and
+    # we never reach here (so a real failure still surfaces as a non-zero exit).
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":
