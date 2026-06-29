@@ -535,17 +535,110 @@ def _derive_class(source_class: str) -> str:
             "": "unknown"}.get(source_class, "aggregator")
 
 
+@st.dialog("Source detail", width="large")
+def _srcreg_view_dialog(r: dict) -> None:
+    """Polished read-only view of one registry source (pop-up)."""
+    host = r.get("host") or ""
+    name = r.get("donor_name") or host
+    ver = (r.get("status") or "").lower() == "confirmed"
+    pushed = bool(r.get("in_catalogue"))
+
+    def _pill(txt: str, on: bool) -> str:
+        bg, fg = ("#dcfce7", "#15803d") if on else ("#e2e8f0", "#475569")
+        return (f"<span style='background:{bg};color:{fg};padding:3px 11px;"
+                f"border-radius:20px;font-size:.78rem;font-weight:700'>{html.escape(txt)}</span>")
+    st.markdown(
+        "<div style='background:linear-gradient(95deg,#0f766e,#0d9488);color:#fff;"
+        "padding:14px 18px;border-radius:11px'>"
+        f"<div style='font-size:1.2rem;font-weight:700'>{html.escape(str(name))}</div>"
+        f"<div style='opacity:.9;font-size:.82rem;margin-top:2px;font-family:monospace'>{html.escape(str(host))}</div>"
+        "<div style='margin-top:9px;display:flex;gap:7px;flex-wrap:wrap'>"
+        + _pill('✅ Verified' if ver else '— Unverified', ver)
+        + _pill('✅ Pushed to Catalogue' if pushed else '— Not pushed', pushed)
+        + f"<span style='background:rgba(255,255,255,.22);padding:3px 11px;border-radius:20px;"
+        f"font-size:.78rem'>{html.escape(_src_class_of(r))}</span></div></div>",
+        unsafe_allow_html=True)
+    lu = r.get("listings_url") or ""
+    if lu:
+        st.markdown(f"**🔗 Listings URL**  \n[{lu}]({lu})")
+    g1, g2 = st.columns(2)
+    g1.markdown(f"**Code**  \n{r.get('donor_code') or '—'}")
+    g1.markdown(f"**Access**  \n{r.get('access_model') or '—'}")
+    g1.markdown(f"**Method**  \n{_norm_method(r.get('ingestion_method'))}")
+    g1.markdown(f"**Hits**  \n{r.get('hits') or 0}")
+    g2.markdown(f"**Solicitation types**  \n{', '.join(r.get('solicitation_types') or []) or '—'}")
+    g2.markdown(f"**Instrument types**  \n{', '.join(r.get('instrument_types') or []) or '—'}")
+    g2.markdown(f"**Verified by**  \n{r.get('verified_by') or '—'}")
+    g2.markdown(f"**Verified at**  \n{str(r.get('verified_at') or '—')[:19]}")
+    if r.get("sample_url"):
+        st.caption(f"Sample opportunity: {r.get('sample_url')}")
+    if r.get("notes"):
+        st.markdown(f"**Notes**  \n{r.get('notes')}")
+
+
+@st.dialog("Edit source", width="large")
+def _srcreg_edit_dialog(r: dict, email) -> None:
+    """Edit ONE registry source. 'Verify & Save' also marks it confirmed."""
+    host = r.get("host") or ""
+    st.markdown(f"**{r.get('donor_name') or host}** · `{host}`")
+    name = st.text_input("Source name", value=r.get("donor_name") or "")
+    code = st.text_input("Code", value=r.get("donor_code") or "")
+    lu = st.text_input("Listings URL", value=r.get("listings_url") or "",
+                       help="The page or API that LISTS this source's opportunities "
+                            "(what the scanner ingests) — the main field to keep accurate.")
+    su = st.text_input("Sample opportunity URL (optional)", value=r.get("sample_url") or "",
+                       help="An example of ONE opportunity — optional; not the listings page.")
+    c1, c2 = st.columns(2)
+    _sc0, _vf0 = _src_class_of(r), _verif_of(r)
+    sc = c1.selectbox("Source class", _SRC_OPTS,
+                      index=_SRC_OPTS.index(_sc0) if _sc0 in _SRC_OPTS else 0)
+    vf = c2.selectbox("Verification", _VERIF_OPTS,
+                      index=_VERIF_OPTS.index(_vf0) if _vf0 in _VERIF_OPTS else 0)
+    c3, c4 = st.columns(2)
+    _ac0, _me0 = (r.get("access_model") or "Unknown"), _norm_method(r.get("ingestion_method"))
+    ac = c3.selectbox("Access", _ACCESS_OPTS,
+                      index=_ACCESS_OPTS.index(_ac0) if _ac0 in _ACCESS_OPTS else 0)
+    me = c4.selectbox("Method", _METHOD_OPTS,
+                      index=_METHOD_OPTS.index(_me0) if _me0 in _METHOD_OPTS else 2)
+    sol = st.multiselect("Solicitation type(s)", SOLICITATION_TYPES,
+                         default=[t for t in (r.get("solicitation_types") or []) if t in SOLICITATION_TYPES])
+    inst = st.multiselect("Instrument type(s)", INSTRUMENT_TYPES,
+                          default=[t for t in (r.get("instrument_types") or []) if t in INSTRUMENT_TYPES])
+    notes = st.text_input("Notes", value=r.get("notes") or "")
+
+    def _save(verify: bool) -> None:
+        f = {
+            "donor_name": name or None, "donor_code": code or None,
+            "listings_url": lu or None, "sample_url": su or None,
+            "source_class": None if sc in ("Unknown", "") else sc,
+            "classification": _derive_class(sc),
+            "access_model": ac or None, "ingestion_method": me or None,
+            "solicitation_types": sol or None, "instrument_types": inst or None,
+            "notes": notes or None,
+            "status": "confirmed" if (verify or vf in _VERIFIED) else "pending",
+        }
+        if source_registry.update_row(host, f, by=email):
+            _flash_set("srcreg", ("✅ Verified & saved " if verify else "💾 Saved ") + host)
+            st.rerun()
+        else:
+            st.error("Save failed — the DB rejected the write (column/RLS). Nothing changed.")
+    bb1, bb2 = st.columns(2)
+    if bb1.button("✓ Verify & Save", type="primary", key="srcreg_edit_vs"):
+        _save(verify=True)
+    if bb2.button("💾 Save (keep status)", key="srcreg_edit_save"):
+        _save(verify=False)
+
+
 def _render_source_registry(user: dict) -> None:
     import pandas as pd
     email = (user or {}).get("email")
     _flash_show("srcreg")
     st.caption(
-        "Every host the scanner meets, with the source-catalogue taxonomy. Set "
-        "**Source class** + **Verification** (the scanner trusts *Primary "
-        "verified* primaries and rejects *…verified* aggregators/blogs), and fill "
-        "**Access / Ingestion**. Edit inline, then **Save** — saved values persist "
-        "(shown from the database). Push confirmed primaries into the Sources "
-        "catalogue below.")
+        "Every host the scanner meets, with the source-catalogue taxonomy. Tick a "
+        "row to **👁 View** or **✏ Edit** it (Edit's *Verify & Save* marks it "
+        "confirmed); tick several for bulk **Push / Delete / Verify**. **Listings "
+        "URL** = the page/API the scanner ingests (the key field). Saved values "
+        "persist in the database. Bulk-edit many at once via the CSV below.")
 
     # --- Manual add (always available, even when the registry is empty) ----
     with st.expander("➕ Add a source manually"):
@@ -586,7 +679,7 @@ def _render_source_registry(user: dict) -> None:
                     "access_model": new_ac, "ingestion_method": new_in,
                     "solicitation_types": new_sol or None,
                     "instrument_types": new_inst or None,
-                    "sample_url": new_host if "/" in (new_host or "") else None,
+                    "listings_url": new_host if "/" in (new_host or "") else None,
                     "notes": new_notes or None,
                 }, by=email)
                 if ok:
@@ -626,12 +719,13 @@ def _render_source_registry(user: dict) -> None:
             continue
         items.append(r)
 
-    # ── Clean selectable table — markers (Verified / Pushed) + bulk actions.
-    # Tick rows → Push / Delete / Verify only the SELECTED hosts (no push-all
-    # script). Editing details still happens in the CSV + inline form below.
+    # ── ONE clean selectable table — leads with the full Listings URL + Verified /
+    # Pushed markers. Tick row(s) → bulk Push / Delete / Verify; tick ONE → View /
+    # Edit pop-up. (Editing many at once → the CSV expander below.)
     _seldf = pd.DataFrame([{
-        "Host": r.get("host"),
         "Source name": (r.get("donor_name") or r.get("host"))[:42],
+        "Listings URL": (r.get("listings_url") or r.get("sample_url")
+                         or f"https://{r.get('host')}/"),
         "Class": _src_class_of(r),
         "Verified": "✅" if (r.get("status") or "").lower() == "confirmed" else "—",
         "Pushed": "✅" if r.get("in_catalogue") else "—",
@@ -641,54 +735,50 @@ def _render_source_registry(user: dict) -> None:
         "Hits": int(r.get("hits") or 0),
     } for r in items])
     st.caption(f"**{len(items)}** hosts · **✅ Verified** = confirmed · **✅ Pushed** = in the "
-               "Catalogue. Tick row(s) for the bulk actions below; edit details in the "
-               "form / CSV further down.")
+               "Catalogue. Tick a row → View / Edit / Push / Delete / Verify below.")
     _ev = st.dataframe(
         _seldf, hide_index=True, width='stretch', selection_mode="multi-row",
         on_select="rerun", key="srcreg_seltable",
         column_config={
+            "Listings URL": st.column_config.LinkColumn(width="large"),
             "Verified": st.column_config.TextColumn(width="small"),
             "Pushed": st.column_config.TextColumn(width="small"),
             "Hits": st.column_config.NumberColumn(width="small")})
     _selrows = (_ev.selection.rows if _ev and getattr(_ev, "selection", None) else [])
-    _selhosts = [items[i]["host"] for i in _selrows if i < len(items)]
-    _bp, _bd, _bv = st.columns(3)
-    if _bp.button(f"⬆ Push selected ({len(_selhosts)})", key="srcreg_push_sel",
-                  type="primary", disabled=not _selhosts,
-                  help="Push the selected CONFIRMED-PRIMARY hosts to the Catalogue "
-                       "(deduped by host; non-confirmed-primary rows are skipped)."):
+    _sel = [items[i] for i in _selrows if i < len(items)]
+    _selhosts = [r["host"] for r in _sel]
+    _one = _sel[0] if len(_sel) == 1 else None
+    bv, be, bp, bd, bm = st.columns(5)
+    if bv.button("👁 View", key="srcreg_view", disabled=_one is None, width='stretch',
+                 help="Select ONE row to view its full detail."):
+        _srcreg_view_dialog(_one)
+    if be.button("✏ Edit", key="srcreg_edit", disabled=_one is None, width='stretch',
+                 help="Select ONE row to edit it ('Verify & Save' marks it verified)."):
+        _srcreg_edit_dialog(_one, email)
+    if bp.button(f"⬆ Push ({len(_selhosts)})", key="srcreg_push_sel", type="primary",
+                 disabled=not _selhosts, width='stretch',
+                 help="Push selected CONFIRMED-PRIMARY hosts to the Catalogue "
+                      "(deduped; non-confirmed-primary rows skipped)."):
         res = source_registry.push_primaries(_selhosts, by=email)
         _sk = res.get("skipped") or []
         _flash_set("srcreg", f"✅ Catalogue: {len(res['added'])} added · "
                    f"{len(res.get('updated', []))} updated"
                    + (f" · {len(_sk)} skipped (not confirmed primary)" if _sk else ""))
         st.rerun()
-    if _bd.button(f"🗑 Delete selected ({len(_selhosts)})", key="srcreg_del_sel",
-                  disabled=not _selhosts):
+    if bd.button(f"🗑 Delete ({len(_selhosts)})", key="srcreg_del_sel",
+                 disabled=not _selhosts, width='stretch'):
         source_registry.delete_hosts(_selhosts)
         _flash_set("srcreg", f"🗑 Deleted {len(_selhosts)} host(s).")
         st.rerun()
-    if _bv.button(f"✓ Mark verified ({len(_selhosts)})", key="srcreg_ver_sel",
-                  disabled=not _selhosts,
-                  help="Set the selected hosts to confirmed (verified)."):
+    if bm.button(f"✓ Verify ({len(_selhosts)})", key="srcreg_ver_sel",
+                 disabled=not _selhosts, width='stretch',
+                 help="Mark selected hosts confirmed (verified)."):
         _n = sum(1 for h in _selhosts
                  if source_registry.update_row(h, {"status": "confirmed"}, by=email))
         _flash_set("srcreg", f"✅ Marked {_n} host(s) verified.")
         st.rerun()
-    if _selhosts:
-        with st.expander(f"👁 View {len(_selhosts)} selected", expanded=False):
-            _byh = {r["host"]: r for r in items}
-            for _h in _selhosts:
-                _r = _byh.get(_h, {})
-                st.markdown(f"**{_r.get('donor_name') or _h}** · `{_h}`  ·  "
-                            f"{'✅ verified' if (_r.get('status') or '').lower()=='confirmed' else '— unverified'}"
-                            f"  ·  {'✅ pushed' if _r.get('in_catalogue') else '— not pushed'}")
-                st.write({k: _r.get(k) for k in (
-                    "source_class", "access_model", "ingestion_method",
-                    "solicitation_types", "instrument_types", "sample_url",
-                    "hits", "verified_by", "verified_at")})
-    st.divider()
 
+    # ── Optional bulk power-edit (many rows at once) via CSV/Excel round-trip.
     def _sr_apply(r, vals, by):
         sc = vals.get("Source class") or _src_class_of(r)
         vl = vals.get("Verification") or _verif_of(r)
@@ -704,8 +794,8 @@ def _render_source_registry(user: dict) -> None:
             f["donor_name"] = vals["Source Name"]
         if vals.get("Code"):
             f["donor_code"] = vals["Code"]
-        if vals.get("Host"):
-            f["sample_url"] = vals["Host"]
+        if vals.get("Listings URL"):
+            f["listings_url"] = vals["Listings URL"]
 
         def _multi(v):
             return [t.strip() for t in (v or "").replace(",", ";").split(";")
@@ -722,7 +812,7 @@ def _render_source_registry(user: dict) -> None:
                       ("Hits", lambda r: r.get("hits") or 0)],
         editable=[("Source Name", None, lambda r: r.get("donor_name") or ""),
                   ("Code", None, lambda r: r.get("donor_code") or ""),
-                  ("Host", None, lambda r: r.get("sample_url") or ""),
+                  ("Listings URL", None, lambda r: r.get("listings_url") or ""),
                   ("Source class", _SRC_OPTS, _src_class_of),
                   ("Verification", _VERIF_OPTS, _verif_of),
                   ("Access", _ACCESS_OPTS, lambda r: r.get("access_model") or "Unknown"),
@@ -733,139 +823,8 @@ def _render_source_registry(user: dict) -> None:
                   ("Instrument types", None,
                    lambda r: "; ".join(r.get("instrument_types") or []))],
         apply_row=_sr_apply, user=user,
-        aliases={"Source Name": ["Donor"], "Host": ["Listings URL", "Sample"],
+        aliases={"Source Name": ["Donor"], "Listings URL": ["Host", "Sample", "Listings"],
                  "Method": ["Ingestion"]})
-    # Paginated FORM (selections don't reload — only "Save page" commits).
-    PER = 50
-    pages = max(1, (len(items) + PER - 1) // PER)
-    pg = max(1, min(int(st.session_state.get("srcreg_pg", 1)), pages))
-    cc, cprev, cnext = st.columns([6, 1, 1])
-    cc.markdown(f"<div style='padding-top:.5rem;color:#475569;font-size:.9rem;'>"
-                f"{len(items)} hosts · page {pg}/{pages} · edit (no reload per "
-                "cell), then <b>Save page</b>. Save before paging.</div>",
-                unsafe_allow_html=True)
-    if cprev.button("‹ Prev", key="srcreg_prev", disabled=pg <= 1, width='stretch'):
-        st.session_state["srcreg_pg"] = pg - 1
-        st.rerun()
-    if cnext.button("Next ›", key="srcreg_next", disabled=pg >= pages,
-                    width='stretch'):
-        st.session_state["srcreg_pg"] = pg + 1
-        st.rerun()
-    st.session_state["srcreg_pg"] = pg
-    sl = items[(pg - 1) * PER: pg * PER]
-
-    W = [2.4, 1.6, 1.5, 1.0, 1.2, 1.7, 1.7]
-    hh = st.columns(W)
-    for i, lbl in enumerate(["ID · Source Name · Code · Host", "Source class",
-                             "Verification", "Access", "Method",
-                             "Solicitation", "Instrument"]):
-        hh[i].markdown(f"**{lbl}**")
-    dbrows = {r["host"]: r for r in rows}
-    with st.form(f"srcreg_form_{pg}"):
-        for r in sl:
-            host = r["host"]
-            c = st.columns(W)
-            sample = r.get("sample_url") or ""
-            donor = r.get("donor_name") or host
-            c[0].caption(f"`#{r.get('source_uid')}` · **{donor}** · "
-                         f"{r.get('donor_code') or '—'} · `{host}`")
-            uk = f"srcreg_url_{host}"
-            if uk not in st.session_state:
-                st.session_state[uk] = sample
-            c[0].text_input("url", key=uk, label_visibility="collapsed",
-                            placeholder="listing URL (editable)")
-            for col, kfn, dval in (
-                    ("sc", _src_class_of, None),
-                    ("vf", _verif_of, None),
-                    ("ac", None, r.get("access_model") or "Unknown"),
-                    ("in", lambda r: _norm_method(r.get("ingestion_method")), None)):
-                k = f"srcreg_{col}_{host}"
-                if k not in st.session_state:
-                    st.session_state[k] = kfn(r) if kfn else dval
-            solk, instk = f"srcreg_sol_{host}", f"srcreg_inst_{host}"
-            if solk not in st.session_state:
-                st.session_state[solk] = [t for t in (r.get("solicitation_types") or [])
-                                          if t in SOLICITATION_TYPES]
-            if instk not in st.session_state:
-                st.session_state[instk] = [t for t in (r.get("instrument_types") or [])
-                                           if t in INSTRUMENT_TYPES]
-            c[1].selectbox("sc", _SRC_OPTS, key=f"srcreg_sc_{host}",
-                           label_visibility="collapsed")
-            c[2].selectbox("vf", _VERIF_OPTS, key=f"srcreg_vf_{host}",
-                           label_visibility="collapsed")
-            c[3].selectbox("ac", _ACCESS_OPTS, key=f"srcreg_ac_{host}",
-                           label_visibility="collapsed")
-            c[4].selectbox("in", _METHOD_OPTS, key=f"srcreg_in_{host}",
-                           label_visibility="collapsed")
-            c[5].multiselect("sol", SOLICITATION_TYPES, key=solk,
-                             label_visibility="collapsed")
-            c[6].multiselect("inst", INSTRUMENT_TYPES, key=instk,
-                             label_visibility="collapsed")
-        sr_submitted = st.form_submit_button(f"💾 Save page ({len(sl)})",
-                                             type="primary")
-
-    if sr_submitted:
-        n = 0
-        for r in sl:
-            host = r["host"]
-            db = dbrows.get(host, {})
-            sc = st.session_state.get(f"srcreg_sc_{host}", "Unknown")
-            vl = st.session_state.get(f"srcreg_vf_{host}", "Unverified")
-            fields = {
-                "source_class": None if sc in ("Unknown", "") else sc,
-                "classification": _derive_class(sc),
-                "status": "confirmed" if vl in _VERIFIED else "pending",
-                "access_model": st.session_state.get(f"srcreg_ac_{host}") or None,
-                "ingestion_method": st.session_state.get(f"srcreg_in_{host}") or None,
-                "solicitation_types":
-                    st.session_state.get(f"srcreg_sol_{host}") or None,
-                "instrument_types":
-                    st.session_state.get(f"srcreg_inst_{host}") or None,
-                "sample_url": st.session_state.get(f"srcreg_url_{host}") or None,
-            }
-            if (db.get("source_class") != fields["source_class"]
-                    or db.get("classification") != fields["classification"]
-                    or (db.get("status") or "pending") != fields["status"]
-                    or db.get("access_model") != fields["access_model"]
-                    or db.get("ingestion_method") != fields["ingestion_method"]
-                    or (db.get("solicitation_types") or []) != (fields["solicitation_types"] or [])
-                    or (db.get("instrument_types") or []) != (fields["instrument_types"] or [])
-                    or (db.get("sample_url") or "") != (fields["sample_url"] or "")):
-                if source_registry.update_row(host, fields, by=email):
-                    n += 1
-        _flash_set("srcreg", f"✅ Saved {n} host(s) to the database.")
-        st.rerun()
-
-    b2, _sp = st.columns([2.2, 4])
-
-    if b2.button("⬆ Push confirmed primaries → Sources catalogue",
-                 key="srcreg_push",
-                 help="Insert confirmed-primary hosts into donor_sources "
-                      "(de-duped by host)."):
-        prim = [r["host"] for r in rows
-                if r.get("classification") == "primary"
-                and (r.get("status") or "").lower() == "confirmed"]
-        res = source_registry.push_primaries(prim, by=email)
-        if res.get("error"):
-            st.error(f"Push failed: {res['error']}")
-        else:
-            st.success(
-                f"Catalogue synced: {len(res['added'])} added · "
-                f"{len(res.get('updated', []))} updated · "
-                f"{len(res['skipped'])} skipped (not confirmed primary).")
-            if res["added"]:
-                st.caption("Added: " + ", ".join(res["added"][:20]))
-            if res.get("updated"):
-                st.caption("Updated: " + ", ".join(res["updated"][:20]))
-
-    # Delete via row-select (no Del column) → button appears once hosts picked.
-    st.divider()
-    dsel = st.multiselect("Select host(s) to delete", [r["host"] for r in items],
-                          key="srcreg_delsel")
-    if dsel and st.button(f"🗑 Delete {len(dsel)} host(s)", key="srcreg_del"):
-        source_registry.delete_hosts(dsel)
-        _flash_set("srcreg", f"🗑 Deleted {len(dsel)} host(s).")
-        st.rerun()
 
 
 def render_verification(user: dict[str, Any], sb=None) -> None:
