@@ -44,12 +44,20 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "legal_type": "nonprofit",              # canonical bucket (see core.auto_scorer
                                             # applicant buckets): nonprofit / government /
                                             # higher_ed / for_profit / individual / tribal
+    "entity_type": "",                      # MUST-1 item B — grassroot_local |
+                                            # multi_country | individual. SINGLE source of
+                                            # truth; on save it derives the legacy
+                                            # org_is_grassroot / org_is_multi_country settings.
+                                            # Validation: legal_type=individual ⇒ individual.
     "donor_registrations": [],              # e.g. "SAM.gov", "EU PADOR/PIC", "UNGM"
     "countries_registered": [],             # jurisdictions where legally registered
 
-    # --- capacity (can we deliver?) ---
+    # --- capacity (can we deliver?) — multi-factorial MUST-3 inputs ---
     "annual_budget_usd": None,              # number — org size / financial-capacity bar
-    "largest_grant_usd": None,              # number — absorptive capacity for award size
+    "largest_grant_usd": None,              # number — biggest grant ever managed
+    "lowest_grant_usd": None,               # number — smallest grant managed (range awareness)
+    "number_of_grants_managed": None,       # int — track-record depth (raises the stretch)
+    # (founding_year + org_stage, defined elsewhere, also feed the capacity stretch)
 
     # --- funding_quality (PREFER 6) — org's preferred award-size band (USD) ---
     "funding_target_low": None,             # floor of interest
@@ -63,6 +71,9 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "org_has_sam_uei": False,               # holds SAM.gov / UEI registration
     "org_tax_exempt": False,                # tax-exempt (501c3 or non-US equivalent)
     "org_stage": "established",             # "early-stage" | "established"
+    "has_established_pi": False,            # MUST-1 item E — has a well-established
+                                            # Principal Investigator (satisfies an
+                                            # in-scope-country PI requirement)
     # Partners WITH type + country (for named-partner conditions, e.g. NIHR -> UK
     # academic). List of {name, type, country}. Complements the flat trusted_* lists.
     "partners": [],
@@ -85,11 +96,28 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "trusted_for_profit_partners": [],      # for-profit firms (free-add, codified)
     "trusted_academic_institutions": [],    # universities / research orgs (free-add, codified)
 
-    # --- cofinancing ---
+    # --- cofinancing & compliance (MUST 5) ---
     "cofinancing_capacity": "limited",      # none | limited | moderate | strong
+    # Hard pre-acquire compliance credentials the org ALREADY holds — each gates a
+    # donor requirement of the same name (org lacks it + donor requires it -> 0).
+    "has_audited_financials": False,        # recent independently audited financials
+    "has_audit_report": False,              # a formal external audit report on file
+    "has_safeguarding_policy": False,       # safeguarding / PSEA policy in place
+    "has_partner_mou": False,               # signed MOU(s) with implementing partner(s)
+    "has_govt_mou": False,                  # signed MOU with host-government authority
+    "has_govt_endorsement": False,          # can secure a government endorsement letter
+    # Donors we have ALREADY obtained an authorized-signatory sign-off from — matched
+    # by name to a call's donor when it requires authorized-signatory sign-off.
+    "authorized_signatory_donors": [],
+    # Funding ROUTES the org can RECEIVE through (tokens: grant | procurement | loan |
+    # subrecipient | govt_ccm | direct). Matched (≥1 overlap) to the call/donor routes.
+    "org_funding_routes": ["grant", "subrecipient"],
 
     # --- funder_relationship ---
     "funder_history": [],                   # funders we are/were funded by
+    # MUST-1 item I — donors CURRENTLY funding us (a current-grant exclusion in a
+    # call disqualifies us; distinct from funder_history = past/previous grants).
+    "active_donors": [],
 
     # --- bid_effort ---
     "proposal_languages": ["English"],      # languages we can write a competitive bid in
@@ -103,7 +131,8 @@ LIST_FIELDS: tuple[str, ...] = (
     "donor_registrations", "countries_registered", "countries_of_operation",
     "trusted_partners", "trusted_for_profit_partners",
     "trusted_academic_institutions", "domains", "priority_areas",
-    "funder_history", "proposal_languages",
+    "funder_history", "active_donors", "proposal_languages",
+    "authorized_signatory_donors", "org_funding_routes",
 )
 
 COFINANCING_LEVELS: tuple[str, ...] = ("none", "limited", "moderate", "strong")
@@ -128,6 +157,23 @@ def legal_type_label(code: Any) -> str:
     if not s:
         return "—"
     return LEGAL_TYPE_LABELS.get(s, s.replace("_", " ").title())
+
+
+# MUST-1 item B — entity-registration type (replaces the org_is_grassroot /
+# org_is_multi_country checkboxes). Stored value is the canonical code; the form
+# shows the label via entity_type_label(). "" = not specified.
+ENTITY_TYPE_LABELS: dict[str, str] = {
+    "": "(not specified)",
+    "grassroot_local": "Grassroot / Local Organization",
+    "multi_country": "Multi-country Organization",
+    "individual": "Individual",
+}
+
+
+def entity_type_label(code: Any) -> str:
+    """Readable label for a stored entity_type code; empty -> '(not specified)'."""
+    s = str(code or "").strip()
+    return ENTITY_TYPE_LABELS.get(s, s.replace("_", " ").title())
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:

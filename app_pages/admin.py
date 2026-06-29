@@ -21,6 +21,7 @@ import streamlit as st
 
 from core import excel_sync, settings
 from core import permissions
+from core.records import clean_df
 from db.supabase_client import get_client, safe_execute
 from views.account_sections import render_manage_users, render_user_access
 from views.org_setup import render_org_setup
@@ -129,7 +130,7 @@ with tab_data:
             "and never touched by Excel sync."
         )
 
-        # --- Per-table specs (Found RFPs handled separately below) ---------------
+        # --- Per-table specs (Screened Solicitations handled separately below) ---
         _DATA_SPECS: dict[str, dict] = {
             "Meeting Logs": {
                 "table": "meeting_logs",
@@ -245,13 +246,71 @@ with tab_data:
             },
         }
 
-        _DATA_OPTIONS = ["Found RFPs"] + list(_DATA_SPECS.keys())
+        _SCREENED = "Screened Solicitations"      # was "Found RFPs" (UI rename)
+        _EXTRACTED = "Extracted Solicitations"
+        _DATA_OPTIONS = [_SCREENED, _EXTRACTED] + list(_DATA_SPECS.keys())
         pick = st.selectbox("Table", _DATA_OPTIONS, key="data_table_pick")
 
-        # ----- FOUND RFPS branch — renders the master line-list inline ---------
-        if pick == "Found RFPs":
+        # ----- SCREENED SOLICITATIONS branch — renders the master line-list -----
+        if pick == _SCREENED:
             from core.render_view import render_view
             render_view("rfp_records")
+
+        # ----- EXTRACTED SOLICITATIONS branch — the global raw store (read-only) -
+        elif pick == _EXTRACTED:
+            st.info(
+                "Global **raw** store — every captured solicitation across **all "
+                "geographies**, before org screening (DATA_SCHEMA_ETL.md §1–4). This "
+                "is the eventual public-facing dataset. Read-only here; populated by "
+                "scans (shadow). Off-geography rows that the Screened table rejects "
+                "still appear here.")
+            from core import extracted_store as _es
+            _erows = _es.list_extracted(limit=5000)
+            edf = pd.DataFrame(_erows)
+            if edf.empty:
+                st.info("No extracted solicitations yet — run a scan to populate this store.")
+            else:
+                # Controls on ONE row: Search · Status · Page. (No "Find my matches"
+                # here — this is the super-user/dev raw store; matching is a tenant
+                # action that lives on the Pipeline page + Manual Scan tab.)
+                _c1, _c2, _c3 = st.columns([3, 1.5, 1])
+                _eq = _c1.text_input("Search (name / funder / geography)", key="extr_q",
+                                     placeholder="malaria, Gates, Mali, LMICs")
+                _status = _c2.selectbox("Status", ["All", "Open", "Closed"], key="extr_status")
+                fdf = edf
+                if _eq:
+                    _term = _eq.lower()
+                    _m = pd.Series(False, index=edf.index)
+                    for _c in ("opportunity_name", "funder_name", "geographic_scope",
+                               "solicitation_type"):
+                        if _c in edf.columns:
+                            _m |= edf[_c].fillna("").astype(str).str.lower().str.contains(
+                                _term, regex=False)
+                    fdf = edf[_m].reset_index(drop=True)
+                if _status != "All" and "funding_status" in fdf.columns:
+                    fdf = fdf[fdf["funding_status"] == _status].reset_index(drop=True)
+                _per = 25
+                _pages = max(1, (len(fdf) + _per - 1) // _per)
+                _pg = int(_c3.number_input("Page", 1, _pages, 1, step=1, key="extr_pg"))
+                st.caption(f"**{len(fdf)}** of {len(edf)} extracted solicitations "
+                           f"(all geographies) · page {_pg} of {_pages}")
+                _show_cols = ["opportunity_name", "funder_name", "funding_status",
+                              "deadline", "deadline_confidence", "grant_amount",
+                              "currency", "geographic_scope", "solicitation_type",
+                              "funding_window", "source", "opportunity_url"]
+                _show = fdf[[c for c in _show_cols if c in fdf.columns]]
+                st.dataframe(
+                    _show.iloc[(_pg - 1) * _per: _pg * _per], hide_index=True,
+                    width='stretch',
+                    column_config={"opportunity_url": st.column_config.LinkColumn(
+                        "Link", display_text="Open ↗")})
+                st.divider()
+                st.download_button(
+                    f"⬇ Download all {len(fdf)} (CSV)",
+                    fdf.to_csv(index=False).encode("utf-8"),
+                    file_name="extracted_solicitations.csv", mime="text/csv",
+                    key="extr_dl",
+                    help="Every row in the current (filtered) view — all pages, all columns.")
 
         # ----- Auxiliary tables branch -------------------------------------------
         else:
@@ -269,7 +328,7 @@ with tab_data:
                         .limit(2000)
                         .execute()
                     )
-                    return pd.DataFrame(res.data or [])
+                    return clean_df(pd.DataFrame(res.data or []))
                 except Exception as exc:
                     st.error(f"Could not load {table}: {exc}")
                     return pd.DataFrame()
@@ -615,7 +674,7 @@ with tab_data:
                     st.markdown("#### Download")
                     # CSV of the SELECTED rows (preferred over the whole filtered
                     # view when the user explicitly multi-selected).
-                    sel_df = pd.DataFrame(rows)
+                    sel_df = clean_df(pd.DataFrame(rows))
                     buf = StringIO()
                     sel_df.to_csv(buf, index=False)
                     st.download_button(
@@ -823,7 +882,7 @@ with tab_data:
 
     # -----------------------------------------------------------------------------
     # Tab — Data (row-select + Edit/Delete/Share modals)
-    #   First option = Found RFPs (jumps to the dedicated RFP Records page where
+    #   First option = Screened Solicitations (jumps to the dedicated Records page where
     #   the full 5-tab edit modal lives). Other options = auxiliary tables with
     #   the same row-select UX pattern.
     # -----------------------------------------------------------------------------
@@ -864,7 +923,7 @@ with tab_sources:
     def _donors() -> pd.DataFrame:
         res = (get_client().table("donor_sources").select("*")
                .order("donor_name").execute())
-        return pd.DataFrame(res.data or [])
+        return clean_df(pd.DataFrame(res.data or []))
 
     def _import_from_config() -> None:
         """Copy config/sources.yaml entries into donor_sources, skipping any
@@ -1208,134 +1267,143 @@ with tab_scan:
     st.subheader("Trigger a manual scan")
     from core.scan_runner import scannable_source_count as _src_count
     st.caption(
-        "Scan every configured donor source for new RFPs that match this "
-        "organisation's eligibility policies (Settings → Scan eligibility & "
-        f"auto-scoring policies). A full run ({_src_count()} catalogued sources "
-        "with detail-page + PDF enrichment) typically takes **3-8 minutes**."
+        "Two workflows. **⛏ Run Extraction** crawls every catalogued donor source "
+        f"and extracts opportunities into the global store — a full run ({_src_count()} "
+        "sources with detail-page + PDF + LLM enrichment) is the slow backend job "
+        "(**~20-40 minutes**, no org screening). **🎯 My Eligible Funding** then "
+        "screens that store against this organisation's eligibility (Settings → Scan "
+        "eligibility & auto-scoring policies) — fast, no crawl."
     )
 
-    try:
-        last = (
-            safe_execute(
-                sb.table("scan_logs").select("*").order("scan_date", desc=True).limit(1)
-            ).data
-        )
-    except Exception as exc:
-        last = None
-        st.warning(f"Couldn't load scan history (transient connection issue) — "
-                   f"refresh to retry. ({type(exc).__name__})")
+    from core.scan_pipeline import MATCH_RUN_LABEL
+    from datetime import timedelta as _td
+
     def _pretty_trigger(raw: str | None) -> str:
-        """Strip the audit prefix so the user-facing display reads as a name.
-        DB still stores 'manual:<name>' for audit; we just hide the prefix
-        in the UI. 'cron' / 'startup' / 'test' values are shown as-is."""
+        """Strip the audit prefix (manual:/extraction:/match:) so the display reads
+        as the user's name. The DB keeps the prefixed value for audit."""
         if not raw:
             return "—"
-        return raw.split("manual:", 1)[1] if raw.startswith("manual:") else raw
+        for _p in ("manual:", "extraction:", "match:"):
+            if raw.startswith(_p):
+                return raw.split(_p, 1)[1]
+        return raw
 
-    if last:
-        # Aggregate the WHOLE scan run, not just the last source. Each run
-        # writes one row per source; we group everything within 5 minutes
-        # of the latest row and sum the counts so the metrics reflect the
-        # full scan outcome.
-        from datetime import timedelta as _td
-        latest_ts = pd.to_datetime(last[0]["scan_date"])
-        recent = (
-            safe_execute(
-                sb.table("scan_logs")
-                .select("*")
-                .gte("scan_date", (latest_ts - _td(minutes=5)).isoformat())
-                .order("scan_date", desc=True)
-            ).data
-            or []
-        )
-        # Filter to the same triggered_by as the latest row — protects
-        # against a cron scan and manual scan interleaving.
-        latest_trigger = last[0].get("triggered_by")
-        recent = [r for r in recent if r.get("triggered_by") == latest_trigger]
+    def _run_summary(rows: list[dict]) -> dict | None:
+        """Aggregate the most-recent run within `rows` (newest-first). Walks back
+        from the latest row, grouping CONTIGUOUS rows (gap < 15 min) so a long run
+        (a 52-source extraction takes 8+ min) is summed in full — the old fixed
+        5-min window undercounted it. Stops at the first big gap (= a prior run)."""
+        if not rows:
+            return None
+        latest = rows[0]
+        trig = latest.get("triggered_by")
+        grp = [latest]
+        prev_ts = pd.to_datetime(latest["scan_date"])
+        for r in rows[1:]:
+            ts = pd.to_datetime(r["scan_date"])
+            if (prev_ts - ts).total_seconds() > 900:   # >15-min gap → different run
+                break
+            if r.get("triggered_by") == trig:
+                grp.append(r)
+            prev_ts = ts
+        return {
+            "ts": latest["scan_date"][:16].replace("T", " "),
+            "trigger": _pretty_trigger(trig),
+            "found": sum(int(r.get("rfps_found") or 0) for r in grp),
+            "new": sum(int(r.get("rfps_new") or 0) for r in grp),
+            "rejected": sum(int(r.get("rfps_rejected") or 0) for r in grp),
+        }
 
-        total_found = sum(int(r.get("rfps_found") or 0) for r in recent)
-        total_new = sum(int(r.get("rfps_new") or 0) for r in recent)
-        total_declined = sum(int(r.get("rfps_rejected") or 0) for r in recent)
+    try:
+        _all_logs = (safe_execute(
+            sb.table("scan_logs").select("*").order("scan_date", desc=True).limit(500)
+        ).data or [])
+    except Exception as exc:
+        _all_logs = []
+        st.warning(f"Couldn't load scan history (transient connection issue) — "
+                   f"refresh to retry. ({type(exc).__name__})")
+    _ext_rows = [r for r in _all_logs if r.get("source") != MATCH_RUN_LABEL]
+    _match_rows = [r for r in _all_logs if r.get("source") == MATCH_RUN_LABEL]
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Last scan", l := last[0]["scan_date"][:16].replace("T", " "))
-        c2.metric("Triggered by", _pretty_trigger(latest_trigger))
-        c3.metric(
-            "Found", total_found,
-            help="Candidates returned by scrapers across all sources in this run.",
-        )
-        c4.metric(
-            "New", total_new,
-            help="Inserted or merge-updated rows in rfp_submissions — passed "
-                 "the strict eligibility gate.",
-        )
-        c5.metric(
-            "Rejected", total_declined,
-            help="Filtered out at scan time by the STRICT eligibility gate "
-                 "(country / theme / deadline / feasibility hard-reject). "
-                 "These never enter the DB. Not to be confused with **Declined** "
-                 "on the Screen tab — that's the auto_recommendation = Decline "
-                 "based on MUST/PREFER scoring, which only applies to RFPs that "
-                 "PASSED this gate.",
-        )
+    # Compact metric-card fonts so long values (e.g. the extraction timestamp)
+    # show in full instead of truncating. Applies to BOTH summary-card rows
+    # (extraction + Eligible funding history) — same st.metric testid.
+    st.markdown(
+        "<style>[data-testid='stMetricValue']{font-size:1.05rem;line-height:1.3;"
+        "white-space:normal;overflow:visible;}"
+        "[data-testid='stMetricLabel']{font-size:0.8rem;}</style>",
+        unsafe_allow_html=True,
+    )
+
+    # Two SEPARATE workflows (DATA_SCHEMA_ETL.md §2-3):
+    #   • Run Extraction      — crawl every donor source → extract into the global
+    #     store. PURE extraction, NO org screening (extract_only=True). Slow.
+    #   • My Eligible Funding — screen the INTERNAL store against this org
+    #     (geography + MUST/PREFER) → the funding the org is potentially eligible
+    #     for. Fast (no crawl). Tenant-facing version = the Pipeline "Scan now".
+    # Buttons sit ABOVE the summary cards. Each flips to a disabled "running…"
+    # label in place while it works.
+    _who = user.get("name") or user.get("email") or "admin"
+    # Run Extraction = extreme LEFT, My Eligible Funding = extreme RIGHT (wide gap).
+    _bc1, _bcmid, _bc2 = st.columns([1.9, 4.2, 1.9])
+    _ext_slot = _bc1.empty()
+    _match_slot = _bc2.empty()
+    _do_extract = _ext_slot.button(
+        "⛏ Run Extraction", type="secondary", key="admin_extract_btn", width='stretch',
+        help="Platform job: crawl all donor sources and extract into the global "
+             "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
+             "(~20-40 min for a full run).")
+    _do_match = _match_slot.button(
+        "🎯 My Eligible Funding", type="primary", key="admin_match_btn", width='stretch',
+        help="Screen the curated store against this org's eligibility (geography + "
+             "MUST/PREFER) — the funding you're potentially eligible for. Fast.")
+
+    if _do_extract:
+        # Replace the button in place with a disabled "running" label during the run.
+        _ext_slot.button("⏳ Running extraction…", disabled=True, width='stretch',
+                         key="admin_extract_running")
+        try:
+            from core.scan_runner import run_scan_now
+            run_scan_now(triggered_by=f"extraction:{_who}", extract_only=True)
+        except Exception as exc:
+            st.session_state["admin_scan_banner"] = {
+                "ok": False, "msg": f"❌ Extraction crashed: `{type(exc).__name__}: {exc}`."}
+        st.rerun()
+
+    if _do_match:
+        _match_slot.button("⏳ Selecting eligible funding…", disabled=True,
+                           width='stretch', key="admin_match_running")
+        try:
+            from core.scan_runner import run_screening_now
+            run_screening_now(triggered_by=f"match:{_who}")
+        except Exception as exc:
+            st.session_state["admin_scan_banner"] = {
+                "ok": False,
+                "msg": f"❌ My Eligible Funding failed: `{type(exc).__name__}: {exc}`."}
+        st.rerun()
 
     # Banner from the previous run (survives the post-scan rerun).
     _scan_banner = st.session_state.pop("admin_scan_banner", None)
     if _scan_banner:
         (st.success if _scan_banner.get("ok") else st.error)(_scan_banner["msg"])
 
-    if st.button("▶ Run scan now", type="primary", key="admin_scan_btn"):
-        # Lock navigation while the long-running subprocess holds the
-        # script. Otherwise switching tabs mid-scan produces the
-        # "double-screen" overlap where the previous render lingers
-        # grayed-out next to the new one.
-        st.markdown(
-            """
-            <style>
-              [data-testid="stTabs"] [role="tablist"],
-              [data-testid="stSidebarNav"] {
-                pointer-events: none !important;
-                opacity: 0.45 !important;
-              }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-        # Show visible "click registered" feedback BEFORE the import so the
-        # user sees something happen instantly. Without this the click can
-        # feel like a no-op for the first ~500ms while Python imports
-        # scan_runner + scraper + bs4 + feedparser.
-        _status = st.empty()
-        _status.info("⏳ Initialising scan…")
-        try:
-            from core.scan_runner import run_scan_now, scan_banner
-            _who = user.get("name") or user.get("email") or "admin"
-            _status.info(scan_banner(_who))
-            ok = run_scan_now(triggered_by=f"manual:{_who}")
-        except Exception as exc:
-            # Surface ANY exception so a scan that 'does nothing' becomes
-            # diagnosable. Previous behaviour swallowed import / pipeline
-            # crashes silently.
-            _status.empty()
-            st.error(
-                f"❌ Scan crashed before completion: `{type(exc).__name__}: {exc}`. "
-                "Check the terminal for the full traceback."
-            )
-            st.stop()
+    # Extraction summary cards (BELOW the buttons).
+    _ext = _run_summary(_ext_rows)
+    if _ext:
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Last extraction", _ext["ts"])
+        c2.metric("Triggered by", _ext["trigger"])
+        c3.metric("Found", _ext["found"],
+                  help="Candidates returned by the crawlers across all sources.")
+        c4.metric("Extracted", _ext["new"],
+                  help="Written to the global Extracted Solicitations store.")
+        c5.metric("Rejected", _ext["rejected"],
+                  help="Failed the extraction gate (not-an-rfp / off-theme / "
+                       "opportunity-type / language / past-deadline).")
 
-        st.session_state["admin_scan_banner"] = {
-            "ok": bool(ok),
-            "msg": (
-                f"✓ Scan complete at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. "
-                "Last-scan metric and history below have been refreshed."
-            ) if ok else "Scan exited with errors. See output above for details.",
-        }
-        st.rerun()
-
-    # ----- Scan history (merged from former "Scan Logs" tab) -----------------
+    # ----- History (split): Extraction runs (the crawl) vs Found-matches runs --
+    from core.scan_pipeline import MATCH_RUN_LABEL
     st.markdown("---")
-    st.subheader("Scan history")
-    st.caption("Most recent 500 scan runs.")
     res = (
         sb.table("scan_logs")
         .select("*")
@@ -1343,30 +1411,33 @@ with tab_scan:
         .limit(500)
         .execute()
     )
-    logs = pd.DataFrame(res.data or [])
-    if logs.empty:
-        st.info("No scans recorded yet.")
+    logs = clean_df(pd.DataFrame(res.data or []))
+    if not logs.empty and "triggered_by" in logs.columns:
+        logs["triggered_by"] = (
+            logs["triggered_by"].fillna("").astype(str).map(_pretty_trigger)
+        )
+    if not logs.empty and "source" in logs.columns:
+        _is_match = logs["source"].astype(str) == MATCH_RUN_LABEL
     else:
-        # Strip "manual:" prefix in the displayed column. Defensive against
-        # NaN / None / non-string values so the apply never short-circuits.
-        if "triggered_by" in logs.columns:
-            logs["triggered_by"] = (
-                logs["triggered_by"]
-                .fillna("")
-                .astype(str)
-                .map(_pretty_trigger)
-            )
-        # rfps_rejected exists only after migration 012 — fall back gracefully
-        # if the column hasn't been added yet.
+        _is_match = pd.Series([False] * len(logs), index=logs.index)
+    extr_logs = logs[~_is_match] if not logs.empty else logs
+    match_logs = logs[_is_match] if not logs.empty else logs
+
+    # --- Extraction history (the donor-source crawl) ---
+    st.subheader("Extraction history")
+    st.caption("Each donor-source crawl (“Run Extraction”). Most recent 500 runs.")
+    if extr_logs.empty:
+        st.info("No extraction runs recorded yet.")
+    else:
         hist_cols = [
             "scan_date", "triggered_by", "source",
             "rfps_found", "rfps_new", "rfps_duplicate",
         ]
-        if "rfps_rejected" in logs.columns:
+        if "rfps_rejected" in extr_logs.columns:
             hist_cols.append("rfps_rejected")
         hist_cols += ["duration_sec", "errors"]
         st.dataframe(
-            logs[hist_cols],
+            extr_logs[[c for c in hist_cols if c in extr_logs.columns]],
             width='stretch',
             hide_index=True,
             column_config={
@@ -1383,6 +1454,44 @@ with tab_scan:
                 ),
                 "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.2f"),
                 "errors": st.column_config.TextColumn("Errors"),
+            },
+        )
+
+    # --- Eligible funding history (the fast internal re-screen) ---
+    st.markdown("---")
+    st.subheader("Eligible funding history")
+    # Summary cards for the latest "My eligible funding" run.
+    _mt = _run_summary(_match_rows)
+    if _mt:
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Last run", _mt["ts"])
+        m2.metric("Triggered by", _mt["trigger"])
+        m3.metric("Considered", _mt["found"],
+                  help="Curated solicitations screened against your org.")
+        m4.metric("Eligible", _mt["new"],
+                  help="Newly eligible for your org (passed geography + MUST/PREFER).")
+        m5.metric("Not a fit", _mt["rejected"])
+    st.caption("Each “My eligible funding” run — a fast internal screen of the "
+               "curated store against this org's eligibility policies.")
+    if match_logs.empty:
+        st.info("No “My eligible funding” runs yet.")
+    else:
+        _mcols = ["scan_date", "triggered_by", "rfps_found", "rfps_new",
+                  "rfps_duplicate", "rfps_rejected", "duration_sec"]
+        st.dataframe(
+            match_logs[[c for c in _mcols if c in match_logs.columns]],
+            width='stretch',
+            hide_index=True,
+            column_config={
+                "scan_date": st.column_config.TextColumn("Run time"),
+                "triggered_by": st.column_config.TextColumn("Run by"),
+                "rfps_found": st.column_config.NumberColumn(
+                    "Considered",
+                    help="Curated solicitations screened against your org."),
+                "rfps_new": st.column_config.NumberColumn("Eligible"),
+                "rfps_duplicate": st.column_config.NumberColumn("Already tracked"),
+                "rfps_rejected": st.column_config.NumberColumn("Not a fit"),
+                "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.2f"),
             },
         )
 
