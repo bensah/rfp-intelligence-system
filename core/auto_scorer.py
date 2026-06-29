@@ -122,7 +122,7 @@ def _full_text(candidate: dict[str, Any]) -> str:
         " ".join([
             candidate.get("opportunity_title") or "",
             candidate.get("brief_description") or "",
-            " ".join(candidate.get("geographic_scope") or []),
+            " ".join(candidate.get("call_geographic_scope") or []),
             candidate.get("focus_theme") or "",
             candidate.get("funding_agency") or "",
         ])
@@ -138,7 +138,7 @@ def _geo_text(candidate: dict[str, Any]) -> str:
         " ".join([
             candidate.get("opportunity_title") or "",
             candidate.get("brief_description") or "",
-            " ".join(candidate.get("geographic_scope") or []),
+            " ".join(candidate.get("call_geographic_scope") or []),
             candidate.get("focus_theme") or "",
         ])
     )
@@ -1271,7 +1271,7 @@ def _has_request_details(candidate: dict[str, Any]) -> bool:
     amount. (Description alone doesn't count — hub pages have descriptions.)"""
     if candidate.get("submission_deadline"):
         return True
-    ev = candidate.get("estimated_value")
+    ev = candidate.get("call_award_value")
     try:
         return ev not in (None, "", 0, "0") and float(ev) > 0
     except (TypeError, ValueError):
@@ -1555,7 +1555,7 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
     # only on an explicit False. Bounded: most rows have a scope (skip), and
     # llm_judge has a per-process call cap. Org-facing only (geo_org_gates).
     if geo_org_gates and llm_adjudicate:
-        _geo = candidate.get("geographic_scope")
+        _geo = candidate.get("call_geographic_scope")
         _has_geo = (bool(_geo) if isinstance(_geo, (list, tuple))
                     else bool(str(_geo or "").strip()))
         if not _has_geo:
@@ -1749,7 +1749,7 @@ def _decision_from_criteria(values: dict[str, str]) -> str:
     return "Park"
 
 
-def _extract_geographic_scope(text: str, policies: dict[str, Any]) -> list[str]:
+def _extract_call_geographic_scope(text: str, policies: dict[str, Any]) -> list[str]:
     """Detect KNOWN_COUNTRIES mentions in the candidate's text. Returns the
     list of country names verbatim (case-preserved via the matched form).
     Restricted to eligible-list countries + broad regions when present, so
@@ -1839,7 +1839,7 @@ def _apply_scoring_rules(
     # Compute USD-converted estimated_value once. Falls back to 0 on bad data.
     try:
         from core import dropdowns as _dd
-        raw_amount = candidate.get("estimated_value")
+        raw_amount = candidate.get("call_award_value")
         amount_usd = (
             float(raw_amount) * _dd.usd_rate(candidate.get("currency"))
             if raw_amount not in (None, "", 0) else 0.0
@@ -1967,7 +1967,7 @@ def _is_blank_cheque(candidate: dict[str, Any]) -> bool:
     documented, etc.) — there's nothing to bid on, so it is declined."""
     if candidate.get("submission_deadline"):
         return False
-    val = candidate.get("estimated_value")
+    val = candidate.get("call_award_value")
     try:
         if val is not None and float(val) > 0:   # float('nan') > 0 is False — good
             return False
@@ -1981,9 +1981,9 @@ def _is_blank_cheque(candidate: dict[str, Any]) -> bool:
             return any(str(i).strip() for i in x)
         return bool(str(x).strip())
 
-    if _listed(candidate.get("geographic_scope")):
+    if _listed(candidate.get("call_geographic_scope")):
         return False
-    pa = candidate.get("program_area")
+    pa = candidate.get("call_domain_areas")
     pa_list = pa if isinstance(pa, (list, tuple)) else ([pa] if pa else [])
     from core.program_area_classifier import PROGRAM_AREA_KEYWORDS as _PAK
     if any(str(p) in _PAK for p in pa_list):
@@ -2000,7 +2000,7 @@ def auto_score(
 
     Output keys: feasibility, qualification, ..., bid_effort,
     alignment_score, auto_recommendation, decision, decline_flags_present,
-    geographic_scope (if detected), program_area (if detected).
+    call_geographic_scope (if detected), program_area (if detected).
     """
     text = _full_text(candidate)
     # Criteria are now OBJECTIVELY DERIVED from org × RFP (× donor) facts — the
@@ -2056,9 +2056,9 @@ def auto_score(
     scorer_input = {k: values[k] for k in values if k != "feasibility"}
     score, _legacy_rec = score_submission(scorer_input, decline_flags)
 
-    # SCORE = composite (0.80 criteria + 0.20 donor-org extras), shown on the
-    # Bid-Strength gauge. We keep the composite for the SCORE, but the DECISION
-    # comes from the explicit rule below (not the composite's own thresholds).
+    # SCORE = composite = the 9 weighted criteria (100%; the 0.20 donor-org extras
+    # were dropped 2026-06-29 as duplicative), shown on the Bid-Strength gauge. We keep
+    # the composite for the SCORE, but the DECISION comes from the explicit rule below.
     rec = _decision_from_criteria(values)   # fallback if matching is unavailable
     try:
         from core import matching as _matching
@@ -2154,10 +2154,10 @@ def auto_score(
     }
     # Auto-populated companion fields — only set if the candidate hasn't
     # already provided them, so explicit scraper-extracted values win.
-    if not candidate.get("geographic_scope"):
-        geo = _extract_geographic_scope(text, policies)
+    if not candidate.get("call_geographic_scope"):
+        geo = _extract_call_geographic_scope(text, policies)
         if geo:
-            out["geographic_scope"] = geo
+            out["call_geographic_scope"] = geo
     # program_area: classify from the description. REPLACE a generic crawled
     # value (e.g. "Health" — not a taxonomy key) with specific areas so
     # strategic_fit can match the org; leave an already-taxonomy-keyed value
@@ -2167,7 +2167,7 @@ def auto_score(
         PROGRAM_AREA_KEYWORDS as _PAK, UNSPECIFIED as _UNSPEC,
         category_full as _catfull, subarea_label as _sublab,
     )
-    _cur_pa = candidate.get("program_area")
+    _cur_pa = candidate.get("call_domain_areas")
     _cur_list = _cur_pa if isinstance(_cur_pa, (list, tuple)) else ([_cur_pa] if _cur_pa else [])
     # match on either the canonical key OR the bare sub-label (stored form)
     if not any(str(v) in _PAK or str(v) in {_sublab(k) for k in _PAK} for v in _cur_list):
@@ -2177,5 +2177,5 @@ def auto_score(
             # ("NCDs - Mental Health") — the category prefix is dropped everywhere
             # per policy. focus_theme keeps the category (computed from the key).
             out["focus_theme"] = "; ".join(sorted({_catfull(a) for a in prog}))
-            out["program_area"] = [_sublab(a) for a in prog]
+            out["call_domain_areas"] = [_sublab(a) for a in prog]
     return out

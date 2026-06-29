@@ -123,7 +123,7 @@ def funding_quality(row: dict, *, false_below: float = 50_000,
     """Typical funding tier from the donor's award range — the PREFER 6
     fallback when the RFP itself publishes no amount. Uses the award ceiling
     (what the donor CAN fund); falls back to the floor."""
-    hi = parse_money(row.get("award_high_usd")) or parse_money(row.get("award_low_usd"))
+    hi = parse_money(row.get("donor_award_high")) or parse_money(row.get("donor_award_low"))
     if hi is None:
         return None
     if hi >= partial_below:
@@ -136,9 +136,9 @@ def funding_quality(row: dict, *, false_below: float = 50_000,
 def compliance(row: dict, *, org_has_local_board: Optional[str] = None) -> Optional[str]:
     """MUST 4 from donor requirement flags + the org's structural profile."""
     # Hard disqualifier: donor needs a local board, org doesn't have one.
-    if _yes(row, "local_board_required") and (org_has_local_board or "").lower() == "no":
+    if _yes(row, "donor_local_board_required") and (org_has_local_board or "").lower() == "no":
         return "No"
-    pf = str(row.get("prefinance_required") or "").strip().lower()
+    pf = str(row.get("donor_prefinance_required") or "").strip().lower()
     if pf == "reimbursement_only":
         return "Partial"      # we must pre-finance — cash-flow risk
     if pf in ("none", "partial"):
@@ -148,7 +148,7 @@ def compliance(row: dict, *, org_has_local_board: Optional[str] = None) -> Optio
 
 def partnership(row: dict) -> Optional[str]:
     """PREFER 8 from the donor's partnership requirement."""
-    pm = str(row.get("partnership_mandatory") or "").strip().lower()
+    pm = str(row.get("donor_partnership_mandatory") or "").strip().lower()
     if pm == "yes":
         return "No"           # must partner / consortium required
     if pm == "no":
@@ -174,7 +174,7 @@ _HEALTH_CATEGORY_NAMES = (
 
 def _has_health_program_area(row: dict) -> bool:
     """True if priority_program_areas contains any health-category key/name."""
-    raw = row.get("priority_program_areas")
+    raw = row.get("donor_priority_areas")
     if not raw:
         return False
     txt = str(raw)
@@ -200,51 +200,29 @@ def program_alignment(row: dict) -> tuple[Optional[str], Optional[str]]:
 
 
 def apply_to_values(values: dict, candidate: dict, policies: dict) -> Optional[dict]:
-    """Override MUST 4 / PREFER 8 / (fallback) PREFER 6 from the matched
-    donor record. Authoritative when present; silent no-op when the funder
-    doesn't match a known donor or a field is blank (unknown). Returns the
-    matched row (for callers that want to record provenance), else None."""
+    """ALL criterion overrides are now DISABLED — the dedicated active-only
+    derivations in core.criteria_derive are authoritative for every criterion. This
+    remains only to return the matched donor row for provenance (callers record it).
+
+    History: the MUST-1 / MUST-2 overrides were disabled 2026-06-28; the MUST-4 /
+    PREFER-8 / PREFER-6 overrides were disabled 2026-06-29 once those criteria were
+    reworked under the active-only model (owner's standing rule: retire each donor_intel
+    override as its criterion is rebuilt, since the heuristic would otherwise CONFLICT
+    with the reworked derivation — e.g. force geographic_fit past the geo-scope/US-only/
+    'Not sure' logic, or funding_quality past its 'Not sure' default)."""
     row = match_donor(candidate.get("funding_agency"))
     if not row:
         return None
 
-    # Org structural profile (read lazily; no Streamlit dependency).
-    try:
-        from core import settings as _s
-        org_board = _s.get_setting("org_has_local_board", "")
-    except Exception:
-        org_board = ""
-
-    comp = compliance(row, org_has_local_board=org_board)
-    if comp is not None:
-        values["geographic_fit"] = comp
-
-    part = partnership(row)
-    if part is not None:
-        values["competitiveness"] = part
-
-    # MUST 1 / MUST 2 — DISABLED 2026-06-28 (owner): the dedicated MUST-1
-    # (qualification) and MUST-2 (strategic_fit) derivations are now authoritative,
-    # so this on-mission "force to Yes" heuristic is redundant and would conflict.
-    # (Extraction is separate from scan/auto-score; the reworked derivations decide.)
-    # The MUST-4 / PREFER-8 / PREFER-6 overrides above/below stay until those
-    # criteria are reworked too.
-
-    # PREFER 6 fallback ONLY when the RFP itself published no amount — a
-    # donor that typically funds >$100k implies Funding Quality = Yes even
-    # if this specific call is silent on the figure.
-    if _rfp_amount(candidate) <= 0:
-        tiers = (((policies or {}).get("scoring_rules") or {})
-                 .get("funding_quality_tiers") or {})
-        fb, pb = _tier_thresholds(tiers)
-        fq = funding_quality(row, false_below=fb, partial_below=pb)
-        if fq is not None:
-            values["funding_quality"] = fq
+    # geographic_fit (MUST-4), competitiveness (PREFER-8) and the funding_quality
+    # (PREFER-6) no-amount fallback are NO LONGER overridden here — see docstring.
+    # (compliance() / partnership() / funding_quality() helpers are kept for any
+    # provenance/diagnostic readers but are not applied to `values`.)
     return row
 
 
 def _rfp_amount(candidate: dict) -> float:
-    raw = candidate.get("estimated_value")
+    raw = candidate.get("call_award_value")
     try:
         return float(raw) if raw not in (None, "", 0) else 0.0
     except (TypeError, ValueError):
