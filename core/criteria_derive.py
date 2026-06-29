@@ -818,19 +818,21 @@ def cofinancing_bid_strength(org: dict, rfp: dict, donor: dict | None = None,
 def derive_cofinancing(org: dict, rfp: dict, donor: dict | None = None,
                        rfp_compliance: dict | None = None,
                        org_settings: dict | None = None) -> str | None:
-    """MUST-5 label (gate logic over ACTIVE components only): any 0 → 'No, required';
-    any 0.5 → 'Partial, with effort'; all 1 → 'Yes, none required'. NO active component
-    (nothing the call/donor imposes) → 'Not sure' → scores value 1 (Park)."""
+    """MUST-5 label (gate logic over ACTIVE components only): any 0 → 'Not met';
+    any 0.5 → 'Partial, with effort'; all 1 → 'Yes, fully met'. NO active component
+    (nothing the call/donor imposes) → 'Not sure' → scores value 1 (Park). MUST-5 spans
+    co-financing AND the compliance gates (SAM/tax-exempt/…), so ANY unmet requirement —
+    a hard non-dynamic gate OR co-financing — forces 'Not met' even if the rest are met."""
     scores = [f["score"] for f in compliance_factors(
         org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
         if f["active"] and f["score"] is not None]
     if not scores:
         return "Not sure"
     if any(s <= 0.0 for s in scores):
-        return "No, required"
+        return "Not met"
     if any(s == 0.5 for s in scores):
         return "Partial, with effort"
-    return "Yes, none required"
+    return "Yes, fully met"
 
 
 def derive_funding_quality(rfp: dict, org: dict | None = None,
