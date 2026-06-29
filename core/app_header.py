@@ -35,7 +35,12 @@ THEME_PRIMARY_LIGHT = "#e6f2eb"
 THEME_NAVY = "#1e3a8a"          # RFPIS brand color (sidebar logo)
 THEME_SLATE = "#475569"
 THEME_SLATE_LIGHT = "#94a3b8"
-THEME_BG_CARD = "#fafcfa"
+# Warm palette (owner 2026-06-29 — "warmer, not stark white" for the scan/test
+# phase). Cream page + warm card + warm hairline; keep the brand green accent so
+# buttons/headings still read as the organisation. Mirror THEME_BG_PAGE in .streamlit/config.toml.
+THEME_BG_PAGE = "#FBF6EE"       # warm cream — page background (matches config.toml)
+THEME_BG_CARD = "#FFFCF6"       # warm near-white — metric tiles / quick-cards
+THEME_BORDER_WARM = "#E7DCC9"   # warm hairline (replaces cool #e3e7e3 on cards)
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _LOGO_PATH = _ASSETS_DIR / "rfpis_logo.svg"
@@ -227,22 +232,31 @@ _GLOBAL_CSS = f"""
      page body scrolls. White backdrop + hairline + soft shadow so the
      content scrolling beneath doesn't bleed through. This replaces the
      old st.divider under the header (removed from render_app_header). */
+  /* !important on position/top is REQUIRED — Streamlit's generated emotion class
+     on the same div sets position:relative and otherwise wins the cascade, so the
+     bar scrolled away. The scroll happens on stMain, so top:0 pins to the viewport. */
   [class*="st-key-rfpis_topbar"] {{
-    position: sticky;
-    top: 0;
-    z-index: 1000;
-    background: #ffffff;
-    padding-top: 0.2rem;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 1000 !important;
+    background: {THEME_BG_PAGE} !important;
+    padding-top: 0.4rem;
     padding-bottom: 0.45rem;   /* keep the org name clear of the border line */
     margin-bottom: 0.4rem;
-    border-bottom: 1px solid #e3e7e3;
-    box-shadow: 0 3px 6px -4px rgba(0, 0, 0, 0.25);
+    border-bottom: 1px solid {THEME_BORDER_WARM};
+    box-shadow: 0 4px 10px -6px rgba(120, 84, 20, 0.30);
+  }}
+  /* An overflow:hidden/auto on any ancestor between the sticky bar and the stMain
+     scroller would break sticky — keep the immediate block wrappers visible. */
+  [data-testid="stMainBlockContainer"],
+  [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {{
+    overflow: visible !important;
   }}
 
   /* Metric tiles — give them card-like presence */
   [data-testid="stMetric"] {{
     background: {THEME_BG_CARD};
-    border: 1px solid #e3e7e3;
+    border: 1px solid {THEME_BORDER_WARM};
     border-left: 4px solid {THEME_PRIMARY};
     border-radius: 6px;
     padding: 10px 14px;
@@ -279,7 +293,7 @@ _GLOBAL_CSS = f"""
      plus the heading; descriptions stretch via flex so all cards
      render at the same height regardless of text length. */
   .quickcard {{
-    border: 1px solid #e3e7e3;
+    border: 1px solid {THEME_BORDER_WARM};
     border-left: 4px solid {THEME_PRIMARY};
     border-radius: 6px;
     padding: 14px 16px;
@@ -308,7 +322,7 @@ _GLOBAL_CSS = f"""
   .rfpis-footer-brand {{
     margin-top: 1rem;
     padding: 0.6rem 0.5rem;
-    border-top: 1px solid #e3e7e3;
+    border-top: 1px solid {THEME_BORDER_WARM};
     font-size: 0.78rem;
     color: {THEME_SLATE};
     line-height: 1.3;
