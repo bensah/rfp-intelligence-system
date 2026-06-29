@@ -146,6 +146,10 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "— 3-6 short NUMBERED steps (e.g. register on the portal, prepare a concept "
         "note, submit by the deadline), naming the submission portal / email and any "
         'application URL when stated. Format each step on its own line as "1. …". '
+        "AFTER the numbered steps, if the call describes how proposals are EVALUATED / "
+        'SELECTED, add one final line beginning "Selection: " summarising the review / '
+        "scoring stages, evaluation criteria weights, and who decides (e.g. two-stage "
+        "concept-then-full, technical + cost panels, board approval). "
         "null if the page gives no application instructions.\n"
         '  "compliance_requirements": the co-financing / eligibility / compliance '
         "HARD requirements the RFP explicitly states — cost-share or match %, "
@@ -153,6 +157,17 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "due-diligence, SAM.gov/UEI, tax-exempt status, etc. One per line as "
         '"• …" with the specifics. "None stated" if the call imposes none. This '
         "protects applicants from a hidden hard-gate discovered near the deadline.\n"
+        '  "application_checklist": the concrete DELIVERABLES an applicant must submit '
+        "for THIS call — e.g. concept note, full proposal, detailed budget, logframe / "
+        "results framework, registration certificate, audited financials, CVs, letters "
+        "of support / partner MoUs, tax/ legal docs, work plan. One item per line as "
+        '"• …", naming page/word limits or templates when stated. "None stated" if the '
+        "call lists no required documents. Capture EVERY item the text names.\n"
+        '  "eligibility_specifics": concrete, call-SPECIFIC eligibility constraints '
+        "BEYOND the generic country/theme fit — e.g. 'Activities must focus on UNESCO "
+        "World Heritage Sites', 'Lead applicant must be a registered NGO operating "
+        "≥3 years', 'Consortia of 2-4 partners only', 'For-profits ineligible'. One per "
+        'line as "• …". "None stated" if the call adds no specific constraints.\n'
         '  "call_compliance_flags": a STRUCTURED object — set a key to true ONLY for each '
         "requirement the RFP EXPLICITLY imposes, choosing from exactly these keys: "
         "cost_sharing_match_required, local_registration_required, "
@@ -227,8 +242,11 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "call_domain_areas": pas or None,
         "key_risks": _clip(parsed.get("key_risks"), 300),
         "decision_rationale": _clip(parsed.get("decision_rationale"), 400),
-        "how_to_apply": _clip(parsed.get("how_to_apply"), 1500),
+        "how_to_apply": _clip(parsed.get("how_to_apply"), 1800),
         "compliance_requirements": _clip(parsed.get("compliance_requirements"), 1200),
+        "application_checklist": (_clip(_as_lines(parsed.get("application_checklist")), 1500)
+                                  or _regex_checklist(body)),
+        "eligibility_specifics": _clip(_as_lines(parsed.get("eligibility_specifics")), 1200),
         "call_compliance_flags": (parsed.get("call_compliance_flags")
                              if isinstance(parsed.get("call_compliance_flags"), dict) else {}),
         "_llm_model": chosen,
@@ -284,6 +302,43 @@ def _clip(v: Any, n: int) -> str | None:
     if not s:
         return None
     return s[: n - 1].rstrip() + "…" if len(s) > n else s
+
+
+def _as_lines(v: Any) -> Any:
+    """The LLM is asked for one-item-per-line text, but sometimes returns an array.
+    Join arrays into "• …" lines so storage + display stay uniform (text columns)."""
+    if isinstance(v, (list, tuple)):
+        items = [str(x).strip().lstrip("•-–* ").strip() for x in v if str(x).strip()]
+        return "\n".join(f"• {x}" for x in items) if items else None
+    return v
+
+
+# Common required-submission documents — a deterministic fallback for the application
+# checklist when the LLM is disabled or returns nothing (the user asked for "LLM from
+# donor docs + regex"). label -> case-insensitive pattern.
+_CHECKLIST_PATTERNS: list[tuple[str, str]] = [
+    ("Concept note", r"concept note"),
+    ("Full / technical proposal", r"full proposal|technical proposal|project proposal"),
+    ("Detailed budget", r"detailed budget|budget (?:template|narrative|breakdown)|line[- ]item budget"),
+    ("Logframe / results framework", r"log[- ]?frame|logical framework|results framework"),
+    ("Work / implementation plan", r"work\s?plan|implementation plan"),
+    ("Theory of change", r"theory of change"),
+    ("Registration certificate", r"registration certificate|certificate of (?:registration|incorporation)|legal registration"),
+    ("Audited financials", r"audited (?:financial|account)"),
+    ("CVs / key personnel", r"\bcvs?\b|curriculum vitae|team bios|key personnel"),
+    ("Letters of support / partner MoU", r"letter[s]? of (?:support|commitment|endorsement)|partner(?:ship)? (?:mou|agreement)|\bmou\b"),
+    ("Cover letter / application form", r"cover letter|cover sheet|application form"),
+    ("Tax / legal documents", r"tax (?:certificate|exempt|clearance)|legal status document"),
+]
+
+
+def _regex_checklist(body: str | None) -> str | None:
+    """Deterministic fallback: scan the call text for common required documents."""
+    blob = (body or "").lower()
+    if not blob:
+        return None
+    hits = [label for label, pat in _CHECKLIST_PATTERNS if re.search(pat, blob)]
+    return "\n".join(f"• {h}" for h in hits) if hits else None
 
 
 def _parse_json(raw: str) -> dict | None:
