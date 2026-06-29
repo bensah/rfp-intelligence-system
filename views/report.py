@@ -640,7 +640,7 @@ def _load_rfps() -> pd.DataFrame:
     for c in ("submitted_at", "search_date"):
         if c in df.columns:
             df[c] = pd.to_datetime(df[c], **_DT_KW)
-    for c in ("submission_deadline", "date_completed", "decision_date",
+    for c in ("call_submission_deadline", "date_completed", "decision_date",
               "date_of_approval"):
         if c in df.columns:
             df[c] = pd.to_datetime(df[c], **_DT_KW).dt.date

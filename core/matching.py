@@ -241,7 +241,7 @@ def _relationship_fit(org: dict, donor: dict, org_settings: dict) -> float:
     """1.0 when the applicant org has an existing tie to the donor — it appears in
     the donor's Funders & Collaborators (or a partner it lists does), or it has
     already been funded by this donor. Neutral 0.5 when there's no signal."""
-    funders = {_norm_name(x) for x in _as_list(donor.get("funders_collaborators"))}
+    funders = {_norm_name(x) for x in _as_list(donor.get("donor_funders_collaborators"))}
     funders.discard("")
     donor_names = {_norm_name(donor.get(f)) for f in ("donor", "donor_short")}
     donor_names.discard("")

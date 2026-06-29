@@ -117,7 +117,7 @@ def search_opportunities(query: str, limit: int = 30) -> list[dict]:
         if not title or key in seen:
             continue
         seen.add(key)
-        dl = r.get("submission_deadline")
+        dl = r.get("call_submission_deadline")
         out.append({
             "title": title,
             "funder": funder,
