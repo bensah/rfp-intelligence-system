@@ -104,7 +104,7 @@ def usd_rate(currency: str | None) -> float:
     for entry in currencies:
         if (entry.get("code") == cur
                 or entry.get("label") == cur
-                or cur in (entry.get("aliases") or [])):
+                or cur in (entry.get("donor_aliases") or [])):
             return _rate(entry)
     # Fallback: first whitespace token (e.g. "GBP £" → "GBP")
     first = cur.split()[0] if cur else ""
