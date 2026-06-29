@@ -615,6 +615,10 @@ def ingest_candidates(
                             row["how_to_apply"] = _syn["how_to_apply"]
                         if _syn.get("compliance_requirements"):
                             row["compliance_requirements"] = _syn["compliance_requirements"]
+                        if _syn.get("application_checklist"):
+                            row["application_checklist"] = _syn["application_checklist"]
+                        if _syn.get("eligibility_specifics"):
+                            row["eligibility_specifics"] = _syn["eligibility_specifics"]
                         # CLOSE THE LOOP: feed the LLM-extracted RFP compliance flags
                         # into MUST-5, then re-derive cofinancing + re-score so the
                         # stored decision reflects hard-gates the call itself states.

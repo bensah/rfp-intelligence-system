@@ -790,6 +790,18 @@ with dl_col:
             f"<span style='font-size:0.85rem'>{_esc(_comp_req).replace(chr(10), '<br>')}"
             "</span></div>",
             unsafe_allow_html=True)
+    # 🎯 Call-specific eligibility constraints (LLM-extracted) — a hidden eligibility
+    # gate (e.g. "must focus on UNESCO sites") seen BEFORE committing, like compliance.
+    _elig_spec = (row.get("eligibility_specifics") or "").strip()
+    if _elig_spec and _elig_spec.lower() not in ("none stated", "none", "n/a"):
+        st.markdown(
+            "<div style='margin-top:10px;border-left:3px solid #1f7a8c;"
+            "background:#eef7fa;padding:8px 12px;border-radius:6px'>"
+            "<span style='color:#155e6b;font-weight:700;font-size:0.82rem'>"
+            "🎯 Eligibility specifics (from the RFP)</span><br>"
+            f"<span style='font-size:0.85rem'>{_esc(_elig_spec).replace(chr(10), '<br>')}"
+            "</span></div>",
+            unsafe_allow_html=True)
 
 with calc_col:
     # Per-criterion contribution = weight × (criterion value ÷ 2), so the rows sum to
