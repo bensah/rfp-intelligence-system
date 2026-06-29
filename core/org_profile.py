@@ -41,10 +41,10 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "founding_year": None,                  # int — track-record length (strategic_fit)
 
     # --- qualification (can we formally apply?) ---
-    "legal_type": "nonprofit",              # canonical bucket (see core.auto_scorer
+    "org_legal_type": "nonprofit",              # canonical bucket (see core.auto_scorer
                                             # applicant buckets): nonprofit / government /
                                             # higher_ed / for_profit / individual / tribal
-    "entity_type": "",                      # MUST-1 item B — grassroot_local |
+    "org_entity_type": "",                      # MUST-1 item B — grassroot_local |
                                             # multi_country | individual. SINGLE source of
                                             # truth; on save it derives the legacy
                                             # org_is_grassroot / org_is_multi_country settings.
@@ -71,7 +71,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "org_has_sam_uei": False,               # holds SAM.gov / UEI registration
     "org_tax_exempt": False,                # tax-exempt (501c3 or non-US equivalent)
     "org_stage": "established",             # "early-stage" | "established"
-    "has_established_pi": False,            # MUST-1 item E — has a well-established
+    "org_has_established_pi": False,            # MUST-1 item E — has a well-established
                                             # Principal Investigator (satisfies an
                                             # in-scope-country PI requirement)
     # Partners WITH type + country (for named-partner conditions, e.g. NIHR -> UK
@@ -114,10 +114,10 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "org_funding_routes": ["grant", "subrecipient"],
 
     # --- funder_relationship ---
-    "funder_history": [],                   # funders we are/were funded by
+    "org_funder_history": [],                   # funders we are/were funded by
     # MUST-1 item I — donors CURRENTLY funding us (a current-grant exclusion in a
     # call disqualifies us; distinct from funder_history = past/previous grants).
-    "active_donors": [],
+    "org_active_donors": [],
 
     # --- bid_effort ---
     "proposal_languages": ["English"],      # languages we can write a competitive bid in
@@ -131,7 +131,7 @@ LIST_FIELDS: tuple[str, ...] = (
     "donor_registrations", "org_registered_countries", "org_operating_countries",
     "trusted_partners", "trusted_for_profit_partners",
     "trusted_academic_institutions", "org_domain_expertise", "org_priority_areas",
-    "funder_history", "active_donors", "proposal_languages",
+    "org_funder_history", "org_active_donors", "proposal_languages",
     "authorized_signatory_donors", "org_funding_routes",
 )
 
@@ -208,6 +208,12 @@ _RENAMED_KEYS = {
     "annual_budget_usd": "org_annual_budget",
     "lowest_grant_usd": "org_lowest_grant",
     "number_of_grants_managed": "org_grants_count",
+    # Legal status & eligibility (axis 4)
+    "legal_type": "org_legal_type",
+    "entity_type": "org_entity_type",
+    "has_established_pi": "org_has_established_pi",
+    "active_donors": "org_active_donors",
+    "funder_history": "org_funder_history",
 }
 
 

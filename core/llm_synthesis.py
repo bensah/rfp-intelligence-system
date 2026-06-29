@@ -59,7 +59,7 @@ def _org_block(org: dict) -> str:
     if not org:
         return "(org profile unavailable)"
     pa = org.get("org_priority_areas") or org.get("org_domain_expertise") or []
-    funders = org.get("funder_history") or []
+    funders = org.get("org_funder_history") or []
     return (
         f"- Operates in: {', '.join(org.get('org_operating_countries') or []) or '—'}\n"
         f"- Annual budget managed: {_money(org.get('org_annual_budget'))}/yr; "
@@ -242,9 +242,9 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
 # Allowed enum values for the LLM-extracted MUST-1 requirements (anything else is
 # dropped — grounded, no fabrication).
 _MUST1_ENUMS = {
-    "pi_country_scope": {"in_scope", "foreign"},
-    "entity_type_required": {"grassroot_local", "multi_country", "individual"},
-    "prior_beneficiary_rule": {"eligible", "ineligible_current",
+    "donor_pi_country_scope": {"in_scope", "foreign"},
+    "donor_entity_type_required": {"grassroot_local", "multi_country", "individual"},
+    "donor_prior_beneficiary_rule": {"eligible", "ineligible_current",
                                "ineligible_previous", "ineligible_any"},
     "experience_required": {"significant", "moderate"},   # MUST-3 capacity
     "org_stage_required": {"early-stage", "established"},  # MUST-3 org stage (only if RESTRICTED)
@@ -255,21 +255,21 @@ def _sanitize_must1(d: dict) -> dict:
     """Keep only valid, grounded MUST-1 requirement keys/values from the LLM output;
     coerce requires_pi to a boolean flag; bound free-text country/region length."""
     clean: dict[str, Any] = {}
-    if str(d.get("requires_pi") or "").strip().lower() in ("yes", "true", "1"):
-        clean["requires_pi"] = True
+    if str(d.get("donor_requires_pi") or "").strip().lower() in ("yes", "true", "1"):
+        clean["donor_requires_pi"] = True
     for key, allowed in _MUST1_ENUMS.items():
         v = str(d.get(key) or "").strip().lower()
         if v in allowed:
             clean[key] = v
-    hq = str(d.get("hq_country_required") or "").strip()
+    hq = str(d.get("donor_hq_country_required") or "").strip()
     if hq and len(hq) <= 60:
-        clean["hq_country_required"] = hq
-    rr = d.get("registration_region")
+        clean["donor_hq_country_required"] = hq
+    rr = d.get("donor_registration_region")
     if isinstance(rr, list):
         rr = ", ".join(str(x).strip() for x in rr if str(x).strip())
     rr = str(rr or "").strip()
     if rr and len(rr) <= 120:
-        clean["registration_region"] = rr
+        clean["donor_registration_region"] = rr
     return clean
 
 
