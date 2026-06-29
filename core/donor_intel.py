@@ -223,14 +223,12 @@ def apply_to_values(values: dict, candidate: dict, policies: dict) -> Optional[d
     if part is not None:
         values["competitiveness"] = part
 
-    # MUST 1 / MUST 2 — upgrade from the donor's program-area fit (on-mission,
-    # LMIC/global health donor → aligned + strategically relevant). Only lifts
-    # to Yes; never downgrades a keyword-derived value.
-    m1, m2 = program_alignment(row)
-    if m1 == "Yes":
-        values["qualification"] = m1
-    if m2 == "Yes":
-        values["strategic_fit"] = m2
+    # MUST 1 / MUST 2 — DISABLED 2026-06-28 (owner): the dedicated MUST-1
+    # (qualification) and MUST-2 (strategic_fit) derivations are now authoritative,
+    # so this on-mission "force to Yes" heuristic is redundant and would conflict.
+    # (Extraction is separate from scan/auto-score; the reworked derivations decide.)
+    # The MUST-4 / PREFER-8 / PREFER-6 overrides above/below stay until those
+    # criteria are reworked too.
 
     # PREFER 6 fallback ONLY when the RFP itself published no amount — a
     # donor that typically funds >$100k implies Funding Quality = Yes even

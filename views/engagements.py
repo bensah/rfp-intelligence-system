@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from core import dropdowns
+from core.records import clean_df
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -35,7 +36,7 @@ def _fetch() -> pd.DataFrame:
         .order("engagement_date", desc=True)
         .execute()
     )
-    df = pd.DataFrame(res.data or [])
+    df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty:
         df["engagement_date"] = pd.to_datetime(df["engagement_date"], errors="coerce")
     return df

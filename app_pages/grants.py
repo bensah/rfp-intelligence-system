@@ -21,6 +21,7 @@ import pandas as pd
 import streamlit as st
 
 from core.pipeline import usd_value
+from core.records import clean_record, clean_df
 from db.supabase_client import get_client
 
 sb = get_client()
@@ -36,8 +37,8 @@ def _fetch() -> tuple[pd.DataFrame, pd.DataFrame]:
     rfps = pd.DataFrame(
         sbc.table("rfp_submissions").select("*").eq("is_duplicate", False).execute().data or []
     )
-    grants = pd.DataFrame(sbc.table("active_grants").select("*").execute().data or [])
-
+    grants = clean_df(pd.DataFrame(sbc.table("active_grants").select("*").execute().data or []))
+    rfps = clean_df(rfps)
     if not rfps.empty:
         dd = rfps["donor_decision"].fillna("").astype(str).str.strip().str.lower()
         # ACTIVE = Approved OR Under Review. Not Approved drops out.
@@ -119,7 +120,7 @@ pick = st.selectbox(
     key="grants_active_picker",
 )
 uid = uid_by_label[pick]
-r = active[active["uid"] == uid].iloc[0].to_dict()
+r = clean_record(active[active["uid"] == uid].iloc[0].to_dict())
 
 # Status badge
 DD_COLOR = {"approved": "#dcf5e3", "under review": "#fff4cc"}
@@ -150,10 +151,12 @@ else:
 #   * Technical → the deploying org provides TA, neither lead nor sub.
 # Excel cells containing "N/A" / "NA" / blank are treated as empty.
 def _placeholder(v) -> str:
-    s = (v or "").strip()
+    # Guard on type: a blank cell arrives as NaN (a float), which `or ""` won't
+    # catch (NaN is truthy) and .strip() then breaks (AttributeError on float).
+    s = (v if isinstance(v, str) else "").strip()
     return "" if s.lower() in ("", "n/a", "na", "none", "—") else s
 
-_role = (r.get("applicant_role") or "").strip()
+_role = (r.get("applicant_role") if isinstance(r.get("applicant_role"), str) else "").strip()
 _role_lc = _role.lower()
 _raw_lead = _placeholder(r.get("lead_applicant"))
 _raw_sub = _placeholder(r.get("sub_applicant"))
@@ -235,7 +238,7 @@ if len(linked) > 1:
     )
 
 if not linked.empty:
-    g = linked.iloc[0].to_dict()
+    g = clean_record(linked.iloc[0].to_dict())
     st.markdown("**Reporting**")
     rep1, rep2, rep3, rep4, rep5 = st.columns(5)
     # Markdown rather than st.metric so long text values (e.g. "Not Started")
