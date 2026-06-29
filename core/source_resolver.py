@@ -270,7 +270,7 @@ def resolve_and_enrich(cand: dict) -> bool:
     cand["_resolved_from_aggregator"] = True
     dl = _extract_deadline_from_text(text)
     if dl:
-        cand["submission_deadline"] = dl
+        cand["call_submission_deadline"] = dl
     pd = _extract_page_date(soup)
     if pd and not cand.get("date_posted"):
         cand["date_posted"] = pd

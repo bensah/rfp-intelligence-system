@@ -1633,7 +1633,7 @@ with tab_learning:
                    f"total signals (newest first). Counts above are the full-table totals.")
         _cols = [c for c in ["created_at", "event_type", "label", "reason",
                              "opportunity_title", "funding_agency", "source",
-                             "submission_deadline", "alignment_score",
+                             "call_submission_deadline", "alignment_score",
                              "opportunity_link", "decided_by"]
                  if c in _ldf.columns]
         st.dataframe(

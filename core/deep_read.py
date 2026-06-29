@@ -217,10 +217,10 @@ def _harvest(candidate: dict, text: str, soup) -> None:
         _extract_deadline_from_text, _extract_description_from_soup,
         _extract_eligibility_from_text,
     )
-    if not candidate.get("submission_deadline"):
+    if not candidate.get("call_submission_deadline"):
         d = _extract_deadline_from_text(text)
         if d:
-            candidate["submission_deadline"] = d
+            candidate["call_submission_deadline"] = d
     # Award amount — 'Grant Size $100,000', 'up to $100,000', etc. (capacity +
     # funding_quality both need it; was previously never harvested from HTML).
     if not candidate.get("call_award_value"):
@@ -249,7 +249,7 @@ def _harvest(candidate: dict, text: str, soup) -> None:
 
 
 def _thin(candidate: dict) -> bool:
-    return (not candidate.get("submission_deadline")
+    return (not candidate.get("call_submission_deadline")
             or len(candidate.get("brief_description") or "") < _THIN_DESC)
 
 
@@ -265,18 +265,18 @@ def _follow_for_deadline(candidate: dict, soup, base_url: str) -> None:
         if pdf_url:
             d, brief = _try_pdf_guide_deadline(pdf_url)
             if d:
-                candidate["submission_deadline"] = d
+                candidate["call_submission_deadline"] = d
             # Re-extract eligibility/geo from the PDF too: fold its text into
             # the description (which the country gate reads) when we're thin.
             if brief and not (candidate.get("brief_description") or "").strip():
                 candidate["brief_description"] = brief[:1800]
     except Exception:
         pass
-    if not candidate.get("submission_deadline"):
+    if not candidate.get("call_submission_deadline"):
         try:
             d = _follow_companion_for_deadline(soup, base_url)
             if d:
-                candidate["submission_deadline"] = d
+                candidate["call_submission_deadline"] = d
         except Exception:
             pass
 
@@ -334,7 +334,7 @@ def enrich(candidate: dict) -> bool:
     _harvest(candidate, text, soup)
 
     # 3) Deadline still missing → PDF guide, then companion calendar page.
-    if not candidate.get("submission_deadline"):
+    if not candidate.get("call_submission_deadline"):
         _follow_for_deadline(candidate, soup, link)
 
     # 4) Still thin → follow the best valid child/companion detail link.

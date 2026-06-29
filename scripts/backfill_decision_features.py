@@ -76,7 +76,7 @@ def main() -> int:
                 "funding_agency": r.get("funding_agency"),
                 "source": r.get("source"),
                 "call_geographic_scope": r.get("call_geographic_scope"),
-                "submission_deadline": r.get("submission_deadline"),
+                "call_submission_deadline": r.get("call_submission_deadline"),
                 "alignment_score": r.get("alignment_score"),
             }
             partial += 1

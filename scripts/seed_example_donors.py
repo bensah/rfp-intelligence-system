@@ -50,7 +50,7 @@ NIHR = {
     "website": "https://www.nihr.ac.uk/explore-nihr/funding-programmes/global-health.htm",
     "founded": "2006",
     "parent_organization": None,   # superseded by funders_collaborators
-    "funders_collaborators": json.dumps(["UK Department of Health and Social Care (DHSC)"]),
+    "donor_funders_collaborators": json.dumps(["UK Department of Health and Social Care (DHSC)"]),
     "general_email": "nihrglobalhealth@nihr.ac.uk",
     "hq_country": "United Kingdom",
     "summary_description": (
@@ -193,8 +193,8 @@ NIHR = {
     "donor_ngo_eligible": "no", "donor_for_profit_eligible": "no",
     "donor_subrecipient_partner_possible": "yes", "donor_grant_route": "yes",
     "open_call_unsolicited": "yes", "two_stage_application": "yes",
-    "online_portal_submission": "yes", "lmic_africa_focus": "yes",
-    "global_multi_country_scope": "yes", "donor_partnership_mandatory": "yes",
+    "online_portal_submission": "yes", "donor_lmic_africa_focus": "yes",
+    "donor_global_multi_country_scope": "yes", "donor_partnership_mandatory": "yes",
     "donor_local_partner_required": "yes",
     "concept_note_required": "yes", "full_technical_proposal_required": "yes",
     "detailed_budget_required": "yes", "budget_narrative_required": "yes",
@@ -307,7 +307,7 @@ DIV = {
     }),
     "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Asia"]),
-    "funders_collaborators": json.dumps([
+    "donor_funders_collaborators": json.dumps([
         "Coefficient Giving", "GiveWell", "Livelihood Impact Fund", "CRI Foundation",
         "Global Development Incubator", "Anonymous Donors"]),
     "in_scope": (
@@ -409,7 +409,7 @@ DIV = {
     "donor_ngo_eligible": "yes", "donor_for_profit_eligible": "yes",
     "donor_subrecipient_partner_possible": "yes", "donor_grant_route": "yes",
     "open_call_unsolicited": "yes", "online_portal_submission": "yes",
-    "lmic_africa_focus": "yes", "global_multi_country_scope": "yes",
+    "donor_lmic_africa_focus": "yes", "donor_global_multi_country_scope": "yes",
     "theory_of_change_required": "yes", "mande_plan_required": "yes",
     "detailed_budget_required": "yes", "donor_partner_mou_required": "yes",
     "sustainability_exit_plan_required": "yes",
@@ -542,7 +542,7 @@ CRI_FOUNDATION = {
         "generating interventions with rigorous evaluation; catalytic, collaborative "
         "funding (e.g. the CRI-DIV collaborative)."),
     "funding_mechanism": json.dumps(["Grants"]),
-    "funders_collaborators": json.dumps(["Development Innovation Ventures Fund"]),
+    "donor_funders_collaborators": json.dumps(["Development Innovation Ventures Fund"]),
     "donor_priority_areas": json.dumps([
         "Cross-cutting - Research", "IDs - Malaria & NTDs", "WCH - MNCH",
         "HSS - Health Workforce", "WCH - Nutrition"]),

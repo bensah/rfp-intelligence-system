@@ -145,8 +145,8 @@ def _fetch(year: int):
     if not rfps.empty:
         rfps["_submitted_at"] = pd.to_datetime(rfps["submitted_at"], errors="coerce", format="ISO8601")
         rfps = rfps[rfps["_submitted_at"].dt.year == year].copy()
-        rfps["_dtd"] = rfps["submission_deadline"].apply(days_to_deadline)
-        rfps["_dstat"] = rfps["submission_deadline"].apply(deadline_status)
+        rfps["_dtd"] = rfps["call_submission_deadline"].apply(days_to_deadline)
+        rfps["_dstat"] = rfps["call_submission_deadline"].apply(deadline_status)
         rfps["_usd"] = rfps.apply(
             lambda r: usd_value(r.get("call_award_value"), r.get("currency")), axis=1
         )
@@ -171,7 +171,7 @@ def _fetch(year: int):
         rfps["_date_completed"] = rfps["date_completed"].apply(_safe_date)
         rfps["_date_approval"] = rfps["date_of_approval"].apply(_safe_date)
         rfps["_search_date"] = rfps["search_date"].apply(_safe_date)
-        rfps["_deadline_date"] = rfps["submission_deadline"].apply(_safe_date)
+        rfps["_deadline_date"] = rfps["call_submission_deadline"].apply(_safe_date)
         # Submissions count (defaults to 1 if column missing or null)
         if "submissions" in rfps.columns:
             rfps["_submissions"] = rfps["submissions"].fillna(1).astype(int)
@@ -263,7 +263,7 @@ with bc2:
         else:
             for _, r in soon.iterrows():
                 st.markdown(
-                    f"- **{r['submission_deadline']}** ({int(r['_dtd'])}d) — "
+                    f"- **{r['call_submission_deadline']}** ({int(r['_dtd'])}d) — "
                     f"{(r.get('opportunity_title') or '')[:70]}"
                 )
 

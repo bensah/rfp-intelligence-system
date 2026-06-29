@@ -377,7 +377,7 @@ def _verify_table(*, user: dict, key: str, rows: list[dict],
                             "opportunity_title": r.get("opportunity_title"),
                             "opportunity_link": r.get("opportunity_link"),
                             "funding_agency": r.get("funding_agency"),
-                            "submission_deadline": r.get("submission_deadline"),
+                            "call_submission_deadline": r.get("call_submission_deadline"),
                         }, user, provenance="reject-recovery")
                         st.toast(f"Recovered as {res['uid']}." if res["ok"] else
                                  "Already tracked." if res["skipped"] else
@@ -420,7 +420,7 @@ def _render_reject_log(user: dict) -> None:
         filter_key="label", filter_label="reject reason",
         extra_cols=[("Funder", lambda r: r.get("funding_agency") or ""),
                     ("Rejection reason", lambda r: r.get("label") or "—"),
-                    ("Deadline", lambda r: str(r.get("submission_deadline") or ""))],
+                    ("Deadline", lambda r: str(r.get("call_submission_deadline") or ""))],
         recover=True,
         # Correct-reason override → learning signal (system reason vs human).
         reason_opts={

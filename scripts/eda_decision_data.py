@@ -39,7 +39,7 @@ pd.set_option("display.max_columns", 40)
 
 # Fields the model / matching rely on, and how to read them off rfp_submissions.
 _EXTRACTION_FIELDS = [
-    "opportunity_title", "brief_description", "submission_deadline",
+    "opportunity_title", "brief_description", "call_submission_deadline",
     "call_award_value", "currency", "call_geographic_scope", "call_domain_areas",
     "funding_agency", "focus_theme", "date_posted",
 ]
@@ -128,8 +128,8 @@ def audit_extraction(subs: list[dict]) -> pd.DataFrame:
               if present else "estimated_value: none parseable")
     if "currency" in live:
         print("currency values:", dict(Counter(live["currency"].fillna("∅"))))
-    if "submission_deadline" in live:
-        dl = pd.to_datetime(live["submission_deadline"], errors="coerce", utc=True)
+    if "call_submission_deadline" in live:
+        dl = pd.to_datetime(live["call_submission_deadline"], errors="coerce", utc=True)
         today = pd.Timestamp.now(tz="UTC")
         print(f"submission_deadline: {dl.notna().sum()}/{len(live)} parseable; "
               f"in the PAST: {int((dl < today).sum())}; "
