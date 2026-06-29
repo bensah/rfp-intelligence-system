@@ -78,7 +78,8 @@ _CORE_COLS = ("source_uid,host,classification,status,source_class,access_model,"
               "ingestion_method,has_api,detected_as,hits,"
               "sample_url,sample_title,last_seen,verified_by")
 _EXTRA_COLS = (",opportunity_types,solicitation_types,instrument_types,"
-               "donor_name,donor_code,in_catalogue")
+               "donor_name,donor_code,in_catalogue,listings_url,notes,"
+               "verified_at")
 
 
 def list_rows() -> list[dict]:
@@ -86,22 +87,25 @@ def list_rows() -> list[dict]:
     to the core columns if the migration-037 columns aren't present yet, so the
     registry stays viewable in the meantime."""
     sb = get_client()
-    try:
-        return (sb.table(_TABLE).select(_CORE_COLS + _EXTRA_COLS)
-                .order("hits", desc=True).limit(5000).execute().data or [])
-    except Exception:
+    # Degrade gracefully if a column isn't migrated yet: full → drop listings_url
+    # (migration 061) but keep the 037 extras → bare core. Keeps the table usable
+    # during a migration lag.
+    for cols in (_CORE_COLS + _EXTRA_COLS,
+                 _CORE_COLS + _EXTRA_COLS.replace(",listings_url", ""),
+                 _CORE_COLS):
         try:
-            return (sb.table(_TABLE).select(_CORE_COLS)
+            return (sb.table(_TABLE).select(cols)
                     .order("hits", desc=True).limit(5000).execute().data or [])
-        except Exception as exc:
-            log.debug("source_registry.list_rows failed: %s", exc)
-            return []
+        except Exception:
+            continue
+    log.debug("source_registry.list_rows failed for all column sets")
+    return []
 
 
 _EDITABLE = ("classification", "status", "source_class", "access_model",
              "ingestion_method", "has_api", "opportunity_types",
              "solicitation_types", "instrument_types", "sample_url",
-             "donor_name", "donor_code")
+             "listings_url", "notes", "donor_name", "donor_code")
 
 
 def update_row(host: str, fields: dict, by: str | None = None) -> bool:
@@ -230,7 +234,8 @@ def push_primaries(hosts: list[str], by: str | None = None) -> dict:
                 "donor_name": r.get("donor_name") or host,
                 "donor_code": r.get("donor_code"),
                 "base_url": f"https://{host}/",
-                "rfp_listing_url": r.get("sample_url") or f"https://{host}/",
+                "rfp_listing_url": (r.get("listings_url") or r.get("sample_url")
+                                    or f"https://{host}/"),
                 "scrape_method": _method_for(r.get("ingestion_method")),
                 "access_model": r.get("access_model"),
                 "source_class": r.get("source_class"),
