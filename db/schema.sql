@@ -47,7 +47,7 @@ create table if not exists rfp_submissions (
     opportunity_link            text,
     applicant_role                   text,
     funding_window              text,
-    submission_deadline         date,
+    call_submission_deadline         date,
     expected_award_date         date,
     time_to_award               text,
     call_award_value             numeric,
@@ -110,7 +110,7 @@ create table if not exists rfp_submissions (
 
 create index if not exists rfp_submissions_review_week_idx on rfp_submissions(review_week);
 create index if not exists rfp_submissions_decision_idx     on rfp_submissions(decision);
-create index if not exists rfp_submissions_deadline_idx     on rfp_submissions(submission_deadline);
+create index if not exists rfp_submissions_deadline_idx     on rfp_submissions(call_submission_deadline);
 create index if not exists rfp_submissions_funder_idx       on rfp_submissions(funding_agency);
 create index if not exists rfp_submissions_is_duplicate_idx on rfp_submissions(is_duplicate);
 

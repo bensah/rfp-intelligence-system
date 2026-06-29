@@ -105,16 +105,16 @@ Use = which criterion consumes it.**
 | `donor_submission_portal_url` | donor.`submission_portal_url` | Portal to register on · donor · M5 platform-reg vs `org_donor_registrations` |
 | `call_compliance_flags` | call.`compliance_flags` | Call-stated requirements (LLM) merged into the donor gates · call · M5/M1 |
 
-### 2.6 Relationship · competitiveness · bid-effort  → PREFER-7/8/9
+### 2.6 Relationship · competitiveness · bid-effort  → PREFER-7/8/9   ✅ MIGRATED (migration 059)
 | New name | Old name | Def · Src · Use |
 |---|---|---|
 | `org_donor_registrations` | org.`donor_registrations` | Portals the org is registered on · org · M5 platform, P8 portal familiarity |
 | `org_founding_year` | org.`founding_year` | Year founded → age · org · P8 incumbency (org-only attribute, no call counterpart — by design) |
 | `org_has_bd_team` | settings.`org_has_bd_team` | Has a business-development team · org · P9 feasibility |
 | `org_is_multi_country` / `org_is_grassroot` | derived from `org_entity_type` | P8 multi-country / grassroots match |
-| `don_funders_collaborators` | donor.`funders_collaborators` | Funder's partners/collaborators · donor · P7 shared-collaborator |
-| `don_multi_country_encouraged` | donor.`multi_country_encouraged` | Call encourages multi-country proposals · donor/call · P8 vs `org_is_multi_country` |
-| `cal_submission_deadline` | call.`submission_deadline` | Deadline · call · P9 time-to-deadline |
+| `donor_funders_collaborators` | donor.`funders_collaborators` | Funder's partners/collaborators · donor · P7 shared-collaborator |
+| `donor_multi_country_encouraged` | donor.`multi_country_encouraged` | Call encourages multi-country proposals · donor/call · P8 vs `org_is_multi_country` |
+| `call_submission_deadline` | call.`submission_deadline` | Deadline · call · P9 time-to-deadline |
 
 ---
 
@@ -124,7 +124,8 @@ Use = which criterion consumes it.**
 
 ---
 
-## 4. Non-comparison columns (still role-prefixed, listed for completeness)
+## 4. Non-comparison columns
+> AXIS 7 (workflow/decision/team/award + criterion outputs) KEPT BARE (owner 2026-06-29): `decision`/`stage`/`status` are overloaded as internal return-dict keys + not comparison inputs. AXIS 8 ✅ donor families prefixed donor_* (migration 060): legacy *_fit, per-proposal *_required docs, narrative, contacts. EXCLUDED: system cols, `notes` (shared with rfp), the central `donor` name col.
 - **donor_intel** — narrative/profile (`don_mission`, `don_vision`, `don_strategy_url`, `don_summary_description`, …); the `*_fit` program-area flags → `don_fit_*`; contacts (`don_hq_address`, `don_general_email`, `don_contact_persons`, …); the long `*_required` per-proposal doc family (M&E, ToC, logframe, CVs, budget…) → `don_doc_*` (NOT scored — documented as "easy per-proposal docs").
 - **rfp_submissions** — `wf_*` workflow (`wf_decision`, `wf_decision_date`, `wf_stage`, `wf_progress_status`, `wf_proposal_lead`, `wf_assigned_to`, award/post-award `wf_amount_secured`…); `cal_*` call attributes (`cal_brief_description`, `cal_funding_agency`, `cal_solicitation_type`, `cal_instrument_type`, `cal_funding_window`, `cal_date_posted`, …).
 - **extracted_solicitations** — `cal_*` raw-store mirror (`cal_opportunity_name`, `cal_funder_name`, `cal_deadline`, `cal_grant_amount`, …) + provenance (`field_provenance`, `extraction_confidence` kept).
@@ -141,4 +142,4 @@ Use = which criterion consumes it.**
 ---
 
 ## 6. Execution plan (after sign-off)
-Per-axis, each a single reviewable PR-style step: **(1) Geography ✅ done (migration 054) → (2) Program areas ✅ done (migration 055) → (3) Award/funding ✅ done (migration 056) → (4) Eligibility ✅ done (migration 057) → (5) Compliance ✅ done (migration 058) → (6) Relationship/competitiveness/bid-effort → (7) Workflow/outputs → (8) Non-comparison families.** Each step = `ALTER TABLE RENAME COLUMN` migration (idempotent) + JSON-key migration for org_profile + code update (criteria_derive, matching, features, scan_pipeline, llm_synthesis, views, scripts) + verify, with this doc's per-field one-liners filled in for that axis. ML feature names (`core/features`, `decision_model`) updated in lockstep.
+Per-axis, each a single reviewable PR-style step: **(1) Geography ✅ done (migration 054) → (2) Program areas ✅ done (migration 055) → (3) Award/funding ✅ done (migration 056) → (4) Eligibility ✅ done (migration 057) → (5) Compliance ✅ done (migration 058) → (6) Relationship/competitiveness/bid-effort ✅ done (migration 059) → (7) Workflow/outputs — KEPT BARE (owner: overloaded as internal keys + non-comparison) → (8) Non-comparison donor families ✅ done (migration 060).** Each step = `ALTER TABLE RENAME COLUMN` migration (idempotent) + JSON-key migration for org_profile + code update (criteria_derive, matching, features, scan_pipeline, llm_synthesis, views, scripts) + verify, with this doc's per-field one-liners filled in for that axis. ML feature names (`core/features`, `decision_model`) updated in lockstep.

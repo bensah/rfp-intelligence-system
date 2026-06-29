@@ -275,7 +275,7 @@ def strategic_bid_strength(org: dict, rfp: dict,
 def _org_years(org: dict) -> int | None:
     """Years the org has existed (from founding_year), or None if unknown."""
     from datetime import date as _date
-    fy = _num(org.get("founding_year"))
+    fy = _num(org.get("org_founding_year"))
     return (_date.today().year - int(fy)) if (fy and fy >= 1900) else None
 
 
@@ -610,8 +610,8 @@ def _has_qualifying_partner(org: dict) -> bool:
 def _has_required_partner(org: dict, rfp: dict, donor: dict) -> bool:
     """A partner matching the donor's required partner TYPE and/or COUNTRY (a 'local
     partner' with no explicit country falls back to the call's geographic scope)."""
-    req_types = {t.lower() for t in _as_list(donor.get("required_partner_type")) if t.lower() != "any"}
-    req_ctrys = {c.lower() for c in _as_list(donor.get("required_partner_country")) if c.lower() != "any"}
+    req_types = {t.lower() for t in _as_list(donor.get("donor_required_partner_type")) if t.lower() != "any"}
+    req_ctrys = {c.lower() for c in _as_list(donor.get("donor_required_partner_country")) if c.lower() != "any"}
     if _truthy(donor.get("donor_local_partner_required")) and not req_ctrys:
         req_ctrys = {c.lower() for c in _as_list(rfp.get("call_geographic_scope"))}
     for p in (org.get("partners") or []):
@@ -673,7 +673,7 @@ def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
     if not have:
         return False
     targets = _name_set([donor.get("donor"), donor.get("donor_short"),
-                         rfp.get("funding_agency")] + _as_list(donor.get("aliases")))
+                         rfp.get("funding_agency")] + _as_list(donor.get("donor_aliases")))
     for a in have:
         for b in targets:
             if a and b and (a == b or (len(a) >= 4 and len(b) >= 4 and (a in b or b in a))):
@@ -718,7 +718,7 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     # HARD credential gates — ACTIVE only when the donor/call imposes it; then the org
     # must already hold it (else 0). Undetected → Not sure (excluded).
     _sam_ok = bool(org.get("org_has_sam_uei")) or any(
-        "sam" in str(r).lower() for r in (org.get("donor_registrations") or []))
+        "sam" in str(r).lower() for r in (org.get("org_donor_registrations") or []))
     _hard = [
         ("audited_financials", "Audited financials", _need("donor_audited_financials_required"),
          bool(org.get("org_has_audited_financials"))),
@@ -852,12 +852,12 @@ def _registered_on_portal(org: dict, rfp: dict, donor: dict | None) -> bool:
     """True when the org has registered on the donor's / the call's portal —
     org.donor_registrations (clean hosts) ∩ {donor.submission_portal_url,
     donor.website, rfp link} host."""
-    regs = {clean_portal_url(r) for r in (org.get("donor_registrations") or []) if r}
+    regs = {clean_portal_url(r) for r in (org.get("org_donor_registrations") or []) if r}
     if not regs:
         return False
     d = donor or {}
     portals = {clean_portal_url(x) for x in
-               (d.get("donor_submission_portal_url"), d.get("website"),
+               (d.get("donor_submission_portal_url"), d.get("donor_website"),
                 rfp.get("opportunity_link")) if x}
     return bool(regs & {p for p in portals if p})
 
@@ -880,7 +880,7 @@ def _shared_collaborator(org: dict, donor: dict | None) -> bool:
         return False
     ours = _name_set(org.get("trusted_partners")) | _name_set(org.get("partners"))
     theirs = set()
-    for f in ("funders_collaborators", "key_partners", "implementing_partners",
+    for f in ("donor_funders_collaborators", "key_partners", "implementing_partners",
               "partners", "co_funders"):
         theirs |= _name_set(_as_list(donor.get(f)))
     for a in ours:
@@ -923,14 +923,14 @@ def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) 
         return "Current/past grantee"
     if _shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor):
         return "Some contact"
-    if not hist and not (org.get("donor_registrations") or []) and not (org.get("trusted_partners") or []):
+    if not hist and not (org.get("org_donor_registrations") or []) and not (org.get("trusted_partners") or []):
         return None                    # no relationship data on file → Not sure
     return "None"
 
 
 def derive_bid_effort(rfp: dict, org_settings: dict | None = None) -> str | None:
     bd = str((org_settings or {}).get("org_has_bd_team", "false")).lower() == "true"
-    return bid_effort_label(days_until(rfp.get("submission_deadline")), bd)
+    return bid_effort_label(days_until(rfp.get("call_submission_deadline")), bd)
 
 
 # Real donor_intel requirement columns (migration 020). Values are text
@@ -941,7 +941,7 @@ _COFIN_FLAGS = ("donor_cost_sharing_match_required", "donor_prefinance_required"
 # multi_country_encouraged (migration 053) = the call EXPLICITLY encourages
 # multi-country proposals → matched to org Entity type = Multi-country Organization
 # (org_is_multi_country). global_multi_country_scope kept as a weaker legacy cue.
-_MULTI_FLAGS = ("multi_country_encouraged", "global_multi_country_scope")
+_MULTI_FLAGS = ("donor_multi_country_encouraged", "donor_global_multi_country_scope")
 
 
 def _truthy(v: Any) -> bool:
@@ -976,7 +976,7 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
             strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0)  # 0–5
             score += 1.5 if strength >= 4 else (0.5 if strength >= 2 else -1.0)
 
-    fy = _num(org.get("founding_year"))
+    fy = _num(org.get("org_founding_year"))
     if fy:
         signals += 1
         age = date.today().year - int(fy)
@@ -1003,7 +1003,7 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
         if _flag(donor, _MULTI_FLAGS):
             signals += 1
             score += 1.0 if _truthy(org_settings.get("org_is_multi_country")) else -0.5
-        dhq = (donor.get("hq_country") or "").strip().lower()
+        dhq = (donor.get("donor_hq_country") or "").strip().lower()
         ohq = str(org_settings.get("org_hq_country")
                   or org_settings.get("org_country") or "").strip().lower()
         if dhq and ohq:
@@ -1111,7 +1111,7 @@ def _foreign_pi_partner(org: dict, donor: dict | None) -> bool:
     partner sits OUTSIDE the org's registration countries OR in the donor's HQ
     country (covers donor-country and 3rd-party-OECD PI requirements — CADC case)."""
     regd = {str(c).strip().lower() for c in (org.get("org_registered_countries") or [])}
-    dhq = str((donor or {}).get("hq_country") or "").strip().lower()
+    dhq = str((donor or {}).get("donor_hq_country") or "").strip().lower()
     for p in (org.get("partners") or []):
         if not isinstance(p, dict):
             continue
@@ -1178,7 +1178,7 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     hq_req = [h.lower() for h in _as_list(donor.get("donor_hq_country_required"))]
     detected = bool(hq_req and "any" not in hq_req)
     ohq = str(os.get("org_hq_country") or os.get("org_country") or "").strip().lower()
-    items.append(_qfactor("hq_country", "HQ country", active=detected,
+    items.append(_qfactor("donor_hq_country", "HQ country", active=detected,
                           score=(1.0 if (ohq and ohq in hq_req) else 0.0), hard=True))
 
     # --- D. Registration region — GEO-SCOPE PROXY (owner 2026-06-29). Active when the
@@ -1391,8 +1391,8 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
         from core.matching import _priority_vector
         dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
     strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0) if rfp_keys else 0.0
-    fy = _num(org.get("founding_year"))
-    dhq = (donor.get("hq_country") or "").strip().lower()
+    fy = _num(org.get("org_founding_year"))
+    dhq = (donor.get("donor_hq_country") or "").strip().lower()
     ohq = str(osx.get("org_hq_country") or osx.get("org_country") or "").strip().lower()
     out = [
         _factor("comp_track", "Track record in this program area", "RG",
@@ -1417,7 +1417,7 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
 def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dict]:
     """PREFER-9 sub-factors: time-to-deadline × a business-development team."""
     osx = org_settings or {}
-    days = days_until(rfp.get("submission_deadline"))
+    days = days_until(rfp.get("call_submission_deadline"))
     bd = str(osx.get("org_has_bd_team", "false")).lower() == "true"
     return [
         _factor("bid_time", "Enough time before the deadline (>14d)", "R",

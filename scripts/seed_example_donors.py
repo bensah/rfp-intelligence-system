@@ -36,7 +36,7 @@ def _find_key(rows: list[dict], *needles: str) -> str | None:
     wants = [_norm(n) for n in needles]
     for r in rows:
         hay = " ".join(_norm(r.get(f)) for f in
-                       ("canonical_key", "donor", "donor_short", "aliases"))
+                       ("canonical_key", "donor", "donor_short", "donor_aliases"))
         if any(w and w in hay for w in wants):
             return r["canonical_key"]
     return None
@@ -47,19 +47,19 @@ NIHR = {
     "donor": "National Institute for Health and Care Research",
     "donor_short": "NIHR",
     "donor_category": "Bilaterals / government development agencies",
-    "website": "https://www.nihr.ac.uk/explore-nihr/funding-programmes/global-health.htm",
-    "founded": "2006",
-    "parent_organization": None,   # superseded by funders_collaborators
-    "funders_collaborators": json.dumps(["UK Department of Health and Social Care (DHSC)"]),
-    "general_email": "nihrglobalhealth@nihr.ac.uk",
-    "hq_country": "United Kingdom",
-    "summary_description": (
+    "donor_website": "https://www.nihr.ac.uk/explore-nihr/funding-programmes/global-health.htm",
+    "donor_founded": "2006",
+    "donor_parent_organization": None,   # superseded by funders_collaborators
+    "donor_funders_collaborators": json.dumps(["UK Department of Health and Social Care (DHSC)"]),
+    "donor_general_email": "nihrglobalhealth@nihr.ac.uk",
+    "donor_hq_country": "United Kingdom",
+    "donor_summary_description": (
         "The UK's largest funder of health and care research. Its Global Health "
         "Research (GHR) programme funds LMIC-led or LMIC–UK joint research "
         "partnerships using UK ODA — £734.5M committed since 2016 across the GHR "
         "portfolio (163 active awards, 90 completed, 1,429 researchers trained)."),
-    "mission": "Improve the health and wealth of the nation through research.",
-    "strategic_priorities": (
+    "donor_mission": "Improve the health and wealth of the nation through research.",
+    "donor_strategic_priorities": (
         "Global Health Research (GHR) spans five global-health-security focus areas: "
         "antimicrobial resistance (★ 2026 primary theme — bacterial & fungal "
         "pathogens, WHO list), pandemic preparedness, infectious diseases of poverty, "
@@ -69,17 +69,17 @@ NIHR = {
         "themed call rotates annually; 2026 is the first dedicated AMR theme."),
     "donor_award_low": "£0.5M",
     "donor_award_high": "£5M",
-    "total_annual_funding_global": "~£20–30M (2026 AMR themed call, estimated)",
-    "total_awards": "253 (163 active + 90 completed since 2016)",
-    "total_funding_to_date": "£734.5M (GHR, since 2016)",
-    "current_awards": "163 active",
-    "past_awards": "90 completed since 2016",
-    "funding_mechanism": json.dumps(["Grants"]),
-    "funding_programs": (
+    "donor_total_annual_funding_global": "~£20–30M (2026 AMR themed call, estimated)",
+    "donor_total_awards": "253 (163 active + 90 completed since 2016)",
+    "donor_total_funding_to_date": "£734.5M (GHR, since 2016)",
+    "donor_current_awards": "163 active",
+    "donor_past_awards": "90 completed since 2016",
+    "donor_funding_mechanism": json.dumps(["Grants"]),
+    "donor_funding_programs": (
         "GHR Themed (annual researcher-led calls on rotating health-security themes; "
         "2026 = AMR); Global Professorships; Global Advanced Fellowships; Partnerships "
         "(co-funding with other funders for strategic priorities)."),
-    "funding_tiers_json": json.dumps([
+    "donor_funding_tiers_json": json.dumps([
         {"name": "Band 1", "amount": "£3–5M", "duration": "Up to 5 years",
          "notes": "Experienced multi-country teams with established partnerships; "
                   "formal MSc/PhD posts; 20–25% of budget for research capacity strengthening."},
@@ -110,19 +110,19 @@ NIHR = {
     }),
     "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Southern Asia"]),
-    "in_scope": (
+    "donor_in_scope": (
         "WHO priority bacterial & fungal pathogens (excl. TB); late-phase evaluations "
         "& real-world effectiveness studies; implementation, scale-up & sustainability "
         "evaluation; AMR in vulnerable groups (mother, newborn, child); strengthening "
         "EXISTING AMR surveillance systems; antimicrobial & diagnostic stewardship; "
         "health systems strengthening for AMR; multimorbidity & ageing interactions with AMR."),
-    "out_of_scope": (
+    "donor_out_of_scope": (
         "TB, viral or parasitic AMR; Phase 1 & 2 / proof-of-concept; environmental AMR "
         "without human-health outcomes; social-determinants-only research; setting up "
         "NEW surveillance systems; service delivery without a research question; "
         "humanitarian response; infrastructure or commodity procurement alone; "
         "stand-alone training or technical assistance with no research design."),
-    "selection_criteria": (
+    "donor_selection_criteria": (
         "Estimated committee weighting (high→low): LMIC relevance & demand, "
         "methodological quality, LMIC-led team, impact & sustainability, inclusive "
         "research, capacity strengthening, community engagement (CEI), partnership "
@@ -131,33 +131,33 @@ NIHR = {
         "1–2); equitable partnerships (co-leads, shared authorship); credible policy "
         "pathway (national-plan alignment, demonstrated government demand)."),
     "donor_direct_local_org_eligible": "Yes — via competitive RFP / invited proposal",
-    "active_route_status": "Active",
-    "application_process": "Concept note → full proposal (two-stage)",
-    "funding_cycle": "Annual",
-    "reporting_requirements": "Narrative + financial reports",
-    "application_deadlines": "2026 AMR themed call — Stage 1 outline due 1pm UK time, 8 July 2026 (max 5 A4 pages).",
+    "donor_active_route_status": "Active",
+    "donor_application_process": "Concept note → full proposal (two-stage)",
+    "donor_funding_cycle": "Annual",
+    "donor_reporting_requirements": "Narrative + financial reports",
+    "donor_application_deadlines": "2026 AMR themed call — Stage 1 outline due 1pm UK time, 8 July 2026 (max 5 A4 pages).",
     "donor_submission_portal_url": "https://awardsmanagement.nihr.ac.uk",
-    "recent_activity": "2026: first dedicated AMR themed call (GHR).",
-    "eligibility_notes": (
+    "donor_recent_activity": "2026: first dedicated AMR themed call (GHR).",
+    "donor_eligibility_notes": (
         "Funds LMIC-led or LMIC–UK joint research partnerships — NOT implementers "
         "directly. An eligible LMIC academic/research institution must be the (joint) "
         "lead applicant; all co-applicants register on the NIHR Awards Management "
         "System (AMS). UK academic partners add methodological value, not replace LMIC "
         "leadership. Bands 1 & 2 require a joint lead."),
-    "strategic_fit_notes": (
+    "donor_strategic_fit_notes": (
         "Strongest applicants pair an LMIC academic/research institution as (joint) "
         "lead with implementing organisations and a UK methods/health-economics "
         "partner. Demonstrated national government demand (e.g. a National Action Plan) "
         "and the ability to build on EXISTING surveillance/evidence are decisive. "
         "Multi-country reach and a prior evidence base (baselines, peer-reviewed "
         "outputs) strengthen Band 1–2 bids."),
-    "gaps_risks": (
+    "donor_gaps_risks": (
         "Common disqualifiers: framing work as service delivery / a programme rather "
         "than research; weak or vague methodology (the single most common rejection "
         "reason); no eligible LMIC lead applicant; missing health-economics / cost-"
         "effectiveness expertise; no credible policy-uptake pathway; under-budgeting "
         "research capacity strengthening (must be 20–25% for Bands 1–2)."),
-    "recommended_approach": (
+    "donor_recommended_approach": (
         "Frame the work as implementation research ('an intervention to be evaluated'), "
         "not service delivery. Secure an eligible LMIC academic lead early and register "
         "all co-applicants on NIHR AMS before the deadline. Band 2 (£1.5–3M, up to 4 "
@@ -165,12 +165,12 @@ NIHR = {
         "country early-stage teams; Band 1 once a multi-country track record exists. "
         "Map every work-package output to a national policy objective and embed MSc/PhD "
         "training posts."),
-    "verification_level": "high",
-    "evidence_summary": (
+    "donor_verification_level": "high",
+    "donor_evidence_summary": (
         "Sourced from the NIHR GHR Themed Programme call (Ref 2026/402–404), the NIHR "
         "GHR webinar (12 May 2026), and NIHR portfolio data (April 2026)."),
-    "source_urls": "https://www.nihr.ac.uk/explore-nihr/funding-programmes/global-health.htm\nhttps://awardsmanagement.nihr.ac.uk",
-    "past_projects_json": json.dumps([
+    "donor_source_urls": "https://www.nihr.ac.uk/explore-nihr/funding-programmes/global-health.htm\nhttps://awardsmanagement.nihr.ac.uk",
+    "donor_past_projects_json": json.dumps([
         {"title": "NIHR GHR — AMR Research Units & Groups", "amount": None,
          "currency": None, "year": "2023", "country": "Kenya · Nigeria · India",
          "stage": "Completed",
@@ -192,16 +192,16 @@ NIHR = {
     # priority_program_areas + program_area_ratings, NOT the deprecated *_fit flags.
     "donor_ngo_eligible": "no", "donor_for_profit_eligible": "no",
     "donor_subrecipient_partner_possible": "yes", "donor_grant_route": "yes",
-    "open_call_unsolicited": "yes", "two_stage_application": "yes",
-    "online_portal_submission": "yes", "lmic_africa_focus": "yes",
-    "global_multi_country_scope": "yes", "donor_partnership_mandatory": "yes",
+    "donor_open_call_unsolicited": "yes", "donor_two_stage_application": "yes",
+    "donor_online_portal_submission": "yes", "donor_lmic_africa_focus": "yes",
+    "donor_global_multi_country_scope": "yes", "donor_partnership_mandatory": "yes",
     "donor_local_partner_required": "yes",
-    "concept_note_required": "yes", "full_technical_proposal_required": "yes",
-    "detailed_budget_required": "yes", "budget_narrative_required": "yes",
-    "theory_of_change_required": "yes", "mande_plan_required": "yes",
-    "cvs_key_personnel_required": "yes", "letters_of_support_required": "yes",
-    "ethics_irb_approval_required": "yes", "gender_inclusion_plan_required": "yes",
-    "sustainability_exit_plan_required": "yes", "references_required": "yes",
+    "donor_concept_note_required": "yes", "donor_full_technical_proposal_required": "yes",
+    "donor_detailed_budget_required": "yes", "donor_budget_narrative_required": "yes",
+    "donor_theory_of_change_required": "yes", "donor_mande_plan_required": "yes",
+    "donor_cvs_key_personnel_required": "yes", "donor_letters_of_support_required": "yes",
+    "donor_ethics_irb_approval_required": "yes", "donor_gender_inclusion_plan_required": "yes",
+    "donor_sustainability_exit_plan_required": "yes", "donor_references_required": "yes",
 }
 
 # ── DIV Fund (independent evidence-to-scale fund; div.fund) ───────────────────
@@ -209,11 +209,11 @@ DIV = {
     "donor": "Development Innovation Ventures Fund",
     "donor_short": "DIV Fund",
     "donor_category": "International philanthropies & foundations",
-    "website": "https://www.div.fund",
-    "founded": None,
-    "parent_organization": None,
-    "hq_country": "United States",
-    "summary_description": (
+    "donor_website": "https://www.div.fund",
+    "donor_founded": None,
+    "donor_parent_organization": None,
+    "donor_hq_country": "United States",
+    "donor_summary_description": (
         "An independent, evidence-driven 'discovery engine for global development' — "
         "the DIV Fund fosters, tests and scales innovations that measurably improve "
         "the health and welfare of people living in poverty in low- and middle-income "
@@ -224,10 +224,10 @@ DIV = {
         "Development Innovation Ventures programme, CIO Jeff Brown is a former CEO of "
         "Evidence Action and the Global Innovation Fund, and board chair Michael Kremer "
         "is a 2019 Nobel laureate in economics."),
-    "mission": (
+    "donor_mission": (
         "Foster, test and scale innovative ideas that improve the health and welfare of "
         "people living in poverty around the world."),
-    "strategic_priorities": (
+    "donor_strategic_priorities": (
         "Open to ALL sectors in LMICs — commercial and public-sector solutions alike. "
         "Recent portfolio spans Health, Agriculture/Food Security, Education, Economic "
         "Growth, WASH, Energy, Environment, and Democracy/Rights/Governance. Three "
@@ -235,14 +235,14 @@ DIV = {
         "scale (reaching at least 1M people, with a sustainable financing pathway)."),
     "donor_award_low": "$200K",
     "donor_award_high": "$1.5M",
-    "total_awards": None,
-    "total_funding_to_date": None,
-    "funding_mechanism": json.dumps(["Grants"]),
-    "funding_programs": (
+    "donor_total_awards": None,
+    "donor_total_funding_to_date": None,
+    "donor_funding_mechanism": json.dumps(["Grants"]),
+    "donor_funding_programs": (
         "Open, rolling RFP awarded in three evidence tiers: Stage 1 (Pilot, ≤ $200K), "
         "Stage 2 (Test & position for scale, ≤ $500K — exceptionally ≤ $750K), and "
         "Stage 3 (Transition to scale, ≤ $1.5M); each up to 5 years."),
-    "funding_tiers_json": json.dumps([
+    "donor_funding_tiers_json": json.dumps([
         {"name": "Stage 1 — Pilot", "amount": "≤ $200K", "duration": "Up to 5 years",
          "notes": "Real-world pilots of early-stage innovations (post-prototype); "
                   "robust theory of change and a sketched evaluation plan."},
@@ -307,58 +307,58 @@ DIV = {
     }),
     "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Asia"]),
-    "funders_collaborators": json.dumps([
+    "donor_funders_collaborators": json.dumps([
         "Coefficient Giving", "GiveWell", "Livelihood Impact Fund", "CRI Foundation",
         "Global Development Incubator", "Anonymous Donors"]),
-    "in_scope": (
+    "donor_in_scope": (
         "Innovations ready for real-world testing in LMICs with potential to reach "
         "millions — products, services, policies, programs, delivery models, and "
         "rigorous evidence generation for widely-used approaches that lack evaluation. "
         "Commercial, public-sector and hybrid solutions are all eligible, in any sector."),
-    "out_of_scope": (
+    "donor_out_of_scope": (
         "Lab-stage or idea-stage innovations not yet ready for real-world testing; "
         "applications from individuals (not eligible); solutions with no credible path "
         "to durable scale or cost-effectiveness."),
-    "selection_criteria": (
+    "donor_selection_criteria": (
         "Three core principles: (1) Evidence of impact — causal measurement that the "
         "innovation caused the improvement; (2) Cost-effectiveness — more impact per "
         "dollar than alternatives; (3) Durable scale — a credible path to reach at "
         "least 1M people over ~10 years with sustainable (public, commercial or hybrid) "
         "financing. The evidence tier sets the bar — higher stages need stronger proof."),
-    "active_route_status": "Active",
-    "application_process": "Online portal submission",
-    "funding_cycle": "Rolling / open call (no fixed deadline)",
-    "reporting_requirements": "Milestone / deliverable-based",
-    "application_deadlines": "Rolling / open call — no fixed deadline; apply anytime.",
+    "donor_active_route_status": "Active",
+    "donor_application_process": "Online portal submission",
+    "donor_funding_cycle": "Rolling / open call (no fixed deadline)",
+    "donor_reporting_requirements": "Milestone / deliverable-based",
+    "donor_application_deadlines": "Rolling / open call — no fixed deadline; apply anytime.",
     "donor_submission_portal_url": "https://www.div.fund/apply",
-    "recent_activity": "Actively accepting proposals across all sectors in LMICs (rolling RFP).",
-    "eligibility_notes": (
+    "donor_recent_activity": "Actively accepting proposals across all sectors in LMICs (rolling RFP).",
+    "donor_eligibility_notes": (
         "Open to non-profits, social enterprises, universities, research institutions, "
         "technical-assistance providers, businesses and multi-organisation partnerships. "
         "Individuals are NOT eligible. Technical assistance is also offered to "
         "governments, bilateral / multilateral agencies and philanthropies."),
-    "strategic_fit_notes": (
+    "donor_strategic_fit_notes": (
         "Best-fit applicants bring a discrete, testable innovation with a clear cost-"
         "per-beneficiary and a realistic route to durable scale (public, commercial or "
         "hybrid). Prior causal evidence and an engaged scale partner materially "
         "strengthen applications, particularly at Stage 2–3."),
-    "gaps_risks": (
+    "donor_gaps_risks": (
         "Common disqualifiers: lab/idea-stage innovations not ready for field testing; "
         "no rigorous (causal) evaluation design; no credible cost-effectiveness case; "
         "no realistic path to ~1M people; applications from individuals (ineligible)."),
-    "recommended_approach": (
+    "donor_recommended_approach": (
         "Target Stage 2 (Test, ≤ $500K) with a rigorous causal evaluation (RCT / "
         "quasi-experimental) and a documented cost-per-beneficiary. Use Stage 1 to "
         "establish proof-of-concept; pursue Stage 3 only with existing causal evidence "
         "and a financial-sustainability / scale-integration plan."),
-    "verification_level": "high",
-    "evidence_summary": (
+    "donor_verification_level": "high",
+    "donor_evidence_summary": (
         "Sourced directly from div.fund — the About, RFP (apply/rfp) and Portfolio "
         "pages (2026)."),
-    "source_urls": ("https://www.div.fund/about\nhttps://www.div.fund/apply/rfp\n"
+    "donor_source_urls": ("https://www.div.fund/about\nhttps://www.div.fund/apply/rfp\n"
                     "https://www.div.fund/portfolio"),
     # 9 representative grantees across Stage 1–3 (links point to the DIV portfolio).
-    "past_projects_json": json.dumps([
+    "donor_past_projects_json": json.dumps([
         {"title": "TERI — Riverbank filtration with sensors", "amount": 200000,
          "currency": "USD", "year": "2022", "country": "India", "stage": "Stage 1",
          "description": "Sensor-automated riverbank water filtration for safe water and "
@@ -408,32 +408,32 @@ DIV = {
     # Flags. Program areas now live in priority_program_areas + program_area_ratings.
     "donor_ngo_eligible": "yes", "donor_for_profit_eligible": "yes",
     "donor_subrecipient_partner_possible": "yes", "donor_grant_route": "yes",
-    "open_call_unsolicited": "yes", "online_portal_submission": "yes",
-    "lmic_africa_focus": "yes", "global_multi_country_scope": "yes",
-    "theory_of_change_required": "yes", "mande_plan_required": "yes",
-    "detailed_budget_required": "yes", "donor_partner_mou_required": "yes",
-    "sustainability_exit_plan_required": "yes",
+    "donor_open_call_unsolicited": "yes", "donor_online_portal_submission": "yes",
+    "donor_lmic_africa_focus": "yes", "donor_global_multi_country_scope": "yes",
+    "donor_theory_of_change_required": "yes", "donor_mande_plan_required": "yes",
+    "donor_detailed_budget_required": "yes", "donor_partner_mou_required": "yes",
+    "donor_sustainability_exit_plan_required": "yes",
 }
 
 
 # ── DIV Fund backers / collaborators — added as donor records + partner options ──
 COEFFICIENT_GIVING = {
     "donor": "Coefficient Giving", "donor_short": "Coefficient Giving",
-    "aliases": "Open Philanthropy; Open Phil",
+    "donor_aliases": "Open Philanthropy; Open Phil",
     "donor_category": "International philanthropies & foundations",
-    "website": "https://www.coefficientgiving.org", "founded": "2017",
-    "hq_country": "United States",
-    "summary_description": (
+    "donor_website": "https://www.coefficientgiving.org", "donor_founded": "2017",
+    "donor_hq_country": "United States",
+    "donor_summary_description": (
         "A US philanthropic adviser and funder (formerly Open Philanthropy; rebranded "
         "in 2025) that finds and funds outstanding giving opportunities at scale — "
         ">$4B directed to date. Now operates multi-donor 'funds' other philanthropists "
         "can join; anchor backing from Dustin Moskovitz and Cari Tuna."),
-    "mission": "Give as well as possible — maximise impact per dollar through evidence and reasoning.",
-    "strategic_priorities": (
+    "donor_mission": "Give as well as possible — maximise impact per dollar through evidence and reasoning.",
+    "donor_strategic_priorities": (
         "Program areas are structured as multi-donor funds: global health & wellbeing "
         "(incl. global health R&D and scientific research), pandemic preparedness / "
         "biosecurity, farm animal welfare, and risks from advanced AI."),
-    "funding_mechanism": json.dumps(["Grants", "Program-related investments (equity/debt)"]),
+    "donor_funding_mechanism": json.dumps(["Grants", "Program-related investments (equity/debt)"]),
     "donor_priority_areas": json.dumps([
         "IDs - Pandemic Response", "Cross-cutting - Research", "WCH - Vaccines",
         "Cross-cutting - Diagnostics", "Cross-cutting - Digital Health (+AI)"]),
@@ -443,34 +443,34 @@ COEFFICIENT_GIVING = {
         "Cross-cutting - Digital Health (+AI)": 3}),
     "donor_geographic_scope": json.dumps([
         "Global / worldwide", "Low- and middle-income countries (LMICs)"]),
-    "eligibility_notes": (
+    "donor_eligibility_notes": (
         "Largely proactive / invitation-driven grantmaking sourced through its own "
         "research and trusted recommenders — not a broad open call. Funds nonprofits "
         "and, via program-related investments, some for-profits."),
-    "verification_level": "medium",
-    "evidence_summary": "From coefficientgiving.org and reporting on the 2025 Open Philanthropy → Coefficient Giving rebrand.",
-    "source_urls": "https://www.coefficientgiving.org\nhttps://en.wikipedia.org/wiki/Coefficient_Giving",
-    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "invitation_solicited": "yes",
-    "open_call_unsolicited": "no",
+    "donor_verification_level": "medium",
+    "donor_evidence_summary": "From coefficientgiving.org and reporting on the 2025 Open Philanthropy → Coefficient Giving rebrand.",
+    "donor_source_urls": "https://www.coefficientgiving.org\nhttps://en.wikipedia.org/wiki/Coefficient_Giving",
+    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "donor_invitation_solicited": "yes",
+    "donor_open_call_unsolicited": "no",
 }
 
 GIVEWELL = {
     "donor": "GiveWell", "donor_short": "GiveWell",
     "donor_category": "International philanthropies & foundations",
-    "website": "https://www.givewell.org", "founded": "2007",
-    "hq_country": "United States",
-    "summary_description": (
+    "donor_website": "https://www.givewell.org", "donor_founded": "2007",
+    "donor_hq_country": "United States",
+    "donor_summary_description": (
         "A US nonprofit charity evaluator turned major grantmaker (>$400M/yr). Finds "
         "and funds evidence-backed, highly cost-effective programmes that save or "
         "improve lives in low- and lower-middle-income countries, and publishes all "
         "its research openly. Channels funding via its Top Charities Fund and All "
         "Grants Fund."),
-    "mission": "Find and fund the giving opportunities that save or improve the most lives per dollar.",
-    "strategic_priorities": (
+    "donor_mission": "Find and fund the giving opportunities that save or improve the most lives per dollar.",
+    "donor_strategic_priorities": (
         "Evidence-backed, cost-effective global health & development — malaria (nets, "
         "seasonal chemoprevention), vitamin A supplementation, vaccination / "
         "immunisation incentives, safe water, and maternal & child health."),
-    "funding_mechanism": json.dumps(["Grants"]),
+    "donor_funding_mechanism": json.dumps(["Grants"]),
     "donor_priority_areas": json.dumps([
         "IDs - Malaria & NTDs", "WCH - Nutrition", "WCH - Vaccines",
         "WASH - Safe Water", "WCH - MNCH", "Cross-cutting - Research"]),
@@ -479,31 +479,31 @@ GIVEWELL = {
         "WASH - Safe Water": 4, "WCH - MNCH": 3, "Cross-cutting - Research": 4}),
     "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Asia"]),
-    "eligibility_notes": (
+    "donor_eligibility_notes": (
         "Highly selective and research-led: funds a small set of vetted Top Charities "
         "plus targeted grants that clear a strict cost-effectiveness bar. Not a broad "
         "open call."),
-    "verification_level": "high",
-    "evidence_summary": "From givewell.org (How We Work, Top Charities Fund) and public profiles.",
-    "source_urls": "https://www.givewell.org\nhttps://www.givewell.org/how-we-work",
-    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "invitation_solicited": "yes",
+    "donor_verification_level": "high",
+    "donor_evidence_summary": "From givewell.org (How We Work, Top Charities Fund) and public profiles.",
+    "donor_source_urls": "https://www.givewell.org\nhttps://www.givewell.org/how-we-work",
+    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "donor_invitation_solicited": "yes",
 }
 
 LIVELIHOOD_IMPACT_FUND = {
     "donor": "Livelihood Impact Fund", "donor_short": "LIF",
     "donor_category": "International philanthropies & foundations",
-    "founded": None, "hq_country": "United States",
-    "summary_description": (
+    "donor_founded": None, "donor_hq_country": "United States",
+    "donor_summary_description": (
         "A US grantmaking foundation that helps people in poverty toward self-"
         "sufficiency with skills, capital and opportunities. Backs scalable programmes "
         "delivering at least 5× returns in future earnings per dollar, with multi-year, "
         "trust-based funding focused on measurable income growth. ~$23M granted in 2023 "
         "(64 awards, ~$100K–$300K each); works across Africa (originally Cambodia)."),
-    "mission": "Improve the lives of the global poor by equipping individuals and families for self-sufficiency.",
-    "strategic_priorities": (
+    "donor_mission": "Improve the lives of the global poor by equipping individuals and families for self-sufficiency.",
+    "donor_strategic_priorities": (
         "Livelihoods & economic self-sufficiency — vocational / skills training, jobs, "
         "financial inclusion and economic empowerment, judged on measurable income growth."),
-    "funding_mechanism": json.dumps(["Grants"]),
+    "donor_funding_mechanism": json.dumps(["Grants"]),
     "donor_award_low": "$100K", "donor_award_high": "$300K",
     "donor_priority_areas": json.dumps([
         "ECON - Jobs & Skills", "EDU - Higher Education & TVET",
@@ -514,35 +514,35 @@ LIVELIHOOD_IMPACT_FUND = {
         "GES - Youth Empowerment": 3}),
     "donor_geographic_scope": json.dumps([
         "Sub-Saharan Africa", "Low- and middle-income countries (LMICs)"]),
-    "eligibility_notes": (
+    "donor_eligibility_notes": (
         "Trust-based, multi-year funding to vetted high-impact organisations; strongly "
         "outcomes-focused (income growth, lives transformed). Largely sourced / invited."),
-    "verification_level": "medium",
-    "evidence_summary": "From DevelopmentAid and BFA Global profiles of the Livelihood Impact Fund.",
-    "source_urls": "https://bfaglobal.com/livelihood-impact-fund/",
-    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "invitation_solicited": "yes",
+    "donor_verification_level": "medium",
+    "donor_evidence_summary": "From DevelopmentAid and BFA Global profiles of the Livelihood Impact Fund.",
+    "donor_source_urls": "https://bfaglobal.com/livelihood-impact-fund/",
+    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "donor_invitation_solicited": "yes",
 }
 
 CRI_FOUNDATION = {
     "donor": "CRI Foundation", "donor_short": "CRI",
-    "aliases": "Child Relief International Foundation",
+    "donor_aliases": "Child Relief International Foundation",
     "donor_category": "International philanthropies & foundations",
-    "website": "https://crifoundation.org", "founded": "2006",
-    "hq_country": "United States",
-    "summary_description": (
+    "donor_website": "https://crifoundation.org", "donor_founded": "2006",
+    "donor_hq_country": "United States",
+    "donor_summary_description": (
         "A New York private foundation (formerly Child Relief International Foundation; "
         "founded 2006 by Andrew & Bonnie Weiss; >$135M assets) funding cost-effective, "
         "catalytic work to improve the lives of people in extreme poverty — primarily "
         "health in sub-Saharan Africa. Requires organisations to be evidence-based or "
         "evidence-generating with rigorous evaluation; partners with the DIV Fund "
         "(CRI-DIV collaborative) since 2019."),
-    "mission": "Improve the lives of people in extreme poverty through cost-effective, catalytic, evidence-based giving.",
-    "strategic_priorities": (
+    "donor_mission": "Improve the lives of people in extreme poverty through cost-effective, catalytic, evidence-based giving.",
+    "donor_strategic_priorities": (
         "Cost-effective health in sub-Saharan Africa; evidence-based or evidence-"
         "generating interventions with rigorous evaluation; catalytic, collaborative "
         "funding (e.g. the CRI-DIV collaborative)."),
-    "funding_mechanism": json.dumps(["Grants"]),
-    "funders_collaborators": json.dumps(["Development Innovation Ventures Fund"]),
+    "donor_funding_mechanism": json.dumps(["Grants"]),
+    "donor_funders_collaborators": json.dumps(["Development Innovation Ventures Fund"]),
     "donor_priority_areas": json.dumps([
         "Cross-cutting - Research", "IDs - Malaria & NTDs", "WCH - MNCH",
         "HSS - Health Workforce", "WCH - Nutrition"]),
@@ -551,35 +551,35 @@ CRI_FOUNDATION = {
         "HSS - Health Workforce": 3, "WCH - Nutrition": 3}),
     "donor_geographic_scope": json.dumps([
         "Sub-Saharan Africa", "Low- and middle-income countries (LMICs)"]),
-    "eligibility_notes": (
+    "donor_eligibility_notes": (
         "Funds evidence-based or evidence-generating organisations with rigorous "
         "evaluation frameworks; emphasis on cost-effective, catalytic opportunities, "
         "often through collaboratives (e.g. with the DIV Fund)."),
-    "verification_level": "medium",
-    "evidence_summary": "From crifoundation.org (Collaboratives, CRI-DIV) and public foundation profiles.",
-    "source_urls": "https://crifoundation.org\nhttps://crifoundation.org/cri-div/",
-    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "prior_track_record_required": "yes",
-    "invitation_solicited": "yes",
+    "donor_verification_level": "medium",
+    "donor_evidence_summary": "From crifoundation.org (Collaboratives, CRI-DIV) and public foundation profiles.",
+    "donor_source_urls": "https://crifoundation.org\nhttps://crifoundation.org/cri-div/",
+    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "donor_prior_track_record_required": "yes",
+    "donor_invitation_solicited": "yes",
 }
 
 GLOBAL_DEV_INCUBATOR = {
     "donor": "Global Development Incubator", "donor_short": "GDI",
     "donor_category": "International philanthropies & foundations",
-    "website": "https://globaldevincubator.org", "founded": "2007",
-    "hq_country": "United States",
-    "summary_description": (
+    "donor_website": "https://globaldevincubator.org", "donor_founded": "2007",
+    "donor_hq_country": "United States",
+    "donor_summary_description": (
         "A Washington DC nonprofit incubator (founded 2007) that brings together ideas, "
         "leaders and capital to build and scale social-impact ventures. Runs a 12–36 "
         "month incubation (Discover → Design → Build → Exit) and has shaped 40+ ventures "
         "across health, agriculture, inclusive finance, climate, youth employment and "
         "economic inclusion in LMICs. Acts as an intermediary / venture-builder more "
         "than a pure grantmaker."),
-    "mission": "Bring together ideas, leaders and capital to build and scale the next generation of social solutions.",
-    "strategic_priorities": (
+    "donor_mission": "Bring together ideas, leaders and capital to build and scale the next generation of social solutions.",
+    "donor_strategic_priorities": (
         "Builds & scales ventures across digital health, inclusive / smallholder "
         "finance, agriculture, climate & ecosystems, youth employment, economic "
         "inclusion and MSME development."),
-    "funding_mechanism": json.dumps(["Technical assistance", "Co-financing", "Grants"]),
+    "donor_funding_mechanism": json.dumps(["Technical assistance", "Co-financing", "Grants"]),
     "donor_priority_areas": json.dumps([
         "Cross-cutting - Digital Health (+AI)", "ECON - Financial Inclusion",
         "AGRI - Smallholder Productivity", "ECON - Jobs & Skills",
@@ -590,13 +590,13 @@ GLOBAL_DEV_INCUBATOR = {
         "ENV - Climate Adaptation & Resilience": 3, "HSS - Health Workforce": 3}),
     "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa"]),
-    "eligibility_notes": (
+    "donor_eligibility_notes": (
         "Operates as an incubator / intermediary — partners with funders and "
         "entrepreneurs to build ventures; engagement is selective and relationship-"
         "driven rather than an open grant call."),
-    "verification_level": "medium",
-    "evidence_summary": "From globaldevincubator.org and the Devex organisation profile.",
-    "source_urls": "https://globaldevincubator.org\nhttps://www.devex.com/organizations/global-development-incubator-gdi-56305",
+    "donor_verification_level": "medium",
+    "donor_evidence_summary": "From globaldevincubator.org and the Devex organisation profile.",
+    "donor_source_urls": "https://globaldevincubator.org\nhttps://www.devex.com/organizations/global-development-incubator-gdi-56305",
     "donor_ngo_eligible": "yes", "donor_subrecipient_partner_possible": "yes", "donor_grant_route": "yes",
 }
 
