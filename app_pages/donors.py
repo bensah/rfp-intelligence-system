@@ -98,8 +98,8 @@ _ACR = {
 
 _LABEL_OVERRIDES = {
     "donor_type": "Donor type (descriptive)",
-    "is_dual_role_implementer": "Also an implementer that publishes calls?",
-    "opportunity_listing_urls": "Opportunity listing URL(s)",
+    "donor_is_dual_role_implementer": "Also an implementer that publishes calls?",
+    "donor_opportunity_listing_urls": "Opportunity listing URL(s)",
     "donor_local_board_required": "Local board members required",
     # MUST-5 cofinancing & compliance (migration 052). The portal URL reuses the
     # existing submission_portal_url (matched against the org's donor_registrations).
@@ -107,32 +107,32 @@ _LABEL_OVERRIDES = {
     "donor_funding_platform_registration_required": "Funding-platform registration required",
     # PREFER-8 competitiveness (migration 053)
     "donor_multi_country_encouraged": "Encourages multi-country proposals",
-    "summary_description": "Summary",
+    "donor_summary_description": "Summary",
     "donor_values": "Values",
-    "strategy_url": "Strategy (URL)",
-    "projected_budget_period": "Budget period",
+    "donor_strategy_url": "Strategy (URL)",
+    "donor_projected_budget_period": "Budget period",
     # Strategic-intelligence fields (migration 029)
-    "strategic_priorities": "Strategic priorities",
-    "in_scope": "What they fund (in scope)",
-    "out_of_scope": "What they don't fund (out of scope)",
-    "selection_criteria": "Selection / evaluation criteria",
-    "funding_programs": "Funding programs / windows",
-    "eligibility_notes": "Who can apply / lead",
-    "application_deadlines": "Key dates / deadlines",
+    "donor_strategic_priorities": "Strategic priorities",
+    "donor_in_scope": "What they fund (in scope)",
+    "donor_out_of_scope": "What they don't fund (out of scope)",
+    "donor_selection_criteria": "Selection / evaluation criteria",
+    "donor_funding_programs": "Funding programs / windows",
+    "donor_eligibility_notes": "Who can apply / lead",
+    "donor_application_deadlines": "Key dates / deadlines",
     "donor_submission_portal_url": "Submission portal (URL)",
-    "strategic_fit_notes": "Ideal applicant & what this funder rewards",
-    "gaps_risks": "Common pitfalls & disqualifiers",
-    "recommended_approach": "How to position a competitive application",
+    "donor_strategic_fit_notes": "Ideal applicant & what this funder rewards",
+    "donor_gaps_risks": "Common pitfalls & disqualifiers",
+    "donor_recommended_approach": "How to position a competitive application",
     "donor_funders_collaborators": "Funders & Collaborators",
     "donor_hq_country_required": "Applicant must be HQ'd in",
     "org_stage_required": "Org stage required",
     "donor_max_annual_budget": "Max annual budget (eligibility ceiling)",
     "donor_min_track_record": "Min largest grant managed (floor)",
-    "required_partner_type": "Required partner type",
-    "required_partner_country": "Required partner country",
-    "max_request_pct_of_budget": "Max request (% of project budget)",
+    "donor_required_partner_type": "Required partner type",
+    "donor_required_partner_country": "Required partner country",
+    "donor_max_request_pct_of_budget": "Max request (% of project budget)",
     "donor_min_cofinancing_secured_pct": "Min co-financing secured (%)",
-    "independent_entity_required": "Independent entity required (no INGO affiliates)",
+    "donor_independent_entity_required": "Independent entity required (no INGO affiliates)",
     "donor_welcome_registration_required": "Pre-registration / senior-leadership approval required",
     # MUST-1 rework (migration 049)
     "donor_entity_type_required": "Entity type required",
@@ -339,45 +339,45 @@ def _normalize_category(raw) -> str:
 _META = {"id", "updated_at", "created_at", "canonical_key", "category_clean",
          "online_source_check_status", "last_checked", "row_type",
          "award_size_basis"}
-_SHORT_TEXT = ["donor", "donor_short", "donor_category", "donor_type", "website",
+_SHORT_TEXT = ["donor", "donor_short", "donor_category", "donor_type", "donor_website",
                "donor_award_low", "donor_award_high",
-               "total_annual_funding_global", "funding_mechanism"]
-_LONG_TEXT = ["aliases", "donor_geographic_scope", "active_route_status",
+               "donor_total_annual_funding_global", "donor_funding_mechanism"]
+_LONG_TEXT = ["donor_aliases", "donor_geographic_scope", "donor_active_route_status",
               "donor_direct_local_org_eligible", "donor_priority_areas",
-              "verification_caveats", "evidence_summary", "notes",
-              "source_urls", "opportunity_listing_urls"]
+              "donor_verification_caveats", "donor_evidence_summary", "notes",
+              "donor_source_urls", "donor_opportunity_listing_urls"]
 # Institutional / official donor contact (one set per donor — the donor_intel
 # row). The many focal-person contacts live in the donor_contacts table.
-_CONTACT = ["hq_address", "hq_country", "main_phone", "general_email",
-            "donor_linkedin_url", "other_profile_urls",
-            "contact_persons", "contact_emails", "contact_phones",
-            "contact_linkedin_urls"]
+_CONTACT = ["donor_hq_address", "donor_hq_country", "donor_main_phone", "donor_general_email",
+            "donor_linkedin_url", "donor_other_profile_urls",
+            "donor_contact_persons", "donor_contact_emails", "donor_contact_phones",
+            "donor_contact_linkedin_urls"]
 _CHOICE = {
     "donor_prefinance_required": ["", "none", "partial", "reimbursement_only"],
-    "verification_level": ["", "high", "medium", "low"],
-    "is_dual_role_implementer": ["", "yes", "no"],
+    "donor_verification_level": ["", "high", "medium", "low"],
+    "donor_is_dual_role_implementer": ["", "yes", "no"],
 }
 # Qualitative donor-intelligence profile (added to the edit form, migration 025).
 # Listed here so these columns are treated as free text — NOT flags — once they
 # exist in the table, and so the View / Share / PDF summaries include them.
-_PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values",
-            "strategy_url", "total_awards", "total_funding_to_date",
-            "current_awards", "past_awards", "projected_budget",
-            "projected_budget_period", "funding_cycle", "recent_activity",
-            "application_process", "reporting_requirements",
-            "past_projects_json",
+_PROFILE = ["donor_founded", "donor_summary_description", "donor_mission", "donor_vision", "donor_values",
+            "donor_strategy_url", "donor_total_awards", "donor_total_funding_to_date",
+            "donor_current_awards", "donor_past_awards", "donor_projected_budget",
+            "donor_projected_budget_period", "donor_funding_cycle", "donor_recent_activity",
+            "donor_application_process", "donor_reporting_requirements",
+            "donor_past_projects_json",
             # Strategic-intelligence fields (migration 029) — narrative + JSON.
             # Listed here so they're treated as text (not flags) and persist /
             # surface in the view, share and PDF.
-            "strategic_priorities", "in_scope",
-            "out_of_scope", "selection_criteria", "funding_programs",
-            "funding_tiers_json", "eligibility_notes", "application_deadlines",
-            "donor_submission_portal_url", "strategic_fit_notes", "gaps_risks",
-            "recommended_approach", "donor_priority_ratings", "donor_funders_collaborators",
+            "donor_strategic_priorities", "donor_in_scope",
+            "donor_out_of_scope", "donor_selection_criteria", "donor_funding_programs",
+            "donor_funding_tiers_json", "donor_eligibility_notes", "donor_application_deadlines",
+            "donor_submission_portal_url", "donor_strategic_fit_notes", "donor_gaps_risks",
+            "donor_recommended_approach", "donor_priority_ratings", "donor_funders_collaborators",
             # Hard eligibility conditions (migration 032) — VALUED (not flags).
             "donor_hq_country_required", "org_stage_required", "donor_max_annual_budget",
-            "donor_min_track_record", "required_partner_type", "required_partner_country",
-            "max_request_pct_of_budget", "donor_min_cofinancing_secured_pct",
+            "donor_min_track_record", "donor_required_partner_type", "donor_required_partner_country",
+            "donor_max_request_pct_of_budget", "donor_min_cofinancing_secured_pct",
             # MUST-1 rework conditions (migration 049) — VALUED text, not flags.
             "donor_entity_type_required", "donor_registration_region",
             "donor_requires_pi", "donor_pi_country_scope", "donor_max_prior_grant",
@@ -386,7 +386,7 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
 # not shown in View, not in share/PDF). verification_level already captures data
 # confidence, so the free-text "verification caveats" was redundant + confusing.
 # funded_geographies is an unused column (the geo field is donor_geographic_scope).
-_HIDDEN_FIELDS = {"verification_caveats", "funded_geographies"}
+_HIDDEN_FIELDS = {"donor_verification_caveats", "donor_funded_geographies"}
 
 _NON_FLAG = (set(_META) | set(_SHORT_TEXT) | set(_LONG_TEXT)
              | set(_CHOICE) | set(_CONTACT) | set(_PROFILE) | _HIDDEN_FIELDS)
@@ -395,8 +395,8 @@ _FLAGS = [c for c in df.columns if c not in _NON_FLAG]
 _ELIG = [
     "donor_ngo_eligible", "donor_for_profit_eligible", "donor_govt_or_ccm_route_required",
     "donor_grant_route", "donor_procurement_tender_route", "donor_loan_dev_finance_route",
-    "donor_subrecipient_partner_possible", "open_call_unsolicited",
-    "invitation_solicited", "two_stage_application", "online_portal_submission",
+    "donor_subrecipient_partner_possible", "donor_open_call_unsolicited",
+    "donor_invitation_solicited", "donor_two_stage_application", "donor_online_portal_submission",
     "donor_lmic_africa_focus", "donor_global_multi_country_scope",
 ]
 _FIT = [c for c in _FLAGS if c.endswith("_fit")]
@@ -495,10 +495,10 @@ def _cell(v):
 
 # Fields stored as JSON lists — rendered as comma lists in share/export.
 _LIST_FIELDS = {"donor_geographic_scope", "donor_priority_areas",
-                "funding_mechanism", "donor_funders_collaborators",
+                "donor_funding_mechanism", "donor_funders_collaborators",
                 # MUST-1 multi-selects (migration 049) — stored as JSON lists.
-                "donor_hq_country_required", "donor_registration_region", "required_partner_type",
-                "required_partner_country"}
+                "donor_hq_country_required", "donor_registration_region", "donor_required_partner_type",
+                "donor_required_partner_country"}
 
 # Unified partner/funder options for the "Funders & collaborators" picker — the
 # shared partner vocabulary merged with the donor catalog (so any catalogued donor
@@ -528,33 +528,33 @@ def _json_dicts(v) -> list[dict]:
 
 def _past_projects(row: dict) -> list[dict]:
     """Parsed past-projects list (only entries with a title), or []."""
-    return [p for p in _json_dicts(row.get("past_projects_json")) if p.get("title")]
+    return [p for p in _json_dicts(row.get("donor_past_projects_json")) if p.get("title")]
 
 
 def _funding_tiers(row: dict) -> list[dict]:
     """Parsed funding-tiers list (only entries with a name), or []."""
-    return [t for t in _json_dicts(row.get("funding_tiers_json")) if t.get("name")]
+    return [t for t in _json_dicts(row.get("donor_funding_tiers_json")) if t.get("name")]
 
 
 # Fields that count toward the data-completeness score (every donor-facing field).
 # JSON/list fields count as documented when non-empty; flags count when explicitly
 # yes/no (blank = undocumented). donor_short is excluded (optional acronym).
 _COMPLETENESS_TEXT = [
-    "donor", "donor_category", "website", "founded",
-    "general_email", "main_phone", "hq_country", "hq_address",
-    "donor_linkedin_url", "other_profile_urls", "summary_description", "mission",
-    "vision", "donor_values", "strategic_priorities", "strategy_url",
-    "donor_award_low", "donor_award_high", "total_annual_funding_global",
-    "total_awards", "total_funding_to_date", "current_awards", "past_awards",
-    "projected_budget", "funding_programs", "in_scope", "out_of_scope",
-    "donor_direct_local_org_eligible", "active_route_status", "donor_prefinance_required",
-    "application_process", "funding_cycle", "reporting_requirements",
-    "application_deadlines", "donor_submission_portal_url", "recent_activity",
-    "eligibility_notes", "selection_criteria", "strategic_fit_notes",
-    "gaps_risks", "recommended_approach", "verification_level",
-    "evidence_summary", "notes", "source_urls",
+    "donor", "donor_category", "donor_website", "donor_founded",
+    "donor_general_email", "donor_main_phone", "donor_hq_country", "donor_hq_address",
+    "donor_linkedin_url", "donor_other_profile_urls", "donor_summary_description", "donor_mission",
+    "donor_vision", "donor_values", "donor_strategic_priorities", "donor_strategy_url",
+    "donor_award_low", "donor_award_high", "donor_total_annual_funding_global",
+    "donor_total_awards", "donor_total_funding_to_date", "donor_current_awards", "donor_past_awards",
+    "donor_projected_budget", "donor_funding_programs", "donor_in_scope", "donor_out_of_scope",
+    "donor_direct_local_org_eligible", "donor_active_route_status", "donor_prefinance_required",
+    "donor_application_process", "donor_funding_cycle", "donor_reporting_requirements",
+    "donor_application_deadlines", "donor_submission_portal_url", "donor_recent_activity",
+    "donor_eligibility_notes", "donor_selection_criteria", "donor_strategic_fit_notes",
+    "donor_gaps_risks", "donor_recommended_approach", "donor_verification_level",
+    "donor_evidence_summary", "notes", "donor_source_urls",
 ]
-_COMPLETENESS_JSON = ["funding_tiers_json", "past_projects_json"]
+_COMPLETENESS_JSON = ["donor_funding_tiers_json", "donor_past_projects_json"]
 
 
 def _completeness(row: dict) -> tuple[int, int, int]:
@@ -704,42 +704,42 @@ def _summary_lines(row: dict) -> list[str]:
         ("Category", _cat if _cat != "(uncategorised)" else None),
         ("Donor type", _disp(row.get("donor_type"))),
         ("Also an implementer that publishes calls",
-         _disp(row.get("is_dual_role_implementer"))),
-        ("Founded", _disp(row.get("founded"))),
-        ("Website", _disp(row.get("website"))),
-        ("HQ country", _disp(row.get("hq_country"))),
-        ("HQ address", _disp(row.get("hq_address"))),
-        ("General email", _disp(row.get("general_email"))),
-        ("Main phone", _disp(row.get("main_phone"))),
+         _disp(row.get("donor_is_dual_role_implementer"))),
+        ("Founded", _disp(row.get("donor_founded"))),
+        ("Website", _disp(row.get("donor_website"))),
+        ("HQ country", _disp(row.get("donor_hq_country"))),
+        ("HQ address", _disp(row.get("donor_hq_address"))),
+        ("General email", _disp(row.get("donor_general_email"))),
+        ("Main phone", _disp(row.get("donor_main_phone"))),
         ("LinkedIn", _disp(row.get("donor_linkedin_url"))),
-        ("Other profiles", _disp(row.get("other_profile_urls"))),
+        ("Other profiles", _disp(row.get("donor_other_profile_urls"))),
     ])
     section("About & strategy", [
-        ("Summary", _disp(row.get("summary_description"))),
-        ("Mission", _disp(row.get("mission"))),
-        ("Vision", _disp(row.get("vision"))),
+        ("Summary", _disp(row.get("donor_summary_description"))),
+        ("Mission", _disp(row.get("donor_mission"))),
+        ("Vision", _disp(row.get("donor_vision"))),
         ("Values", _disp(row.get("donor_values"))),
-        (_label("strategic_priorities"), _disp(row.get("strategic_priorities"))),
-        ("Strategy (URL)", _disp(row.get("strategy_url"))),
+        (_label("donor_strategic_priorities"), _disp(row.get("donor_strategic_priorities"))),
+        ("Strategy (URL)", _disp(row.get("donor_strategy_url"))),
     ])
 
     _lo, _hi = _disp(row.get("donor_award_low")), _disp(row.get("donor_award_high"))
     _award = f"{_lo or '—'} – {_hi or '—'}" if (_lo or _hi) else None
-    _pb = _disp(row.get("projected_budget"))
+    _pb = _disp(row.get("donor_projected_budget"))
     if _pb:
-        _per = _disp(row.get("projected_budget_period"))
+        _per = _disp(row.get("donor_projected_budget_period"))
         _pb = f"{_pb} ({_per})" if _per else _pb
     section("Funding", [
         ("Award range", _award),
-        ("Annual funding", _disp(row.get("total_annual_funding_global"))),
-        ("Total awards", _disp(row.get("total_awards"))),
-        ("Total funding to date", _disp(row.get("total_funding_to_date"))),
-        ("Current awards", _disp(row.get("current_awards"))),
-        ("Past awards", _disp(row.get("past_awards"))),
+        ("Annual funding", _disp(row.get("donor_total_annual_funding_global"))),
+        ("Total awards", _disp(row.get("donor_total_awards"))),
+        ("Total funding to date", _disp(row.get("donor_total_funding_to_date"))),
+        ("Current awards", _disp(row.get("donor_current_awards"))),
+        ("Past awards", _disp(row.get("donor_past_awards"))),
         ("Projected budget", _pb),
-        ("Funding mechanism", _disp_field(row, "funding_mechanism")),
+        ("Funding mechanism", _disp_field(row, "donor_funding_mechanism")),
         (_label("donor_funders_collaborators"), _disp_field(row, "donor_funders_collaborators")),
-        (_label("funding_programs"), _disp(row.get("funding_programs"))),
+        (_label("donor_funding_programs"), _disp(row.get("donor_funding_programs"))),
     ])
     _tiers = _funding_tiers(row)
     if _tiers:
@@ -756,8 +756,8 @@ def _summary_lines(row: dict) -> list[str]:
         _pa_ratings_s = {}
     _scope_pairs = [(lbl, v) for lbl, v in (
         ("Funding scope — geographies", listf("donor_geographic_scope")),
-        (_label("in_scope"), _disp(row.get("in_scope"))),
-        (_label("out_of_scope"), _disp(row.get("out_of_scope"))),
+        (_label("donor_in_scope"), _disp(row.get("donor_in_scope"))),
+        (_label("donor_out_of_scope"), _disp(row.get("donor_out_of_scope"))),
     ) if v]
     if _areas_s or _scope_pairs:
         lines.append("Scope & fit")
@@ -773,23 +773,23 @@ def _summary_lines(row: dict) -> list[str]:
         ("Eligibility & routes", flags("Eligibility & routes")),
         ("Requirements & compliance", flags("Requirements & compliance")),
         ("Direct local org eligible", _disp(row.get("donor_direct_local_org_eligible"))),
-        ("Route status", _disp(row.get("active_route_status"))),
+        ("Route status", _disp(row.get("donor_active_route_status"))),
         ("Prefinance", choice("donor_prefinance_required")),
-        ("Application process", _disp(row.get("application_process"))),
-        ("Funding cycle", _disp(row.get("funding_cycle"))),
-        ("Reporting requirements", _disp(row.get("reporting_requirements"))),
-        (_label("application_deadlines"), _disp(row.get("application_deadlines"))),
+        ("Application process", _disp(row.get("donor_application_process"))),
+        ("Funding cycle", _disp(row.get("donor_funding_cycle"))),
+        ("Reporting requirements", _disp(row.get("donor_reporting_requirements"))),
+        (_label("donor_application_deadlines"), _disp(row.get("donor_application_deadlines"))),
         (_label("donor_submission_portal_url"), _disp(row.get("donor_submission_portal_url"))),
-        ("Recent activity", _disp(row.get("recent_activity"))),
-        (_label("eligibility_notes"), _disp(row.get("eligibility_notes"))),
-        (_label("selection_criteria"), _disp(row.get("selection_criteria"))),
+        ("Recent activity", _disp(row.get("donor_recent_activity"))),
+        (_label("donor_eligibility_notes"), _disp(row.get("donor_eligibility_notes"))),
+        (_label("donor_selection_criteria"), _disp(row.get("donor_selection_criteria"))),
         (_label("donor_hq_country_required"), listf("donor_hq_country_required")),
         (_label("org_stage_required"), _disp(row.get("org_stage_required"))),
         (_label("donor_max_annual_budget"), _disp_field(row, "donor_max_annual_budget")),
         (_label("donor_min_track_record"), _disp_field(row, "donor_min_track_record")),
-        (_label("required_partner_type"), listf("required_partner_type")),
-        (_label("required_partner_country"), listf("required_partner_country")),
-        (_label("max_request_pct_of_budget"), _disp(row.get("max_request_pct_of_budget"))),
+        (_label("donor_required_partner_type"), listf("donor_required_partner_type")),
+        (_label("donor_required_partner_country"), listf("donor_required_partner_country")),
+        (_label("donor_max_request_pct_of_budget"), _disp(row.get("donor_max_request_pct_of_budget"))),
         (_label("donor_min_cofinancing_secured_pct"), _disp(row.get("donor_min_cofinancing_secured_pct"))),
         (_label("donor_entity_type_required"), choice("donor_entity_type_required")),
         (_label("donor_registration_region"), listf("donor_registration_region")),
@@ -806,17 +806,17 @@ def _summary_lines(row: dict) -> list[str]:
         lines.append("")
 
     section("Strategic guidance", [
-        (_label("strategic_fit_notes"), _disp(row.get("strategic_fit_notes"))),
-        (_label("gaps_risks"), _disp(row.get("gaps_risks"))),
-        (_label("recommended_approach"), _disp(row.get("recommended_approach"))),
+        (_label("donor_strategic_fit_notes"), _disp(row.get("donor_strategic_fit_notes"))),
+        (_label("donor_gaps_risks"), _disp(row.get("donor_gaps_risks"))),
+        (_label("donor_recommended_approach"), _disp(row.get("donor_recommended_approach"))),
     ])
     section("Sources & data quality", [
-        ("Verification", choice("verification_level")),
-        ("Evidence summary", _disp(row.get("evidence_summary"))),
+        ("Verification", choice("donor_verification_level")),
+        ("Evidence summary", _disp(row.get("donor_evidence_summary"))),
         ("Notes", _disp(row.get("notes"))),
-        ("Aliases", _disp(row.get("aliases"))),
-        ("Source URLs", _disp(row.get("source_urls"))),
-        ("Opportunity listing URL(s)", _disp(row.get("opportunity_listing_urls"))),
+        ("Aliases", _disp(row.get("donor_aliases"))),
+        ("Source URLs", _disp(row.get("donor_source_urls"))),
+        ("Opportunity listing URL(s)", _disp(row.get("donor_opportunity_listing_urls"))),
     ])
     return lines
 
@@ -970,33 +970,33 @@ def _edit_dialog(row: dict) -> None:
             "Donor category", _cat_opts,
             index=(_cat_opts.index(_cur_cat) if _cur_cat in _cat_opts else 0),
             key=f"cat_{ck}")
-        edited["website"] = c4.text_input("Website", row.get("website") or "", key=f"website_{ck}")
+        edited["donor_website"] = c4.text_input("Website", row.get("donor_website") or "", key=f"website_{ck}")
         # Donor type (descriptive — complements donor_category) + dual-role flag.
         dt1, dt2 = st.columns(2)
         edited["donor_type"] = dt1.text_input(
             _label("donor_type"), row.get("donor_type") or "", key=f"donor_type_{ck}",
             help="Richer descriptive label, e.g. 'Private Foundation & Philanthropic "
                  "Organization'. Complements (doesn't replace) Donor category.")
-        _dual_opts = _CHOICE["is_dual_role_implementer"]
-        _cur_dual = str(row.get("is_dual_role_implementer") or "").strip().lower()
-        edited["is_dual_role_implementer"] = dt2.selectbox(
-            _label("is_dual_role_implementer"), _dual_opts,
+        _dual_opts = _CHOICE["donor_is_dual_role_implementer"]
+        _cur_dual = str(row.get("donor_is_dual_role_implementer") or "").strip().lower()
+        edited["donor_is_dual_role_implementer"] = dt2.selectbox(
+            _label("donor_is_dual_role_implementer"), _dual_opts,
             index=_dual_opts.index(_cur_dual) if _cur_dual in _dual_opts else 0,
             key=f"dualrole_{ck}",
             help="Yes for implementers (CHAI, PATH, Sightsavers…) that ALSO publish "
                  "their own calls / sub-grants.")
-        edited["opportunity_listing_urls"] = st.text_area(
-            _label("opportunity_listing_urls"), row.get("opportunity_listing_urls") or "",
+        edited["donor_opportunity_listing_urls"] = st.text_area(
+            _label("donor_opportunity_listing_urls"), row.get("donor_opportunity_listing_urls") or "",
             height=60, key=f"oppurls_{ck}",
             help="The donor's RFP / tender / grant LISTING page(s) — pipe-separated. "
                  "These feed the scan catalogue (Sources) via the listing-URL sync.")
         # Founded — year dropdown (append a legacy value not in the list so an
         # existing donor's value is never dropped on save).
-        _cur_founded = str(row.get("founded") or "").strip()
+        _cur_founded = str(row.get("donor_founded") or "").strip()
         _yr_opts = (_YEAR_OPTIONS if _cur_founded in _YEAR_OPTIONS
                     else _YEAR_OPTIONS + [_cur_founded])
         c5, _c6 = st.columns(2)
-        edited["founded"] = c5.selectbox(
+        edited["donor_founded"] = c5.selectbox(
             "Founded (year)", _yr_opts, index=_yr_opts.index(_cur_founded),
             key=f"founded_{ck}", help="Year the organisation was established.")
         # Funders & Collaborators — the funders/partners behind or alongside this
@@ -1012,79 +1012,79 @@ def _edit_dialog(row: dict) -> None:
 
         st.markdown("**Official / institutional contact**")
         ic1, ic2 = st.columns(2)
-        edited["general_email"] = ic1.text_input("General email", row.get("general_email") or "",
+        edited["donor_general_email"] = ic1.text_input("General email", row.get("donor_general_email") or "",
                                                  key=f"general_email_{ck}")
-        edited["main_phone"] = ic2.text_input("Main phone", row.get("main_phone") or "",
+        edited["donor_main_phone"] = ic2.text_input("Main phone", row.get("donor_main_phone") or "",
                                               key=f"main_phone_{ck}")
         ic3, ic4 = st.columns(2)
-        _cur_hq = str(row.get("hq_country") or "").strip()
+        _cur_hq = str(row.get("donor_hq_country") or "").strip()
         _hq_opts = (_HQ_COUNTRY_OPTIONS if _cur_hq in _HQ_COUNTRY_OPTIONS
                     else _HQ_COUNTRY_OPTIONS + [_cur_hq])
-        edited["hq_country"] = ic3.selectbox("HQ country", _hq_opts,
+        edited["donor_hq_country"] = ic3.selectbox("HQ country", _hq_opts,
                                              index=_hq_opts.index(_cur_hq), key=f"hq_country_{ck}")
         edited["donor_linkedin_url"] = ic4.text_input("Donor LinkedIn",
                                                       row.get("donor_linkedin_url") or "",
                                                       key=f"donor_linkedin_url_{ck}")
-        edited["hq_address"] = st.text_area("HQ address", row.get("hq_address") or "",
+        edited["donor_hq_address"] = st.text_area("HQ address", row.get("donor_hq_address") or "",
                                             height=60, key=f"hq_address_{ck}")
-        edited["other_profile_urls"] = st.text_area("Other profile URLs",
-                                                    row.get("other_profile_urls") or "",
+        edited["donor_other_profile_urls"] = st.text_area("Other profile URLs",
+                                                    row.get("donor_other_profile_urls") or "",
                                                     height=60, key=f"other_profile_urls_{ck}")
 
     # ── About & strategy ─────────────────────────────────────────────────────
     with t_about:
-        edited["summary_description"] = st.text_area(
-            "Summary / description", row.get("summary_description") or "", height=90,
+        edited["donor_summary_description"] = st.text_area(
+            "Summary / description", row.get("donor_summary_description") or "", height=90,
             key=f"summary_description_{ck}")
         _mv1, _mv2 = st.columns(2)
-        edited["mission"] = _mv1.text_area("Mission", row.get("mission") or "", height=80,
+        edited["donor_mission"] = _mv1.text_area("Mission", row.get("donor_mission") or "", height=80,
                                            key=f"mission_{ck}")
-        edited["vision"] = _mv2.text_area("Vision", row.get("vision") or "", height=80,
+        edited["donor_vision"] = _mv2.text_area("Vision", row.get("donor_vision") or "", height=80,
                                           key=f"vision_{ck}")
         edited["donor_values"] = st.text_area("Values", row.get("donor_values") or "",
                                               height=70, key=f"donor_values_{ck}")
-        edited["strategic_priorities"] = st.text_area(
-            _label("strategic_priorities"), row.get("strategic_priorities") or "", height=120,
+        edited["donor_strategic_priorities"] = st.text_area(
+            _label("donor_strategic_priorities"), row.get("donor_strategic_priorities") or "", height=120,
             key=f"strategic_priorities_{ck}",
             help="Current strategic priorities, rotating themes and the period they cover "
                  "(e.g. '2026 theme: AMR; 2026–2030 strategy; 4 Is framework').")
-        edited["strategy_url"] = st.text_input(
-            "Donor strategy (URL)", row.get("strategy_url") or "", key=f"strategy_url_{ck}",
+        edited["donor_strategy_url"] = st.text_input(
+            "Donor strategy (URL)", row.get("donor_strategy_url") or "", key=f"strategy_url_{ck}",
             help="Link to the donor's published strategy document.")
 
     # ── Funding ──────────────────────────────────────────────────────────────
     with t_fund:
         st.markdown("**Funding footprint**")
         _ff1, _ff2 = st.columns(2)
-        edited["total_awards"] = _ff1.text_input("Total awards", row.get("total_awards") or "",
+        edited["donor_total_awards"] = _ff1.text_input("Total awards", row.get("donor_total_awards") or "",
                                                  key=f"total_awards_{ck}")
-        edited["total_funding_to_date"] = _ff2.text_input(
-            "Total funding to date (amount)", row.get("total_funding_to_date") or "",
+        edited["donor_total_funding_to_date"] = _ff2.text_input(
+            "Total funding to date (amount)", row.get("donor_total_funding_to_date") or "",
             key=f"total_funding_to_date_{ck}")
         _ff3, _ff4 = st.columns(2)
-        edited["current_awards"] = _ff3.text_input("Current / active awards",
-                                                   row.get("current_awards") or "",
+        edited["donor_current_awards"] = _ff3.text_input("Current / active awards",
+                                                   row.get("donor_current_awards") or "",
                                                    key=f"current_awards_{ck}")
-        edited["past_awards"] = _ff4.text_input("Past awards", row.get("past_awards") or "",
+        edited["donor_past_awards"] = _ff4.text_input("Past awards", row.get("donor_past_awards") or "",
                                                 key=f"past_awards_{ck}")
         _pb1, _pb2 = st.columns([3, 2])
-        edited["projected_budget"] = _pb1.text_input(
-            "Projected budget / published allocations", row.get("projected_budget") or "",
+        edited["donor_projected_budget"] = _pb1.text_input(
+            "Projected budget / published allocations", row.get("donor_projected_budget") or "",
             key=f"projbud_{ck}", help="The amount, e.g. '200 billion XAF' or '$5M'.")
-        edited["projected_budget_period"] = _pb2.text_input(
-            "Period / end year", row.get("projected_budget_period") or "",
+        edited["donor_projected_budget_period"] = _pb2.text_input(
+            "Period / end year", row.get("donor_projected_budget_period") or "",
             key=f"projbudper_{ck}", help="When it applies, e.g. '2024–2030' or 'by 2046'.")
 
         st.markdown("**Award size & mechanism**")
         fcols = st.columns(2)
         for j, col in enumerate(["donor_award_low", "donor_award_high",
-                                 "total_annual_funding_global"]):
+                                 "donor_total_annual_funding_global"]):
             edited[col] = fcols[j % 2].text_input(_label(col), row.get(col) or "", key=f"{col}_{ck}")
-        edited["funding_mechanism"] = json.dumps(_multi_with_options(
-            "Funding mechanism (type)", FUNDING_MECHANISMS, row.get("funding_mechanism"),
+        edited["donor_funding_mechanism"] = json.dumps(_multi_with_options(
+            "Funding mechanism (type)", FUNDING_MECHANISMS, row.get("donor_funding_mechanism"),
             key=f"fm_{ck}", help="The kind of money — grants, loans, technical assistance, …"))
-        edited["funding_programs"] = st.text_area(
-            _label("funding_programs"), row.get("funding_programs") or "", height=80,
+        edited["donor_funding_programs"] = st.text_area(
+            _label("donor_funding_programs"), row.get("donor_funding_programs") or "", height=80,
             key=f"funding_programs_{ck}",
             help="Named schemes / windows, e.g. 'GHR Themed; Global Professorships; Fellowships'.")
         # (Funders & Collaborators is captured on the Identity tab.)
@@ -1092,7 +1092,7 @@ def _edit_dialog(row: dict) -> None:
         st.markdown("**Funding tiers / bands / stages**")
         st.caption("One row per band/stage — e.g. NIHR Band 1/2/3 or DIV Stage 1/2/3.")
         try:
-            _tiers = json.loads(row.get("funding_tiers_json") or "[]")
+            _tiers = json.loads(row.get("donor_funding_tiers_json") or "[]")
             _tiers = _tiers if isinstance(_tiers, list) else []
         except (ValueError, TypeError):
             _tiers = []
@@ -1115,7 +1115,7 @@ def _edit_dialog(row: dict) -> None:
                 continue
             _tier_recs.append({k: _cell(_tr.get(k))
                                for k in ("name", "amount", "duration", "notes")})
-        edited["funding_tiers_json"] = json.dumps(_tier_recs)
+        edited["donor_funding_tiers_json"] = json.dumps(_tier_recs)
 
     # ── Scope & fit ──────────────────────────────────────────────────────────
     with t_scope:
@@ -1138,11 +1138,11 @@ def _edit_dialog(row: dict) -> None:
             key=f"fsg_{ck}",
             help="Where the donor funds. Drives the 'Funds in' filter + coverage view."))
         _sc1, _sc2 = st.columns(2)
-        edited["in_scope"] = _sc1.text_area(
-            _label("in_scope"), row.get("in_scope") or "", height=170, key=f"in_scope_{ck}",
+        edited["donor_in_scope"] = _sc1.text_area(
+            _label("donor_in_scope"), row.get("donor_in_scope") or "", height=170, key=f"in_scope_{ck}",
             help="What the donor DOES fund — eligible activities, study types, topics.")
-        edited["out_of_scope"] = _sc2.text_area(
-            _label("out_of_scope"), row.get("out_of_scope") or "", height=170,
+        edited["donor_out_of_scope"] = _sc2.text_area(
+            _label("donor_out_of_scope"), row.get("donor_out_of_scope") or "", height=170,
             key=f"out_of_scope_{ck}", help="What the donor explicitly does NOT fund.")
 
     # ── Eligibility & process ────────────────────────────────────────────────
@@ -1157,8 +1157,8 @@ def _edit_dialog(row: dict) -> None:
                 "Direct local org eligible", LOCAL_ORG_ELIGIBLE,
                 row.get("donor_direct_local_org_eligible"), key=f"dle_{ck}")
         with _r2:
-            edited["active_route_status"] = _single_with_other(
-                "Route status", ROUTE_STATUSES, row.get("active_route_status"), key=f"rstat_{ck}")
+            edited["donor_active_route_status"] = _single_with_other(
+                "Route status", ROUTE_STATUSES, row.get("donor_active_route_status"), key=f"rstat_{ck}")
         _pc1, _pc2 = st.columns(2)
         with _pc1:
             _pf_opts = _CHOICE["donor_prefinance_required"]
@@ -1168,34 +1168,34 @@ def _edit_dialog(row: dict) -> None:
                 index=_pf_opts.index(_cur_pf) if _cur_pf in _pf_opts else 0,
                 key=f"prefinance_required_{ck}", format_func=_pretty_choice)
         with _pc2:
-            edited["funding_cycle"] = _single_with_other(
-                "Funding cycle / timing", FUNDING_CYCLES, row.get("funding_cycle"),
+            edited["donor_funding_cycle"] = _single_with_other(
+                "Funding cycle / timing", FUNDING_CYCLES, row.get("donor_funding_cycle"),
                 key=f"fcyc_{ck}")
         _ap1, _ap2 = st.columns(2)
         with _ap1:
-            edited["application_process"] = _single_with_other(
+            edited["donor_application_process"] = _single_with_other(
                 "Application process", APPLICATION_PROCESSES,
-                row.get("application_process"), key=f"appproc_{ck}")
+                row.get("donor_application_process"), key=f"appproc_{ck}")
         with _ap2:
-            edited["reporting_requirements"] = _single_with_other(
+            edited["donor_reporting_requirements"] = _single_with_other(
                 "Reporting requirements", REPORTING_REQUIREMENTS,
-                row.get("reporting_requirements"), key=f"reprq_{ck}")
+                row.get("donor_reporting_requirements"), key=f"reprq_{ck}")
         _dl1, _dl2 = st.columns(2)
-        edited["application_deadlines"] = _dl1.text_input(
-            _label("application_deadlines"), row.get("application_deadlines") or "",
+        edited["donor_application_deadlines"] = _dl1.text_input(
+            _label("donor_application_deadlines"), row.get("donor_application_deadlines") or "",
             key=f"appdl_{ck}", help="Key dates, e.g. 'Stage 1 outline: 1pm UK, 8 Jul 2026'.")
         edited["donor_submission_portal_url"] = _dl2.text_input(
             _label("donor_submission_portal_url"), row.get("donor_submission_portal_url") or "",
             key=f"portal_{ck}")
-        edited["recent_activity"] = st.text_input(
-            "Recent activity / last funded", row.get("recent_activity") or "",
+        edited["donor_recent_activity"] = st.text_input(
+            "Recent activity / last funded", row.get("donor_recent_activity") or "",
             key=f"recent_activity_{ck}", help="Free text — e.g. a year or last-funded note.")
-        edited["eligibility_notes"] = st.text_area(
-            _label("eligibility_notes"), row.get("eligibility_notes") or "", height=90,
+        edited["donor_eligibility_notes"] = st.text_area(
+            _label("donor_eligibility_notes"), row.get("donor_eligibility_notes") or "", height=90,
             key=f"elig_notes_{ck}",
             help="Who can be lead / co-applicant, partnership rules, registration constraints.")
-        edited["selection_criteria"] = st.text_area(
-            _label("selection_criteria"), row.get("selection_criteria") or "", height=120,
+        edited["donor_selection_criteria"] = st.text_area(
+            _label("donor_selection_criteria"), row.get("donor_selection_criteria") or "", height=120,
             key=f"selcrit_{ck}", help="Evaluation criteria, relative weights, and what wins.")
 
         # Hard eligibility conditions → computed Qualification (MUST-1). Each is
@@ -1228,20 +1228,20 @@ def _edit_dialog(row: dict) -> None:
             key=f"mintrk_{ck}", help="Applicant's largest grant must be ABOVE this (e.g. '$500k').")
         _pp1, _pp2 = st.columns(2)
         with _pp1:
-            edited["required_partner_type"] = json.dumps(_multi_with_options(
-                _label("required_partner_type"), ["Any"] + _PARTNER_TYPE_OPTIONS,
-                row.get("required_partner_type"), key=f"reqpt_{ck}",
+            edited["donor_required_partner_type"] = json.dumps(_multi_with_options(
+                _label("donor_required_partner_type"), ["Any"] + _PARTNER_TYPE_OPTIONS,
+                row.get("donor_required_partner_type"), key=f"reqpt_{ck}",
                 help="Required partner profile(s) — pick one or several, or 'Any' "
                      "(e.g. NIHR → Academic / research institutions)."))
         with _pp2:
-            edited["required_partner_country"] = json.dumps(_multi_with_options(
-                _label("required_partner_country"), ["Any"] + list(_geo.COUNTRIES),
-                row.get("required_partner_country"), key=f"reqpc_{ck}",
+            edited["donor_required_partner_country"] = json.dumps(_multi_with_options(
+                _label("donor_required_partner_country"), ["Any"] + list(_geo.COUNTRIES),
+                row.get("donor_required_partner_country"), key=f"reqpc_{ck}",
                 help="Required partner country/countries — pick one or several, or "
                      "'Any' (e.g. NIHR → United Kingdom)."))
         _hc1, _hc2 = st.columns(2)
-        edited["max_request_pct_of_budget"] = _hc1.text_input(
-            _label("max_request_pct_of_budget"), row.get("max_request_pct_of_budget") or "",
+        edited["donor_max_request_pct_of_budget"] = _hc1.text_input(
+            _label("donor_max_request_pct_of_budget"), row.get("donor_max_request_pct_of_budget") or "",
             key=f"maxpct_{ck}", help="e.g. '50' — request may be ≤50% of the project budget.")
         edited["donor_min_cofinancing_secured_pct"] = _hc2.text_input(
             _label("donor_min_cofinancing_secured_pct"), row.get("donor_min_cofinancing_secured_pct") or "",
@@ -1275,7 +1275,7 @@ def _edit_dialog(row: dict) -> None:
         _broad_geo = list(getattr(_geo, "BROAD_GEOGRAPHIES", None)
                           or (list(getattr(_geo, "UN_REGIONS", []))
                               + list(getattr(_geo, "INCOME_TIERS", []))))
-        _pi_scope_opts = ["", "in_scope", "foreign"]
+        _pi_scope_opts = ["", "donor_in_scope", "foreign"]
         _cur_pis = str(row.get("donor_pi_country_scope") or "").strip()
         _rr1, _rr2 = st.columns(2)
         with _rr1:
@@ -1317,7 +1317,7 @@ def _edit_dialog(row: dict) -> None:
         st.caption("Funded projects — title, amount, year, country, stage, short "
                    "description, link. Add rows freely.")
         try:
-            _proj = json.loads(row.get("past_projects_json") or "[]")
+            _proj = json.loads(row.get("donor_past_projects_json") or "[]")
             _proj = _proj if isinstance(_proj, list) else []
         except (ValueError, TypeError):
             _proj = []
@@ -1361,45 +1361,45 @@ def _edit_dialog(row: dict) -> None:
                 "description": _cell(_pr.get("description")),
                 "link": _cell(_pr.get("link")),
             })
-        edited["past_projects_json"] = json.dumps(_proj_recs)
+        edited["donor_past_projects_json"] = json.dumps(_proj_recs)
 
     # ── Strategic guidance — funder-centric, reusable across tenants ─────────
     with t_strat:
         st.caption("Funder-centric guidance any applicant institution can use — "
                    "describe the **donor**, not one organisation. Keep it generic "
                    "(no tenant names) but specific enough to be actionable.")
-        edited["strategic_fit_notes"] = st.text_area(
-            _label("strategic_fit_notes"), row.get("strategic_fit_notes") or "", height=120,
+        edited["donor_strategic_fit_notes"] = st.text_area(
+            _label("donor_strategic_fit_notes"), row.get("donor_strategic_fit_notes") or "", height=120,
             key=f"stratfit_{ck}",
             help="The applicant profile this funder rewards and the strengths that win "
                  "(e.g. 'LMIC-led teams with government demand and prior evidence').")
-        edited["gaps_risks"] = st.text_area(
-            _label("gaps_risks"), row.get("gaps_risks") or "", height=120, key=f"gaps_{ck}",
+        edited["donor_gaps_risks"] = st.text_area(
+            _label("donor_gaps_risks"), row.get("donor_gaps_risks") or "", height=120, key=f"gaps_{ck}",
             help="Common reasons applications fail / are disqualified — generic to any "
                  "applicant (e.g. 'service delivery framed as research', 'no causal design').")
-        edited["recommended_approach"] = st.text_area(
-            _label("recommended_approach"), row.get("recommended_approach") or "", height=120,
+        edited["donor_recommended_approach"] = st.text_area(
+            _label("donor_recommended_approach"), row.get("donor_recommended_approach") or "", height=120,
             key=f"recapp_{ck}",
             help="How to position a strong application — recommended tier/band, framing "
                  "and sequencing — usable by any institution.")
         st.divider()
         _vc1, _vc2 = st.columns([1, 2])
         with _vc1:
-            _vl_opts = _CHOICE["verification_level"]
-            _cur_vl = row.get("verification_level") or ""
-            edited["verification_level"] = st.selectbox(
-                _label("verification_level"), _vl_opts,
+            _vl_opts = _CHOICE["donor_verification_level"]
+            _cur_vl = row.get("donor_verification_level") or ""
+            edited["donor_verification_level"] = st.selectbox(
+                _label("donor_verification_level"), _vl_opts,
                 index=_vl_opts.index(_cur_vl) if _cur_vl in _vl_opts else 0,
                 key=f"verification_level_{ck}", format_func=_pretty_choice)
-        edited["evidence_summary"] = st.text_area("Evidence summary",
-                                                  row.get("evidence_summary") or "", height=80,
+        edited["donor_evidence_summary"] = st.text_area("Evidence summary",
+                                                  row.get("donor_evidence_summary") or "", height=80,
                                                   key=f"evidence_summary_{ck}")
         edited["notes"] = st.text_area("Notes", row.get("notes") or "", height=70,
                                        key=f"notes_{ck}")
         _ax1, _ax2 = st.columns(2)
-        edited["aliases"] = _ax1.text_area("Aliases", row.get("aliases") or "", height=70,
+        edited["donor_aliases"] = _ax1.text_area("Aliases", row.get("donor_aliases") or "", height=70,
                                            key=f"aliases_{ck}")
-        edited["source_urls"] = _ax2.text_area("Source URLs", row.get("source_urls") or "",
+        edited["donor_source_urls"] = _ax2.text_area("Source URLs", row.get("donor_source_urls") or "",
                                                height=70, key=f"source_urls_{ck}")
 
     # ── Contacts — focal persons & additional (private) ──────────────────────
@@ -1539,7 +1539,7 @@ def _add_donor_dialog() -> None:
         payload = {"canonical_key": _key, "donor": name.strip(),
                    "donor_short": (short.strip() or None),
                    "donor_category": _normalize_category(cat),
-                   "website": (website.strip() or None)}
+                   "donor_website": (website.strip() or None)}
         try:
             resp = sb.table("donor_intel").upsert(
                 payload, on_conflict="canonical_key").execute()
@@ -1713,14 +1713,14 @@ def _view_dialog(row: dict) -> None:
     _cat = _normalize_category(row.get("donor_category"))
     if _cat and _cat != "(uncategorised)":
         _subparts.append(_html.escape(_cat))
-    if _disp(row.get("founded")):
-        _subparts.append(f"Founded {_html.escape(_disp(row.get('founded')))}")
+    if _disp(row.get("donor_founded")):
+        _subparts.append(f"Founded {_html.escape(_disp(row.get('donor_founded')))}")
     _hdr_funders = _to_list(row.get("donor_funders_collaborators"))
     if _hdr_funders:
         _shown = ", ".join(_hdr_funders[:3]) + ("…" if len(_hdr_funders) > 3 else "")
         _subparts.append("Partnered with " + _html.escape(_shown))
-    if _disp(row.get("website")):
-        _w = _disp(row.get("website"))
+    if _disp(row.get("donor_website")):
+        _w = _disp(row.get("donor_website"))
         _wh = _w if _w.startswith(("http://", "https://")) else f"https://{_w}"
         _subparts.append(f"<a href='{_html.escape(_wh)}' target='_blank'>{_html.escape(_w)}</a>")
     _pct, _have, _total = _completeness(row)
@@ -1731,13 +1731,13 @@ def _view_dialog(row: dict) -> None:
         + f"<span class='di-badge' style='background:{_band_col}'>"
         + f"Data completeness {_pct}% · {_band_lbl} ({_have}/{_total} fields)</span></div>",
         unsafe_allow_html=True)
-    if row.get("verification_level") == "low":
+    if row.get("donor_verification_level") == "low":
         st.warning("⚠ Low verification — confirm against the live call package.")
 
     # ── 🏷 Identity — official / institutional contact ───────────────────────
     _inst = [(_label(c), c) for c in
-             ("general_email", "main_phone", "hq_country", "hq_address",
-              "donor_linkedin_url", "other_profile_urls") if _disp(row.get(c))]
+             ("donor_general_email", "donor_main_phone", "donor_hq_country", "donor_hq_address",
+              "donor_linkedin_url", "donor_other_profile_urls") if _disp(row.get(c))]
     if _inst:
         with st.container(border=True):
             _sec_header("🏷", "Identity")
@@ -1748,11 +1748,11 @@ def _view_dialog(row: dict) -> None:
 
     # ── 📖 About & strategy ──────────────────────────────────────────────────
     _about = [(lbl, col) for col, lbl in (
-        ("summary_description", "Summary"), ("mission", "Mission"),
-        ("vision", "Vision"), ("donor_values", "Values"),
-        ("strategic_priorities", _label("strategic_priorities")))
+        ("donor_summary_description", "Summary"), ("donor_mission", "Mission"),
+        ("donor_vision", "Vision"), ("donor_values", "Values"),
+        ("donor_strategic_priorities", _label("donor_strategic_priorities")))
         if _disp(row.get(col))]
-    _su = _disp(row.get("strategy_url"))
+    _su = _disp(row.get("donor_strategy_url"))
     if _about or _su:
         with st.container(border=True):
             _sec_header("📖", "About & strategy")
@@ -1767,21 +1767,21 @@ def _view_dialog(row: dict) -> None:
     lo, hi = _md(row.get("donor_award_low")), _md(row.get("donor_award_high"))
     if lo or hi:
         facts.append(("Award range", f"{lo or '—'} – {hi or '—'}"))
-    for col, lbl in (("total_annual_funding_global", "Annual funding"),
-                     ("total_funding_to_date", "Total funding"),
-                     ("total_awards", "Total awards"),
-                     ("current_awards", "Current awards"),
-                     ("past_awards", "Past awards"),
-                     ("projected_budget", "Projected budget")):
+    for col, lbl in (("donor_total_annual_funding_global", "Annual funding"),
+                     ("donor_total_funding_to_date", "Total funding"),
+                     ("donor_total_awards", "Total awards"),
+                     ("donor_current_awards", "Current awards"),
+                     ("donor_past_awards", "Past awards"),
+                     ("donor_projected_budget", "Projected budget")):
         v = _md(row.get(col)) or _disp(row.get(col))
-        if col == "projected_budget" and v:
-            _per = _disp(row.get("projected_budget_period"))
+        if col == "donor_projected_budget" and v:
+            _per = _disp(row.get("donor_projected_budget_period"))
             if _per:
                 v = f"{v} ({_per})"
         if v:
             facts.append((lbl, v))
-    _mech = _to_list(row.get("funding_mechanism"))
-    _programs = _disp(row.get("funding_programs"))
+    _mech = _to_list(row.get("donor_funding_mechanism"))
+    _programs = _disp(row.get("donor_funding_programs"))
     _funders = _to_list(row.get("donor_funders_collaborators"))
     _tiers = _funding_tiers(row)
     if facts or _mech or _programs or _funders or _tiers:
@@ -1798,7 +1798,7 @@ def _view_dialog(row: dict) -> None:
                 _sub(_label("donor_funders_collaborators"))
                 st.markdown(_chips(_funders), unsafe_allow_html=True)
             if _programs:
-                _sub(_label("funding_programs"))
+                _sub(_label("donor_funding_programs"))
                 st.markdown(_programs)
             if _tiers:
                 _sub("Funding tiers / bands / stages")
@@ -1812,8 +1812,8 @@ def _view_dialog(row: dict) -> None:
     # ── 🎯 Scope & fit — strategic priority areas (graded) / geo / in-out ────
     _scope = _to_list(row.get("donor_geographic_scope"))
     _areas = _to_list(row.get("donor_priority_areas"))
-    _in_scope = _disp(row.get("in_scope"))
-    _out_scope = _disp(row.get("out_of_scope"))
+    _in_scope = _disp(row.get("donor_in_scope"))
+    _out_scope = _disp(row.get("donor_out_of_scope"))
     try:
         _pa_ratings = json.loads(row.get("donor_priority_ratings") or "{}")
         _pa_ratings = _pa_ratings if isinstance(_pa_ratings, dict) else {}
@@ -1837,30 +1837,30 @@ def _view_dialog(row: dict) -> None:
             if _in_scope or _out_scope:
                 _sc1, _sc2 = st.columns(2)
                 if _in_scope:
-                    _sc1.markdown(f"**✓ {_label('in_scope')}**")
+                    _sc1.markdown(f"**✓ {_label('donor_in_scope')}**")
                     _sc1.markdown(_in_scope)
                 if _out_scope:
-                    _sc2.markdown(f"**✗ {_label('out_of_scope')}**")
+                    _sc2.markdown(f"**✗ {_label('donor_out_of_scope')}**")
                     _sc2.markdown(_out_scope)
 
     # ── ✅ Eligibility & process — routes/requirements flags + logistics ─────
     _elig_kv = []
-    for _lbl, _col in (("Route status", "active_route_status"),
+    for _lbl, _col in (("Route status", "donor_active_route_status"),
                        ("Direct local org eligible", "donor_direct_local_org_eligible"),
                        ("Prefinance", "donor_prefinance_required"),
-                       ("Application process", "application_process"),
-                       ("Funding cycle", "funding_cycle"),
-                       ("Reporting requirements", "reporting_requirements"),
-                       (_label("application_deadlines"), "application_deadlines"),
+                       ("Application process", "donor_application_process"),
+                       ("Funding cycle", "donor_funding_cycle"),
+                       ("Reporting requirements", "donor_reporting_requirements"),
+                       (_label("donor_application_deadlines"), "donor_application_deadlines"),
                        (_label("donor_submission_portal_url"), "donor_submission_portal_url"),
-                       ("Recent activity", "recent_activity"),
+                       ("Recent activity", "donor_recent_activity"),
                        (_label("donor_hq_country_required"), "donor_hq_country_required"),
                        (_label("org_stage_required"), "org_stage_required"),
                        (_label("donor_max_annual_budget"), "donor_max_annual_budget"),
                        (_label("donor_min_track_record"), "donor_min_track_record"),
-                       (_label("required_partner_type"), "required_partner_type"),
-                       (_label("required_partner_country"), "required_partner_country"),
-                       (_label("max_request_pct_of_budget"), "max_request_pct_of_budget"),
+                       (_label("donor_required_partner_type"), "donor_required_partner_type"),
+                       (_label("donor_required_partner_country"), "donor_required_partner_country"),
+                       (_label("donor_max_request_pct_of_budget"), "donor_max_request_pct_of_budget"),
                        (_label("donor_min_cofinancing_secured_pct"), "donor_min_cofinancing_secured_pct"),
                        (_label("donor_entity_type_required"), "donor_entity_type_required"),
                        (_label("donor_registration_region"), "donor_registration_region"),
@@ -1880,8 +1880,8 @@ def _view_dialog(row: dict) -> None:
             _elig_kv.append((_lbl, _col, v))
     _elig_flags = {g: [_label(c) for c in _FLAG_GROUPS.get(g, []) if _yes(row.get(c))]
                    for g in ("Eligibility & routes", "Requirements & compliance")}
-    _elig_notes = _disp(row.get("eligibility_notes"))
-    _sel = _disp(row.get("selection_criteria"))
+    _elig_notes = _disp(row.get("donor_eligibility_notes"))
+    _sel = _disp(row.get("donor_selection_criteria"))
     if any(_elig_flags.values()) or _elig_kv or _elig_notes or _sel:
         with st.container(border=True):
             _sec_header("✅", "Eligibility & process")
@@ -1897,10 +1897,10 @@ def _view_dialog(row: dict) -> None:
                     else:
                         st.markdown(f"- **{_lbl}:** {v}")
             if _elig_notes:
-                _sub(_label("eligibility_notes"))
+                _sub(_label("donor_eligibility_notes"))
                 st.markdown(_elig_notes)
             if _sel:
-                _sub(_label("selection_criteria"))
+                _sub(_label("donor_selection_criteria"))
                 st.markdown(_sel)
 
     # ── 📚 Track record — funded projects (incl. stage + description) ────────
@@ -1922,7 +1922,7 @@ def _view_dialog(row: dict) -> None:
 
     # ── 🧭 Strategic guidance — funder-centric, useful to any applicant ──────
     _guide = [(_label(col), _disp(row.get(col))) for col in
-              ("strategic_fit_notes", "gaps_risks", "recommended_approach")
+              ("donor_strategic_fit_notes", "donor_gaps_risks", "donor_recommended_approach")
               if _disp(row.get(col))]
     if _guide:
         with st.container(border=True):
@@ -1942,11 +1942,11 @@ def _view_dialog(row: dict) -> None:
                 st.markdown("- " + _contact_line(cr.to_dict()))
 
     # ── Sources & data quality ───────────────────────────────────────────────
-    _ver = _pretty_choice(row.get("verification_level")) if _disp(row.get("verification_level")) else None
-    _ev = _disp(row.get("evidence_summary"))
+    _ver = _pretty_choice(row.get("donor_verification_level")) if _disp(row.get("donor_verification_level")) else None
+    _ev = _disp(row.get("donor_evidence_summary"))
     _notes = _disp(row.get("notes"))
-    _alias = _disp(row.get("aliases"))
-    _urls = _disp(row.get("source_urls"))
+    _alias = _disp(row.get("donor_aliases"))
+    _urls = _disp(row.get("donor_source_urls"))
     if _ver or _ev or _notes or _alias or _urls:
         with st.container(border=True):
             _sec_header("🗂", "Sources & data quality")
@@ -1954,7 +1954,7 @@ def _view_dialog(row: dict) -> None:
             if _ver:
                 st.markdown(f"- **Verification (manual):** {_ver}")
             if _ev:
-                st.markdown(f"- **Evidence summary:** {_md(row.get('evidence_summary')) or _ev}")
+                st.markdown(f"- **Evidence summary:** {_md(row.get('donor_evidence_summary')) or _ev}")
             if _notes:
                 st.markdown(f"- **Notes:** {_md(row.get('notes')) or _notes}")
             if _alias:
@@ -1988,8 +1988,8 @@ if "donor_lmic_africa_focus" in df:
     k2.metric("LMIC / Africa focus", int((df["donor_lmic_africa_focus"] == "yes").sum()))
 if "donor_global_multi_country_scope" in df:
     k3.metric("Global / multi-country", int((df["donor_global_multi_country_scope"] == "yes").sum()))
-if "verification_level" in df:
-    k4.metric("High-confidence", int((df["verification_level"] == "high").sum()))
+if "donor_verification_level" in df:
+    k4.metric("High-confidence", int((df["donor_verification_level"] == "high").sum()))
 
 if "category_clean" in df:
     cat = (df["category_clean"].fillna("(uncategorised)")
@@ -2038,7 +2038,7 @@ with st.expander("🔎 Filter & search", expanded=False):
     fc3, fc4 = st.columns(2)
     vers = fc3.multiselect(
         "Verification",
-        sorted(df["verification_level"].dropna().unique().tolist()) if "verification_level" in df else [],
+        sorted(df["donor_verification_level"].dropna().unique().tolist()) if "donor_verification_level" in df else [],
         key="donor_ver")
     areas_f = fc4.multiselect(
         "Strategic priority area", _pa.CATEGORIES, key="donor_pa",
@@ -2057,11 +2057,11 @@ with st.expander("🔎 Filter & search", expanded=False):
 fdf = df.copy()
 if q:
     ql = q.lower()
-    fdf = fdf[fdf.apply(lambda r: ql in f"{r.get('donor','')} {r.get('donor_short','')} {r.get('aliases','')}".lower(), axis=1)]
+    fdf = fdf[fdf.apply(lambda r: ql in f"{r.get('donor','')} {r.get('donor_short','')} {r.get('donor_aliases','')}".lower(), axis=1)]
 if cats:
     fdf = fdf[fdf["category_clean"].isin(cats)]
 if vers:
-    fdf = fdf[fdf["verification_level"].isin(vers)]
+    fdf = fdf[fdf["donor_verification_level"].isin(vers)]
 # Strategic-priority-area filter — match donor priority_program_areas (expanded
 # to taxonomy child keys) against the selected categories.
 if areas_f and "donor_priority_areas" in fdf.columns:
@@ -2154,8 +2154,8 @@ _grid = pd.DataFrame({
     "Donor": page_df.get("donor"),
     "Short": page_df.get("donor_short"),
     "Category": page_df.get("category_clean"),
-    "Verification": page_df.get("verification_level"),
-    "Website": (page_df["website"].map(_weburl) if "website" in page_df.columns else None),
+    "Verification": page_df.get("donor_verification_level"),
+    "Website": (page_df["donor_website"].map(_weburl) if "donor_website" in page_df.columns else None),
 })
 _event = st.dataframe(
     _grid, hide_index=True, width='stretch',

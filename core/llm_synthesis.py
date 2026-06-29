@@ -171,7 +171,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "Allowed keys & values ONLY: "
         "requires_pi ('yes' only if the call requires a named INDIVIDUAL / Principal "
         "Investigator rather than an organisation); "
-        "pi_country_scope ('in_scope' if that PI must be based in the implementation "
+        "pi_country_scope ('donor_in_scope' if that PI must be based in the implementation "
         "country, 'foreign' if in the donor's or another specified country); "
         "entity_type_required ('grassroot_local' | 'multi_country' | 'individual'); "
         "hq_country_required (the country the applicant must be HEADQUARTERED in, verbatim); "
@@ -242,7 +242,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
 # Allowed enum values for the LLM-extracted MUST-1 requirements (anything else is
 # dropped — grounded, no fabrication).
 _MUST1_ENUMS = {
-    "donor_pi_country_scope": {"in_scope", "foreign"},
+    "donor_pi_country_scope": {"donor_in_scope", "foreign"},
     "donor_entity_type_required": {"grassroot_local", "multi_country", "individual"},
     "donor_prior_beneficiary_rule": {"eligible", "ineligible_current",
                                "ineligible_previous", "ineligible_any"},

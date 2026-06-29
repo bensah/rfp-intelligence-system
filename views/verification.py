@@ -617,7 +617,7 @@ def _render_source_registry(user: dict) -> None:
     for r in rows:
         if pick != "All" and _eff(r, "source_class", _src_class_of) != pick:
             continue
-        if only_unv and _eff(r, "verification_level", _verif_of) in _VERIFIED:
+        if only_unv and _eff(r, "donor_verification_level", _verif_of) in _VERIFIED:
             continue
         items.append(r)
 
