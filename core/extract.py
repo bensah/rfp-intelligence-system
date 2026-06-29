@@ -135,8 +135,8 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     dl = deadline_extract.extract_deadline(text, scan_year=scan_year, title=title,
                                            llm_arbiter=llm_arbiter)
     cand = dict(candidate)
-    if not cand.get("submission_deadline") and dl["deadline"]:
-        cand["submission_deadline"] = dl["deadline"]
+    if not cand.get("call_submission_deadline") and dl["deadline"]:
+        cand["call_submission_deadline"] = dl["deadline"]
     if cand.get("call_award_value") in (None, "", 0, "0") and amt is not None:
         cand["call_award_value"] = amt
 
@@ -242,12 +242,12 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # else regex (high/med); else LLM; else regex low/none.
     d_val, d_conf, d_method, d_window = (dl["deadline"], dl["confidence"],
                                          dl["method"], dl["funding_window"])
-    _cand_dl = _as_iso(candidate.get("submission_deadline"))
+    _cand_dl = _as_iso(candidate.get("call_submission_deadline"))
     if _cand_dl:
         d_val, d_conf, d_method = _cand_dl, "high", "handler"
         d_window = d_window or "One-off"
-    elif (d_val is None or d_conf == "low") and _llm("submission_deadline"):
-        d_val, d_conf, d_method = _llm("submission_deadline"), "medium", "llm"
+    elif (d_val is None or d_conf == "low") and _llm("call_submission_deadline"):
+        d_val, d_conf, d_method = _llm("call_submission_deadline"), "medium", "llm"
         d_window = d_window or "One-off"
     prov["deadline"] = {"method": d_method, "confidence": d_conf, "source_tier": "T1"}
 

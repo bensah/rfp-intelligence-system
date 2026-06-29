@@ -46,7 +46,7 @@ canonical_columns:
   - funding_agency          # text  — the donor / funder (display name)
   - brief_description       # text  — short narrative, scoring-friendly
   - date_posted             # date  — when the donor published the call
-  - submission_deadline     # date  — final application closing date
+  - call_submission_deadline     # date  — final application closing date
   - expected_award_date     # date  — when decisions land
   - call_geographic_scope        # text[]— countries / regions in scope
   - call_domain_areas            # text[]— donor's own category labels
@@ -91,7 +91,7 @@ grants_gov:
     number:                 opportunity_id        # human-readable RFA, e.g. HT942526PRMRPDA
     agencyName:             funding_agency        # fallback only
     openDate:               { to: date_posted,         as: date }
-    closeDate:              { to: submission_deadline, as: date }
+    closeDate:              { to: call_submission_deadline, as: date }
   # Detail-call fields (the fetchOpportunity payload — fully populated only
   # when the body key is `opportunityId`, NOT `oppId`)
   detail_field_map:
@@ -102,7 +102,7 @@ grants_gov:
     "synopsis.estimatedFunding":                        { to: call_award_value,   as: money }
     # Backup if estimatedFunding is blank (some agencies only publish per-award ceiling)
     "synopsis.awardCeiling":                            { to: call_award_value,   as: money, only_if_blank: true }
-    "synopsis.responseDate":                            { to: submission_deadline, as: date }
+    "synopsis.responseDate":                            { to: call_submission_deadline, as: date }
     "synopsis.postingDate":                             { to: date_posted,         as: date }
     "synopsis.applicantTypes[*].description":           { to: notes,              as: prefix, prefix: "Eligible applicants" }
     "synopsis.fundingActivityCategories[*].description": { to: call_domain_areas,      as: list }
@@ -136,7 +136,7 @@ developmentaid:
     "dt:contains('Sectors') ~ dd":                { to: call_domain_areas,        as: list }
     "dt:contains('Donor') ~ dd":                  funding_agency
     "dt:contains('Eligible applicants') ~ dd":    { to: notes, as: prefix, prefix: "Eligible" }
-    "dt:contains('Deadline') ~ dd":               { to: submission_deadline, as: date }
+    "dt:contains('Deadline') ~ dd":               { to: call_submission_deadline, as: date }
     "dt:contains('Launch date') ~ dd":            { to: date_posted,         as: date }
     "dt:contains('Reference') ~ dd":              opportunity_id
     ".grant-description":                         { to: brief_description, as: text, max_chars: 1800 }
@@ -158,7 +158,7 @@ ec_sedia:
     "metadata.callTitle[0]":                      opportunity_title
     "metadata.identifier[0]":                     opportunity_id
     "metadata.callIdentifier[0]":                 { to: notes, as: prefix, prefix: "Call ID" }
-    "metadata.deadlineDate[0]":                   { to: submission_deadline, as: iso_date }
+    "metadata.deadlineDate[0]":                   { to: call_submission_deadline, as: iso_date }
     "metadata.startDate[0]":                      { to: date_posted,         as: iso_date }
     "metadata.frameworkProgramme[0]":             { to: call_domain_areas, as: list }
     "metadata.descriptionByte[0]":                { to: brief_description, as: html_to_text, max_chars: 1800 }
@@ -173,7 +173,7 @@ ec_sedia:
 # whatever it can via regex + meta tags. Listed here so it's obvious that
 # every other source falls into this bucket and gets only:
 #   opportunity_title, opportunity_link, funding_agency (from source name),
-#   brief_description (best-effort from page text or meta), submission_deadline
+#   brief_description (best-effort from page text or meta), call_submission_deadline
 #   (regex-extracted), call_domain_areas / call_award_value / call_geographic_scope all
 #   blank unless the LLM layer (off by default) fills them.
 # ---------------------------------------------------------------------------
@@ -219,4 +219,4 @@ dedup_signals:
       All three of (funder, deadline, call_award_value) match and none is
       null. Useful for cases where titles drift but the underlying call is
       identifiable by its envelope.
-    fields: [funding_agency, submission_deadline, call_award_value]
+    fields: [funding_agency, call_submission_deadline, call_award_value]

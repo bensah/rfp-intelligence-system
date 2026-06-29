@@ -143,7 +143,7 @@ def _build_prompt(title: str, url: str, page_text: str) -> str:
         ">>>\n\n"
         "Return ONE JSON object — no prose, no markdown fences — with "
         "these keys:\n"
-        '  "submission_deadline": ISO date "YYYY-MM-DD" of the FINAL\n'
+        '  "call_submission_deadline": ISO date "YYYY-MM-DD" of the FINAL\n'
         "    application closing date. If the page describes a window\n"
         '    like "FROM Oct 9 TO Nov 7 2025", return the END date\n'
         "    (Nov 7 = 2025-11-07). If no concrete deadline appears,\n"
@@ -207,11 +207,11 @@ def extract(
         log.info("LLM extractor non-JSON for %s: %r", url, raw[:200])
         return None
 
-    dl = parsed.get("submission_deadline")
+    dl = parsed.get("call_submission_deadline")
     if dl and not (isinstance(dl, str) and _DEADLINE_ISO_RE.match(dl)):
         dl = None
     return {
-        "submission_deadline": dl,
+        "call_submission_deadline": dl,
         "eligibility_text": _str_or_none(parsed.get("eligibility_text")),
         "brief_description": _str_or_none(parsed.get("brief_description")),
         "confidence": _str_or_none(parsed.get("confidence")) or "low",

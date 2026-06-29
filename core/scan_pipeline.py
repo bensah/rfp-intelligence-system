@@ -54,8 +54,8 @@ def _apply_llm_judgment(cand: dict[str, Any]) -> None:
     j = cand.get("_llm_judgment")
     if not isinstance(j, dict):
         return
-    if not cand.get("submission_deadline") and j.get("submission_deadline"):
-        cand["submission_deadline"] = j["submission_deadline"]
+    if not cand.get("call_submission_deadline") and j.get("call_submission_deadline"):
+        cand["call_submission_deadline"] = j["call_submission_deadline"]
     if cand.get("call_award_value") in (None, "", 0, "0") and j.get("call_award_value") is not None:
         cand["call_award_value"] = j["call_award_value"]
         if not cand.get("currency") and j.get("currency"):
@@ -80,7 +80,7 @@ _SCRAPE_MANAGED_FIELDS = (
     "funding_agency",
     "brief_description",
     "date_posted",
-    "submission_deadline",
+    "call_submission_deadline",
 )
 
 # Donor-extracted structured fields that auto_score does NOT emit. `_build_row`
@@ -150,7 +150,7 @@ def _build_row(
     """Build a fresh rfp_submissions row for INSERT."""
     uid = _generate_auto_uid(serial, ts)
     iso_now = ts.replace(tzinfo=timezone.utc).isoformat()
-    deadline = candidate.get("submission_deadline")
+    deadline = candidate.get("call_submission_deadline")
     posted = candidate.get("date_posted")
     row: dict[str, Any] = {
         "uid": uid,
@@ -171,7 +171,7 @@ def _build_row(
         "funding_agency": candidate.get("funding_agency"),
         "brief_description": candidate.get("brief_description"),
         "date_posted": _iso_date(posted),
-        "submission_deadline": _iso_date(deadline),
+        "call_submission_deadline": _iso_date(deadline),
         "review_week": review_week_label(),
         # ---- Pipeline defaults for auto-scanned rows ---------------------
         # Every newly-inserted scan row enters the workflow with a known
@@ -218,7 +218,7 @@ def _build_merge_payload(
       * Title is never overwritten — humans may have cleaned it up.
     """
     payload: dict[str, Any] = {}
-    deadline = candidate.get("submission_deadline")
+    deadline = candidate.get("call_submission_deadline")
     posted = candidate.get("date_posted")
     candidate_normalized = {
         "opportunity_link": candidate.get("opportunity_link"),
@@ -226,7 +226,7 @@ def _build_merge_payload(
         "funding_agency": candidate.get("funding_agency"),
         "brief_description": candidate.get("brief_description"),
         "date_posted": _iso_date(posted),
-        "submission_deadline": _iso_date(deadline),
+        "call_submission_deadline": _iso_date(deadline),
         # Structured donor fields — gap-filled on rescan so EXISTING empty rows
         # get backfilled (estimated_value / program_area / geography / …).
         "call_award_value": candidate.get("call_award_value"),
@@ -405,7 +405,7 @@ def ingest_candidates(
         # gate reject expired calls that would otherwise slip through (the scraper
         # misses deadlines in prose / FR "date limite" / mixed formats). Low-
         # confidence guesses are ignored so a genuinely rolling call isn't dropped.
-        if not cand.get("submission_deadline") and not cand.get("extraction_uid"):
+        if not cand.get("call_submission_deadline") and not cand.get("extraction_uid"):
             try:
                 from datetime import date as _date
                 _dl = deadline_extract.extract_deadline(
@@ -414,7 +414,7 @@ def ingest_candidates(
                     title=cand.get("opportunity_title") or "")
                 if (_dl["deadline"] and _dl["confidence"] in ("high", "medium")
                         and _dl["method"] != "default-rolling"):
-                    cand["submission_deadline"] = _dl["deadline"]
+                    cand["call_submission_deadline"] = _dl["deadline"]
             except Exception as _exc:
                 log.debug("deadline backstop skipped: %s", _exc)
         # First-pass eligibility gate (cheap: URL/title/keyword/deadline/scope).
@@ -449,7 +449,7 @@ def ingest_candidates(
         # deadlines buried in prose the listing snippet didn't carry.
         _thin = not (cand.get("brief_description") or "").strip()
         if (not dry_run and not cand.get("extraction_uid")
-                and (_thin or not cand.get("submission_deadline"))
+                and (_thin or not cand.get("call_submission_deadline"))
                 and _live_checks < _live_check_max):
             _live_checks += 1
             try:
@@ -474,7 +474,7 @@ def ingest_candidates(
         # rejects. No-ops where Chromium isn't available (Streamlit Cloud);
         # active in the GitHub Actions scan (bounded by RFPIS_DEEP_READ_MAX).
         _thin = not (cand.get("brief_description") or "").strip()
-        if ((not cand.get("submission_deadline") or _thin)
+        if ((not cand.get("call_submission_deadline") or _thin)
                 and not cand.get("extraction_uid") and deep_read.available()):
             if deep_read.enrich(cand):
                 ok, reason = is_eligible(cand, policies, geo_org_gates=not extract_only,
@@ -525,7 +525,7 @@ def ingest_candidates(
             "opportunity_title": cand["opportunity_title"],
             "opportunity_link": cand.get("opportunity_link"),
             "funding_agency": cand.get("funding_agency"),
-            "submission_deadline": _iso_date(cand.get("submission_deadline")),
+            "call_submission_deadline": _iso_date(cand.get("call_submission_deadline")),
             "call_award_value": None,
         }
         matches = find_duplicates(probe, existing=existing)
@@ -686,7 +686,7 @@ def ingest_candidates(
                     "funding_agency": row.get("funding_agency"),
                     "brief_description": row.get("brief_description"),
                     "date_posted": row.get("date_posted"),
-                    "submission_deadline": row.get("submission_deadline"),
+                    "call_submission_deadline": row.get("call_submission_deadline"),
                     "call_award_value": None,
                     "alignment_score": row.get("alignment_score"),
                     "call_geographic_scope": None,
@@ -757,7 +757,7 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
         "_page_text": (row.get("brief_description")
                        or (row.get("raw_text") or "")[:3000]),
         "funding_agency": row.get("funder_name"),
-        "submission_deadline": row.get("deadline"),
+        "call_submission_deadline": row.get("deadline"),
         "call_award_value": row.get("grant_amount"),
         "currency": row.get("currency"),
         "call_geographic_scope": list(geo),

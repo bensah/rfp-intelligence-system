@@ -67,11 +67,11 @@ def prove_country_gate(country: str) -> None:
     cands = [
         {"opportunity_title": f"Health systems strengthening grant — {here}",
          "brief_description": f"Funding to strengthen primary health care in {here}.",
-         "call_geographic_scope": [here], "submission_deadline": "2027-12-31",
+         "call_geographic_scope": [here], "call_submission_deadline": "2027-12-31",
          "opportunity_link": "https://example.org/grant/a"},
         {"opportunity_title": f"Maternal health grant — {country}",
          "brief_description": f"Health and nutrition programme based in {country}.",
-         "call_geographic_scope": [country], "submission_deadline": "2027-12-31",
+         "call_geographic_scope": [country], "call_submission_deadline": "2027-12-31",
          "opportunity_link": "https://example.org/grant/b"},
     ]
     print(f"\n=== COUNTRY GATE IS DYNAMIC?  '{here}' (current) vs '{country}' ===")
