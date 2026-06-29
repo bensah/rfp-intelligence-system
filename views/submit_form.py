@@ -239,8 +239,9 @@ def render_submit_form(
             m5 = _crit(
                 "MUST 5 — Cofinancing & compliance", "m5", "cofinancing",
                 "Can we meet any co-financing / match and the funder's compliance "
-                "requirements? (Yes, none required → we can; No, required → it's "
-                "required and we can't.)")
+                "requirements (SAM/UEI, tax-exempt, safeguarding, …)? Yes, fully met → "
+                "we meet them all; Not met → at least one required item we can't meet "
+                "(this gates the whole criterion).")
         with grid_r:
             p6 = _crit(
                 "PREFER 6 — Funding quality", "p6", "funding_quality",
