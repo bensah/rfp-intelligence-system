@@ -1494,8 +1494,9 @@ def _edit_dialog(row: dict) -> None:
         if _dropped:
             _warns.append(
                 "These fields aren't stored yet because the database is missing "
-                "their columns. Apply the latest donor migrations (**025–029**) in "
-                "Supabase, then re-save: " + ", ".join(_dropped))
+                "their columns (the deployed app and the DB are on different "
+                "data-model migrations). Apply the latest `db/migrations/` in Supabase "
+                "AND deploy the matching code, then re-save: " + ", ".join(_dropped))
         if _contact_warn:
             _warns.append(_contact_warn)
         if _warns:
