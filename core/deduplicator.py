@@ -200,7 +200,7 @@ def _fetch_existing() -> list[dict[str, Any]]:
         sb.table("rfp_submissions")
         .select(
             "uid,opportunity_id,opportunity_title,opportunity_link,"
-            "funding_agency,submission_deadline,estimated_value,"
+            "funding_agency,call_submission_deadline,call_award_value,"
             "submitted_at,source"
         )
         .eq("is_duplicate", False)

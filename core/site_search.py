@@ -100,7 +100,7 @@ def search_opportunities(query: str, limit: int = 30) -> list[dict]:
     try:
         rows = (safe_execute(
             sb.table("rfp_submissions")
-            .select("opportunity_title,funding_agency,submission_deadline,"
+            .select("opportunity_title,funding_agency,call_submission_deadline,"
                     "decision,source")
             .or_(f"opportunity_title.ilike.%{qf}%,"
                  f"funding_agency.ilike.%{qf}%,"
