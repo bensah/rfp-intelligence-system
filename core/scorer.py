@@ -43,7 +43,7 @@ _SCORE_MAP = {
     "yes, fully": 2, "mostly, one item unclear": 1, "no, not eligible": 0,
     # strategic_fit — NEW labels (priorities-vs-donor-priorities) + legacy (kept so
     # old stored rows still score and map to the new label by score via match_response)
-    "strongly aligns": 2, "limited priority": 1, "off-strategy": 0,
+    "strongly aligns": 2, "limited priority": 1, "off-strategy": 0, "off-theme": 0,
     "strong - priorities + experience": 2, "priority area, limited experience": 1,
     "experienced but off-strategy": 1, "neither": 0,
     # capacity
@@ -207,23 +207,29 @@ def _value(v: Any) -> float:
     return _SCORE_TO_FLOAT.get(criterion_score(v), 0.0)
 
 
+# "Not sure" / undetermined criterion → value 1 (Park), NOT 0 (owner 2026-06-29).
+# When a criterion has no detectable components (nothing the call/donor imposes and
+# no proxy), it resolves to "Not sure" and contributes the MIDDLE value so the bid
+# routes to Park (manual review) rather than being penalised as a hard fail. Genuine
+# detected failures still score 0 and gate via the MUST rule (criterion_score == 0).
+_NOT_SURE_FLOAT = 0.5
+
+
 def alignment_score(values: Mapping[str, Any]) -> float:
     """Compute alignment score 0-100 from a mapping keyed by the 9 criteria.
 
-    A criterion whose response is "Not sure" / unscored (criterion_score → None)
-    is treated as MISSING — excluded from BOTH the numerator and the weight sum —
-    so it doesn't drag the score down like a "No". The score is the weighted
-    average over the criteria that were actually answered."""
+    ALL 9 criteria count toward the denominator. A response of "Not sure" / unscored
+    (criterion_score → None) is rated value 1 (0.5) — the Park midpoint — so an
+    UNKNOWN criterion reads as 'needs review', not a hard fail. A clearly DETECTED
+    failure scores 0 and still gates (MUST rule)."""
     cfg = _load_config()
     total = 0.0
     weight_sum = 0.0
     for c in CRITERIA:
-        sc = criterion_score(values.get(c))
-        if sc is None:
-            continue                      # missing — not a 0
+        sc = criterion_score(values.get(c))      # None → "Not sure" → value 1 (0.5)
         w = float(cfg.get(c, 0.0))
         weight_sum += w
-        total += w * _SCORE_TO_FLOAT[sc]
+        total += w * (_SCORE_TO_FLOAT[sc] if sc is not None else _NOT_SURE_FLOAT)
     if weight_sum <= 0:
         return 0.0
     score = (total / weight_sum) * 100.0

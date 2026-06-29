@@ -618,33 +618,53 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
                 print(f"  derived submitted_by_email for {filled} row(s) from users")
         except Exception as exc:
             print(f"  (skipped email derivation: {exc})")
-    # Insert-ONLY-new (2026-06-19): never overwrite RFPs already in the system.
-    # Re-importing the Excel must NOT push old-dimension criteria values into the
-    # renamed columns — only brand-new Form_IDs (uids) are migrated; existing rows
-    # keep their reviewed values untouched.
+    # Excel-as-source-of-truth (2026-06-25), NON-NULL merge. The UID both DEDUPS
+    # and DRIVES UPDATES: new Form_IDs are INSERTED; existing migration rows are
+    # UPDATED field-by-field, but ONLY where the Excel cell HAS a value — a blank
+    # Excel cell PRESERVES whatever the app already stored, so app-side edits and
+    # derived values aren't wiped by an empty column. This supersedes the
+    # 2026-06-19 insert-only rule (which never propagated Excel edits at all). The
+    # old guard existed to stop OLD-scale criteria values landing in the renamed
+    # columns during the one-time rename; the workbook now carries current values.
+    # Columns NOT in the Excel mapping are never touched.
     if dry_run:
-        print(f"  rfp_submissions (dry-run): {len(rfp_rows)} mapped — would insert NEW uids only")
+        print(f"  rfp_submissions (dry-run): {len(rfp_rows)} mapped — would insert "
+              "new + update existing on uid (non-null cells only; blanks preserved)")
     elif sb is not None and rfp_rows:
         try:
             _ex = sb.table("rfp_submissions").select("uid").execute().data or []
             _existing_uids = {(e.get("uid") or "") for e in _ex}
-        except Exception as _e:                       # don't risk a partial overwrite
-            print(f"  ⚠ could not read existing uids ({_e}); skipped rfp insert for safety")
+        except Exception as _e:
+            print(f"  ⚠ could not read existing uids ({_e}); skipped rfp sync for safety")
             _existing_uids = None
         if _existing_uids is not None:
-            _new = [r for r in rfp_rows if r.get("uid") and r["uid"] not in _existing_uids]
-            _skip = len(rfp_rows) - len(_new)
+            _new = [r for r in rfp_rows
+                    if r.get("uid") and r["uid"] not in _existing_uids]
+            _existing = [r for r in rfp_rows
+                         if r.get("uid") and r["uid"] in _existing_uids]
             for i in range(0, len(_new), 200):
                 sb.table("rfp_submissions").insert(_new[i:i + 200]).execute()
-            # Tombstone the imported rows in the permanent seen-ledger so they're
-            # remembered (never silently re-scanned in) even if later deleted.
-            try:
-                from core import seen_ledger
-                seen_ledger.record(_new, reason="migration")
-            except Exception as _e:
-                print(f"  (seen-ledger record skipped: {_e})")
-            print(f"  rfp_submissions: {len(_new)} NEW inserted · "
-                  f"{_skip} existing skipped (not overwritten)")
+            # Update existing rows with ONLY the Excel cells that carry a value;
+            # None (blank cell / missing column) is dropped so it can't null out
+            # a stored value. created_at (_SYNC_TS) + computed fields are always
+            # non-None, so re-float ordering + scores still refresh.
+            _upd = 0
+            for r in _existing:
+                payload = {k: v for k, v in r.items() if v is not None}
+                if not payload:
+                    continue
+                sb.table("rfp_submissions").update(payload).eq("uid", r["uid"]).execute()
+                _upd += 1
+            # Tombstone only the brand-NEW uids in the permanent seen-ledger so
+            # they're remembered (never silently re-scanned in) even if later deleted.
+            if _new:
+                try:
+                    from core import seen_ledger
+                    seen_ledger.record(_new, reason="migration")
+                except Exception as _e:
+                    print(f"  (seen-ledger record skipped: {_e})")
+            print(f"  rfp_submissions: {len(_new)} inserted · {_upd} updated from "
+                  "Excel (non-null cells; blanks preserved)")
 
     # --- Seed source_registry from the Opportunity Link column. Adds only NEW
     # hosts (deduped against the existing registry), as status='pending' so Bernard

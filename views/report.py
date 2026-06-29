@@ -38,6 +38,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from core import dropdowns, report_snapshots, settings
+from core.records import clean_df
 from db.supabase_client import get_client
 
 
@@ -601,7 +602,7 @@ def _load_scan_logs(start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
         q = q.lte("scan_date",
                   (date.fromisoformat(end_iso) + timedelta(days=1)).isoformat())
     res = q.limit(10000).execute()
-    df = pd.DataFrame(res.data or [])
+    df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty:
         df["scan_date"] = pd.to_datetime(df["scan_date"], **_DT_KW)
         for c in ("rfps_found", "rfps_new", "rfps_duplicate", "rfps_rejected"):
@@ -633,7 +634,7 @@ def _load_rfps() -> pd.DataFrame:
         "lead_applicant,sub_applicant,"
         "is_duplicate,review_week,applicant_role"
     ).limit(50000).execute()
-    df = pd.DataFrame(res.data or [])
+    df = clean_df(pd.DataFrame(res.data or []))
     if df.empty:
         return df
     for c in ("submitted_at", "search_date"):
@@ -655,7 +656,7 @@ def _load_meetings(start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     if end_iso:
         q = q.lte("meeting_date", end_iso)
     res = q.limit(10000).execute()
-    df = pd.DataFrame(res.data or [])
+    df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty and "meeting_date" in df.columns:
         df["meeting_date"] = pd.to_datetime(df["meeting_date"], **_DT_KW)
         df["is_resolved"] = df.get("is_resolved", False).fillna(False)
@@ -670,7 +671,7 @@ def _load_engagements(start_iso: str | None, end_iso: str | None) -> pd.DataFram
     if end_iso:
         q = q.lte("engagement_date", end_iso)
     res = q.limit(10000).execute()
-    df = pd.DataFrame(res.data or [])
+    df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty and "engagement_date" in df.columns:
         df["engagement_date"] = pd.to_datetime(df["engagement_date"], **_DT_KW)
     return df
@@ -679,7 +680,7 @@ def _load_engagements(start_iso: str | None, end_iso: str | None) -> pd.DataFram
 @st.cache_data(ttl=120)
 def _load_grants() -> pd.DataFrame:
     res = sb.table("active_grants").select("*").limit(10000).execute()
-    df = pd.DataFrame(res.data or [])
+    df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty:
         for c in ("award_date", "end_date", "submitted_date", "report_due_date"):
             if c in df.columns:
@@ -1795,8 +1796,7 @@ if _show_sec("4"):
                         name_col: n, "Status": s,
                         "RFPs": int(match["RFPs"].iloc[0]) if not match.empty else 0,
                     })
-            return pd.DataFrame(all_rows)
-
+            return clean_df(pd.DataFrame(all_rows))
         _STACK_COLORS = {"Submitted": "#10b981", "Unsubmitted": "#cbd5e1"}
 
         # ───────────── Proposal Leads (stacked) ───────────────────────────────
