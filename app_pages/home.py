@@ -102,7 +102,7 @@ def _kpis() -> dict:
     sbc = get_client()
     rfps = sbc.table("rfp_submissions").select(
         "uid,decision,donor_decision,progress_status,"
-        "submission_deadline,is_duplicate"
+        "call_submission_deadline,is_duplicate"
     ).execute().data or []
 
     today = date.today()
