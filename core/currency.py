@@ -37,7 +37,7 @@ def _resolve_currency(code_str: str) -> dict | None:
     for entry in currencies:
         if entry.get("code") == code_str or entry.get("label") == code_str:
             return entry
-        if code_str in (entry.get("aliases") or []):
+        if code_str in (entry.get("donor_aliases") or []):
             return entry
     # Fallback: first whitespace token
     first = code_str.split()[0] if code_str else ""

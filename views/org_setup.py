@@ -196,7 +196,7 @@ def render_org_setup(user, sb):
             # Clean every seed + catalog website to a bare host, then de-duplicate.
             _portals = sorted({p for p in (
                 set(map(clean_portal_url, DONOR_PORTALS))
-                | {clean_portal_url(d.get("website")) for d in _dn}
+                | {clean_portal_url(d.get("donor_website")) for d in _dn}
             ) if p and "." in p})
         except Exception:
             pass
@@ -873,7 +873,7 @@ def render_org_setup(user, sb):
                     "Code": c.get("code") or "",
                     "Label": c.get("label") or "",
                     "Symbol": c.get("symbol") or "",
-                    "Aliases": ", ".join(c.get("aliases") or []),
+                    "Aliases": ", ".join(c.get("donor_aliases") or []),
                     "USD rate": float(c.get("usd_rate") or 1.0),
                 }
                 for c in cur_list
@@ -905,7 +905,7 @@ def render_org_setup(user, sb):
                         "code": code,
                         "label": (row.get("Label") or code).strip() or code,
                         "symbol": (row.get("Symbol") or None) or None,
-                        "aliases": aliases,
+                        "donor_aliases": aliases,
                         "usd_rate": float(row.get("USD rate") or 1.0),
                     })
                 settings.set_currency_overrides(new_list, updated_by=user.get("email"))
