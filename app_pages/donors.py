@@ -105,6 +105,11 @@ _LABEL_OVERRIDES = {
     # existing submission_portal_url (matched against the org's donor_registrations).
     "donor_govt_mou_required": "Government MOU required",
     "donor_funding_platform_registration_required": "Funding-platform registration required",
+    # New capture fields (migration 062). State/counterpart co-financing is DISTINCT
+    # from cost-share match. Indirect-cost flag is phrased as the constraint.
+    "donor_state_party_cofinancing_required": "Government / counterpart co-financing required",
+    "donor_indirect_cost_disallowed": "Indirect / overhead costs not allowed",
+    "donor_fund_use_conditions": "Conditions on use of funds",
     # PREFER-8 competitiveness (migration 053)
     "donor_multi_country_encouraged": "Encourages multi-country proposals",
     "donor_summary_description": "Summary",
@@ -389,7 +394,9 @@ _PROFILE = ["donor_founded", "donor_summary_description", "donor_mission", "dono
             # MUST-1 rework conditions (migration 049) — VALUED text, not flags.
             "donor_entity_type_required", "donor_registration_region",
             "donor_requires_pi", "donor_pi_country_scope", "donor_max_prior_grant",
-            "donor_prior_beneficiary_rule"]
+            "donor_prior_beneficiary_rule",
+            # Conditions on how awarded funds may be used (migration 062) — free text.
+            "donor_fund_use_conditions"]
 # Columns kept for backward-compat but no longer surfaced anywhere (not edited,
 # not shown in View, not in share/PDF). verification_level already captures data
 # confidence, so the free-text "verification caveats" was redundant + confusing.
