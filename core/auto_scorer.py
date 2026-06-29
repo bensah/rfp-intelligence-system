@@ -1983,7 +1983,7 @@ def _is_blank_cheque(candidate: dict[str, Any]) -> bool:
 
     if _listed(candidate.get("call_geographic_scope")):
         return False
-    pa = candidate.get("program_area")
+    pa = candidate.get("call_domain_areas")
     pa_list = pa if isinstance(pa, (list, tuple)) else ([pa] if pa else [])
     from core.program_area_classifier import PROGRAM_AREA_KEYWORDS as _PAK
     if any(str(p) in _PAK for p in pa_list):
@@ -2167,7 +2167,7 @@ def auto_score(
         PROGRAM_AREA_KEYWORDS as _PAK, UNSPECIFIED as _UNSPEC,
         category_full as _catfull, subarea_label as _sublab,
     )
-    _cur_pa = candidate.get("program_area")
+    _cur_pa = candidate.get("call_domain_areas")
     _cur_list = _cur_pa if isinstance(_cur_pa, (list, tuple)) else ([_cur_pa] if _cur_pa else [])
     # match on either the canonical key OR the bare sub-label (stored form)
     if not any(str(v) in _PAK or str(v) in {_sublab(k) for k in _PAK} for v in _cur_list):
@@ -2177,5 +2177,5 @@ def auto_score(
             # ("NCDs - Mental Health") — the category prefix is dropped everywhere
             # per policy. focus_theme keeps the category (computed from the key).
             out["focus_theme"] = "; ".join(sorted({_catfull(a) for a in prog}))
-            out["program_area"] = [_sublab(a) for a in prog]
+            out["call_domain_areas"] = [_sublab(a) for a in prog]
     return out

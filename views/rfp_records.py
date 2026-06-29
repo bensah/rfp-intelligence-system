@@ -522,7 +522,7 @@ def view_dialog(row: dict) -> None:
     g1, g2 = st.columns(2)
     g1.markdown(f"**🌍 Geography**  \n{_disp(row.get('call_geographic_scope'))}")
     g1.markdown(f"**👥 Proposal lead(s)**  \n{_disp(row.get('proposal_lead'))}")
-    g2.markdown(f"**🎯 Focus areas**  \n{_disp(row.get('program_area'))}")
+    g2.markdown(f"**🎯 Focus areas**  \n{_disp(row.get('call_domain_areas'))}")
     g2.markdown(f"**📌 Stage / Progress**  \n{_disp(row.get('stage'))} · {_disp(row.get('progress_status'))}")
 
     # ── Eligibility outcome — high-level MUST/PREFER labels only ───────────
@@ -720,8 +720,8 @@ def edit_dialog(row: dict) -> None:
         )
         prog_in = st.multiselect(
             "Program area(s)",
-            _multi_options(dropdowns.get("program_areas"), row.get("program_area")),
-            default=_multi_default(row.get("program_area")),
+            _multi_options(dropdowns.get("call_domain_areas"), row.get("call_domain_areas")),
+            default=_multi_default(row.get("call_domain_areas")),
             key=f"e_prog_{row['uid']}",
         )
 
@@ -932,7 +932,7 @@ def edit_dialog(row: dict) -> None:
             "project_duration": int(dur_in) if dur_in else None,
             "focus_theme": _val(focus_in),
             "call_geographic_scope": geo_in or None,
-            "program_area": prog_in or None,
+            "call_domain_areas": prog_in or None,
             "feasibility": _val(feas_in),
             **vals,
             "decline_flags_present": decline_bool,
@@ -1032,7 +1032,7 @@ def _markdown_summary(row: dict) -> str:
         f"- **Deadline:** {row.get('submission_deadline') or '—'}\n"
         f"- **Estimated value:** {row.get('estimated_value') or '—'} {row.get('currency') or ''}\n"
         f"- **Geography:** {', '.join(row.get('call_geographic_scope') or []) or '—'}\n"
-        f"- **Program area:** {', '.join(row.get('program_area') or []) or '—'}\n"
+        f"- **Program area:** {', '.join(row.get('call_domain_areas') or []) or '—'}\n"
         f"- **Alignment score:** {row.get('alignment_score') or 0:.1f} / 100\n"
         f"- **Auto-decision:** {row.get('auto_recommendation') or '—'}\n"
         f"- **Decision:** {row.get('decision') if (isinstance(row.get('decision'), str) and row.get('decision').strip()) else 'Pending'}\n"

@@ -343,7 +343,7 @@ _SHORT_TEXT = ["donor", "donor_short", "donor_category", "donor_type", "website"
                "award_low_usd", "award_high_usd",
                "total_annual_funding_global", "funding_mechanism"]
 _LONG_TEXT = ["aliases", "donor_geographic_scope", "active_route_status",
-              "direct_local_org_eligible", "priority_program_areas",
+              "direct_local_org_eligible", "donor_priority_areas",
               "verification_caveats", "evidence_summary", "notes",
               "source_urls", "opportunity_listing_urls"]
 # Institutional / official donor contact (one set per donor — the donor_intel
@@ -373,7 +373,7 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
             "out_of_scope", "selection_criteria", "funding_programs",
             "funding_tiers_json", "eligibility_notes", "application_deadlines",
             "submission_portal_url", "strategic_fit_notes", "gaps_risks",
-            "recommended_approach", "program_area_ratings", "funders_collaborators",
+            "recommended_approach", "donor_priority_ratings", "funders_collaborators",
             # Hard eligibility conditions (migration 032) — VALUED (not flags).
             "hq_country_required", "org_stage_required", "max_annual_budget_usd",
             "min_track_record_usd", "required_partner_type", "required_partner_country",
@@ -494,7 +494,7 @@ def _cell(v):
 
 
 # Fields stored as JSON lists — rendered as comma lists in share/export.
-_LIST_FIELDS = {"donor_geographic_scope", "priority_program_areas",
+_LIST_FIELDS = {"donor_geographic_scope", "donor_priority_areas",
                 "funding_mechanism", "funders_collaborators",
                 # MUST-1 multi-selects (migration 049) — stored as JSON lists.
                 "hq_country_required", "registration_region", "required_partner_type",
@@ -573,7 +573,7 @@ def _completeness(row: dict) -> tuple[int, int, int]:
     # program_area_ratings is a JSON OBJECT (not a list) — documented if non-empty.
     total += 1
     try:
-        _r = json.loads(row.get("program_area_ratings") or "{}")
+        _r = json.loads(row.get("donor_priority_ratings") or "{}")
     except (ValueError, TypeError):
         _r = {}
     if isinstance(_r, dict) and _r:
@@ -748,9 +748,9 @@ def _summary_lines(row: dict) -> list[str]:
         lines.append("")
 
     # Scope & fit — strategic priority areas (graded), geographies, in/out scope.
-    _areas_s = _to_list(row.get("priority_program_areas"))
+    _areas_s = _to_list(row.get("donor_priority_areas"))
     try:
-        _pa_ratings_s = json.loads(row.get("program_area_ratings") or "{}")
+        _pa_ratings_s = json.loads(row.get("donor_priority_ratings") or "{}")
         _pa_ratings_s = _pa_ratings_s if isinstance(_pa_ratings_s, dict) else {}
     except (ValueError, TypeError):
         _pa_ratings_s = {}
@@ -1125,12 +1125,12 @@ def _edit_dialog(row: dict) -> None:
         # old *_fit checkbox flags.
         _sel, _ratings = program_area_matrix_editor(
             "Strategic priority areas",
-            row.get("priority_program_areas"), row.get("program_area_ratings"),
+            row.get("donor_priority_areas"), row.get("donor_priority_ratings"),
             key_prefix=f"ppa_{ck}",
             help="The donor's funding priorities. Grade 0–5 how central each area is "
                  "to this funder — matched against your org's priorities for strategic fit.")
-        edited["priority_program_areas"] = json.dumps(_sel)
-        edited["program_area_ratings"] = json.dumps(_ratings)
+        edited["donor_priority_areas"] = json.dumps(_sel)
+        edited["donor_priority_ratings"] = json.dumps(_ratings)
         st.divider()
         edited["donor_geographic_scope"] = json.dumps(_multi_with_options(
             "Funding scope — geographies (UN regions / tiers / countries)",
@@ -1810,11 +1810,11 @@ def _view_dialog(row: dict) -> None:
 
     # ── 🎯 Scope & fit — strategic priority areas (graded) / geo / in-out ────
     _scope = _to_list(row.get("donor_geographic_scope"))
-    _areas = _to_list(row.get("priority_program_areas"))
+    _areas = _to_list(row.get("donor_priority_areas"))
     _in_scope = _disp(row.get("in_scope"))
     _out_scope = _disp(row.get("out_of_scope"))
     try:
-        _pa_ratings = json.loads(row.get("program_area_ratings") or "{}")
+        _pa_ratings = json.loads(row.get("donor_priority_ratings") or "{}")
         _pa_ratings = _pa_ratings if isinstance(_pa_ratings, dict) else {}
     except (ValueError, TypeError):
         _pa_ratings = {}
@@ -2063,9 +2063,9 @@ if vers:
     fdf = fdf[fdf["verification_level"].isin(vers)]
 # Strategic-priority-area filter — match donor priority_program_areas (expanded
 # to taxonomy child keys) against the selected categories.
-if areas_f and "priority_program_areas" in fdf.columns:
+if areas_f and "donor_priority_areas" in fdf.columns:
     _want_pa = _pa.expand(areas_f)
-    fdf = fdf[fdf["priority_program_areas"].apply(
+    fdf = fdf[fdf["donor_priority_areas"].apply(
         lambda v: bool(_pa.expand(_to_list(v)) & _want_pa))]
 # Applicant-type filter (OR across selected types) using existing eligibility flags.
 _APPL_FLAG = {"NGO": "ngo_eligible", "For-profit / private": "for_profit_eligible",
