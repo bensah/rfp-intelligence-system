@@ -160,9 +160,17 @@ def _pretty_choice(v: str) -> str:
 
 
 def _label(col: str) -> str:
+    # The DB columns carry a source-role prefix (donor_/call_/org_) for an auditable
+    # schema, but those prefixes must NOT show in the form — "Donor tax exempt status
+    # required" reads as wanting the DONOR's status, when it means "the donor REQUIRES
+    # tax-exempt status from applicants". So strip the prefix for display only (owner
+    # 2026-06-29). Schema is unchanged.
     if col in _LABEL_OVERRIDES:
         return _LABEL_OVERRIDES[col]
-    words = col.replace("_", " ").split()
+    bare = re.sub(r"^(donor_|call_|org_)", "", col)
+    if bare in _LABEL_OVERRIDES:
+        return _LABEL_OVERRIDES[bare]
+    words = bare.replace("_", " ").split()
     out = []
     for i, w in enumerate(words):
         lw = w.lower()
