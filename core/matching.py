@@ -141,13 +141,13 @@ def _thematic_fit(org: dict, donor: dict) -> float:
     # Graded path: correlate the org's vs the donor's priority vectors (handles
     # parent categories, specific sub-areas, ungraded=5, broad=avg-of-children).
     graded = strategic_fit_score(
-        org.get("priority_areas"), org.get("program_area_ratings"),
-        donor.get("priority_program_areas"), donor.get("program_area_ratings"))
+        org.get("org_priority_areas"), org.get("org_priority_ratings"),
+        donor.get("donor_priority_areas"), donor.get("donor_priority_ratings"))
     if graded is not None:
         return graded
     # Fallback: binary overlap on the shared taxonomy (no priority signal one side).
-    org_pa = (org.get("priority_areas") or []) + (org.get("domains") or [])
-    don_pa = _as_list(donor.get("priority_program_areas"))
+    org_pa = (org.get("org_priority_areas") or []) + (org.get("org_domain_expertise") or [])
+    don_pa = _as_list(donor.get("donor_priority_areas"))
     if not org_pa or not don_pa:
         return 0.5
     return 1.0 if (_pa.expand(org_pa) & _pa.expand(don_pa)) else 0.0

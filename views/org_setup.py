@@ -417,13 +417,13 @@ def render_org_setup(user, sb):
         #    not) → feeds STRATEGIC FIT (MUST-2), matched to donor priorities.
         domains_sel, domain_ratings = program_area_matrix_editor(
             "Domains / areas of expertise (track record)",
-            _prof.get("domains"), _prof.get("domain_ratings"), "orgp_domains",
+            _prof.get("org_domain_expertise"), _prof.get("org_domain_ratings"), "orgp_domains",
             help="Where you have demonstrated experience — grade 0–5 how strong your "
                  "track record is (e.g. malaria 5 = many funded/ongoing projects; "
                  "health workforce 1 = a minor past project). Drives competitiveness.")
         priorities_sel, priority_ratings = program_area_matrix_editor(
             "Strategic priority areas (strategy)",
-            _prof.get("priority_areas"), _prof.get("program_area_ratings"),
+            _prof.get("org_priority_areas"), _prof.get("org_priority_ratings"),
             "orgp_priority_areas",
             help="Where your strategy says you want to work — even with no footprint "
                  "yet (e.g. nutrition 5 = a top priority you're pursuing). Drives "
@@ -550,10 +550,10 @@ def render_org_setup(user, sb):
                 "authorized_signatory_donors": authorized_signatory_donors,
                 "org_funding_routes": org_funding_routes,
                 "partners": partners_struct,
-                "domains": domains_sel,
-                "domain_ratings": domain_ratings,
-                "priority_areas": priorities_sel,
-                "program_area_ratings": priority_ratings,
+                "org_domain_expertise": domains_sel,
+                "org_domain_ratings": domain_ratings,
+                "org_priority_areas": priorities_sel,
+                "org_priority_ratings": priority_ratings,
                 "org_operating_countries": countries_op_sel,
                 # Partners now live in the single `partners` table above. The flat
                 # lists are kept (consolidated) only for back-compat readers:

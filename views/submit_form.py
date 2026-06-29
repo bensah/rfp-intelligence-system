@@ -67,7 +67,7 @@ def render_submit_form(
     funding_windows = dropdowns.get("funding_window")
     time_to_award = dropdowns.get("time_to_award")
     submission_formats = dropdowns.get("submission_format")
-    program_areas = dropdowns.get("program_areas")
+    program_areas = dropdowns.get("call_domain_areas")
     geo_scope = dropdowns.get("call_geographic_scope")
     decisions = dropdowns.get("decisions")
     currencies = [c["code"] for c in dropdowns.load().get("currencies", [])]
@@ -351,7 +351,7 @@ def render_submit_form(
         "date_posted": date_posted.isoformat() if isinstance(date_posted, date) else None,
         "funding_agency": resolved.get("funder"),
         "call_geographic_scope": resolved.get("geo"),
-        "program_area": resolved.get("program"),
+        "call_domain_areas": resolved.get("program"),
         "focus_theme": _none(focus_theme),
         "opportunity_link": _none(link),
         "applicant_role": _none(role),

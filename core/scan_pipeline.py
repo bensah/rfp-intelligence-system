@@ -92,7 +92,7 @@ _SCRAPE_MANAGED_FIELDS = (
 _SCRAPE_STRUCTURED_FIELDS = (
     "estimated_value",
     "currency",
-    "program_area",
+    "call_domain_areas",
     "call_geographic_scope",
     "funding_window",
     "funding_type",
@@ -231,7 +231,7 @@ def _build_merge_payload(
         # get backfilled (estimated_value / program_area / geography / …).
         "estimated_value": candidate.get("estimated_value"),
         "currency": candidate.get("currency"),
-        "program_area": candidate.get("program_area"),
+        "call_domain_areas": candidate.get("call_domain_areas"),
         "call_geographic_scope": candidate.get("call_geographic_scope"),
         "funding_window": candidate.get("funding_window"),
         "funding_type": candidate.get("funding_type"),
@@ -605,8 +605,8 @@ def ingest_candidates(
                     if _syn:
                         if _syn.get("brief_description"):
                             row["brief_description"] = _syn["brief_description"]
-                        if _syn.get("program_areas"):
-                            row["program_area"] = _syn["program_areas"]
+                        if _syn.get("call_domain_areas"):
+                            row["call_domain_areas"] = _syn["call_domain_areas"]
                         if _syn.get("key_risks") and not row.get("key_risks"):
                             row["key_risks"] = _syn["key_risks"]
                         if _syn.get("decision_rationale") and not row.get("decision_note"):
