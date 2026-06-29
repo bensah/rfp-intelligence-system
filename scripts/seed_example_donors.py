@@ -92,12 +92,12 @@ NIHR = {
     ]),
     # Strategic priority areas — canonical keys from the shared taxonomy
     # (core/program_area_classifier.py), with 0–5 priority grades.
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "IDs - Antimicrobial Resistance (AMR)", "Cross-cutting - Diagnostics",
         "Cross-cutting - Research", "HSS - Health Workforce",
         "HSS - Health Financing", "WCH - MNCH", "WCH - Vaccines",
         "Cross-cutting - Digital Health (+AI)", "IDs - Pandemic Response"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "IDs - Antimicrobial Resistance (AMR)": 5,
         "Cross-cutting - Diagnostics": 5,
         "Cross-cutting - Research": 5,
@@ -258,7 +258,7 @@ DIV = {
     # distribution (Health 10 · Agriculture/Food Security 4 · Education 4 ·
     # Environment 2 · Economic Growth 1 · Democracy/Rights/Governance 1 · WASH 1),
     # nuanced by what their grantees actually do. Grades scale with that emphasis.
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         # Health (dominant sector) ---------------------------------------------
         "Cross-cutting - Digital Health (+AI)", "IDs - Malaria & NTDs",
         "WCH - MNCH", "WCH - Vaccines", "HSS - Health Workforce",
@@ -276,7 +276,7 @@ DIV = {
         "ECON - Jobs & Skills",
         # Governance + Humanitarian (light) ------------------------------------
         "GOV - Democracy & Civic Participation", "HUM - Emergency Response"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         # Health — DIV's largest, most active sector
         "Cross-cutting - Digital Health (+AI)": 5,   # Dimagi, Maisha Meds, Simprints
         "IDs - Malaria & NTDs": 5,                   # antimalarial access, malaria-vaccine uptake
@@ -434,10 +434,10 @@ COEFFICIENT_GIVING = {
         "(incl. global health R&D and scientific research), pandemic preparedness / "
         "biosecurity, farm animal welfare, and risks from advanced AI."),
     "funding_mechanism": json.dumps(["Grants", "Program-related investments (equity/debt)"]),
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "IDs - Pandemic Response", "Cross-cutting - Research", "WCH - Vaccines",
         "Cross-cutting - Diagnostics", "Cross-cutting - Digital Health (+AI)"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "IDs - Pandemic Response": 5, "Cross-cutting - Research": 5,
         "WCH - Vaccines": 3, "Cross-cutting - Diagnostics": 3,
         "Cross-cutting - Digital Health (+AI)": 3}),
@@ -471,10 +471,10 @@ GIVEWELL = {
         "seasonal chemoprevention), vitamin A supplementation, vaccination / "
         "immunisation incentives, safe water, and maternal & child health."),
     "funding_mechanism": json.dumps(["Grants"]),
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "IDs - Malaria & NTDs", "WCH - Nutrition", "WCH - Vaccines",
         "WASH - Safe Water", "WCH - MNCH", "Cross-cutting - Research"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "IDs - Malaria & NTDs": 5, "WCH - Nutrition": 4, "WCH - Vaccines": 4,
         "WASH - Safe Water": 4, "WCH - MNCH": 3, "Cross-cutting - Research": 4}),
     "donor_geographic_scope": json.dumps([
@@ -505,10 +505,10 @@ LIVELIHOOD_IMPACT_FUND = {
         "financial inclusion and economic empowerment, judged on measurable income growth."),
     "funding_mechanism": json.dumps(["Grants"]),
     "award_low_usd": "$100K", "award_high_usd": "$300K",
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "ECON - Jobs & Skills", "EDU - Higher Education & TVET",
         "ECON - Financial Inclusion", "ECON - Social Protection", "GES - Youth Empowerment"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "ECON - Jobs & Skills": 5, "EDU - Higher Education & TVET": 4,
         "ECON - Financial Inclusion": 4, "ECON - Social Protection": 3,
         "GES - Youth Empowerment": 3}),
@@ -543,10 +543,10 @@ CRI_FOUNDATION = {
         "funding (e.g. the CRI-DIV collaborative)."),
     "funding_mechanism": json.dumps(["Grants"]),
     "funders_collaborators": json.dumps(["Development Innovation Ventures Fund"]),
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "Cross-cutting - Research", "IDs - Malaria & NTDs", "WCH - MNCH",
         "HSS - Health Workforce", "WCH - Nutrition"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "Cross-cutting - Research": 5, "IDs - Malaria & NTDs": 4, "WCH - MNCH": 4,
         "HSS - Health Workforce": 3, "WCH - Nutrition": 3}),
     "donor_geographic_scope": json.dumps([
@@ -580,11 +580,11 @@ GLOBAL_DEV_INCUBATOR = {
         "finance, agriculture, climate & ecosystems, youth employment, economic "
         "inclusion and MSME development."),
     "funding_mechanism": json.dumps(["Technical assistance", "Co-financing", "Grants"]),
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "Cross-cutting - Digital Health (+AI)", "ECON - Financial Inclusion",
         "AGRI - Smallholder Productivity", "ECON - Jobs & Skills",
         "ENV - Climate Adaptation & Resilience", "HSS - Health Workforce"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "Cross-cutting - Digital Health (+AI)": 4, "ECON - Financial Inclusion": 4,
         "AGRI - Smallholder Productivity": 4, "ECON - Jobs & Skills": 3,
         "ENV - Climate Adaptation & Resilience": 3, "HSS - Health Workforce": 3}),

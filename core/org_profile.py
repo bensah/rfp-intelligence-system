@@ -79,12 +79,12 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "partners": [],
 
     # --- strategic_fit + competitiveness (priorities vs track record) ---
-    "domains": [],                          # areas of demonstrated expertise / experience
-    "domain_ratings": {},                   # {child key: 0-5} TRACK-RECORD strength per
+    "org_domain_expertise": [],                          # areas of demonstrated expertise / experience
+    "org_domain_ratings": {},                   # {child key: 0-5} TRACK-RECORD strength per
                                             # domain — feeds COMPETITIVENESS (how well-placed
                                             # we are to win an RFP in that exact area)
-    "priority_areas": [],                   # declared strategic priorities (may have no footprint yet)
-    "program_area_ratings": {},             # {child key: 0-5} STRATEGY priority per area —
+    "org_priority_areas": [],                   # declared strategic priorities (may have no footprint yet)
+    "org_priority_ratings": {},             # {child key: 0-5} STRATEGY priority per area —
                                             # feeds STRATEGIC FIT (MUST-2), correlated with
                                             # donor_intel.program_area_ratings
 
@@ -130,7 +130,7 @@ PROFILE_FIELDS: tuple[str, ...] = tuple(DEFAULT_PROFILE.keys())
 LIST_FIELDS: tuple[str, ...] = (
     "donor_registrations", "org_registered_countries", "org_operating_countries",
     "trusted_partners", "trusted_for_profit_partners",
-    "trusted_academic_institutions", "domains", "priority_areas",
+    "trusted_academic_institutions", "org_domain_expertise", "org_priority_areas",
     "funder_history", "active_donors", "proposal_languages",
     "authorized_signatory_donors", "org_funding_routes",
 )
@@ -195,6 +195,11 @@ _RENAMED_KEYS = {
     # Geography (axis 1)
     "countries_registered": "org_registered_countries",
     "countries_of_operation": "org_operating_countries",
+    # Program areas (axis 2)
+    "priority_areas": "org_priority_areas",
+    "program_area_ratings": "org_priority_ratings",
+    "domains": "org_domain_expertise",
+    "domain_ratings": "org_domain_ratings",
 }
 
 
@@ -235,4 +240,4 @@ def is_configured() -> bool:
     before relying on the matching profile."""
     p = get_profile()
     return bool((p.get("org_operating_countries") or [])
-                and ((p.get("domains") or []) or (p.get("priority_areas") or [])))
+                and ((p.get("org_domain_expertise") or []) or (p.get("org_priority_areas") or [])))

@@ -297,7 +297,7 @@ st.markdown(
   </div>
   <div style="{_CARD}">
     <div style="{_HDR}">Focus Areas</div>
-    <div style="color:#333">{_esc(row.get('program_area'))}</div>
+    <div style="color:#333">{_esc(row.get('call_domain_areas'))}</div>
   </div>
   <div style="{_CARD}">
     <div style="{_HDR}">Geographic Scope</div>

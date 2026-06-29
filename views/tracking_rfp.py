@@ -493,7 +493,7 @@ def _view_rfp(r: dict) -> None:
     g1, g2 = st.columns(2)
     g1.markdown(f"**🌍 Geography**  \n{', '.join(r.get('call_geographic_scope') or []) or '—'}")
     g1.markdown(f"**👥 Proposal lead(s)**  \n{r.get('all_leads') or r.get('proposal_lead') or '—'}")
-    g2.markdown(f"**🎯 Focus areas**  \n{', '.join(r.get('program_area') or []) or '—'}")
+    g2.markdown(f"**🎯 Focus areas**  \n{', '.join(r.get('call_domain_areas') or []) or '—'}")
     g2.markdown(f"**⏱ Duration**  \n{r.get('project_duration') or '—'}")
 
     # ── Eligibility outcome — the 9 MUST/PREFER high-level outputs (labels only,
