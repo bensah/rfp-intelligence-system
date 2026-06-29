@@ -40,7 +40,7 @@ pd.set_option("display.max_columns", 40)
 # Fields the model / matching rely on, and how to read them off rfp_submissions.
 _EXTRACTION_FIELDS = [
     "opportunity_title", "brief_description", "submission_deadline",
-    "estimated_value", "currency", "call_geographic_scope", "call_domain_areas",
+    "call_award_value", "currency", "call_geographic_scope", "call_domain_areas",
     "funding_agency", "focus_theme", "date_posted",
 ]
 
@@ -119,8 +119,8 @@ def audit_extraction(subs: list[dict]) -> pd.DataFrame:
 
     # noise spot-checks on the numeric/date/array fields
     _hr("B0 — NOISE / VALIDITY SPOT-CHECKS")
-    if "estimated_value" in live:
-        ev = pd.to_numeric(live["estimated_value"], errors="coerce")
+    if "call_award_value" in live:
+        ev = pd.to_numeric(live["call_award_value"], errors="coerce")
         present = ev.notna().sum()
         print(f"estimated_value: {present}/{len(live)} numeric-parseable; "
               f"<=0: {int((ev <= 0).sum())}; "

@@ -37,8 +37,8 @@ DONOR = {
         "across two cycles; decisions on the written application only (no interview)."
     ),
     # Funding footprint
-    "award_low_usd": "$25,000",
-    "award_high_usd": "$100,000",
+    "donor_award_low": "$25,000",
+    "donor_award_high": "$100,000",
     "total_annual_funding_global": "Up to $3M / year",
     "projected_budget": "Up to $3M / year",
     "projected_budget_period": "2026 (two cycles)",

@@ -361,7 +361,7 @@ def render_submit_form(
         "submission_deadline": deadline.isoformat() if isinstance(deadline, date) else None,
         "expected_award_date": award_date.isoformat() if isinstance(award_date, date) else None,
         "time_to_award": _none(tta),
-        "estimated_value": float(value) if value else None,
+        "call_award_value": float(value) if value else None,
         "currency": _none(currency),
         "project_duration": int(duration) if duration else None,
         "submission_format": resolved.get("sub_format"),
