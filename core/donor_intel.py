@@ -174,7 +174,7 @@ _HEALTH_CATEGORY_NAMES = (
 
 def _has_health_program_area(row: dict) -> bool:
     """True if priority_program_areas contains any health-category key/name."""
-    raw = row.get("priority_program_areas")
+    raw = row.get("donor_priority_areas")
     if not raw:
         return False
     txt = str(raw)

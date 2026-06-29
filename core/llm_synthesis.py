@@ -58,7 +58,7 @@ def _money(v: Any) -> str:
 def _org_block(org: dict) -> str:
     if not org:
         return "(org profile unavailable)"
-    pa = org.get("priority_areas") or org.get("domains") or []
+    pa = org.get("org_priority_areas") or org.get("org_domain_expertise") or []
     funders = org.get("funder_history") or []
     return (
         f"- Operates in: {', '.join(org.get('org_operating_countries') or []) or '—'}\n"
@@ -133,7 +133,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "for each RFP so it never reads like a robotic fill-in-the-blank. Ground every "
         "statement in the text; if a detail (e.g. the amount) is not stated, OMIT it "
         "rather than inventing one. MAX 1000 characters.\n"
-        '  "program_areas": array of 1-3 best-fit areas chosen ONLY from this '
+        '  "call_domain_areas": array of 1-3 best-fit areas chosen ONLY from this '
         f"list (verbatim): {options}\n"
         '  "key_risks": ONE sentence naming the single most material risk of THIS '
         "org pursuing THIS RFP, grounded in the org context — e.g. no prior "
@@ -217,10 +217,10 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         return None
 
     valid = set(options)
-    pas = [p for p in (parsed.get("program_areas") or []) if p in valid][:3]
+    pas = [p for p in (parsed.get("call_domain_areas") or []) if p in valid][:3]
     out = {
         "brief_description": _clip(parsed.get("brief_description"), _BRIEF_MAX),
-        "program_areas": pas or None,
+        "call_domain_areas": pas or None,
         "key_risks": _clip(parsed.get("key_risks"), 300),
         "decision_rationale": _clip(parsed.get("decision_rationale"), 400),
         "how_to_apply": _clip(parsed.get("how_to_apply"), 1500),

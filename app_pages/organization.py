@@ -180,11 +180,11 @@ def _areas_block(title, ratings, selection, caption):
 with st.container(border=True):
     st.markdown("#### 🎯 Program areas (graded 0–5)")
     _areas_block("Domains / areas of expertise (track record → competitiveness)",
-                 prof.get("domain_ratings"), prof.get("domains"),
+                 prof.get("org_domain_ratings"), prof.get("org_domain_expertise"),
                  "Where you have demonstrated experience.")
     st.markdown("")
     _areas_block("Strategic priority areas (strategy → strategic fit)",
-                 prof.get("program_area_ratings"), prof.get("priority_areas"),
+                 prof.get("org_priority_ratings"), prof.get("org_priority_areas"),
                  "Where your strategy says you want to work.")
 
 # ── Geography & partners ──────────────────────────────────────────────────────
