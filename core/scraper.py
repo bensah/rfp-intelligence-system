@@ -9,7 +9,7 @@ a list of candidate dicts. Each candidate has the shape:
       "funding_agency":    str | None, # donor / agency
       "brief_description": str | None,
       "date_posted":       date | None,
-      "submission_deadline": date | None,
+      "call_submission_deadline": date | None,
       "_source_origin":    str,        # human-readable (where we found it)
     }
 
@@ -785,8 +785,8 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
     # point downloading something we'll reject. Stamp the deadline so
     # downstream eligibility cleanly logs WHY it was rejected.
     url_yr = _detect_url_year(link, cand.get("opportunity_title") or "")
-    if url_yr and url_yr < date.today().year and not cand.get("submission_deadline"):
-        cand["submission_deadline"] = date(url_yr, 12, 31)
+    if url_yr and url_yr < date.today().year and not cand.get("call_submission_deadline"):
+        cand["call_submission_deadline"] = date(url_yr, 12, 31)
         cand["_deadline_from_url_year"] = True
         return cand
 
@@ -852,10 +852,10 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
     #      page shows publish date only; real deadline is in the
     #      downloadable Guide-*.pdf).
     #   3. Latest year mentioned in URL / title.
-    if not cand.get("submission_deadline"):
+    if not cand.get("call_submission_deadline"):
         d = _extract_deadline_from_text(text)
         if d:
-            cand["submission_deadline"] = d
+            cand["call_submission_deadline"] = d
         elif soup is not None:
             # Follow the most-likely application-guide PDF on the page
             # and try to extract the deadline from THERE.
@@ -863,23 +863,23 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
             if pdf_url:
                 pdf_deadline, pdf_brief = _try_pdf_guide_deadline(pdf_url)
                 if pdf_deadline:
-                    cand["submission_deadline"] = pdf_deadline
+                    cand["call_submission_deadline"] = pdf_deadline
                     cand["_deadline_from_guide_pdf"] = pdf_url
                 if pdf_brief and not cand.get("brief_description"):
                     cand["brief_description"] = pdf_brief
             # Still no deadline? Follow a companion call / calendar page (e.g.
             # Fondation Pierre Fabre -> odess.io application calendar).
-            if not cand.get("submission_deadline"):
+            if not cand.get("call_submission_deadline"):
                 companion_deadline = _follow_companion_for_deadline(soup, link)
                 if companion_deadline:
-                    cand["submission_deadline"] = companion_deadline
+                    cand["call_submission_deadline"] = companion_deadline
                     cand["_deadline_from_companion"] = True
         # Final fallback: year-in-URL heuristic.
-        if not cand.get("submission_deadline"):
+        if not cand.get("call_submission_deadline"):
             yr = _detect_url_year(link, cand.get("opportunity_title", ""))
             today = date.today()
             if yr and yr < today.year:
-                cand["submission_deadline"] = date(yr, 12, 31)
+                cand["call_submission_deadline"] = date(yr, 12, 31)
                 cand["_deadline_from_url_year"] = True
 
     # Brief description — prefer meta tags / first paragraph for HTML,
@@ -923,7 +923,7 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
     # Cost: ~$0.0008 per call at Haiku tier. Only triggered for the
     # subset of candidates the regex layer couldn't fully fill — usually
     # a handful per scan, not the full 100.
-    missing_deadline = not cand.get("submission_deadline")
+    missing_deadline = not cand.get("call_submission_deadline")
     missing_desc = not cand.get("brief_description") or len(
         (cand.get("brief_description") or "")
     ) < 60
@@ -940,10 +940,10 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
                 page_text=text,
             )
             if llm:
-                if missing_deadline and llm.get("submission_deadline"):
+                if missing_deadline and llm.get("call_submission_deadline"):
                     try:
-                        cand["submission_deadline"] = date.fromisoformat(
-                            llm["submission_deadline"]
+                        cand["call_submission_deadline"] = date.fromisoformat(
+                            llm["call_submission_deadline"]
                         )
                         cand["_deadline_from_llm"] = True
                     except ValueError:
@@ -1109,7 +1109,7 @@ def _scan_rss(name: str, url: str) -> list[dict[str, Any]]:
             "funding_agency": funder,
             "brief_description": summary[:1500] or None,
             "date_posted": published,
-            "submission_deadline": None,
+            "call_submission_deadline": None,
             "_source_origin": f"{name} (RSS)",
         })
     return out
@@ -1183,7 +1183,7 @@ def _scan_researchnet(name: str, url: str) -> list[dict[str, Any]]:
             "funding_agency": "Canadian Institutes of Health Research",
             "brief_description": brief[:1500] or None,
             "date_posted": published,
-            "submission_deadline": deadline,
+            "call_submission_deadline": deadline,
             # CIHR funds Canadian institutions by default; the "Canadian" cue lives
             # in the funder name (excluded from geo detection), so stamp Canada as
             # the default scope. The geo gate then drops Canada-only calls and
@@ -1319,7 +1319,7 @@ def _scan_google_alerts(name: str, url: str) -> list[dict[str, Any]]:
             "funding_agency": _domain_to_funder(link),
             "brief_description": summary[:1500] or None,
             "date_posted": published,
-            "submission_deadline": None,
+            "call_submission_deadline": None,
             "_source_origin": f"{name} (Google Alert)",
         })
     if skipped_noise:
@@ -1455,7 +1455,7 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
                 "funding_agency": agency or "US Federal (Grants.gov)",
                 "brief_description": None,
                 "date_posted": _parse_iso_date(open_iso),
-                "submission_deadline": _parse_iso_date(close_iso),
+                "call_submission_deadline": _parse_iso_date(close_iso),
                 "_source_origin": f"{name} (kw={keyword!r})",
                 "_grants_gov_id": numeric_id,
             })
@@ -1541,7 +1541,7 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
         # authoritative `responseDate` rather than the abbreviated closeDate).
         dl = _parse_iso_date(syn.get("responseDate") or "")
         if dl:
-            cand["submission_deadline"] = dl
+            cand["call_submission_deadline"] = dl
 
         # --- program_area: from fundingActivityCategories[*].description ---
         cats = syn.get("fundingActivityCategories") or []
@@ -1691,7 +1691,7 @@ def _scan_worldbank(name: str, url: str) -> list[dict[str, Any]]:
             "funding_agency": "World Bank",
             "brief_description": None,
             "date_posted": _parse_iso_date(p.get("boardapprovaldate")),
-            "submission_deadline": _parse_iso_date(p.get("closingdate")),
+            "call_submission_deadline": _parse_iso_date(p.get("closingdate")),
             "_source_origin": name,
         })
     return out
@@ -1815,7 +1815,7 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
                 "funding_agency": _eu_funder(ident),
                 "brief_description": _clean(it.get("summary") or "")[:1800] or None,
                 "date_posted": _parse_iso_date(_first(md, "startDate")[:10]),
-                "submission_deadline": _parse_iso_date(_first(md, "deadlineDate")[:10]),
+                "call_submission_deadline": _parse_iso_date(_first(md, "deadlineDate")[:10]),
                 "call_award_value": amt,
                 "currency": cur,
                 "solicitation_type": "Prize" if is_prize else None,
@@ -1863,7 +1863,7 @@ def _scan_worldbank_procurement(name: str, url: str) -> list[dict[str, Any]]:
             "funding_agency": f"World Bank ({ntype})" if ntype else "World Bank",
             "brief_description": desc[:1800] or None,
             "date_posted": _wb_date(n.get("noticedate")),
-            "submission_deadline": _parse_iso_date(str(n.get("submission_date") or "")[:10]),
+            "call_submission_deadline": _parse_iso_date(str(n.get("submission_date") or "")[:10]),
             "call_geographic_scope": [ctry] if ctry else None,
             "_source_origin": name,
         })
@@ -1905,7 +1905,7 @@ def _scan_ocds(name: str, url: str, *, notice_base: str, geo: str
             "funding_agency": _clean((rel.get("buyer") or {}).get("name") or "") or name,
             "brief_description": _clean(t.get("description") or "")[:1800] or None,
             "date_posted": _parse_iso_date(str(rel.get("date") or "")[:10]),
-            "submission_deadline": _parse_iso_date(str(tp.get("endDate") or "")[:10]),
+            "call_submission_deadline": _parse_iso_date(str(tp.get("endDate") or "")[:10]),
             "call_geographic_scope": [geo],
             "_source_origin": name,
         })
@@ -1959,7 +1959,7 @@ def _scan_ted(name: str, url: str) -> list[dict[str, Any]]:
             "funding_agency": "EU public procurement (TED)",
             "brief_description": None,
             "date_posted": _parse_iso_date(str(n.get("PD") or "")[:10]),
-            "submission_deadline": deadline,
+            "call_submission_deadline": deadline,
             "call_geographic_scope": cy if isinstance(cy, list) else ([cy] if cy else None),
             "_source_origin": name,
         })
@@ -2022,7 +2022,7 @@ def _scan_ungm(name: str, url: str) -> list[dict[str, Any]]:
                 "opportunity_id": ref or None,
                 "funding_agency": f"UN — {agency}" if agency else "UN (UNGM)",
                 "brief_description": None,
-                "submission_deadline": deadline,
+                "call_submission_deadline": deadline,
                 "call_geographic_scope": [country] if country else None,
                 "_source_origin": name,
             })
@@ -2066,7 +2066,7 @@ def _scan_unops(name: str, url: str) -> list[dict[str, Any]]:
             "funding_agency": "UNOPS (GrantPlus)",
             "brief_description": _clean(n.get("description") or "")[:1800] or None,
             "date_posted": _parse_iso_date(str(n.get("postingDate") or "")[:10]),
-            "submission_deadline": _parse_iso_date(
+            "call_submission_deadline": _parse_iso_date(
                 str(n.get("submissionDueDate") or "")[:10]),
             "call_award_value": n.get("fundingAvailable"),
             "currency": (n.get("currency") or {}).get("code"),
@@ -2119,7 +2119,7 @@ def _scan_chinnova(name: str, url: str) -> list[dict[str, Any]]:
                                         a["href"]),
             "funding_agency": "CHINNOVA / Association of African Universities",
             "brief_description": None,
-            "submission_deadline": deadline,
+            "call_submission_deadline": deadline,
             "_source_origin": name,
         })
     return _dedup_by_link_or_title(out)
@@ -2182,7 +2182,7 @@ def _scan_grandchallenges_ca(name: str, url: str) -> list[dict[str, Any]]:
             "opportunity_link": full,
             "funding_agency": "Grand Challenges Canada",
             "brief_description": ctext[:1800] or None,
-            "submission_deadline": deadline,
+            "call_submission_deadline": deadline,
             "_source_origin": name,
         })
     return _dedup_by_link_or_title(out)
@@ -2363,7 +2363,7 @@ def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
                               or _funder_from_source_name(name),
             "brief_description": _clean(desc)[:1800] or None,
             "date_posted": _ts_to_date(it.get("date")),
-            "submission_deadline": _ts_to_date(it.get("date_end")),
+            "call_submission_deadline": _ts_to_date(it.get("date_end")),
             "_source_origin": f"{name}{' (coming soon)' if it.get('coming_soon') else ''}",
         })
     return _dedup_by_link_or_title(out)
@@ -2396,7 +2396,7 @@ def _scan_packard(name: str, url: str) -> list[dict[str, Any]]:
             "funding_agency": "Packard Foundation",
             "brief_description": _clean(excerpt)[:1800] or None,
             "date_posted": _parse_iso_date(str(it.get("date") or "")[:10]),
-            "submission_deadline": None,
+            "call_submission_deadline": None,
             "_source_origin": name,
         })
     return _dedup_by_link_or_title(out)
@@ -2439,7 +2439,7 @@ def _scan_rvo(name: str, url: str) -> list[dict[str, Any]]:
                 "opportunity_link": urljoin("https://english.rvo.nl/", rel.lstrip("/")),
                 "funding_agency": "Netherlands Enterprise Agency (RVO)",
                 "brief_description": _clean(summary)[:1800] or None,
-                "submission_deadline": None,
+                "call_submission_deadline": None,
                 "_source_origin": name,
             })
         pager = j.get("pager") or {}
@@ -2562,7 +2562,7 @@ def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[d
             "funding_agency": funder,
             "brief_description": None,
             "date_posted": None,
-            "submission_deadline": None,
+            "call_submission_deadline": None,
             "_source_origin": f"{name} (HTML)",
         }
         if len(candidates) >= 40:  # cap noise

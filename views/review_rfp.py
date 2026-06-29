@@ -271,7 +271,7 @@ def _kd(label: str, value: str) -> str:
 _kd_rows = (
     _kd("Applicant role", _esc(row.get("applicant_role")))
     + _kd("Window", _esc(row.get("funding_window")))
-    + _kd("Deadline", _esc(row.get("submission_deadline")))
+    + _kd("Deadline", _esc(row.get("call_submission_deadline")))
     + _kd("Award date", _esc(row.get("expected_award_date")))
     + _kd("Duration", f"{_esc(row.get('project_duration'))} mo")
 )

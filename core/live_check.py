@@ -90,10 +90,10 @@ def recheck_and_enrich(cand: dict) -> bool:
         return True
 
     # Live page — recover the signals the gate needs to judge the real call.
-    if not cand.get("submission_deadline"):
+    if not cand.get("call_submission_deadline"):
         dl = _extract_deadline_from_text(text)
         if dl:
-            cand["submission_deadline"] = dl
+            cand["call_submission_deadline"] = dl
     if not (cand.get("brief_description") or "").strip():
         desc = _extract_description_from_soup(soup) or (text[:600] if text else "")
         elig = _extract_eligibility_from_text(text)
