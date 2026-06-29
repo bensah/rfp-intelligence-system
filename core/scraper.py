@@ -670,7 +670,7 @@ def _enrich_developmentaid(cand: dict[str, Any]) -> dict[str, Any] | None:
         cand["call_geographic_scope"] = countries
     sectors = [s.strip() for s in (m.group("sectors") or "").split(",") if s.strip()]
     if sectors:
-        cand["program_area"] = sectors
+        cand["call_domain_areas"] = sectors
     # Brief description from og:description (full body text isn't
     # uniquely structured; og:description is the curated summary).
     og_desc_tag = soup.find("meta", attrs={"property": "og:description"})
@@ -1549,7 +1549,7 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
             labels = [_clean(c.get("description") or "") for c in cats if isinstance(c, dict)]
             labels = [x for x in labels if x]
             if labels:
-                cand["program_area"] = labels
+                cand["call_domain_areas"] = labels
 
         # --- funding_window: instrument types joined ---
         instrs = syn.get("fundingInstruments") or []

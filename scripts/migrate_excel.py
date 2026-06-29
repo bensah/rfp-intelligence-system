@@ -177,7 +177,7 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
         "date_posted": _date(get("Date Posted")),
         "funding_agency": _txt(get("Funding Agency", "Funder")),
         "call_geographic_scope": _multi(get("Geographic Scope", "Applicant Country")),
-        "program_area": _multi(get("Program Area")),
+        "call_domain_areas": _multi(get("Program Area")),
         "focus_theme": _txt(get("Focus Theme")),
         "opportunity_link": _txt(get("Opportunity Link")),
         # applicant_role: the source workbook header is "the organisation Role" (col Q);
