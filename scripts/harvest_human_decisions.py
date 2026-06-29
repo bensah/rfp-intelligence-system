@@ -104,8 +104,8 @@ def main(commit: bool) -> int:
             "funding_agency": r.get("funding_agency"),
             "source": r.get("source"),
             "call_geographic_scope": _scope_text(r.get("call_geographic_scope")),
-            "submission_deadline": (str(r.get("submission_deadline"))[:10]
-                                    if r.get("submission_deadline") else None),
+            "call_submission_deadline": (str(r.get("call_submission_deadline"))[:10]
+                                    if r.get("call_submission_deadline") else None),
             "alignment_score": r.get("alignment_score"),
             "features": F.extract(r, policies, asof=_asof(r)) or None,
             "decided_by": r.get("decision_overridden_by") or (r.get("source") or "migration"),

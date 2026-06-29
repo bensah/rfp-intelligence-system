@@ -32,7 +32,7 @@ def main(commit: bool) -> int:
             .execute().data or [])
     updates = []
     for r in rows:
-        if not _missing(r.get("founded")):
+        if not _missing(r.get("donor_founded")):
             continue
         acr = (r.get("donor_short") or "").strip().lower()
         name = (r.get("donor") or "").strip().lower()
@@ -40,7 +40,7 @@ def main(commit: bool) -> int:
         if yr:
             updates.append((r.get("canonical_key"), r.get("donor"), yr))
 
-    print(f"{len(rows)} donors; {len(updates)} with a missing 'founded' matched "
+    print(f"{len(rows)} donors; {len(updates)} with a missing 'donor_founded' matched "
           f"to the partner table:")
     for _ck, dn, yr in updates:
         print(f"  {yr}  {dn}")
@@ -54,7 +54,7 @@ def main(commit: bool) -> int:
     n = 0
     for ck, dn, yr in updates:
         try:
-            sb.table("donor_intel").update({"founded": yr}).eq(
+            sb.table("donor_intel").update({"donor_founded": yr}).eq(
                 "canonical_key", ck).execute()
             n += 1
         except Exception as exc:

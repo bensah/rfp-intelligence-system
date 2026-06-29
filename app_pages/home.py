@@ -139,7 +139,7 @@ def _kpis() -> dict:
     if not df.empty:
         dup_count = int(df["is_duplicate"].fillna(False).sum())
         unique = df[~df["is_duplicate"].fillna(False)].copy()
-        unique["_d"] = unique["submission_deadline"].apply(_to_date)
+        unique["_d"] = unique["call_submission_deadline"].apply(_to_date)
         dec_lower = unique["decision"].fillna("").astype(str).str.strip().str.lower()
         total_unique = int(len(unique))
         proceed = int(dec_lower.str.startswith("proceed").sum())
