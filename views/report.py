@@ -625,9 +625,9 @@ def _load_rfps() -> pd.DataFrame:
     res = sb.table("rfp_submissions").select(
         "uid,source,opportunity_title,funding_agency,submitted_at,search_date,"
         "submitted_by,submitted_by_email,"
-        "submission_deadline,date_completed,decision_date,date_of_approval,"
+        "call_submission_deadline,date_completed,decision_date,date_of_approval,"
         "decision,auto_recommendation,donor_decision,progress_status,stage,"
-        "alignment_score,estimated_value,currency,"
+        "alignment_score,call_award_value,currency,"
         "amount_requested,amount_secured,currency_secured,"
         "call_geographic_scope,program_area,decision_overridden_by,"
         "proposal_lead,contributors,reviewers,"

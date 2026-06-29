@@ -61,7 +61,7 @@ def main(argv: list[str]) -> int:
     pol = get_policies()
     rows = (sb.table("rfp_submissions")
             .select("uid,opportunity_id,opportunity_title,opportunity_link,"
-                    "funding_agency,submission_deadline,estimated_value,"
+                    "funding_agency,call_submission_deadline,call_award_value,"
                     "brief_description,call_geographic_scope,submitted_at,source")
             .eq("is_duplicate", False).order("submitted_at").execute().data or [])
     print(f"=== cleanup {'(DRY RUN)' if not commit else '(COMMIT)'} — "
