@@ -231,6 +231,7 @@ def push_primaries(hosts: list[str], by: str | None = None) -> dict:
                 continue
             fields = {
                 # Harmonised registry → catalogue (single source of truth).
+                "host": host,                        # required — insert fails without it
                 "donor_name": r.get("donor_name") or host,
                 "donor_code": r.get("donor_code"),
                 "base_url": f"https://{host}/",
@@ -303,6 +304,7 @@ def reconcile_in_catalogue() -> dict:
         for r in list_rows():
             host = r.get("host")
             present = (_base(host) in cat_bases
+                       or _base(normalize_host(r.get("listings_url"))) in cat_bases
                        or _base(normalize_host(r.get("sample_url"))) in cat_bases)
             current = bool(r.get("in_catalogue"))
             if present == current:
