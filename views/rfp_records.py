@@ -520,7 +520,7 @@ def view_dialog(row: dict) -> None:
 
     # ── At-a-glance ────────────────────────────────────────────────────────
     g1, g2 = st.columns(2)
-    g1.markdown(f"**🌍 Geography**  \n{_disp(row.get('geographic_scope'))}")
+    g1.markdown(f"**🌍 Geography**  \n{_disp(row.get('call_geographic_scope'))}")
     g1.markdown(f"**👥 Proposal lead(s)**  \n{_disp(row.get('proposal_lead'))}")
     g2.markdown(f"**🎯 Focus areas**  \n{_disp(row.get('program_area'))}")
     g2.markdown(f"**📌 Stage / Progress**  \n{_disp(row.get('stage'))} · {_disp(row.get('progress_status'))}")
@@ -714,8 +714,8 @@ def edit_dialog(row: dict) -> None:
         focus_in = c14.text_input("Focus theme", value=_str(row.get("focus_theme")), key=f"e_focus_{row['uid']}")
         geo_in = st.multiselect(
             "Geographic scope",
-            _multi_options(dropdowns.get("geographic_scope"), row.get("geographic_scope")),
-            default=_multi_default(row.get("geographic_scope")),
+            _multi_options(dropdowns.get("call_geographic_scope"), row.get("call_geographic_scope")),
+            default=_multi_default(row.get("call_geographic_scope")),
             key=f"e_geo_{row['uid']}",
         )
         prog_in = st.multiselect(
@@ -931,7 +931,7 @@ def edit_dialog(row: dict) -> None:
             "currency": _val(cur_in),
             "project_duration": int(dur_in) if dur_in else None,
             "focus_theme": _val(focus_in),
-            "geographic_scope": geo_in or None,
+            "call_geographic_scope": geo_in or None,
             "program_area": prog_in or None,
             "feasibility": _val(feas_in),
             **vals,
@@ -1031,7 +1031,7 @@ def _markdown_summary(row: dict) -> str:
         f"- **Window:** {row.get('funding_window') or '—'}\n"
         f"- **Deadline:** {row.get('submission_deadline') or '—'}\n"
         f"- **Estimated value:** {row.get('estimated_value') or '—'} {row.get('currency') or ''}\n"
-        f"- **Geography:** {', '.join(row.get('geographic_scope') or []) or '—'}\n"
+        f"- **Geography:** {', '.join(row.get('call_geographic_scope') or []) or '—'}\n"
         f"- **Program area:** {', '.join(row.get('program_area') or []) or '—'}\n"
         f"- **Alignment score:** {row.get('alignment_score') or 0:.1f} / 100\n"
         f"- **Auto-decision:** {row.get('auto_recommendation') or '—'}\n"

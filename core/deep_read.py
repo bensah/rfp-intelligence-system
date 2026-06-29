@@ -230,7 +230,7 @@ def _harvest(candidate: dict, text: str, soup) -> None:
             candidate.setdefault("currency", "USD")
     # Eligibility / geography prose → fold into the description so the country
     # gate (which reads brief_description) can judge scope without us guessing a
-    # synonym-expanded geographic_scope list.
+    # synonym-expanded call_geographic_scope list.
     try:
         elig = _extract_eligibility_from_text(text)
     except Exception:

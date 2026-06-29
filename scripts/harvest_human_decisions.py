@@ -103,7 +103,7 @@ def main(commit: bool) -> int:
             "opportunity_link": r.get("opportunity_link"),
             "funding_agency": r.get("funding_agency"),
             "source": r.get("source"),
-            "geographic_scope": _scope_text(r.get("geographic_scope")),
+            "call_geographic_scope": _scope_text(r.get("call_geographic_scope")),
             "submission_deadline": (str(r.get("submission_deadline"))[:10]
                                     if r.get("submission_deadline") else None),
             "alignment_score": r.get("alignment_score"),

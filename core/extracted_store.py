@@ -24,7 +24,7 @@ _TABLE = "extracted_solicitations"
 # jsonb columns — serialised to JSON strings on write if a list/dict is passed.
 _JSON_COLS = {
     "eligibility_applicant_types", "eligibility_countries", "eligibility_other",
-    "focus_themes", "program_areas", "geographic_scope", "attachments",
+    "focus_themes", "program_areas", "call_geographic_scope", "attachments",
     "resource_links", "field_provenance", "funding_tiers",
 }
 # Columns the table actually has — anything else in a record dict is dropped so a
@@ -39,7 +39,7 @@ _COLS = {
     "expected_awards", "currency", "date_posted", "deadline", "deadline_confidence",
     "funding_status", "funding_window", "expected_award_date", "time_to_award",
     "project_duration", "submission_format", "solicitation_type", "instrument_type",
-    "opportunity_type", "focus_themes", "program_areas", "geographic_scope",
+    "opportunity_type", "focus_themes", "program_areas", "call_geographic_scope",
     "solicitation_language", "attachments", "resource_links", "funding_tiers",
     "source", "source_uid",
     "raw_text", "content_hash", "extraction_confidence", "field_provenance",

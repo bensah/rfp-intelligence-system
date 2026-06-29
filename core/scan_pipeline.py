@@ -64,11 +64,11 @@ def _apply_llm_judgment(cand: dict[str, Any]) -> None:
         cand["solicitation_type"] = j["solicitation_type"]
     if not cand.get("instrument_type") and j.get("instrument_type"):
         cand["instrument_type"] = j["instrument_type"]
-    _geo = cand.get("geographic_scope")
+    _geo = cand.get("call_geographic_scope")
     _has_geo = (bool(_geo) if isinstance(_geo, (list, tuple))
                 else bool(str(_geo or "").strip()))
-    if not _has_geo and j.get("geographic_scope"):
-        cand["geographic_scope"] = j["geographic_scope"]
+    if not _has_geo and j.get("call_geographic_scope"):
+        cand["call_geographic_scope"] = j["call_geographic_scope"]
 
 
 # Fields that the scraper provides. Re-scans may fill these in if currently
@@ -93,7 +93,7 @@ _SCRAPE_STRUCTURED_FIELDS = (
     "estimated_value",
     "currency",
     "program_area",
-    "geographic_scope",
+    "call_geographic_scope",
     "funding_window",
     "funding_type",
     "project_duration",
@@ -232,7 +232,7 @@ def _build_merge_payload(
         "estimated_value": candidate.get("estimated_value"),
         "currency": candidate.get("currency"),
         "program_area": candidate.get("program_area"),
-        "geographic_scope": candidate.get("geographic_scope"),
+        "call_geographic_scope": candidate.get("call_geographic_scope"),
         "funding_window": candidate.get("funding_window"),
         "funding_type": candidate.get("funding_type"),
         "project_duration": candidate.get("project_duration"),
@@ -261,7 +261,7 @@ def _build_merge_payload(
                 or candidate.get("brief_description")
             ),
             "funding_agency": existing_row.get("funding_agency") or candidate.get("funding_agency"),
-            "geographic_scope": existing_row.get("geographic_scope") or [],
+            "call_geographic_scope": existing_row.get("call_geographic_scope") or [],
             "focus_theme": existing_row.get("focus_theme"),
         }
         scored = auto_score(merged_for_scoring, policies)
@@ -309,7 +309,7 @@ def ingest_candidates(
                 "id,uid,opportunity_title,opportunity_link,opportunity_id,"
                 "funding_agency,brief_description,date_posted,"
                 "submission_deadline,estimated_value,alignment_score,"
-                "geographic_scope,focus_theme,submitted_at,is_duplicate"
+                "call_geographic_scope,focus_theme,submitted_at,is_duplicate"
             )
             .eq("is_duplicate", False)
             .execute()
@@ -689,7 +689,7 @@ def ingest_candidates(
                     "submission_deadline": row.get("submission_deadline"),
                     "estimated_value": None,
                     "alignment_score": row.get("alignment_score"),
-                    "geographic_scope": None,
+                    "call_geographic_scope": None,
                     "focus_theme": None,
                     "submitted_at": row["submitted_at"],
                     "is_duplicate": False,
@@ -743,7 +743,7 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
     so it can flow back through ingest_candidates. raw_text is supplied as
     _page_text so the thin-candidate enrichment (live-check / deep-read) is skipped
     — the data is already extracted, so screening stays crawl-free."""
-    geo = row.get("geographic_scope")
+    geo = row.get("call_geographic_scope")
     if not isinstance(geo, (list, tuple)):
         geo = [geo] if geo else []
     return {
@@ -760,7 +760,7 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
         "submission_deadline": row.get("deadline"),
         "estimated_value": row.get("grant_amount"),
         "currency": row.get("currency"),
-        "geographic_scope": list(geo),
+        "call_geographic_scope": list(geo),
         "solicitation_type": row.get("solicitation_type"),
         "instrument_type": row.get("instrument_type"),
         "opportunity_type": row.get("opportunity_type"),

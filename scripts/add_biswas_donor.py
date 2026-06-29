@@ -44,7 +44,7 @@ DONOR = {
     "projected_budget_period": "2026 (two cycles)",
     # Structured (JSON list) fields — same shape the Donors edit form writes.
     "funding_mechanism": json.dumps(["Grants"]),
-    "funding_scope_geographic": json.dumps(["Global / worldwide"]),
+    "donor_geographic_scope": json.dumps(["Global / worldwide"]),
     "priority_program_areas": json.dumps(
         ["Digital health / data / AI", "Health research"]),
     # Intelligence

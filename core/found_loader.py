@@ -27,7 +27,7 @@ _CARRY = (
     "qualification", "strategic_fit", "capacity", "geographic_fit", "cofinancing",
     "funding_quality", "funder_relationship", "competitiveness", "bid_effort",
     "feasibility", "alignment_score", "auto_recommendation",
-    "decline_flags_present", "geographic_scope", "program_area",
+    "decline_flags_present", "call_geographic_scope", "program_area",
 )
 
 

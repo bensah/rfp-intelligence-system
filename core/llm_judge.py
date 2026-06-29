@@ -144,7 +144,7 @@ def _build_messages(candidate: dict[str, Any], policies: dict[str, Any]) -> list
         "when the call funds in STAGES with different ceilings (e.g. 'Proof of "
         "Concept up to $200,000' + 'Transition to Scale up to $2,000,000' -> two "
         "objects). [] for a single-amount call. amounts numeric, no symbols.\n"
-        '  "geographic_scope": array of countries/regions/tiers the call targets '
+        '  "call_geographic_scope": array of countries/regions/tiers the call targets '
         "(e.g. [\"Sub-Saharan Africa\"], [\"India\"], [\"LMICs\"]); [] if none.\n"
         '  "country_eligible": true if the org\'s eligible country qualifies under '
         "the call's geography (directly, or via a containing region/tier); false if "
@@ -228,7 +228,7 @@ def _normalise(p: dict[str, Any], model: str) -> dict[str, Any]:
         val = float(val) if val is not None and str(val) != "" else None
     except (TypeError, ValueError):
         val = None
-    scope = p.get("geographic_scope")
+    scope = p.get("call_geographic_scope")
     scope = [str(s) for s in scope if s] if isinstance(scope, list) else []
     areas = p.get("matched_areas")
     areas = [str(s) for s in areas if s] if isinstance(areas, list) else []
@@ -243,7 +243,7 @@ def _normalise(p: dict[str, Any], model: str) -> dict[str, Any]:
         "estimated_value": val,
         "currency": _s(p.get("currency")),
         "funding_tiers": tiers,
-        "geographic_scope": scope,
+        "call_geographic_scope": scope,
         "country_eligible": _tri(p.get("country_eligible")),
         "theme_relevant": bool(p.get("theme_relevant")),
         "matched_areas": areas,

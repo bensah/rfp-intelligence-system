@@ -176,8 +176,7 @@ def _baseline_val(key):
 try:
     _sysvals = {k: (_derived.get(k) or row.get(k)) for k in CRITERIA}
     _pm = _matching.composite_match({**row, **_sysvals}, _org_prof, _donor_eff, _org_set)
-    _pcomp = round(0.8 * round(_pm["criteria_score"], 1)
-                   + 0.2 * round(_pm["extras_score"], 1), 1)
+    _pcomp = round(_pm["composite"], 1)          # 100% of the 9 weighted criteria
     _pfatal, _ = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set)
     _sys_dec = ("Decline" if _pfatal else
                 "Proceed" if _pcomp >= 90 else "Park" if _pcomp >= 70 else "Decline")
@@ -302,7 +301,7 @@ st.markdown(
   </div>
   <div style="{_CARD}">
     <div style="{_HDR}">Geographic Scope</div>
-    <div style="color:#333">{_esc(row.get('geographic_scope'))}</div>
+    <div style="color:#333">{_esc(row.get('call_geographic_scope'))}</div>
   </div>
   <div style="{_CARD};grid-column:2 / span 3">
     <div style="{_HDR}">Brief description</div>
@@ -682,9 +681,9 @@ with grid_col:
                         f":{_vc}[{current or 'Not sure'}]  ·  {_ratio}"):
                     st.markdown(_factor_html(key), unsafe_allow_html=True)
 
-# Composite org × donor × RFP match: 80% eligibility criteria + 20% donor-org
-# relationship (thematic / geographic / route), with the hard MUST gate. The
-# gauge shows this composite; criteria-only is the delta reference.
+# Composite org × donor × RFP match: Bid Strength = 100% of the 9 weighted criteria
+# (MUST .65 + PREFER .35), with the hard MUST/fatal gate. (The old 20% donor-org
+# extras were dropped 2026-06-29 — they duplicated MUST-2/4/5-route/PREFER-7.)
 # (org / donor / settings already fetched above the grid)
 _match = _matching.composite_match({**row, **edited_values}, _org_prof, _donor_eff, _org_set)
 
@@ -706,10 +705,8 @@ with gauge_col:
     # ONE consistent calculation: round the two components to 1dp, then compute the
     # composite from THOSE — so the displayed arithmetic reconciles exactly and the
     # gauge/box agree. Bid Strength shown as a half-up rounded integer (92.5→93).
-    _ex = _match["extras"]
     _crit_s = round(_match["criteria_score"], 1)
-    _ext_s = round(_match["extras_score"], 1)
-    _comp = round(0.8 * _crit_s + 0.2 * _ext_s, 1)
+    _comp = round(_match["composite"], 1)               # = the 9 weighted criteria
     _comp_int = int(_comp + 0.5)                        # round half up
     _dec = _review_decision(edited_values, _comp, fatal=_is_fatal)   # SAME rule as the stored Auto-decision
     _pill = {"Proceed": ("#dcf5e3", "#00703C"), "Park": ("#fff4cc", "#8a6d00"),
@@ -795,56 +792,44 @@ with dl_col:
             unsafe_allow_html=True)
 
 with calc_col:
-    def _fit_row(lbl: str, v) -> str:
-        # THREE states: ✓ Yes (clear fit), ✗ No (clear miss), ? Uncertain (no
-        # data → benefit of the doubt, never a red No). 0.5 / None → Uncertain.
-        if v is None or v == 0.5:
-            mark, word, col = "?", "Uncertain", "#8a6d00"
-        elif v >= 1:
-            mark, word, col = "✓", "Yes", "#00703C"
-        else:
-            mark, word, col = "✗", "No", "#b3261e"
-        return (f"<div style='display:flex;justify-content:space-between;padding:2px 0'>"
-                f"<span>{lbl}</span><span style='color:{col};font-weight:700'>{mark} {word}</span></div>")
+    # Per-criterion contribution = weight × (criterion value ÷ 2), so the rows sum to
+    # the Bid Strength. MUST .65 + PREFER .35 = 1.0. "Not sure" counts as the Park
+    # midpoint (value 1 / 0.5). No 80/20 split — Bid Strength IS the 9 criteria.
+    _WEIGHTS = {"qualification": .15, "strategic_fit": .15, "capacity": .15,
+                "geographic_fit": .10, "cofinancing": .10, "funding_quality": .08,
+                "funder_relationship": .08, "competitiveness": .10, "bid_effort": .09}
 
-    # "Existing relationship with funder" == PREFER 7 (authoritative, human-settable)
-    # so the two never contradict: grantee/some contact → Yes; None → No; else ?.
-    _p7 = criterion_score(edited_values.get("funder_relationship"))
-    _rel_v = (1.0 if (_p7 is not None and _p7 >= 1)
-              else 0.0 if _p7 == 0 else _ex.get('donor_relationship_fit', 0.5))
-    _donor_note = ("" if _donor else
-                   "<div style='color:#999;font-style:italic;font-size:0.78rem;"
-                   "margin-top:4px'>No funder profile on file yet — funder-fit items can't "
-                   "be confirmed (shown as Uncertain “?” until a donor profile is "
-                   "matched).</div>")
+    def _contrib_row(key: str) -> str:
+        sc = criterion_score(edited_values.get(key))
+        frac = 0.5 if sc is None else sc / 2.0            # Not sure → Park midpoint
+        pts = _WEIGHTS[key] * frac * 100.0
+        col = "#00703C" if frac >= 1 else "#8a6d00" if frac >= 0.5 else "#b3261e"
+        nm = LABELS[key].split(" · ", 1)[-1]
+        return (f"<div style='display:flex;justify-content:space-between;padding:1px 0'>"
+                f"<span style='color:#555'>{_esc(nm)} "
+                f"<span style='color:#aaa'>·{_WEIGHTS[key]:.2f}</span></span>"
+                f"<span style='color:{col};font-weight:600'>{pts:.1f}</span></div>")
+
     st.markdown(
         f"<div style='border:1px solid #e8e8e8;border-radius:10px;padding:12px 14px;"
         f"font-size:0.85rem;line-height:1.5'>"
         f"<div style='color:#778;font-size:0.74rem;letter-spacing:0.04em;margin-bottom:6px'>"
         f"HOW BID STRENGTH IS CALCULATED</div>"
         f"<div style='text-align:center;font-size:0.92rem;margin-bottom:8px'>"
-        f"<b>{_comp:.1f}</b> = (80% × <b>{_crit_s:.1f}</b>) + (20% × <b>{_ext_s:.1f}</b>)</div>"
-        f"<div style='display:flex;justify-content:space-between'>"
-        f"<span>Your fit on the 9 criteria <span style='color:#aaa'>(80%)</span></span>"
-        f"<b>{_crit_s:.1f}/100</b></div>"
-        f"<div style='display:flex;justify-content:space-between'>"
-        f"<span>How well this funder fits you <span style='color:#aaa'>(20%)</span></span>"
-        f"<b>{_ext_s:.1f}/100</b></div>"
-        f"<div style='border-top:1px solid #eee;margin:8px 0 6px'></div>"
-        f"<div style='color:#778;font-size:0.74rem;letter-spacing:0.04em;margin-bottom:4px'>"
-        f"FUNDER FIT</div>"
-        + _fit_row("Funds your themes", _ex['donor_thematic_fit'])
-        + _fit_row("Funds your geographies", _ex['donor_geographic_fit'])
-        + _fit_row("Uses a funding route you can access", _ex['donor_route_fit'])
-        + _fit_row("Existing relationship with funder", _rel_v)
-        + _donor_note
+        f"Bid Strength <b>{_comp:.1f}</b> = Σ (weight × criterion ÷ 2) × 100</div>"
+        f"<div style='color:#778;font-size:0.74rem;letter-spacing:0.04em;margin-bottom:2px'>"
+        f"MUST (weight .65)</div>"
+        + "".join(_contrib_row(k) for k in CRITERIA[:5])
+        + "<div style='color:#778;font-size:0.74rem;letter-spacing:0.04em;margin:6px 0 2px'>"
+          "PREFER (weight .35)</div>"
+        + "".join(_contrib_row(k) for k in CRITERIA[5:])
         + "<div style='border-top:1px solid #eee;margin:8px 0 6px'></div>"
         + "<div style='color:#888;font-size:0.76rem'>"
-          "<b>Decision</b>: a 🔒 non-dynamic gate failed (legal identity · no "
-          "geographic reach · a donor budget/track-record/route floor) → Decline; "
-          "else Proceed ≥90 · Park 70–89 · Decline <70.<br>"
-          "<b>Fitness label</b> (Strong/Moderate/Weak): 70+ · 45–69 · <45 — describes "
-          "overall match strength only; it does <i>not</i> set the decision.</div>"
+          "<b>Decision</b>: a 🔒 fatal gate failed (legal identity · no geographic "
+          "reach · inaccessible funding route) → Decline; else Proceed ≥90 · Park "
+          "70–89 · Decline &lt;70. \"Not sure\" criteria score the Park midpoint.<br>"
+          "<b>Fitness label</b> (Strong/Moderate/Weak): 70+ · 45–69 · &lt;45 — overall "
+          "match strength only; it does <i>not</i> set the decision.</div>"
         + "</div>",
         unsafe_allow_html=True,
     )
