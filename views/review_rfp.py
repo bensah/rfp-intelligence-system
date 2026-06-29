@@ -522,13 +522,15 @@ def _geo_rule(scores: list[float], by_key=None) -> str:
 
 
 def _cofin_rule(scores: list[float], by_key=None) -> str:
-    """MUST-5 roll-up (gate, like MUST-1): any 0 → required · any 0.5 (soft
-    cost-share/prefinance) → with effort · all 1 → none required."""
+    """MUST-5 roll-up — Met / Not Met framing (MUST-5 spans co-financing AND the
+    compliance gates SAM/tax-exempt/…). ANY unmet active component (hard gate OR
+    co-financing) → 'Not met', overriding the rest · any 0.5 → 'Partial, with effort' ·
+    all 1 → 'Yes, fully met'."""
     if any(s <= 0.0 for s in scores):
-        return "No, required"
+        return "Not met"
     if any(s == 0.5 for s in scores):
         return "Partial, with effort"
-    return "Yes, none required"
+    return "Yes, fully met"
 
 
 # ── PREFER roll-up rules (component scores → the criterion's response label) ────────
