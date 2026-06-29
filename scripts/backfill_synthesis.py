@@ -54,6 +54,10 @@ def _one(row: dict, org: dict, sb=None, org_set: dict | None = None) -> tuple[st
         upd["how_to_apply"] = syn["how_to_apply"]
     if syn.get("compliance_requirements"):
         upd["compliance_requirements"] = syn["compliance_requirements"]
+    if syn.get("application_checklist"):
+        upd["application_checklist"] = syn["application_checklist"]
+    if syn.get("eligibility_specifics"):
+        upd["eligibility_specifics"] = syn["eligibility_specifics"]
     if not (row.get("apply_url") or "").strip():
         upd["apply_url"] = row.get("opportunity_link")   # portal URL (fallback to call link)
     # Feed LLM-extracted RFP compliance flags into MUST-5 → re-derive + re-score
