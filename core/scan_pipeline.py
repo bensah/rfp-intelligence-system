@@ -618,10 +618,10 @@ def ingest_candidates(
                         # CLOSE THE LOOP: feed the LLM-extracted RFP compliance flags
                         # into MUST-5, then re-derive cofinancing + re-score so the
                         # stored decision reflects hard-gates the call itself states.
-                        _flags = _syn.get("compliance_flags") or {}
+                        _flags = _syn.get("call_compliance_flags") or {}
                         if _flags:
                             import json as _json
-                            row["compliance_flags"] = _json.dumps(_flags)   # persist for Review re-merge
+                            row["call_compliance_flags"] = _json.dumps(_flags)   # persist for Review re-merge
                             from core import criteria_derive as _cdv, matching as _mm
                             from core import settings as _settings
                             from core.scorer import CRITERIA as _CR

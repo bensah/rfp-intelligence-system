@@ -136,9 +136,9 @@ def funding_quality(row: dict, *, false_below: float = 50_000,
 def compliance(row: dict, *, org_has_local_board: Optional[str] = None) -> Optional[str]:
     """MUST 4 from donor requirement flags + the org's structural profile."""
     # Hard disqualifier: donor needs a local board, org doesn't have one.
-    if _yes(row, "local_board_required") and (org_has_local_board or "").lower() == "no":
+    if _yes(row, "donor_local_board_required") and (org_has_local_board or "").lower() == "no":
         return "No"
-    pf = str(row.get("prefinance_required") or "").strip().lower()
+    pf = str(row.get("donor_prefinance_required") or "").strip().lower()
     if pf == "reimbursement_only":
         return "Partial"      # we must pre-finance — cash-flow risk
     if pf in ("none", "partial"):
@@ -148,7 +148,7 @@ def compliance(row: dict, *, org_has_local_board: Optional[str] = None) -> Optio
 
 def partnership(row: dict) -> Optional[str]:
     """PREFER 8 from the donor's partnership requirement."""
-    pm = str(row.get("partnership_mandatory") or "").strip().lower()
+    pm = str(row.get("donor_partnership_mandatory") or "").strip().lower()
     if pm == "yes":
         return "No"           # must partner / consortium required
     if pm == "no":
