@@ -298,6 +298,7 @@ _GLOBAL_CSS = f"""
     border: none !important;
     box-shadow: none !important;
     padding: 0.25rem 0.35rem !important;   /* tight — bring the icons close together */
+    margin-top: 0.7rem !important;         /* step the icons down to sit lower in the bar */
   }}
   [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button,
   [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button * {{
