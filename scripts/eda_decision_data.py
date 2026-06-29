@@ -301,8 +301,8 @@ def main() -> int:
     print(f"feedback rows: {len(feedback)}")
     subs = _fetch_all(
         "rfp_submissions",
-        "uid,form_id,source,opportunity_title,brief_description,submission_deadline,"
-        "estimated_value,currency,call_geographic_scope,program_area,funding_agency,"
+        "uid,form_id,source,opportunity_title,brief_description,call_submission_deadline,"
+        "call_award_value,currency,call_geographic_scope,program_area,funding_agency,"
         "focus_theme,date_posted,decision,auto_recommendation,decision_overridden_by,"
         "is_duplicate")
     print(f"rfp_submissions rows: {len(subs)}")

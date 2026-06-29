@@ -308,7 +308,7 @@ def ingest_candidates(
             .select(
                 "id,uid,opportunity_title,opportunity_link,opportunity_id,"
                 "funding_agency,brief_description,date_posted,"
-                "submission_deadline,estimated_value,alignment_score,"
+                "call_submission_deadline,call_award_value,alignment_score,"
                 "call_geographic_scope,focus_theme,submitted_at,is_duplicate"
             )
             .eq("is_duplicate", False)
