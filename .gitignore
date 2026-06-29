@@ -41,3 +41,6 @@ playwright/.local-browsers/
 
 # Local curl/debug dumps
 page.html
+
+# Scratch web-page dumps (debugging extraction)
+cg_*.html

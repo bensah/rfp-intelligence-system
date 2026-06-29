@@ -25,6 +25,7 @@ from core.pipeline import (
     days_to_deadline, deadline_status, prob_tier, usd_value,
 )
 from core.review_week import all_weeks_for_year, monday_from_week_label
+from core.records import clean_df
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -136,12 +137,11 @@ def _kpi(label: str, value, helper: str | None = None) -> None:
 @st.cache_data(ttl=30)
 def _fetch(year: int):
     sbc = get_client()
-    rfps = pd.DataFrame(sbc.table("rfp_submissions").select("*").execute().data or [])
-    grants = pd.DataFrame(sbc.table("active_grants").select("*").execute().data or [])
-    engagements = pd.DataFrame(sbc.table("engagement_logs").select("*").execute().data or [])
-    narratives = pd.DataFrame(sbc.table("narrative_logs").select("*").execute().data or [])
-    meetings = pd.DataFrame(sbc.table("meeting_logs").select("*").execute().data or [])
-
+    rfps = clean_df(pd.DataFrame(sbc.table("rfp_submissions").select("*").execute().data or []))
+    grants = clean_df(pd.DataFrame(sbc.table("active_grants").select("*").execute().data or []))
+    engagements = clean_df(pd.DataFrame(sbc.table("engagement_logs").select("*").execute().data or []))
+    narratives = clean_df(pd.DataFrame(sbc.table("narrative_logs").select("*").execute().data or []))
+    meetings = clean_df(pd.DataFrame(sbc.table("meeting_logs").select("*").execute().data or []))
     if not rfps.empty:
         rfps["_submitted_at"] = pd.to_datetime(rfps["submitted_at"], errors="coerce", format="ISO8601")
         rfps = rfps[rfps["_submitted_at"].dt.year == year].copy()
