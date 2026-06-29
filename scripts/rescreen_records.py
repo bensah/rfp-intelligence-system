@@ -67,11 +67,11 @@ def prove_country_gate(country: str) -> None:
     cands = [
         {"opportunity_title": f"Health systems strengthening grant — {here}",
          "brief_description": f"Funding to strengthen primary health care in {here}.",
-         "geographic_scope": [here], "submission_deadline": "2027-12-31",
+         "call_geographic_scope": [here], "submission_deadline": "2027-12-31",
          "opportunity_link": "https://example.org/grant/a"},
         {"opportunity_title": f"Maternal health grant — {country}",
          "brief_description": f"Health and nutrition programme based in {country}.",
-         "geographic_scope": [country], "submission_deadline": "2027-12-31",
+         "call_geographic_scope": [country], "submission_deadline": "2027-12-31",
          "opportunity_link": "https://example.org/grant/b"},
     ]
     print(f"\n=== COUNTRY GATE IS DYNAMIC?  '{here}' (current) vs '{country}' ===")
@@ -80,7 +80,7 @@ def prove_country_gate(country: str) -> None:
         print(f"  policy {label}:")
         for c in cands:
             ok, why = country_eligible(c, pol)
-            print(f"    {'PASS' if ok else 'BLOCK':5} {c['geographic_scope'][0]:10} "
+            print(f"    {'PASS' if ok else 'BLOCK':5} {c['call_geographic_scope'][0]:10} "
                   f"({c['opportunity_title'][:32]}…) {'' if ok else '— ' + why[:50]}")
     print("  → a country naming the eligible list PASSES; the other is BLOCKED. "
           "The gate reads policies live, so changing the preference flips it.")
@@ -95,7 +95,7 @@ def audit(country: str | None, limit: int) -> None:
     # 1. Existing tracked records that would now be ineligible.
     recs = (sb.table("rfp_submissions")
             .select("uid,opportunity_title,opportunity_link,brief_description,"
-                    "funding_agency,submission_deadline,geographic_scope,focus_theme")
+                    "funding_agency,submission_deadline,call_geographic_scope,focus_theme")
             .eq("is_duplicate", False).limit(limit).execute().data or [])
     now_blocked = []
     for r in recs:
@@ -118,7 +118,7 @@ def audit(country: str | None, limit: int) -> None:
     # 2. Past auto-rejects that would now pass (reversals).
     rej = (sb.table("scan_decisions")
            .select("opportunity_title,opportunity_link,funding_agency,reason,"
-                   "submission_deadline,geographic_scope")
+                   "submission_deadline,call_geographic_scope")
            .eq("event_type", "system_reject").limit(limit).execute().data or [])
     reversed_now = []
     for r in rej:

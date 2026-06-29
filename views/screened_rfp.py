@@ -135,9 +135,9 @@ with st.expander("Filters", expanded=False):
     fc1, fc2, fc3, fc4 = st.columns(4)
     f_dec = fc1.multiselect("Decision", sorted(df["decision"].dropna().unique().tolist()))
     f_feas = fc2.multiselect("Feasibility", sorted(df["feasibility"].dropna().unique().tolist()))
-    geo_opts = sorted({g for arr in df["geographic_scope"].dropna() for g in (arr or [])})
+    geo_opts = sorted({g for arr in df["call_geographic_scope"].dropna() for g in (arr or [])})
     f_geo = fc3.multiselect("Geographic scope", geo_opts)
-    prog_opts = sorted({p for arr in df["program_area"].dropna() for p in (arr or [])})
+    prog_opts = sorted({p for arr in df["call_domain_areas"].dropna() for p in (arr or [])})
     f_prog = fc4.multiselect("Program area", prog_opts)
 
 mask = pd.Series(True, index=df.index)
@@ -146,9 +146,9 @@ if f_dec:
 if f_feas:
     mask &= df["feasibility"].isin(f_feas)
 if f_geo:
-    mask &= df["geographic_scope"].apply(lambda v: bool(set(v or []) & set(f_geo)))
+    mask &= df["call_geographic_scope"].apply(lambda v: bool(set(v or []) & set(f_geo)))
 if f_prog:
-    mask &= df["program_area"].apply(lambda v: bool(set(v or []) & set(f_prog)))
+    mask &= df["call_domain_areas"].apply(lambda v: bool(set(v or []) & set(f_prog)))
 fdf = df[mask].copy()
 
 
@@ -205,7 +205,7 @@ else:
 proceed_df = unique[dec_lower.str.startswith("proceed").to_numpy()].copy()
 if not proceed_df.empty:
     proceed_df["_usd"] = proceed_df.apply(
-        lambda r: (r.get("estimated_value") or 0) * dropdowns.usd_rate(r.get("currency")),
+        lambda r: (r.get("call_award_value") or 0) * dropdowns.usd_rate(r.get("currency")),
         axis=1,
     )
 
@@ -222,7 +222,7 @@ with c1:
     if not proceed_df.empty and proceed_df["_usd"].max() > 0:
         largest = proceed_df.loc[proceed_df["_usd"].idxmax()]
         st.markdown(
-            f"**{format_money(largest.get('estimated_value'), largest.get('currency'))}**  \n"
+            f"**{format_money(largest.get('call_award_value'), largest.get('currency'))}**  \n"
             f"{(largest['opportunity_title'] or '')[:60]}"
         )
     else:

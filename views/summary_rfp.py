@@ -148,7 +148,7 @@ def _fetch(year: int):
         rfps["_dtd"] = rfps["submission_deadline"].apply(days_to_deadline)
         rfps["_dstat"] = rfps["submission_deadline"].apply(deadline_status)
         rfps["_usd"] = rfps.apply(
-            lambda r: usd_value(r.get("estimated_value"), r.get("currency")), axis=1
+            lambda r: usd_value(r.get("call_award_value"), r.get("currency")), axis=1
         )
         rfps["_secured_usd"] = rfps.apply(
             lambda r: usd_value(r.get("amount_secured"), r.get("currency_secured")), axis=1
@@ -160,9 +160,9 @@ def _fetch(year: int):
             amt = r.get("amount_requested")
             try:
                 if amt is None or pd.isna(amt):
-                    amt = r.get("estimated_value")
+                    amt = r.get("call_award_value")
             except (TypeError, ValueError):
-                amt = r.get("estimated_value")
+                amt = r.get("call_award_value")
             return amt
         rfps["_requested_usd"] = rfps.apply(
             lambda r: usd_value(_req_amt(r), r.get("currency")), axis=1
@@ -247,7 +247,7 @@ with bc1:
         top3 = proceed_df.nlargest(3, "_usd")
         for i, (_, r) in enumerate(top3.iterrows(), 1):
             st.markdown(
-                f"{i}. **{format_money(r.get('estimated_value'), r.get('currency'))}** — "
+                f"{i}. **{format_money(r.get('call_award_value'), r.get('currency'))}** — "
                 f"{(r.get('opportunity_title') or '')[:80]}"
             )
 

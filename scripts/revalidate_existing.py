@@ -40,7 +40,7 @@ from db.supabase_client import get_client
 
 # Fields the gate reads — mapped straight from the stored row.
 _GATE_FIELDS = ("opportunity_link", "opportunity_title", "brief_description",
-                "notes", "geographic_scope", "focus_theme", "funding_agency",
+                "notes", "call_geographic_scope", "focus_theme", "funding_agency",
                 "date_posted", "submission_deadline")
 
 
