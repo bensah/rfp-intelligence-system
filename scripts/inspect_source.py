@@ -48,7 +48,7 @@ def main(subs: list[str]) -> int:
         for c in cands[:14]:
             title = (c.get("opportunity_title") or "")[:62]
             link = (c.get("opportunity_link") or "")[:70]
-            dl = c.get("submission_deadline")
+            dl = c.get("call_submission_deadline")
             ok, reason = is_eligible(c, policies)
             mark = "✓" if ok else "✗"
             print(f"  {mark} {title}")

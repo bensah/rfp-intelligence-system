@@ -51,7 +51,7 @@ _CRITERION_FEATURES = (
 # append only (the model's feature_names contract); never reorder/remove.
 _COMPONENT_KEYS: tuple[str, ...] = (
     # MUST-1 qualification
-    "applicant_type", "entity_type", "hq_country", "local_registration",
+    "applicant_type", "entity_type", "donor_hq_country", "local_registration",
     "individual_pi", "prior_beneficiary",
     # MUST-2 strategic_fit
     "strat_fitness",
@@ -249,7 +249,7 @@ def extract(row: dict, policies: dict | None = None, *,
 
     feats["geo_strength"] = _safe_geo_strength(row, policies)
 
-    dl = _parse_date(row.get("submission_deadline"))
+    dl = _parse_date(row.get("call_submission_deadline"))
     feats["has_deadline"] = bool(dl)
     feats["days_to_deadline"] = (dl - asof).days if dl else None
 

@@ -231,15 +231,15 @@ with c1:
 with c2:
     st.caption("Nearest Deadline")
     soonest = (
-        proceed_df.dropna(subset=["submission_deadline"])
-        .sort_values("submission_deadline")
+        proceed_df.dropna(subset=["call_submission_deadline"])
+        .sort_values("call_submission_deadline")
         .head(1)
         if not proceed_df.empty else pd.DataFrame()
     )
     if not soonest.empty:
         r = soonest.iloc[0]
         st.markdown(
-            f"**{r['submission_deadline']}**  \n"
+            f"**{r['call_submission_deadline']}**  \n"
             f"{(r['opportunity_title'] or '')[:60]}"
         )
     else:
@@ -285,7 +285,7 @@ else:
         "Title": show["opportunity_title"].fillna("—"),
         "Funder": show["funding_agency"].fillna("—"),
         "Role": show["applicant_role"].fillna("—"),
-        "Deadline": pd.to_datetime(show["submission_deadline"], errors="coerce", format="ISO8601").dt.date,
+        "Deadline": pd.to_datetime(show["call_submission_deadline"], errors="coerce", format="ISO8601").dt.date,
         "Score": show["alignment_score"].fillna(0).round(0),
         "Decision": _eff_dec.replace("", "—").str.title(),
         "Auto-rec": show["auto_recommendation"].fillna("—"),
