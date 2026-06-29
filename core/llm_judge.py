@@ -48,6 +48,8 @@ import os
 import re
 from typing import Any
 
+from core import type_detect as _td
+
 log = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "gpt-4o-mini"
@@ -129,10 +131,14 @@ def _build_messages(candidate: dict[str, Any], policies: dict[str, Any]) -> list
         "apply to (RFP/CFP/EOI/NOFO/grant/tender/procurement notice). false for "
         "news, grantee profiles, awarded-grant lists, guidance, donor-investment "
         "pages, closed/past calls.\n"
-        '  "solicitation_type": one of NOFO, RFP, RFA, CFP, CFA, EOI, LOI, RFI, '
-        "RFQ, Tender, ITB, Procurement notice, Challenge, Other — or null.\n"
-        '  "instrument_type": Grant, Cooperative agreement, Contract, Loan, Award, '
-        "Tender, or null.\n"
+        '  "solicitation_type": one of NOFO, RFP, RFA, CFP, CFA, CfCN, EOI, LOI, RFI, '
+        "RFQ, Tender, Bid, ITB, Procurement notice, Unsolicited, Challenge, Other — "
+        "or null. NORMALISE any wording/acronym to the canonical type using these "
+        "synonyms: " + _td.synonym_hint("solicitation") + ".\n"
+        '  "instrument_type": one of Grant, Cooperative Agreement, Contract, Loan, '
+        "Equity/Investment, Prize/Award, Fellowship, Scholarship, Seed fund, "
+        "In-kind/TA, Other — or null. NORMALISE using these synonyms: "
+        + _td.synonym_hint("instrument") + ".\n"
         '  "call_submission_deadline": final closing date as "YYYY-MM-DD", or null if '
         "none / rolling / clearly past.\n"
         '  "is_closed": true if the page says the call is closed/concluded/past.\n'
