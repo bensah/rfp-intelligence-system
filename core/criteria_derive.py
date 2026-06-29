@@ -544,6 +544,28 @@ _RFP_VALUED_KEYS = frozenset({
 })
 
 
+# The LLM (`compliance_flags` / `must1_requirements`) emits BARE keys — its stable
+# vocabulary — but after the data-model rename the criteria read source-prefixed
+# columns (donor_*). Map bare→column so a requirement stated only in the CALL still
+# drives MUST-1/MUST-5. Most flags just gain a `donor_` prefix; these few changed
+# stem or intentionally stay bare:
+_LLM_KEY_ALIASES = {
+    "max_prior_grant_usd": "donor_max_prior_grant",
+    "max_annual_budget_usd": "donor_max_annual_budget",
+    "org_stage_required": "org_stage_required",
+    "experience_required": "experience_required",
+}
+
+
+def _eff_column(k: str) -> str:
+    """LLM-emitted (bare) compliance key → the column the criteria actually read."""
+    if k in _LLM_KEY_ALIASES:
+        return _LLM_KEY_ALIASES[k]
+    if k.startswith(("donor_", "call_", "org_")):
+        return k
+    return "donor_" + k
+
+
 def _merge_rfp_compliance(donor: dict | None, rfp_compliance: dict | None) -> dict:
     """Donor profile augmented with requirements the RFP ITSELF states (LLM-
     extracted `compliance_flags`) — triangulates donor × RFP so a requirement
@@ -554,11 +576,12 @@ def _merge_rfp_compliance(donor: dict | None, rfp_compliance: dict | None) -> di
     for k, v in (rfp_compliance or {}).items():
         if not v:
             continue
-        if k in _RFP_VALUED_KEYS:
-            if not str(eff.get(k) or "").strip():
-                eff[k] = v
+        col = _eff_column(k)
+        if col in _RFP_VALUED_KEYS:
+            if not str(eff.get(col) or "").strip():
+                eff[col] = v
         else:
-            eff[k] = True
+            eff[col] = True
     return eff
 
 
@@ -709,7 +732,8 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     cap_sc = (1.0 if cap in ("strong", "moderate")
               else 0.5 if cap == "limited"
               else 0.0 if cap in ("weak", "none", "no") else 0.5)
-    a_cofin = bool(_need("donor_cost_sharing_match_required", "donor_min_cofinancing_secured_pct")
+    a_cofin = bool(_need("donor_cost_sharing_match_required", "donor_min_cofinancing_secured_pct",
+                         "donor_state_party_cofinancing_required")
                    or str(donor.get("donor_prefinance_required") or "").strip().lower() == "reimbursement_only"
                    or _cost_share_required(rfp))
     items.append(_qfactor("cofinance", "Co-financing / pre-finance capacity",
