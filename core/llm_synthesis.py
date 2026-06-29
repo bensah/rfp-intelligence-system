@@ -65,7 +65,7 @@ def _org_block(org: dict) -> str:
         f"- Annual budget managed: {_money(org.get('org_annual_budget'))}/yr; "
         f"largest single grant ever: {_money(org.get('org_largest_grant'))}; "
         f"# grants managed: {org.get('org_grants_count') or '—'}; "
-        f"founded: {org.get('founding_year') or '—'}\n"
+        f"founded: {org.get('org_founding_year') or '—'}\n"
         f"- Preferred award range: {_money(org.get('org_min_target'))}–"
         f"{_money(org.get('org_max_target'))} (sweet spot {_money(org.get('org_mid_target'))})\n"
         f"- Co-financing capacity: {org.get('org_cofinancing_capacity') or '—'}\n"
@@ -114,7 +114,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         f"OPPORTUNITY:\n- Title: {title}\n"
         f"- Funder: {candidate.get('funding_agency') or '—'}\n"
         f"- Geography: {candidate.get('call_geographic_scope') or '—'}; "
-        f"Deadline: {candidate.get('submission_deadline') or '—'}; "
+        f"Deadline: {candidate.get('call_submission_deadline') or '—'}; "
         f"Value: {_money(candidate.get('call_award_value'))} "
         f"{candidate.get('currency') or ''}\n"
         f"- FULL TEXT:\n<<<\n{body}\n>>>\n\n"
@@ -171,7 +171,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "Allowed keys & values ONLY: "
         "requires_pi ('yes' only if the call requires a named INDIVIDUAL / Principal "
         "Investigator rather than an organisation); "
-        "pi_country_scope ('in_scope' if that PI must be based in the implementation "
+        "pi_country_scope ('donor_in_scope' if that PI must be based in the implementation "
         "country, 'foreign' if in the donor's or another specified country); "
         "entity_type_required ('grassroot_local' | 'multi_country' | 'individual'); "
         "hq_country_required (the country the applicant must be HEADQUARTERED in, verbatim); "
@@ -242,7 +242,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
 # Allowed enum values for the LLM-extracted MUST-1 requirements (anything else is
 # dropped — grounded, no fabrication).
 _MUST1_ENUMS = {
-    "donor_pi_country_scope": {"in_scope", "foreign"},
+    "donor_pi_country_scope": {"donor_in_scope", "foreign"},
     "donor_entity_type_required": {"grassroot_local", "multi_country", "individual"},
     "donor_prior_beneficiary_rule": {"eligible", "ineligible_current",
                                "ineligible_previous", "ineligible_any"},

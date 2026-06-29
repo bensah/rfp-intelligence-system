@@ -130,7 +130,7 @@ proceed_rfps = (
     .select("uid,opportunity_title,funding_agency")
     .in_("decision", ["Proceed", "Proceed as sub"])
     .eq("is_duplicate", False)
-    .order("submission_deadline")
+    .order("call_submission_deadline")
     .execute()
     .data
     or []

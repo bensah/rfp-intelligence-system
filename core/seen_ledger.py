@@ -27,14 +27,14 @@ log = logging.getLogger(__name__)
 # Columns find_duplicates needs — the ledger is exactly this projection.
 PROJECTION = (
     "uid", "opportunity_id", "opportunity_title", "opportunity_link",
-    "funding_agency", "submission_deadline", "call_award_value",
+    "funding_agency", "call_submission_deadline", "call_award_value",
 )
 
 
 def signature(row: Mapping[str, Any]) -> dict[str, Any]:
     """The dedup-relevant projection of an rfp row, with the deadline coerced to a
     plain ISO string (find_duplicates compares it as text)."""
-    dl = row.get("submission_deadline")
+    dl = row.get("call_submission_deadline")
     if hasattr(dl, "isoformat"):
         dl = dl.isoformat()
     return {
@@ -43,7 +43,7 @@ def signature(row: Mapping[str, Any]) -> dict[str, Any]:
         "opportunity_title": row.get("opportunity_title"),
         "opportunity_link": row.get("opportunity_link"),
         "funding_agency": row.get("funding_agency"),
-        "submission_deadline": str(dl) if dl else None,
+        "call_submission_deadline": str(dl) if dl else None,
         "call_award_value": row.get("call_award_value"),
     }
 

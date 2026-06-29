@@ -133,7 +133,7 @@ def _build_messages(candidate: dict[str, Any], policies: dict[str, Any]) -> list
         "RFQ, Tender, ITB, Procurement notice, Challenge, Other — or null.\n"
         '  "instrument_type": Grant, Cooperative agreement, Contract, Loan, Award, '
         "Tender, or null.\n"
-        '  "submission_deadline": final closing date as "YYYY-MM-DD", or null if '
+        '  "call_submission_deadline": final closing date as "YYYY-MM-DD", or null if '
         "none / rolling / clearly past.\n"
         '  "is_closed": true if the page says the call is closed/concluded/past.\n'
         '  "call_award_value": numeric award amount (no symbols), or null. READ '
@@ -220,7 +220,7 @@ def judge(candidate: dict[str, Any], policies: dict[str, Any],
 # Parsing / normalisation
 # ---------------------------------------------------------------------------
 def _normalise(p: dict[str, Any], model: str) -> dict[str, Any]:
-    dl = p.get("submission_deadline")
+    dl = p.get("call_submission_deadline")
     if not (isinstance(dl, str) and _ISO_DATE_RE.match(dl)):
         dl = None
     val = p.get("call_award_value")
@@ -239,7 +239,7 @@ def _normalise(p: dict[str, Any], model: str) -> dict[str, Any]:
         "is_closed": bool(p.get("is_closed")),
         "solicitation_type": _s(p.get("solicitation_type")),
         "instrument_type": _s(p.get("instrument_type")),
-        "submission_deadline": dl,
+        "call_submission_deadline": dl,
         "call_award_value": val,
         "currency": _s(p.get("currency")),
         "funding_tiers": tiers,
