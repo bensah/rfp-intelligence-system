@@ -93,7 +93,7 @@ def _num(v: Any) -> float | None:
 
 
 def _usd(rfp: dict) -> float | None:
-    val = _num(rfp.get("estimated_value"))
+    val = _num(rfp.get("call_award_value"))
     if not val:
         return None
     try:
@@ -300,14 +300,14 @@ def _award_absorption_score(org: dict, rfp: dict) -> float | None:
     big pool, they don't take the whole envelope. ask ≤ capacity → comfortably(1) ·
     ≤ 1.5× capacity → stretch(0.5) · else beyond(0). None when there's no amount or no
     capacity facts (→ caller defaults to a pass)."""
-    ask = _num(rfp.get("award_ceiling")) or _usd(rfp)
-    target_max = _num(org.get("funding_target_max"))
+    ask = _num(rfp.get("call_award_ceiling")) or _usd(rfp)
+    target_max = _num(org.get("org_max_target"))
     if ask and target_max:
         ask = min(ask, target_max)        # pursue a tier within the envelope, not the whole pool
     if not ask:
         return None
-    largest = _num(org.get("largest_grant_usd"))
-    annual = _num(org.get("annual_budget_usd"))
+    largest = _num(org.get("org_largest_grant"))
+    annual = _num(org.get("org_annual_budget"))
     if not largest and not annual:
         return None
     anchor = max(x for x in (largest, annual) if x)
@@ -319,7 +319,7 @@ def _award_absorption_score(org: dict, rfp: dict) -> float | None:
         factor = 5.0
     elif yrs and yrs >= 5:
         factor = 3.0
-    n_grants = _num(org.get("number_of_grants_managed"))
+    n_grants = _num(org.get("org_grants_count"))
     if n_grants and n_grants >= 20:
         factor += 2.0
     elif n_grants and n_grants >= 5:
@@ -355,15 +355,15 @@ def capacity_factors(org: dict, rfp: dict, donor: dict | None = None,
 
     # 2. Annual-budget ceiling — active only when the donor states it (unknown org
     #    budget → 0 → pass below the ceiling).
-    mab = _num(donor.get("max_annual_budget_usd"))
+    mab = _num(donor.get("donor_max_annual_budget"))
     items.append(_qfactor("budget_ceiling", "Annual-budget ceiling", active=bool(mab),
-                          score=(1.0 if (_num(org.get("annual_budget_usd")) or 0.0) <= (mab or 0)
+                          score=(1.0 if (_num(org.get("org_annual_budget")) or 0.0) <= (mab or 0)
                                  else 0.0), hard=True))
 
     # 3. Prior-grant ceiling — active only when the donor states it.
-    mpg = _num(donor.get("max_prior_grant_usd"))
+    mpg = _num(donor.get("donor_max_prior_grant"))
     items.append(_qfactor("grant_ceiling", "Prior-grant ceiling", active=bool(mpg),
-                          score=(1.0 if (_num(org.get("largest_grant_usd")) or 0.0) <= (mpg or 0)
+                          score=(1.0 if (_num(org.get("org_largest_grant")) or 0.0) <= (mpg or 0)
                                  else 0.0), hard=True))
 
     # 4. Experience requirement — active only when the call requires it (LLM-detected).
@@ -538,7 +538,7 @@ def _cost_share_required(rfp: dict) -> bool | None:
 # than coercing it to True — and only when the donor record is blank for that key.
 _RFP_VALUED_KEYS = frozenset({
     "entity_type_required", "registration_region",
-    "requires_pi", "pi_country_scope", "max_prior_grant_usd", "max_annual_budget_usd",
+    "requires_pi", "pi_country_scope", "donor_max_prior_grant", "donor_max_annual_budget",
     "hq_country_required", "org_stage_required", "prior_beneficiary_rule",
     "experience_required",                       # MUST-3 experience (call-LLM detected)
 })
@@ -820,9 +820,9 @@ def derive_funding_quality(rfp: dict, org: dict | None = None,
     if not val:
         return "Not sure"                  # no award value stated → can't size → Park
     org = org or {}
-    lo = _num(org.get("funding_target_low"))
-    mid = _num(org.get("funding_target_mid"))
-    mx = _num(org.get("funding_target_max"))
+    lo = _num(org.get("org_min_target"))
+    mid = _num(org.get("org_mid_target"))
+    mx = _num(org.get("org_max_target"))
     if lo and mid and mx and lo <= mid <= mx:
         cut1, cut2 = math.sqrt(lo * mid), math.sqrt(mid * mx)
         if val > cut2:
@@ -1366,8 +1366,8 @@ def _funding_quality_factors(rfp: dict, org: dict | None = None) -> list[dict]:
     """PREFER-6 sub-factors: award size vs the org's preferred band."""
     org = org or {}
     val = _usd(rfp)
-    lo = _num(org.get("funding_target_low"))
-    mx = _num(org.get("funding_target_max"))
+    lo = _num(org.get("org_min_target"))
+    mx = _num(org.get("org_max_target"))
     return [
         _factor("fq_floor", "At/above your minimum target size", "RG",
                 (val >= lo) if (val and lo) else None, active=bool(lo)),

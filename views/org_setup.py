@@ -259,23 +259,23 @@ def render_org_setup(user, sb):
         fb1, fb2 = st.columns(2)
         annual_budget = fb1.number_input(
             "Annual budget managed (USD/yr, 0 = unset)", min_value=0, step=100000,
-            value=int(_prof["annual_budget_usd"]) if _prof.get("annual_budget_usd") else 0,
+            value=int(_prof["org_annual_budget"]) if _prof.get("org_annual_budget") else 0,
             help="Total funds the org MANAGES/spends per YEAR (annual throughput) — "
                  "NOT one grant. A multi-year grant counts only the portion used "
                  "that year. Capacity (MUST 3).")
         largest_grant = fb2.number_input(
             "Largest SINGLE grant ever (USD, 0 = unset)", min_value=0, step=100000,
-            value=int(_prof["largest_grant_usd"]) if _prof.get("largest_grant_usd") else 0,
+            value=int(_prof["org_largest_grant"]) if _prof.get("org_largest_grant") else 0,
             help="Biggest single grant received from ONE donor over its full life "
                  "(distinct from annual budget). Capacity (MUST 3).")
         fb3, fb4 = st.columns(2)
         lowest_grant = fb3.number_input(
             "Smallest grant managed (USD, 0 = unset)", min_value=0, step=10000,
-            value=int(_prof["lowest_grant_usd"]) if _prof.get("lowest_grant_usd") else 0,
+            value=int(_prof["org_lowest_grant"]) if _prof.get("org_lowest_grant") else 0,
             help="Smallest grant the org has run — range awareness for capacity.")
         n_grants = fb4.number_input(
             "Number of grants managed (0 = unset)", min_value=0, step=1,
-            value=int(_prof["number_of_grants_managed"]) if _prof.get("number_of_grants_managed") else 0,
+            value=int(_prof["org_grants_count"]) if _prof.get("org_grants_count") else 0,
             help="How many grants delivered to date — track-record DEPTH; more "
                  "grants raises how far past your largest grant you can credibly stretch.")
 
@@ -288,11 +288,11 @@ def render_org_setup(user, sb):
         st.markdown("**Preferred award size (USD)**", help=_FUNDING_HELP)
         ft1, ft2, ft3 = st.columns(3)
         ftl = ft1.number_input("Target — low (won't apply below this)", min_value=0, step=50000,
-            value=int(_prof["funding_target_low"]) if _prof.get("funding_target_low") else 0)
+            value=int(_prof["org_min_target"]) if _prof.get("org_min_target") else 0)
         ftm = ft2.number_input("Target — mid (sweet spot / ideal)", min_value=0, step=50000,
-            value=int(_prof["funding_target_mid"]) if _prof.get("funding_target_mid") else 0)
+            value=int(_prof["org_mid_target"]) if _prof.get("org_mid_target") else 0)
         ftx = ft3.number_input("Target — max (top of comfort range)", min_value=0, step=50000,
-            value=int(_prof["funding_target_max"]) if _prof.get("funding_target_max") else 0)
+            value=int(_prof["org_max_target"]) if _prof.get("org_max_target") else 0)
 
         st.markdown("**Eligibility facts**",
                     help="Matched to each donor's documented conditions for "
@@ -529,13 +529,13 @@ def render_org_setup(user, sb):
                 "entity_type": entity_type,
                 "founding_year": int(founding_year) or None,
                 "cofinancing_capacity": cofin,
-                "annual_budget_usd": int(annual_budget) or None,
-                "largest_grant_usd": int(largest_grant) or None,
-                "lowest_grant_usd": int(lowest_grant) or None,
-                "number_of_grants_managed": int(n_grants) or None,
-                "funding_target_low": int(ftl) or None,
-                "funding_target_mid": int(ftm) or None,
-                "funding_target_max": int(ftx) or None,
+                "org_annual_budget": int(annual_budget) or None,
+                "org_largest_grant": int(largest_grant) or None,
+                "org_lowest_grant": int(lowest_grant) or None,
+                "org_grants_count": int(n_grants) or None,
+                "org_min_target": int(ftl) or None,
+                "org_mid_target": int(ftm) or None,
+                "org_max_target": int(ftx) or None,
                 "org_is_independent_entity": bool(org_independent),
                 "org_has_sam_uei": bool(org_sam_uei),
                 "org_tax_exempt": bool(org_tax_exempt),

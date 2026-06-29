@@ -243,7 +243,7 @@ _CCY = {"USD": ("US", "$"), "EUR": ("EU", "€"), "GBP": ("GB", "£")}
 
 
 def _value_html() -> str:
-    raw = row.get("estimated_value")
+    raw = row.get("call_award_value")
     try:
         amt = float(raw)
         if pd.isna(amt):

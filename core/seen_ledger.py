@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 # Columns find_duplicates needs — the ledger is exactly this projection.
 PROJECTION = (
     "uid", "opportunity_id", "opportunity_title", "opportunity_link",
-    "funding_agency", "submission_deadline", "estimated_value",
+    "funding_agency", "submission_deadline", "call_award_value",
 )
 
 
@@ -44,7 +44,7 @@ def signature(row: Mapping[str, Any]) -> dict[str, Any]:
         "opportunity_link": row.get("opportunity_link"),
         "funding_agency": row.get("funding_agency"),
         "submission_deadline": str(dl) if dl else None,
-        "estimated_value": row.get("estimated_value"),
+        "call_award_value": row.get("call_award_value"),
     }
 
 
