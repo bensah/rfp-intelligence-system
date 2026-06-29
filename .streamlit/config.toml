@@ -1,8 +1,11 @@
 [theme]
+# Warm palette for the scan/test phase (owner 2026-06-29): cream page + warm sand
+# sidebar/widgets, keeping the CHAI brand green accent. backgroundColor mirrors
+# core.app_header.THEME_BG_PAGE so the sticky top bar blends seamlessly.
 primaryColor = "#00703C"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F6F4"
-textColor = "#1B1B1B"
+backgroundColor = "#FBF6EE"
+secondaryBackgroundColor = "#F2E8D6"
+textColor = "#23201B"
 font = "sans serif"
 
 [server]
