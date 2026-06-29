@@ -567,7 +567,9 @@ def view_dialog(row: dict) -> None:
     _section("🧭 Why this decision", row.get("decision_note"))
     _section("⚠️ Key risks", row.get("key_risks"))
     _section("✅ Compliance requirements", row.get("compliance_requirements"))
+    _section("🎯 Eligibility specifics", row.get("eligibility_specifics"))
     _section("📝 How to apply", row.get("how_to_apply"))
+    _section("📋 Application checklist", row.get("application_checklist"))
     _link = row.get("opportunity_link")
     if isinstance(_link, str) and _link.strip():
         st.markdown(f"📄 [Access opportunity here]({_link})")
