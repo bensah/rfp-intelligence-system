@@ -1113,8 +1113,15 @@ with tab_sources:
                                "method_label"]
         # Access + Source class (migration 037) shown when present.
         extra = [c for c in ("source_class", "access_model") if c in ddf.columns]
-        disp = ddf[base_cols + extra + ["is_active", "last_scraped_at",
-                                        "last_scrape_status", "notes"]].copy()
+        # Solicitation / Instrument types (display as joined strings).
+        type_cols = []
+        for _c in ("solicitation_types", "instrument_types"):
+            if _c in ddf.columns:
+                ddf[_c + "_disp"] = ddf[_c].map(
+                    lambda v: "; ".join(v) if isinstance(v, (list, tuple)) else (v or ""))
+                type_cols.append(_c + "_disp")
+        disp = ddf[base_cols + extra + type_cols + ["is_active", "last_scraped_at",
+                                                    "last_scrape_status", "notes"]].copy()
         st.markdown(f"**{_n_total}** sources · **{_n_active}** active")
         sel = st.dataframe(
             disp, hide_index=True, width='stretch',
@@ -1127,6 +1134,8 @@ with tab_sources:
                 "method_label": st.column_config.TextColumn("Method", width="small"),
                 "source_class": st.column_config.TextColumn("Source class"),
                 "access_model": st.column_config.TextColumn("Access", width="small"),
+                "solicitation_types_disp": st.column_config.TextColumn("Solicitation"),
+                "instrument_types_disp": st.column_config.TextColumn("Instrument"),
                 "is_active": st.column_config.CheckboxColumn("Active", width="small"),
                 "last_scraped_at": st.column_config.DatetimeColumn(
                     "Last scan", format="YYYY-MM-DD HH:mm"),
