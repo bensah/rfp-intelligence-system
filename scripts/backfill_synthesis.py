@@ -58,10 +58,10 @@ def _one(row: dict, org: dict, sb=None, org_set: dict | None = None) -> tuple[st
         upd["apply_url"] = row.get("opportunity_link")   # portal URL (fallback to call link)
     # Feed LLM-extracted RFP compliance flags into MUST-5 → re-derive + re-score
     # (auto fields only; the human's decision/notes are untouched).
-    _flags = syn.get("compliance_flags") or {}
+    _flags = syn.get("call_compliance_flags") or {}
     if _flags:
         import json as _json
-        upd["compliance_flags"] = _json.dumps(_flags)   # persist for Review re-merge
+        upd["call_compliance_flags"] = _json.dumps(_flags)   # persist for Review re-merge
     if _flags and sb is not None:
         try:
             from core import criteria_derive as _cdv, matching as _mm
