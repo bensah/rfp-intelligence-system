@@ -339,10 +339,10 @@ with st.container(border=True):
         try:
             _fa = (row.get("funding_agency") or "").strip()
             if _fa:
-                _dp = (sb.table("donor_intel").select("submission_portal_url")
+                _dp = (sb.table("donor_intel").select("donor_submission_portal_url")
                        .ilike("donor", _fa).limit(1).execute().data or [])
-                if _dp and _dp[0].get("submission_portal_url"):
-                    _apply_url = _dp[0]["submission_portal_url"]
+                if _dp and _dp[0].get("donor_submission_portal_url"):
+                    _apply_url = _dp[0]["donor_submission_portal_url"]
         except Exception:
             pass
     _apply_url = _apply_url or _call_link
