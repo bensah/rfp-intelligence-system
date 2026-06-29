@@ -69,7 +69,7 @@ def main() -> int:
             print("   (no verdict — call failed)\n")
             continue
         print(f"   open_call={j['is_open_call']} type={j['solicitation_type']} "
-              f"deadline={j['submission_deadline']} value={j['estimated_value']}{j['currency'] or ''}")
+              f"deadline={j['submission_deadline']} value={j['call_award_value']}{j['currency'] or ''}")
         print(f"   country_eligible={j['country_eligible']} theme_relevant={j['theme_relevant']} "
               f"conf={j['confidence']}")
         print(f"   reason: {j['reason']}\n")

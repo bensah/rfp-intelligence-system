@@ -125,7 +125,7 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     amt, cur = _amount(title, text)
     # A source handler may already carry a STRUCTURED amount (e.g. EU F&T
     # budgetOverview) — that's authoritative; prefer it over regex/LLM.
-    _cand_val = candidate.get("estimated_value")
+    _cand_val = candidate.get("call_award_value")
     if _cand_val not in (None, "", 0, "0"):
         try:
             amt = float(_cand_val)
@@ -137,8 +137,8 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     cand = dict(candidate)
     if not cand.get("submission_deadline") and dl["deadline"]:
         cand["submission_deadline"] = dl["deadline"]
-    if cand.get("estimated_value") in (None, "", 0, "0") and amt is not None:
-        cand["estimated_value"] = amt
+    if cand.get("call_award_value") in (None, "", 0, "0") and amt is not None:
+        cand["call_award_value"] = amt
 
     # llm_theme=True: let the LLM adjudicate AMBIGUOUS theme calls (excluded/
     # required conflict or a thin incidental keyword match) at the extraction
@@ -202,8 +202,8 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # amount + currency: regex first, LLM fallback.
     g_amt, g_cur = amt, cur
     _amt_is_llm = False
-    if g_amt is None and _llm("estimated_value") is not None:
-        g_amt = _llm("estimated_value")
+    if g_amt is None and _llm("call_award_value") is not None:
+        g_amt = _llm("call_award_value")
         _amt_is_llm = True
         prov["grant_amount"] = {"method": "llm", "confidence": "medium", "source_tier": "T1"}
     elif g_amt is not None:
@@ -278,8 +278,8 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
         "eligibility_applicant_types": candidate.get("eligibility_applicant_types") or [],
         "grant_amount": g_amt,
         "currency": g_cur,
-        "award_floor": floor,
-        "award_ceiling": ceil,
+        "call_award_floor": floor,
+        "call_award_ceiling": ceil,
         "funding_tiers": tiers,
         "deadline": d_val,
         "deadline_confidence": d_conf,

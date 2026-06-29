@@ -126,8 +126,8 @@ _LABEL_OVERRIDES = {
     "funders_collaborators": "Funders & Collaborators",
     "hq_country_required": "Applicant must be HQ'd in",
     "org_stage_required": "Org stage required",
-    "max_annual_budget_usd": "Max annual budget (eligibility ceiling)",
-    "min_track_record_usd": "Min largest grant managed (floor)",
+    "donor_max_annual_budget": "Max annual budget (eligibility ceiling)",
+    "donor_min_track_record": "Min largest grant managed (floor)",
     "required_partner_type": "Required partner type",
     "required_partner_country": "Required partner country",
     "max_request_pct_of_budget": "Max request (% of project budget)",
@@ -139,7 +139,7 @@ _LABEL_OVERRIDES = {
     "registration_region": "Registration region/country required",
     "requires_pi": "Requires an individual / PI",
     "pi_country_scope": "PI base-country scope",
-    "max_prior_grant_usd": "Max prior grant/award (eligibility ceiling)",
+    "donor_max_prior_grant": "Max prior grant/award (eligibility ceiling)",
     "prior_beneficiary_rule": "Prior-beneficiary rule",
 }
 
@@ -340,7 +340,7 @@ _META = {"id", "updated_at", "created_at", "canonical_key", "category_clean",
          "online_source_check_status", "last_checked", "row_type",
          "award_size_basis"}
 _SHORT_TEXT = ["donor", "donor_short", "donor_category", "donor_type", "website",
-               "award_low_usd", "award_high_usd",
+               "donor_award_low", "donor_award_high",
                "total_annual_funding_global", "funding_mechanism"]
 _LONG_TEXT = ["aliases", "donor_geographic_scope", "active_route_status",
               "direct_local_org_eligible", "donor_priority_areas",
@@ -375,12 +375,12 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
             "submission_portal_url", "strategic_fit_notes", "gaps_risks",
             "recommended_approach", "donor_priority_ratings", "funders_collaborators",
             # Hard eligibility conditions (migration 032) — VALUED (not flags).
-            "hq_country_required", "org_stage_required", "max_annual_budget_usd",
-            "min_track_record_usd", "required_partner_type", "required_partner_country",
+            "hq_country_required", "org_stage_required", "donor_max_annual_budget",
+            "donor_min_track_record", "required_partner_type", "required_partner_country",
             "max_request_pct_of_budget", "min_cofinancing_secured_pct",
             # MUST-1 rework conditions (migration 049) — VALUED text, not flags.
             "entity_type_required", "registration_region",
-            "requires_pi", "pi_country_scope", "max_prior_grant_usd",
+            "requires_pi", "pi_country_scope", "donor_max_prior_grant",
             "prior_beneficiary_rule"]
 # Columns kept for backward-compat but no longer surfaced anywhere (not edited,
 # not shown in View, not in share/PDF). verification_level already captures data
@@ -544,7 +544,7 @@ _COMPLETENESS_TEXT = [
     "general_email", "main_phone", "hq_country", "hq_address",
     "donor_linkedin_url", "other_profile_urls", "summary_description", "mission",
     "vision", "donor_values", "strategic_priorities", "strategy_url",
-    "award_low_usd", "award_high_usd", "total_annual_funding_global",
+    "donor_award_low", "donor_award_high", "total_annual_funding_global",
     "total_awards", "total_funding_to_date", "current_awards", "past_awards",
     "projected_budget", "funding_programs", "in_scope", "out_of_scope",
     "direct_local_org_eligible", "active_route_status", "prefinance_required",
@@ -723,7 +723,7 @@ def _summary_lines(row: dict) -> list[str]:
         ("Strategy (URL)", _disp(row.get("strategy_url"))),
     ])
 
-    _lo, _hi = _disp(row.get("award_low_usd")), _disp(row.get("award_high_usd"))
+    _lo, _hi = _disp(row.get("donor_award_low")), _disp(row.get("donor_award_high"))
     _award = f"{_lo or '—'} – {_hi or '—'}" if (_lo or _hi) else None
     _pb = _disp(row.get("projected_budget"))
     if _pb:
@@ -785,8 +785,8 @@ def _summary_lines(row: dict) -> list[str]:
         (_label("selection_criteria"), _disp(row.get("selection_criteria"))),
         (_label("hq_country_required"), listf("hq_country_required")),
         (_label("org_stage_required"), _disp(row.get("org_stage_required"))),
-        (_label("max_annual_budget_usd"), _disp_field(row, "max_annual_budget_usd")),
-        (_label("min_track_record_usd"), _disp_field(row, "min_track_record_usd")),
+        (_label("donor_max_annual_budget"), _disp_field(row, "donor_max_annual_budget")),
+        (_label("donor_min_track_record"), _disp_field(row, "donor_min_track_record")),
         (_label("required_partner_type"), listf("required_partner_type")),
         (_label("required_partner_country"), listf("required_partner_country")),
         (_label("max_request_pct_of_budget"), _disp(row.get("max_request_pct_of_budget"))),
@@ -795,7 +795,7 @@ def _summary_lines(row: dict) -> list[str]:
         (_label("registration_region"), listf("registration_region")),
         (_label("requires_pi"), choice("requires_pi")),
         (_label("pi_country_scope"), choice("pi_country_scope")),
-        (_label("max_prior_grant_usd"), _disp_field(row, "max_prior_grant_usd")),
+        (_label("donor_max_prior_grant"), _disp_field(row, "donor_max_prior_grant")),
         (_label("prior_beneficiary_rule"), choice("prior_beneficiary_rule")),
     ])
 
@@ -1077,7 +1077,7 @@ def _edit_dialog(row: dict) -> None:
 
         st.markdown("**Award size & mechanism**")
         fcols = st.columns(2)
-        for j, col in enumerate(["award_low_usd", "award_high_usd",
+        for j, col in enumerate(["donor_award_low", "donor_award_high",
                                  "total_annual_funding_global"]):
             edited[col] = fcols[j % 2].text_input(_label(col), row.get(col) or "", key=f"{col}_{ck}")
         edited["funding_mechanism"] = json.dumps(_multi_with_options(
@@ -1220,11 +1220,11 @@ def _edit_dialog(row: dict) -> None:
             index=_stage_opts2.index(_cur_st) if _cur_st in _stage_opts2 else 0,
             key=f"stagereq_{ck}", help="e.g. 'early-stage' for DRK-type funders.")
         _hb1, _hb2 = st.columns(2)
-        edited["max_annual_budget_usd"] = _hb1.text_input(
-            _label("max_annual_budget_usd"), row.get("max_annual_budget_usd") or "",
+        edited["donor_max_annual_budget"] = _hb1.text_input(
+            _label("donor_max_annual_budget"), row.get("donor_max_annual_budget") or "",
             key=f"maxbud_{ck}", help="Applicant's annual budget must be BELOW this (e.g. '$2M').")
-        edited["min_track_record_usd"] = _hb2.text_input(
-            _label("min_track_record_usd"), row.get("min_track_record_usd") or "",
+        edited["donor_min_track_record"] = _hb2.text_input(
+            _label("donor_min_track_record"), row.get("donor_min_track_record") or "",
             key=f"mintrk_{ck}", help="Applicant's largest grant must be ABOVE this (e.g. '$500k').")
         _pp1, _pp2 = st.columns(2)
         with _pp1:
@@ -1296,8 +1296,8 @@ def _edit_dialog(row: dict) -> None:
                  "well-established PI qualifies); foreign = PI required in the donor / "
                  "an OECD country (met via an affiliated partner).")
         _ps1, _ps2 = st.columns(2)
-        edited["max_prior_grant_usd"] = _ps1.text_input(
-            _label("max_prior_grant_usd"), row.get("max_prior_grant_usd") or "",
+        edited["donor_max_prior_grant"] = _ps1.text_input(
+            _label("donor_max_prior_grant"), row.get("donor_max_prior_grant") or "",
             key=f"maxpg_{ck}",
             help="Applicant ineligible if its LARGEST prior grant EXCEEDS this "
                  "(e.g. '500000'). A CEILING — distinct from the track-record floor.")
@@ -1763,7 +1763,7 @@ def _view_dialog(row: dict) -> None:
 
     # ── 💰 Funding — footprint facts + mechanism / programs / tiers ──────────
     facts: list[tuple[str, str]] = []
-    lo, hi = _md(row.get("award_low_usd")), _md(row.get("award_high_usd"))
+    lo, hi = _md(row.get("donor_award_low")), _md(row.get("donor_award_high"))
     if lo or hi:
         facts.append(("Award range", f"{lo or '—'} – {hi or '—'}"))
     for col, lbl in (("total_annual_funding_global", "Annual funding"),
@@ -1855,8 +1855,8 @@ def _view_dialog(row: dict) -> None:
                        ("Recent activity", "recent_activity"),
                        (_label("hq_country_required"), "hq_country_required"),
                        (_label("org_stage_required"), "org_stage_required"),
-                       (_label("max_annual_budget_usd"), "max_annual_budget_usd"),
-                       (_label("min_track_record_usd"), "min_track_record_usd"),
+                       (_label("donor_max_annual_budget"), "donor_max_annual_budget"),
+                       (_label("donor_min_track_record"), "donor_min_track_record"),
                        (_label("required_partner_type"), "required_partner_type"),
                        (_label("required_partner_country"), "required_partner_country"),
                        (_label("max_request_pct_of_budget"), "max_request_pct_of_budget"),
@@ -1865,7 +1865,7 @@ def _view_dialog(row: dict) -> None:
                        (_label("registration_region"), "registration_region"),
                        (_label("requires_pi"), "requires_pi"),
                        (_label("pi_country_scope"), "pi_country_scope"),
-                       (_label("max_prior_grant_usd"), "max_prior_grant_usd"),
+                       (_label("donor_max_prior_grant"), "donor_max_prior_grant"),
                        (_label("prior_beneficiary_rule"), "prior_beneficiary_rule")):
         if _col in _LIST_FIELDS:
             _vals = _to_list(row.get(_col))
