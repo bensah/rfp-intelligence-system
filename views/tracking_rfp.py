@@ -542,7 +542,9 @@ def _view_rfp(r: dict) -> None:
     _section("🧭 Why this decision", r.get("decision_note"))
     _section("⚠️ Key risks", r.get("key_risks"))
     _section("✅ Compliance requirements", r.get("compliance_requirements"))
+    _section("🎯 Eligibility specifics", r.get("eligibility_specifics"))
     _section("📝 How to apply", r.get("how_to_apply"))
+    _section("📋 Application checklist", r.get("application_checklist"))
 
     # ── Links / apply ──────────────────────────────────────────────────────
     _link = r.get("opportunity_link")
