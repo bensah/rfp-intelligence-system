@@ -778,6 +778,24 @@ def _render_source_registry(user: dict) -> None:
         _flash_set("srcreg", f"✅ Marked {_n} host(s) verified.")
         st.rerun()
 
+    # ── Reconcile registry ↔ Catalogue (verified sources only). Pushes every
+    # confirmed-primary host (deduped by host) and recomputes the Pushed markers
+    # both ways, so the two tables stay in sync.
+    _sy, _ = st.columns([2.6, 5])
+    if _sy.button("🔄 Sync all verified → Catalogue", key="srcreg_sync",
+                  help="Push every confirmed-primary host to the donor_sources Catalogue "
+                       "(deduped) and refresh the Pushed markers both ways."):
+        prim = [r["host"] for r in rows
+                if r.get("classification") == "primary"
+                and (r.get("status") or "").lower() == "confirmed"]
+        res = source_registry.push_primaries(prim, by=email)
+        rec = source_registry.reconcile_in_catalogue()
+        _flash_set("srcreg", f"🔄 Synced {len(prim)} verified primaries → "
+                   f"{len(res.get('added', []))} added · {len(res.get('updated', []))} updated · "
+                   f"markers +{rec.get('marked', 0)}/-{rec.get('cleared', 0)}"
+                   + (f" · ⚠ push error: {res['error']}" if res.get("error") else ""))
+        st.rerun()
+
     # ── Optional bulk power-edit (many rows at once) via CSV/Excel round-trip.
     def _sr_apply(r, vals, by):
         sc = vals.get("Source class") or _src_class_of(r)
