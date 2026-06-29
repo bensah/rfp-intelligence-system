@@ -205,7 +205,7 @@ else:
 proceed_df = unique[dec_lower.str.startswith("proceed").to_numpy()].copy()
 if not proceed_df.empty:
     proceed_df["_usd"] = proceed_df.apply(
-        lambda r: (r.get("estimated_value") or 0) * dropdowns.usd_rate(r.get("currency")),
+        lambda r: (r.get("call_award_value") or 0) * dropdowns.usd_rate(r.get("currency")),
         axis=1,
     )
 
@@ -222,7 +222,7 @@ with c1:
     if not proceed_df.empty and proceed_df["_usd"].max() > 0:
         largest = proceed_df.loc[proceed_df["_usd"].idxmax()]
         st.markdown(
-            f"**{format_money(largest.get('estimated_value'), largest.get('currency'))}**  \n"
+            f"**{format_money(largest.get('call_award_value'), largest.get('currency'))}**  \n"
             f"{(largest['opportunity_title'] or '')[:60]}"
         )
     else:

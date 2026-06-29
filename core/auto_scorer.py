@@ -1271,7 +1271,7 @@ def _has_request_details(candidate: dict[str, Any]) -> bool:
     amount. (Description alone doesn't count — hub pages have descriptions.)"""
     if candidate.get("submission_deadline"):
         return True
-    ev = candidate.get("estimated_value")
+    ev = candidate.get("call_award_value")
     try:
         return ev not in (None, "", 0, "0") and float(ev) > 0
     except (TypeError, ValueError):
@@ -1839,7 +1839,7 @@ def _apply_scoring_rules(
     # Compute USD-converted estimated_value once. Falls back to 0 on bad data.
     try:
         from core import dropdowns as _dd
-        raw_amount = candidate.get("estimated_value")
+        raw_amount = candidate.get("call_award_value")
         amount_usd = (
             float(raw_amount) * _dd.usd_rate(candidate.get("currency"))
             if raw_amount not in (None, "", 0) else 0.0
@@ -1967,7 +1967,7 @@ def _is_blank_cheque(candidate: dict[str, Any]) -> bool:
     documented, etc.) — there's nothing to bid on, so it is declined."""
     if candidate.get("submission_deadline"):
         return False
-    val = candidate.get("estimated_value")
+    val = candidate.get("call_award_value")
     try:
         if val is not None and float(val) > 0:   # float('nan') > 0 is False — good
             return False

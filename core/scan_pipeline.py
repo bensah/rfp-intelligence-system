@@ -56,8 +56,8 @@ def _apply_llm_judgment(cand: dict[str, Any]) -> None:
         return
     if not cand.get("submission_deadline") and j.get("submission_deadline"):
         cand["submission_deadline"] = j["submission_deadline"]
-    if cand.get("estimated_value") in (None, "", 0, "0") and j.get("estimated_value") is not None:
-        cand["estimated_value"] = j["estimated_value"]
+    if cand.get("call_award_value") in (None, "", 0, "0") and j.get("call_award_value") is not None:
+        cand["call_award_value"] = j["call_award_value"]
         if not cand.get("currency") and j.get("currency"):
             cand["currency"] = j["currency"]
     if not cand.get("solicitation_type") and j.get("solicitation_type"):
@@ -90,7 +90,7 @@ _SCRAPE_MANAGED_FIELDS = (
 # row and gap-filled on rescan. Mostly non-string (numeric / list), so they use
 # a blank-aware check rather than the string-only rule.
 _SCRAPE_STRUCTURED_FIELDS = (
-    "estimated_value",
+    "call_award_value",
     "currency",
     "call_domain_areas",
     "call_geographic_scope",
@@ -101,8 +101,8 @@ _SCRAPE_STRUCTURED_FIELDS = (
     "focus_theme",
     "notes",
     # Distinct award-scope fields (migration 036) — grants.gov + LLM extractor.
-    "award_floor",
-    "award_ceiling",
+    "call_award_floor",
+    "call_award_ceiling",
     "total_program_funding",
     "expected_awards",
     "funding_opportunity_number",
@@ -229,7 +229,7 @@ def _build_merge_payload(
         "submission_deadline": _iso_date(deadline),
         # Structured donor fields — gap-filled on rescan so EXISTING empty rows
         # get backfilled (estimated_value / program_area / geography / …).
-        "estimated_value": candidate.get("estimated_value"),
+        "call_award_value": candidate.get("call_award_value"),
         "currency": candidate.get("currency"),
         "call_domain_areas": candidate.get("call_domain_areas"),
         "call_geographic_scope": candidate.get("call_geographic_scope"),
@@ -526,7 +526,7 @@ def ingest_candidates(
             "opportunity_link": cand.get("opportunity_link"),
             "funding_agency": cand.get("funding_agency"),
             "submission_deadline": _iso_date(cand.get("submission_deadline")),
-            "estimated_value": None,
+            "call_award_value": None,
         }
         matches = find_duplicates(probe, existing=existing)
 
@@ -687,7 +687,7 @@ def ingest_candidates(
                     "brief_description": row.get("brief_description"),
                     "date_posted": row.get("date_posted"),
                     "submission_deadline": row.get("submission_deadline"),
-                    "estimated_value": None,
+                    "call_award_value": None,
                     "alignment_score": row.get("alignment_score"),
                     "call_geographic_scope": None,
                     "focus_theme": None,
@@ -758,7 +758,7 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
                        or (row.get("raw_text") or "")[:3000]),
         "funding_agency": row.get("funder_name"),
         "submission_deadline": row.get("deadline"),
-        "estimated_value": row.get("grant_amount"),
+        "call_award_value": row.get("grant_amount"),
         "currency": row.get("currency"),
         "call_geographic_scope": list(geo),
         "solicitation_type": row.get("solicitation_type"),

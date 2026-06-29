@@ -53,16 +53,16 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "org_registered_countries": [],             # jurisdictions where legally registered
 
     # --- capacity (can we deliver?) — multi-factorial MUST-3 inputs ---
-    "annual_budget_usd": None,              # number — org size / financial-capacity bar
-    "largest_grant_usd": None,              # number — biggest grant ever managed
-    "lowest_grant_usd": None,               # number — smallest grant managed (range awareness)
-    "number_of_grants_managed": None,       # int — track-record depth (raises the stretch)
+    "org_annual_budget": None,              # number — org size / financial-capacity bar
+    "org_largest_grant": None,              # number — biggest grant ever managed
+    "org_lowest_grant": None,               # number — smallest grant managed (range awareness)
+    "org_grants_count": None,       # int — track-record depth (raises the stretch)
     # (founding_year + org_stage, defined elsewhere, also feed the capacity stretch)
 
     # --- funding_quality (PREFER 6) — org's preferred award-size band (USD) ---
-    "funding_target_low": None,             # floor of interest
-    "funding_target_mid": None,             # sweet spot
-    "funding_target_max": None,             # ceiling of interest
+    "org_min_target": None,             # floor of interest
+    "org_mid_target": None,             # sweet spot
+    "org_max_target": None,             # ceiling of interest
     # Bands use GEOMETRIC midpoints: cut1=sqrt(low*mid), cut2=sqrt(mid*max);
     # RFP value <=cut1 Low(0) / <=cut2 Moderate(1) / >cut2 High(2).
 
@@ -200,6 +200,14 @@ _RENAMED_KEYS = {
     "program_area_ratings": "org_priority_ratings",
     "domains": "org_domain_expertise",
     "domain_ratings": "org_domain_ratings",
+    # Award / funding (axis 3)
+    "funding_target_low": "org_min_target",
+    "funding_target_mid": "org_mid_target",
+    "funding_target_max": "org_max_target",
+    "largest_grant_usd": "org_largest_grant",
+    "annual_budget_usd": "org_annual_budget",
+    "lowest_grant_usd": "org_lowest_grant",
+    "number_of_grants_managed": "org_grants_count",
 }
 
 

@@ -50,7 +50,7 @@ create table if not exists rfp_submissions (
     submission_deadline         date,
     expected_award_date         date,
     time_to_award               text,
-    estimated_value             numeric,
+    call_award_value             numeric,
     currency                    text,
     project_duration            integer,
     submission_format           text,

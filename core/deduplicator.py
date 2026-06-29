@@ -111,7 +111,7 @@ def find_duplicates(
     cand_title = _norm_title(candidate.get("opportunity_title"))
     cand_agency = (candidate.get("funding_agency") or "").strip().lower()
     cand_deadline = str(candidate.get("submission_deadline") or "").strip()
-    cand_value = candidate.get("estimated_value")
+    cand_value = candidate.get("call_award_value")
 
     matches: list[dict[str, Any]] = []
     for row in existing:
@@ -168,7 +168,7 @@ def find_duplicates(
             and cand_value is not None
             and (row.get("funding_agency") or "").strip().lower() == cand_agency
             and str(row.get("submission_deadline") or "").strip() == cand_deadline
-            and row.get("estimated_value") == cand_value
+            and row.get("call_award_value") == cand_value
         ):
             matches.append({**row, "_reason": "funder + deadline + value match"})
 
