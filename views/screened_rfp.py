@@ -19,6 +19,7 @@ import streamlit as st
 from core import dropdowns, settings
 from core.currency import format_money
 from core.review_week import all_weeks_for_year, review_week_label, upcoming_review_week_label
+from core.records import clean_df
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -31,11 +32,19 @@ sb = get_client()
 # now (beside "Discovered RFP Pipelines"), so it's reachable from every tab.
 # -----------------------------------------------------------------------------
 year = settings.get_year()
-st.markdown(
-    f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
-    f"margin:0.15rem 0 0.5rem;'>Weekly Screening Pipeline ({year})</h2>",
-    unsafe_allow_html=True,
-)
+_head_l, _head_r = st.columns([4, 1], vertical_alignment="center")
+with _head_l:
+    st.markdown(
+        f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
+        f"margin:0.15rem 0 0.5rem;'>Weekly Screening Pipeline ({year})</h2>",
+        unsafe_allow_html=True,
+    )
+with _head_r:
+    # Extreme-right, secondary (NOT the deep-green primary used by "Scan now")
+    # entry point to the Submit-RFP page — the form is otherwise easy to miss.
+    if st.button("📝 Submit RFP", type="secondary", use_container_width=True,
+                 key="screened_submit_rfp_btn"):
+        st.switch_page("app_pages/submit_rfp.py")
 all_weeks = all_weeks_for_year(year)
 default_week = review_week_label()
 if default_week not in all_weeks:
@@ -59,7 +68,7 @@ def _fetch(week: str) -> pd.DataFrame:
         .eq("review_week", week)
         .execute()
     )
-    return pd.DataFrame(res.data or [])
+    return clean_df(pd.DataFrame(res.data or []))
 
 
 @st.cache_data(ttl=60)

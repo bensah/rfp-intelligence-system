@@ -15,6 +15,7 @@ import streamlit as st
 
 from core import dropdowns, settings
 from core.review_week import all_weeks_for_year, week_bounds
+from core.records import clean_df
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -231,7 +232,7 @@ def _fetch_notes(meeting_date: str) -> pd.DataFrame:
         .order("created_at")
         .execute()
     )
-    return pd.DataFrame(res.data or [])
+    return clean_df(pd.DataFrame(res.data or []))
 
 
 notes = _fetch_notes(mon_date.isoformat())

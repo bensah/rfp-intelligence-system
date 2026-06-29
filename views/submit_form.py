@@ -220,10 +220,11 @@ def render_submit_form(
         grid_l, grid_r = st.columns(2)
         with grid_l:
             m1 = _crit(
-                "MUST 1 — Organisational qualification", "m1", "qualification",
-                "Do we formally qualify to apply — org type, domestic vs global "
-                "registration, local board requirement, any mandatory donor "
-                "registration (e.g. SAM/PADOR) or consortium-lead requirement?")
+                "MUST 1 — Legal status & qualification", "m1", "qualification",
+                "Are we legally eligible to apply — applicant/legal type, HQ country, "
+                "individual-vs-org award, and local registration? These are "
+                "non-dynamic gates (can't change before the deadline). Compliance "
+                "paperwork (SAM, tax, partner, board) now sits in MUST 5.")
             m2 = _crit(
                 "MUST 2 — Strategic fit", "m2", "strategic_fit",
                 "Does this RFP fit our defined strategic priorities?")
@@ -246,9 +247,10 @@ def render_submit_form(
                 "Is the award size attractive — within our preferred funding range "
                 "(not too small to bother with, not beyond what we can absorb)?")
             p7 = _crit(
-                "PREFER 7 — Funder relationship", "p7", "funder_relationship",
-                "Do we have a relationship with this funder — a current / past "
-                "grant, or registration / contact on their portal?")
+                "PREFER 7 — Donor relationship", "p7", "funder_relationship",
+                "Do we have a relationship with this funder — a current/past grant, "
+                "registration/contact on their portal, OR a shared partner who already "
+                "works with this donor?")
             p8 = _crit(
                 "PREFER 8 — Competitiveness", "p8", "competitiveness",
                 "How well-positioned are we to win — track record in this exact "

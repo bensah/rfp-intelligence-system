@@ -27,6 +27,7 @@ from datetime import date, datetime, timedelta  # noqa: E402
 
 import pandas as pd  # noqa: E402
 
+from core.records import clean_df
 from db.supabase_client import get_client  # noqa: E402
 
 # Wrapper page already gated auth; just pick up the user.
@@ -157,7 +158,7 @@ def _fetch_meetings() -> pd.DataFrame:
         .order("deadline")
         .execute()
     )
-    df = pd.DataFrame(res.data or [])
+    df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty:
         df["meeting_date"] = pd.to_datetime(df["meeting_date"], errors="coerce")
         df["deadline"] = pd.to_datetime(df["deadline"], errors="coerce")
@@ -273,7 +274,7 @@ def _fetch_engagements() -> tuple[pd.DataFrame, bool]:
             .order("engagement_date", desc=True)
             .execute()
         )
-        df = pd.DataFrame(res.data or [])
+        df = clean_df(pd.DataFrame(res.data or []))
         if not df.empty:
             df["engagement_date"] = pd.to_datetime(
                 df["engagement_date"], errors="coerce")
@@ -288,7 +289,7 @@ def _fetch_engagements() -> tuple[pd.DataFrame, bool]:
             .order("engagement_date", desc=True)
             .execute()
         )
-        df = pd.DataFrame(res.data or [])
+        df = clean_df(pd.DataFrame(res.data or []))
         if not df.empty:
             df["engagement_date"] = pd.to_datetime(
                 df["engagement_date"], errors="coerce")
