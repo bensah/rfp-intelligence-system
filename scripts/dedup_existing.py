@@ -45,7 +45,7 @@ def run(*, dry_run: bool = False, reset: bool = False,
         sb.table("rfp_submissions")
         .select(
             "uid,opportunity_title,opportunity_link,funding_agency,"
-            "submission_deadline,estimated_value,submitted_at,search_date,"
+            "call_submission_deadline,call_award_value,submitted_at,search_date,"
             "progress_status,decision,donor_decision,stage,"
             "amount_requested,date_completed,submissions,"
             "is_duplicate,duplicate_of_uid"

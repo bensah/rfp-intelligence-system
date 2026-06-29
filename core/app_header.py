@@ -24,6 +24,7 @@ from core import settings
 
 APP_NAME = "RFP Intelligence System"
 APP_SHORT = "RFPIS"
+APP_SLOGAN = "Seeks funding seamlessly"   # tagline shown under the app name in the top bar
 APP_VERSION = "v1.0"
 
 # Primary brand green — used as the global accent across all metric
@@ -35,11 +36,25 @@ THEME_PRIMARY_LIGHT = "#e6f2eb"
 THEME_NAVY = "#1e3a8a"          # RFPIS brand color (sidebar logo)
 THEME_SLATE = "#475569"
 THEME_SLATE_LIGHT = "#94a3b8"
-THEME_BG_CARD = "#fafcfa"
+THEME_BG_CARD = "#fafcfa"       # near-white card (metric tiles / quick-cards)
+THEME_BORDER = "#e3e7e3"        # hairline border on cards/tiles
+# Top app bar (owner 2026-06-29): a full-width DARK GREEN bar — the page itself
+# stays white. Tune THEME_HEADER_BG / THEME_HEADER_H to restyle the whole bar.
+THEME_HEADER_BG = "#014729"     # deep CHAI green — the top app bar
+THEME_HEADER_TEXT = "#ffffff"   # primary org line + icons (on green)
+THEME_HEADER_SUB = "#bfe0cf"    # muted light-green — secondary org line
+THEME_HEADER_H = "4.6rem"       # bar height (also the content top-offset)
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _LOGO_PATH = _ASSETS_DIR / "rfpis_logo.svg"
 _ICON_PATH = _ASSETS_DIR / "rfpis_icon.svg"
+
+# App-logo mark inlined into the top bar's far left (st.image can't render SVG).
+# Placeholder — swap assets/rfpis_icon.svg for the real brand asset later.
+try:
+    _APP_LOGO_SVG = _ICON_PATH.read_text(encoding="utf-8")
+except Exception:
+    _APP_LOGO_SVG = ""
 
 
 _GLOBAL_CSS = f"""
@@ -79,11 +94,16 @@ _GLOBAL_CSS = f"""
   }}
   .block-container,
   [data-testid="stMainBlockContainer"] {{
-    padding-top: 0.8rem !important;
+    /* Clear the FIXED top app bar (THEME_HEADER_H) so content starts below it. */
+    padding-top: calc({THEME_HEADER_H} + 0.5rem) !important;
     padding-bottom: 1rem !important;
+    padding-left: 2.5rem !important;
+    padding-right: 2.5rem !important;
   }}
+  /* (The sidebar's below-the-bar offset is applied once on section[stSidebar]
+     further down — keep this inner padding small so it isn't double-counted.) */
   [data-testid="stSidebar"] > div:first-child {{
-    padding-top: 0.6rem !important;
+    padding-top: 0.4rem !important;
   }}
   /* Tighten the divider that separates the header strip from
      content — the default st.divider has hefty top/bottom margins. */
@@ -108,7 +128,7 @@ _GLOBAL_CSS = f"""
     padding-top: 0.2rem !important;
   }}
   [data-testid="stExpandSidebarButton"] {{
-    top: 0.5rem !important;
+    top: calc({THEME_HEADER_H} + 0.4rem) !important;   /* below the fixed app bar */
     left: 0.6rem !important;
   }}
 
@@ -182,24 +202,11 @@ _GLOBAL_CSS = f"""
     padding-left: 0.4rem !important;
     padding-right: 0.4rem !important;
   }}
-  /* "RFPIS" wordmark at the top of the sidebar nav — replaces the graphic
-     logo and stays visible in both the expanded and the collapsed rail
-     states. (A CSS ::before isn't clickable; the 🏠 Home item right below
-     navigates home.) */
-  [data-testid="stSidebarNav"]::before {{
-    content: "RFPIS";
-    display: block;
-    font-weight: 700;
-    font-size: 1.15rem;
-    letter-spacing: 0.04em;
-    color: {THEME_NAVY};
-    padding: 0 0.85rem 0.55rem;
-    margin-top: -0.9rem;
-  }}
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNav"]::before {{
-    font-size: 0.72rem;
-    padding: 0 0 0.5rem;
-    text-align: center;
+  /* (The "RFPIS" sidebar wordmark was removed — app branding now lives in the
+     top bar. Pull the nav up tight, right under the bar.) */
+  [data-testid="stSidebarNav"] {{
+    margin-top: 0 !important;
+    padding-top: 0 !important;
   }}
   /* Collapse/expand arrows follow the rule WIDE → « (collapse) / NARROW →
      » (expand) — which is already Streamlit's native direction, so we flip
@@ -222,27 +229,159 @@ _GLOBAL_CSS = f"""
   [data-testid="stHeading"] h2,
   [data-testid="stHeading"] h3 {{ color: {THEME_PRIMARY}; }}
 
-  /* ── Pinned top app bar ───────────────────────────────────────────
-     Keep the org logo/name + search/bell/user icons visible while the
-     page body scrolls. White backdrop + hairline + soft shadow so the
-     content scrolling beneath doesn't bleed through. This replaces the
-     old st.divider under the header (removed from render_app_header). */
+  /* ── Full-viewport dark-green top app bar ─────────────────────────
+     position:FIXED (not sticky) pins it flush to the very top of the
+     VIEWPORT and spans the whole width (left:0;right:0) — so there is no
+     white strip above it (it covers Streamlit's stHeader) and no gap at
+     the right edge. The app content + sidebar are pushed down by the bar
+     height (see .block-container / stSidebar padding-top above). Tune via
+     THEME_HEADER_BG / THEME_HEADER_H. */
   [class*="st-key-rfpis_topbar"] {{
-    position: sticky;
-    top: 0;
-    z-index: 1000;
-    background: #ffffff;
-    padding-top: 0.2rem;
-    padding-bottom: 0.45rem;   /* keep the org name clear of the border line */
-    margin-bottom: 0.4rem;
-    border-bottom: 1px solid #e3e7e3;
-    box-shadow: 0 3px 6px -4px rgba(0, 0, 0, 0.25);
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 1000000 !important;          /* ABOVE the sidebar so the bar sits in front of it */
+    background: {THEME_HEADER_BG} !important;
+    min-height: {THEME_HEADER_H} !important;
+    display: flex !important;
+    align-items: center !important;
+    margin: 0 !important;
+    padding: 0.25rem 1.6rem !important;
+    box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.40) !important;
   }}
+  /* Vertically CENTRE the bar's content (icons + brand) within the taller bar.
+     Streamlit's inner vertical block stretches to the full bar height and would
+     otherwise top-align its row; justify-content:center pulls the row to the
+     middle, and align-items:center lines the columns up on that midline. */
+  [class*="st-key-rfpis_topbar"] [data-testid="stVerticalBlock"] {{
+    justify-content: center !important;
+    height: 100% !important;
+  }}
+  [class*="st-key-rfpis_topbar"] [data-testid="stHorizontalBlock"] {{
+    width: 100% !important;
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+  }}
+  /* ── Brand cluster (far-left): app-logo badge + tenant name ──────── */
+  [class*="st-key-rfpis_topbar"] .rfpis-brand {{
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.9rem !important;
+    padding-left: 0.4rem !important;
+  }}
+  /* App logo in a small white badge so the (navy/amber) mark reads on green. */
+  [class*="st-key-rfpis_topbar"] .rfpis-applogo {{
+    background: #ffffff !important;
+    border-radius: 9px !important;
+    padding: 4px !important;
+    line-height: 0 !important;
+    flex: 0 0 auto !important;
+  }}
+  [class*="st-key-rfpis_topbar"] .rfpis-applogo svg {{
+    height: 2.5rem !important;
+    width: 2.5rem !important;
+    display: block !important;
+  }}
+  /* Tenant name — primary white, secondary muted; nudged right off the edge. */
+  [class*="st-key-rfpis_topbar"] .rfpis-org-name {{
+    display: flex !important;
+    flex-direction: column !important;
+    line-height: 1.2 !important;
+  }}
+  [class*="st-key-rfpis_topbar"] .rfpis-org-primary {{ color: {THEME_HEADER_TEXT} !important; }}
+  [class*="st-key-rfpis_topbar"] .rfpis-org-sub {{ color: {THEME_HEADER_SUB} !important; }}
+  /* Search / bell / user popover triggers — NO chip: transparent button, white
+     Material glyphs that read cleanly on the dark green. */
+  [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button {{
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0.25rem 0.35rem !important;   /* tight — bring the icons close together */
+  }}
+  [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button,
+  [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button * {{
+    color: #ffffff !important;
+    fill: #ffffff !important;
+  }}
+  /* Remove the dropdown chevron. The label is now a plain EMOJI (text), so the
+     ONLY Material-icon / svg in the button is Streamlit's chevron — hide both
+     forms to be safe. */
+  [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button [data-testid="stIconMaterial"],
+  [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button svg {{
+    display: none !important;
+  }}
+  /* Enlarge the emoji glyph AND render it MONOCHROME WHITE: brightness(0) turns
+     the colour emoji solid black, invert(1) flips it to white — a uniform, high-
+     contrast, colour-blind-safe icon (fixes the low-contrast purple 👤). The bell's
+     red count badge is a ::after pseudo-element (not inside <p>), so the filter
+     doesn't touch it. */
+  [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button p,
+  [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button [data-testid="stMarkdownContainer"] {{
+    font-size: 1.7rem !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+    filter: brightness(0) invert(1) !important;
+  }}
+  /* Cluster the icons tight on the right: the brand column grows, the three icon
+     columns shrink to their content so they sit next to each other (not spread one
+     per wide cell). */
+  [class*="st-key-rfpis_topbar"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child {{
+    flex: 1 1 auto !important;
+  }}
+  [class*="st-key-rfpis_topbar"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:not(:first-child) {{
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+  }}
+  /* SEARCH icon (2nd column) — replace the solid white magnifier blob with an OUTLINE
+     magnifier whose lens is hollow (the dark green shows through the centre). Hide the
+     emoji glyph and paint a white-stroke / no-fill SVG via ::before. */
+  [class*="st-key-rfpis_topbar"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) [data-testid="stPopover"] button p {{
+    font-size: 0 !important;
+    filter: none !important;
+  }}
+  [class*="st-key-rfpis_topbar"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) [data-testid="stPopover"] button p::before {{
+    content: "";
+    display: inline-block;
+    width: 1.6rem;
+    height: 1.6rem;
+    vertical-align: middle;
+    background: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='white'%20stroke-width='2.4'%20stroke-linecap='round'%3E%3Ccircle%20cx='10.5'%20cy='10.5'%20r='6.5'/%3E%3Cline%20x1='15.2'%20y1='15.2'%20x2='21'%20y2='21'/%3E%3C/svg%3E") center / contain no-repeat;
+  }}
+  [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button:hover {{
+    background: rgba(255, 255, 255, 0.16) !important;
+    border-radius: 8px !important;
+  }}
+  /* The bar now sits IN FRONT of the sidebar (z-index above), so push the whole
+     sidebar's contents (collapse toggle + nav) down below the bar — otherwise the
+     bar would cover them. Matches the main content offset (block-container). */
+  section[data-testid="stSidebar"] {{
+    padding-top: {THEME_HEADER_H} !important;
+  }}
+
+  /* ── Tenant (org) identity — top-right, just below the app bar ────── */
+  .rfpis-orgid {{
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 0.55rem !important;
+    margin: -0.3rem 0 0.5rem 0 !important;
+  }}
+  .rfpis-orgid-logo {{
+    height: 38px !important;
+    width: auto !important;
+    border-radius: 6px !important;
+  }}
+  .rfpis-orgid-text {{ text-align: right !important; line-height: 1.18 !important; }}
+  .rfpis-orgid-name {{ font-weight: 700 !important; font-size: 0.92rem !important;
+                      color: {THEME_NAVY} !important; }}
+  .rfpis-orgid-sub {{ font-size: 0.76rem !important; color: {THEME_SLATE} !important; }}
 
   /* Metric tiles — give them card-like presence */
   [data-testid="stMetric"] {{
     background: {THEME_BG_CARD};
-    border: 1px solid #e3e7e3;
+    border: 1px solid {THEME_BORDER};
     border-left: 4px solid {THEME_PRIMARY};
     border-radius: 6px;
     padding: 10px 14px;
@@ -279,7 +418,7 @@ _GLOBAL_CSS = f"""
      plus the heading; descriptions stretch via flex so all cards
      render at the same height regardless of text length. */
   .quickcard {{
-    border: 1px solid #e3e7e3;
+    border: 1px solid {THEME_BORDER};
     border-left: 4px solid {THEME_PRIMARY};
     border-radius: 6px;
     padding: 14px 16px;
@@ -308,7 +447,7 @@ _GLOBAL_CSS = f"""
   .rfpis-footer-brand {{
     margin-top: 1rem;
     padding: 0.6rem 0.5rem;
-    border-top: 1px solid #e3e7e3;
+    border-top: 1px solid {THEME_BORDER};
     font-size: 0.78rem;
     color: {THEME_SLATE};
     line-height: 1.3;
@@ -443,12 +582,14 @@ _GLOBAL_CSS = f"""
       background: transparent !important;
       box-shadow: none !important;
       min-width: 0 !important;
-      padding: 0.25rem 0.35rem !important;
-      font-size: 1.3rem !important;
-      white-space: nowrap !important;   /* keep 🔔¹² on one line → icons align */
+      padding: 0.2rem 0.3rem !important;
+      white-space: nowrap !important;
     }}
+    /* Smaller glyph on phones (the desktop 1.7rem would overlap), still white. */
     [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button p {{
       white-space: nowrap !important;
+      font-size: 1.45rem !important;
+      filter: brightness(0) invert(1) !important;
     }}
     /* Drop the popover dropdown carets in the top bar (declutter the icons). */
     [class*="st-key-rfpis_topbar"] [data-testid="stPopover"] button [data-testid="stIconMaterial"] {{
@@ -632,14 +773,15 @@ def _render_notifications(user: dict) -> None:
         feed = []
     seen = _notif.last_seen(email) if email else None
     unread = _notif.unread_count(feed, seen) if email else 0
-    # Render the count as small SUPERSCRIPT digits so it hangs on the bell like
-    # a badge and stays on ONE line — keeping the top-bar icons aligned (a
-    # plain " 12" wrapped to a 2nd line and pushed the bell out of line).
-    _cnt = str(unread) if unread < 100 else "99+"
-    _sup = _cnt.translate(str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹"))
-    label = f"🔔{_sup}" if unread else "🔔"
+    # Just the bell here — the unread-count badge is injected by render_app_header
+    # OUTSIDE the icon columns (a stable nth-child selector), so it adds no element to
+    # this column and the bell stays vertically aligned with the search/profile icons.
+    _render_notifications_popover(_notif, feed, seen, email, unread)
+    return unread
 
-    with st.popover(label, width='stretch'):
+
+def _render_notifications_popover(_notif, feed, seen, email, unread) -> None:
+    with st.popover("🔔", width='stretch'):
         st.markdown("**Notifications**")
         nxt = _notif.next_scheduled_scan()
         st.caption(
@@ -679,6 +821,34 @@ def _render_notifications(user: dict) -> None:
                          width='stretch'):
                 _notif.mark_all_read(email)
                 st.rerun()
+
+
+def _render_org_identity() -> None:
+    """Tenant (org) identity — the logo + name from the Org profile — rendered
+    top-RIGHT, just below the app bar. Deliberately separate from the APP branding
+    inside the bar (app logo + RFPIS + slogan): this is the deployment's own logo,
+    uploaded by a user in Org setup, and changes per tenant."""
+    import base64
+    try:
+        logo_bytes, logo_mime = settings.get_org_logo()
+    except Exception:
+        logo_bytes, logo_mime = None, None
+    name_full = settings.get_org_name() or ""
+    if " — " in name_full:
+        primary, secondary = name_full.split(" — ", 1)
+    else:
+        primary, secondary = name_full, ""
+    img_html = ""
+    if logo_bytes:
+        b64 = base64.b64encode(logo_bytes).decode()
+        img_html = (f"<img class='rfpis-orgid-logo' "
+                    f"src='data:{logo_mime or 'image/png'};base64,{b64}'/>")
+    sub = f"<div class='rfpis-orgid-sub'>{secondary}</div>" if secondary else ""
+    st.markdown(
+        f"<div class='rfpis-orgid'>{img_html}"
+        f"<div class='rfpis-orgid-text'>"
+        f"<div class='rfpis-orgid-name'>{primary}</div>{sub}</div></div>",
+        unsafe_allow_html=True)
 
 
 def render_app_header() -> None:
@@ -733,56 +903,55 @@ def render_app_header() -> None:
     # an image asset. The 🏠 Home nav item directly below it goes home.
 
     # ────────────────── MAIN CONTENT — deploying-org branding ─────────
-    try:
-        org_bytes, _ = settings.get_org_logo()
-    except Exception:
-        org_bytes = None
-
     _u = st.session_state.get("app_user") or {}
     # Keyed container so the mobile CSS can target the top bar specifically
     # (keep it horizontal + borderless icons) without affecting other columns.
     with st.container(key="rfpis_topbar"):
-        left, _spacer, c_search, c_bell, c_user = st.columns(
-            [5, 3, 1, 1, 1], gap="small")
+        # Flat columns (no nesting → mobile-friendly). CSS makes `left` grow and the
+        # three icon columns shrink to content + cluster tight on the right.
+        left, c_search, c_bell, c_user = st.columns([6, 1, 1, 1], gap="small")
+        with left:
+            # APP branding (NOT the tenant): app logo badge + app name "RFPIS" and
+            # the slogan in italics. The tenant/org identity is rendered separately,
+            # below the bar (see _render_org_identity).
+            st.markdown(
+                f"<div class='rfpis-brand'>"
+                f"<span class='rfpis-applogo'>{_APP_LOGO_SVG}</span>"
+                f"<span class='rfpis-org-name'>"
+                f"<span class='rfpis-org-primary' style='font-weight:700; "
+                f"font-size:1.15rem;'>{APP_SHORT}</span>"
+                f"<span class='rfpis-org-sub' style='font-style:italic; "
+                f"font-weight:500; font-size:0.82rem;'>{APP_SLOGAN}</span>"
+                f"</span></div>",
+                unsafe_allow_html=True)
         with c_search:
             _render_search(_u)
         with c_bell:
-            _render_notifications(_u)
+            _bell_unread = _render_notifications(_u)
         with c_user:
             _render_user_menu()
-        with left:
-            l_icon, l_text = st.columns([1, 4], gap="small")
-            with l_icon:
-                if org_bytes:
-                    try:
-                        st.image(org_bytes, width=45)
-                    except Exception:
-                        pass
-            with l_text:
-                # Org name on (up to) two tidy lines: the part before " — "
-                # on line 1, the rest on line 2. Each is a display:block span
-                # so "CHAI Cameroon" and "Business Development Team" never
-                # share a line (and never wrap mid-line into a stray "Team"
-                # that crosses the header border). Falls back to a single
-                # line when the name has no " — " separator.
-                _org_name_full = settings.get_org_name()
-                if " — " in _org_name_full:
-                    _org_primary, _org_secondary = _org_name_full.split(" — ", 1)
-                else:
-                    _org_primary, _org_secondary = _org_name_full, ""
-                _name_html = (
-                    f"<div style='padding-top:0.3rem; margin:0; "
-                    f"line-height:1.18; color:{THEME_NAVY};'>"
-                    f"<span style='display:block; font-weight:700; "
-                    f"font-size:0.98rem;'>{_org_primary}</span>"
-                )
-                if _org_secondary:
-                    _name_html += (
-                        f"<span style='display:block; font-weight:500; "
-                        f"font-size:0.8rem;'>{_org_secondary}</span>"
-                    )
-                _name_html += "</div>"
-                st.markdown(_name_html, unsafe_allow_html=True)
+        # Bell count badge — injected here (after the columns, NOT inside the bell
+        # column) so it adds no element that would shift the bell out of line. The
+        # bell is the 3rd column (brand · search · bell · profile); target it by
+        # position and hang a small red badge in its top-right corner.
+        if _bell_unread:
+            _bcnt = str(_bell_unread) if _bell_unread < 100 else "99+"
+            st.markdown(
+                "<style>"
+                "[class*='st-key-rfpis_topbar'] [data-testid='stHorizontalBlock'] >"
+                " [data-testid='stColumn']:nth-child(3) [data-testid='stPopover'] button"
+                " { position: relative !important; }"
+                "[class*='st-key-rfpis_topbar'] [data-testid='stHorizontalBlock'] >"
+                " [data-testid='stColumn']:nth-child(3) [data-testid='stPopover'] button::after {"
+                f" content: '{_bcnt}'; position: absolute; top: -3px; right: -5px;"
+                " background: #dc2626; color: #ffffff !important; font-size: 0.6rem;"
+                " font-weight: 700; line-height: 1; padding: 2px 5px; border-radius: 9px;"
+                " font-style: normal; }"
+                "</style>",
+                unsafe_allow_html=True)
+
+    # Tenant (org) identity — moved OUT of the bar to the top-right, just below it.
+    _render_org_identity()
 
     # No st.divider() here — the pinned top bar carries its own bottom
     # border (see `.st-key-rfpis_topbar` in _GLOBAL_CSS). A separate
