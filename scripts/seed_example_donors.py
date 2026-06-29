@@ -10,7 +10,7 @@ aliases (so it enriches the rows you already have, in place — no duplicates) a
 falls back to creating the row if absent. Upsert is PARTIAL: only the columns
 below are written; every other field on the row is left untouched.
 
-List fields (funding_mechanism, priority_program_areas, funding_scope_geographic)
+List fields (funding_mechanism, priority_program_areas, donor_geographic_scope)
 and the JSON blocks (funding_tiers_json, past_projects_json) are stored exactly as
 the app stores them (json.dumps), so the Donors page renders them natively.
 """
@@ -67,8 +67,8 @@ NIHR = {
         "Guided by the '4 Is' framework: Impact, Inclusion, Innovation, Investment "
         "(value for money, ODA compliance, sustainability beyond the grant). The "
         "themed call rotates annually; 2026 is the first dedicated AMR theme."),
-    "award_low_usd": "£0.5M",
-    "award_high_usd": "£5M",
+    "donor_award_low": "£0.5M",
+    "donor_award_high": "£5M",
     "total_annual_funding_global": "~£20–30M (2026 AMR themed call, estimated)",
     "total_awards": "253 (163 active + 90 completed since 2016)",
     "total_funding_to_date": "£734.5M (GHR, since 2016)",
@@ -92,12 +92,12 @@ NIHR = {
     ]),
     # Strategic priority areas — canonical keys from the shared taxonomy
     # (core/program_area_classifier.py), with 0–5 priority grades.
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "IDs - Antimicrobial Resistance (AMR)", "Cross-cutting - Diagnostics",
         "Cross-cutting - Research", "HSS - Health Workforce",
         "HSS - Health Financing", "WCH - MNCH", "WCH - Vaccines",
         "Cross-cutting - Digital Health (+AI)", "IDs - Pandemic Response"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "IDs - Antimicrobial Resistance (AMR)": 5,
         "Cross-cutting - Diagnostics": 5,
         "Cross-cutting - Research": 5,
@@ -108,7 +108,7 @@ NIHR = {
         "WCH - Vaccines": 3,
         "HSS - Health Financing": 2,
     }),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Southern Asia"]),
     "in_scope": (
         "WHO priority bacterial & fungal pathogens (excl. TB); late-phase evaluations "
@@ -130,13 +130,13 @@ NIHR = {
         "focused; capacity-building embedded (20–25% budget, MSc/PhD posts for Bands "
         "1–2); equitable partnerships (co-leads, shared authorship); credible policy "
         "pathway (national-plan alignment, demonstrated government demand)."),
-    "direct_local_org_eligible": "Yes — via competitive RFP / invited proposal",
+    "donor_direct_local_org_eligible": "Yes — via competitive RFP / invited proposal",
     "active_route_status": "Active",
     "application_process": "Concept note → full proposal (two-stage)",
     "funding_cycle": "Annual",
     "reporting_requirements": "Narrative + financial reports",
     "application_deadlines": "2026 AMR themed call — Stage 1 outline due 1pm UK time, 8 July 2026 (max 5 A4 pages).",
-    "submission_portal_url": "https://awardsmanagement.nihr.ac.uk",
+    "donor_submission_portal_url": "https://awardsmanagement.nihr.ac.uk",
     "recent_activity": "2026: first dedicated AMR themed call (GHR).",
     "eligibility_notes": (
         "Funds LMIC-led or LMIC–UK joint research partnerships — NOT implementers "
@@ -190,12 +190,12 @@ NIHR = {
     ]),
     # Flags (yes only — blanks stay 'not documented'). Program areas now live in
     # priority_program_areas + program_area_ratings, NOT the deprecated *_fit flags.
-    "ngo_eligible": "no", "for_profit_eligible": "no",
-    "subrecipient_partner_possible": "yes", "grant_route": "yes",
+    "donor_ngo_eligible": "no", "donor_for_profit_eligible": "no",
+    "donor_subrecipient_partner_possible": "yes", "donor_grant_route": "yes",
     "open_call_unsolicited": "yes", "two_stage_application": "yes",
     "online_portal_submission": "yes", "lmic_africa_focus": "yes",
-    "global_multi_country_scope": "yes", "partnership_mandatory": "yes",
-    "local_partner_required": "yes",
+    "global_multi_country_scope": "yes", "donor_partnership_mandatory": "yes",
+    "donor_local_partner_required": "yes",
     "concept_note_required": "yes", "full_technical_proposal_required": "yes",
     "detailed_budget_required": "yes", "budget_narrative_required": "yes",
     "theory_of_change_required": "yes", "mande_plan_required": "yes",
@@ -233,8 +233,8 @@ DIV = {
         "Growth, WASH, Energy, Environment, and Democracy/Rights/Governance. Three "
         "investment principles: evidence of impact, cost-effectiveness, and durable "
         "scale (reaching at least 1M people, with a sustainable financing pathway)."),
-    "award_low_usd": "$200K",
-    "award_high_usd": "$1.5M",
+    "donor_award_low": "$200K",
+    "donor_award_high": "$1.5M",
     "total_awards": None,
     "total_funding_to_date": None,
     "funding_mechanism": json.dumps(["Grants"]),
@@ -258,7 +258,7 @@ DIV = {
     # distribution (Health 10 · Agriculture/Food Security 4 · Education 4 ·
     # Environment 2 · Economic Growth 1 · Democracy/Rights/Governance 1 · WASH 1),
     # nuanced by what their grantees actually do. Grades scale with that emphasis.
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         # Health (dominant sector) ---------------------------------------------
         "Cross-cutting - Digital Health (+AI)", "IDs - Malaria & NTDs",
         "WCH - MNCH", "WCH - Vaccines", "HSS - Health Workforce",
@@ -276,7 +276,7 @@ DIV = {
         "ECON - Jobs & Skills",
         # Governance + Humanitarian (light) ------------------------------------
         "GOV - Democracy & Civic Participation", "HUM - Emergency Response"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         # Health — DIV's largest, most active sector
         "Cross-cutting - Digital Health (+AI)": 5,   # Dimagi, Maisha Meds, Simprints
         "IDs - Malaria & NTDs": 5,                   # antimalarial access, malaria-vaccine uptake
@@ -305,7 +305,7 @@ DIV = {
         "GOV - Democracy & Civic Participation": 2,
         "HUM - Emergency Response": 1,
     }),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Asia"]),
     "funders_collaborators": json.dumps([
         "Coefficient Giving", "GiveWell", "Livelihood Impact Fund", "CRI Foundation",
@@ -330,7 +330,7 @@ DIV = {
     "funding_cycle": "Rolling / open call (no fixed deadline)",
     "reporting_requirements": "Milestone / deliverable-based",
     "application_deadlines": "Rolling / open call — no fixed deadline; apply anytime.",
-    "submission_portal_url": "https://www.div.fund/apply",
+    "donor_submission_portal_url": "https://www.div.fund/apply",
     "recent_activity": "Actively accepting proposals across all sectors in LMICs (rolling RFP).",
     "eligibility_notes": (
         "Open to non-profits, social enterprises, universities, research institutions, "
@@ -406,12 +406,12 @@ DIV = {
          "link": "https://www.div.fund/portfolio"},
     ]),
     # Flags. Program areas now live in priority_program_areas + program_area_ratings.
-    "ngo_eligible": "yes", "for_profit_eligible": "yes",
-    "subrecipient_partner_possible": "yes", "grant_route": "yes",
+    "donor_ngo_eligible": "yes", "donor_for_profit_eligible": "yes",
+    "donor_subrecipient_partner_possible": "yes", "donor_grant_route": "yes",
     "open_call_unsolicited": "yes", "online_portal_submission": "yes",
     "lmic_africa_focus": "yes", "global_multi_country_scope": "yes",
     "theory_of_change_required": "yes", "mande_plan_required": "yes",
-    "detailed_budget_required": "yes", "partner_mou_required": "yes",
+    "detailed_budget_required": "yes", "donor_partner_mou_required": "yes",
     "sustainability_exit_plan_required": "yes",
 }
 
@@ -434,14 +434,14 @@ COEFFICIENT_GIVING = {
         "(incl. global health R&D and scientific research), pandemic preparedness / "
         "biosecurity, farm animal welfare, and risks from advanced AI."),
     "funding_mechanism": json.dumps(["Grants", "Program-related investments (equity/debt)"]),
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "IDs - Pandemic Response", "Cross-cutting - Research", "WCH - Vaccines",
         "Cross-cutting - Diagnostics", "Cross-cutting - Digital Health (+AI)"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "IDs - Pandemic Response": 5, "Cross-cutting - Research": 5,
         "WCH - Vaccines": 3, "Cross-cutting - Diagnostics": 3,
         "Cross-cutting - Digital Health (+AI)": 3}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Global / worldwide", "Low- and middle-income countries (LMICs)"]),
     "eligibility_notes": (
         "Largely proactive / invitation-driven grantmaking sourced through its own "
@@ -450,7 +450,7 @@ COEFFICIENT_GIVING = {
     "verification_level": "medium",
     "evidence_summary": "From coefficientgiving.org and reporting on the 2025 Open Philanthropy → Coefficient Giving rebrand.",
     "source_urls": "https://www.coefficientgiving.org\nhttps://en.wikipedia.org/wiki/Coefficient_Giving",
-    "ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
+    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "invitation_solicited": "yes",
     "open_call_unsolicited": "no",
 }
 
@@ -471,13 +471,13 @@ GIVEWELL = {
         "seasonal chemoprevention), vitamin A supplementation, vaccination / "
         "immunisation incentives, safe water, and maternal & child health."),
     "funding_mechanism": json.dumps(["Grants"]),
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "IDs - Malaria & NTDs", "WCH - Nutrition", "WCH - Vaccines",
         "WASH - Safe Water", "WCH - MNCH", "Cross-cutting - Research"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "IDs - Malaria & NTDs": 5, "WCH - Nutrition": 4, "WCH - Vaccines": 4,
         "WASH - Safe Water": 4, "WCH - MNCH": 3, "Cross-cutting - Research": 4}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Asia"]),
     "eligibility_notes": (
         "Highly selective and research-led: funds a small set of vetted Top Charities "
@@ -486,7 +486,7 @@ GIVEWELL = {
     "verification_level": "high",
     "evidence_summary": "From givewell.org (How We Work, Top Charities Fund) and public profiles.",
     "source_urls": "https://www.givewell.org\nhttps://www.givewell.org/how-we-work",
-    "ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
+    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "invitation_solicited": "yes",
 }
 
 LIVELIHOOD_IMPACT_FUND = {
@@ -504,15 +504,15 @@ LIVELIHOOD_IMPACT_FUND = {
         "Livelihoods & economic self-sufficiency — vocational / skills training, jobs, "
         "financial inclusion and economic empowerment, judged on measurable income growth."),
     "funding_mechanism": json.dumps(["Grants"]),
-    "award_low_usd": "$100K", "award_high_usd": "$300K",
-    "priority_program_areas": json.dumps([
+    "donor_award_low": "$100K", "donor_award_high": "$300K",
+    "donor_priority_areas": json.dumps([
         "ECON - Jobs & Skills", "EDU - Higher Education & TVET",
         "ECON - Financial Inclusion", "ECON - Social Protection", "GES - Youth Empowerment"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "ECON - Jobs & Skills": 5, "EDU - Higher Education & TVET": 4,
         "ECON - Financial Inclusion": 4, "ECON - Social Protection": 3,
         "GES - Youth Empowerment": 3}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Sub-Saharan Africa", "Low- and middle-income countries (LMICs)"]),
     "eligibility_notes": (
         "Trust-based, multi-year funding to vetted high-impact organisations; strongly "
@@ -520,7 +520,7 @@ LIVELIHOOD_IMPACT_FUND = {
     "verification_level": "medium",
     "evidence_summary": "From DevelopmentAid and BFA Global profiles of the Livelihood Impact Fund.",
     "source_urls": "https://bfaglobal.com/livelihood-impact-fund/",
-    "ngo_eligible": "yes", "grant_route": "yes", "invitation_solicited": "yes",
+    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "invitation_solicited": "yes",
 }
 
 CRI_FOUNDATION = {
@@ -543,13 +543,13 @@ CRI_FOUNDATION = {
         "funding (e.g. the CRI-DIV collaborative)."),
     "funding_mechanism": json.dumps(["Grants"]),
     "funders_collaborators": json.dumps(["Development Innovation Ventures Fund"]),
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "Cross-cutting - Research", "IDs - Malaria & NTDs", "WCH - MNCH",
         "HSS - Health Workforce", "WCH - Nutrition"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "Cross-cutting - Research": 5, "IDs - Malaria & NTDs": 4, "WCH - MNCH": 4,
         "HSS - Health Workforce": 3, "WCH - Nutrition": 3}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Sub-Saharan Africa", "Low- and middle-income countries (LMICs)"]),
     "eligibility_notes": (
         "Funds evidence-based or evidence-generating organisations with rigorous "
@@ -558,7 +558,7 @@ CRI_FOUNDATION = {
     "verification_level": "medium",
     "evidence_summary": "From crifoundation.org (Collaboratives, CRI-DIV) and public foundation profiles.",
     "source_urls": "https://crifoundation.org\nhttps://crifoundation.org/cri-div/",
-    "ngo_eligible": "yes", "grant_route": "yes", "prior_track_record_required": "yes",
+    "donor_ngo_eligible": "yes", "donor_grant_route": "yes", "prior_track_record_required": "yes",
     "invitation_solicited": "yes",
 }
 
@@ -580,15 +580,15 @@ GLOBAL_DEV_INCUBATOR = {
         "finance, agriculture, climate & ecosystems, youth employment, economic "
         "inclusion and MSME development."),
     "funding_mechanism": json.dumps(["Technical assistance", "Co-financing", "Grants"]),
-    "priority_program_areas": json.dumps([
+    "donor_priority_areas": json.dumps([
         "Cross-cutting - Digital Health (+AI)", "ECON - Financial Inclusion",
         "AGRI - Smallholder Productivity", "ECON - Jobs & Skills",
         "ENV - Climate Adaptation & Resilience", "HSS - Health Workforce"]),
-    "program_area_ratings": json.dumps({
+    "donor_priority_ratings": json.dumps({
         "Cross-cutting - Digital Health (+AI)": 4, "ECON - Financial Inclusion": 4,
         "AGRI - Smallholder Productivity": 4, "ECON - Jobs & Skills": 3,
         "ENV - Climate Adaptation & Resilience": 3, "HSS - Health Workforce": 3}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa"]),
     "eligibility_notes": (
         "Operates as an incubator / intermediary — partners with funders and "
@@ -597,7 +597,7 @@ GLOBAL_DEV_INCUBATOR = {
     "verification_level": "medium",
     "evidence_summary": "From globaldevincubator.org and the Devex organisation profile.",
     "source_urls": "https://globaldevincubator.org\nhttps://www.devex.com/organizations/global-development-incubator-gdi-56305",
-    "ngo_eligible": "yes", "subrecipient_partner_possible": "yes", "grant_route": "yes",
+    "donor_ngo_eligible": "yes", "donor_subrecipient_partner_possible": "yes", "donor_grant_route": "yes",
 }
 
 

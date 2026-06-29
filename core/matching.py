@@ -1,14 +1,17 @@
 """Org × Donor × RFP matching engine → composite Proceed / Park / Decline.
 
-Combines the 9 eligibility CRITERIA (primary, 80%) with DONOR-ORG relationship
-dimensions NOT captured by the criteria (20%): donor thematic fit, donor
-geographic fit, donor route eligibility. The hard MUST gate is preserved — any
-MUST scored "No" forces Decline regardless of the composite.
+Bid Strength = 100% of the 9 weighted eligibility CRITERIA (owner 2026-06-29). The
+former 20% "donor-org extras" (thematic / geographic / route / relationship)
+DUPLICATED MUST-2 / MUST-4 / MUST-5-route / PREFER-7, so it was dropped to stop
+double-counting; those funder signals still count, inside the criteria where they
+belong. The hard MUST gate is preserved — any MUST scored "No" forces Decline
+regardless of the composite. (`donor_org_extras` is retained for diagnostics/display
+only; it no longer affects the composite.)
 
 Field map (air-tight):
   criteria_score  = alignment_score over rfp's 9 criteria (qualification…bid_effort)
   donor_thematic  = org.priority_areas∪domains  ↔ donor.priority_program_areas   (program-area taxonomy overlap)
-  donor_geographic= org.countries_of_operation  ↔ donor.funding_scope_geographic (geo overlap, regions expanded)
+  donor_geographic= org.org_operating_countries  ↔ donor.donor_geographic_scope (geo overlap, regions expanded)
   donor_route     = org.legal_type / org_has_local_board ↔ donor route/eligibility flags
 
 Pure + best-effort: unknown/missing inputs score 0.5 (neutral) rather than 0,
@@ -26,8 +29,8 @@ from core import geographies as _geo
 from core import program_area_classifier as _pa
 from core.scorer import alignment_score, criterion_score
 
-CRITERIA_WEIGHT = 0.80
-EXTRAS_WEIGHT = 0.20
+CRITERIA_WEIGHT = 1.00      # Bid Strength = the 9 weighted criteria (100%)
+EXTRAS_WEIGHT = 0.00        # donor-org extras dropped (duplicated the criteria)
 PROCEED_AT = 70.0          # composite ≥ → Proceed
 PARK_AT = 45.0             # composite ≥ → Park, else Decline
 
@@ -39,7 +42,7 @@ _MUST = ("qualification", "strategic_fit", "capacity", "geographic_fit", "cofina
 
 # Real donor_intel columns (migration 020) that, when truthy, require a local
 # board / local registration — penalised if the org lacks one.
-_LOCAL_BOARD_FLAGS = ("local_board_required", "local_registration_required")
+_LOCAL_BOARD_FLAGS = ("donor_local_board_required", "donor_local_registration_required")
 
 
 def _as_list(v: Any) -> list[str]:
@@ -138,25 +141,25 @@ def _thematic_fit(org: dict, donor: dict) -> float:
     # Graded path: correlate the org's vs the donor's priority vectors (handles
     # parent categories, specific sub-areas, ungraded=5, broad=avg-of-children).
     graded = strategic_fit_score(
-        org.get("priority_areas"), org.get("program_area_ratings"),
-        donor.get("priority_program_areas"), donor.get("program_area_ratings"))
+        org.get("org_priority_areas"), org.get("org_priority_ratings"),
+        donor.get("donor_priority_areas"), donor.get("donor_priority_ratings"))
     if graded is not None:
         return graded
     # Fallback: binary overlap on the shared taxonomy (no priority signal one side).
-    org_pa = (org.get("priority_areas") or []) + (org.get("domains") or [])
-    don_pa = _as_list(donor.get("priority_program_areas"))
+    org_pa = (org.get("org_priority_areas") or []) + (org.get("org_domain_expertise") or [])
+    don_pa = _as_list(donor.get("donor_priority_areas"))
     if not org_pa or not don_pa:
         return 0.5
     return 1.0 if (_pa.expand(org_pa) & _pa.expand(don_pa)) else 0.0
 
 
 def _geographic_fit(org: dict, donor: dict, rfp: dict | None = None) -> float:
-    org_geo = org.get("countries_of_operation") or []
+    org_geo = org.get("org_operating_countries") or []
     # The funder's geography for THIS opportunity = the donor's profile scope PLUS
     # the RFP's own stated geography (the RFP is the most specific signal, e.g.
     # "Africa, Latin America, the Caribbean").
-    scope = (_as_list(donor.get("funding_scope_geographic"))
-             + _as_list((rfp or {}).get("geographic_scope")))
+    scope = (_as_list(donor.get("donor_geographic_scope"))
+             + _as_list((rfp or {}).get("call_geographic_scope")))
     if not org_geo or not scope:
         return 0.5
     if set(_geo.expand(list(org_geo))) & set(_geo.expand(scope)):
@@ -185,14 +188,14 @@ def _route_fit(org: dict, donor: dict, org_settings: dict) -> float:
     """
     if not donor:
         return 0.5
-    org_np = str(org.get("legal_type") or "nonprofit").lower() in (
+    org_np = str(org.get("org_legal_type") or "nonprofit").lower() in (
         "nonprofit", "non-profit", "ngo", "charity")
-    ngo_elig = donor.get("ngo_eligible")
-    direct = _truthy(donor.get("direct_local_org_eligible"))
-    sub_only = _truthy(donor.get("subrecipient_partner_possible"))
-    grant = _truthy(donor.get("grant_route"))
-    loan = _truthy(donor.get("loan_dev_finance_route"))
-    proc = _truthy(donor.get("procurement_tender_route"))
+    ngo_elig = donor.get("donor_ngo_eligible")
+    direct = _truthy(donor.get("donor_direct_local_org_eligible"))
+    sub_only = _truthy(donor.get("donor_subrecipient_partner_possible"))
+    grant = _truthy(donor.get("donor_grant_route"))
+    loan = _truthy(donor.get("donor_loan_dev_finance_route"))
+    proc = _truthy(donor.get("donor_procurement_tender_route"))
     has_partner = bool(org.get("partners") or org.get("trusted_partners"))
 
     # Explicitly NGO-ineligible and we're a nonprofit → only via a direct-local
@@ -249,7 +252,7 @@ def _relationship_fit(org: dict, donor: dict, org_settings: dict) -> float:
     org_ids.discard("")
     if funders and org_ids and _names_overlap(org_ids, funders):
         return 1.0   # our org (or a listed partner) is a funder/collaborator of this donor
-    org_hist = {_norm_name(x) for x in (org.get("funder_history") or [])}
+    org_hist = {_norm_name(x) for x in (org.get("org_funder_history") or [])}
     if donor_names and org_hist and _names_overlap(org_hist, donor_names):
         return 1.0   # we have previously been funded by this donor
     return 0.5

@@ -281,7 +281,7 @@ with tab_data:
                 if _eq:
                     _term = _eq.lower()
                     _m = pd.Series(False, index=edf.index)
-                    for _c in ("opportunity_name", "funder_name", "geographic_scope",
+                    for _c in ("opportunity_name", "funder_name", "call_geographic_scope",
                                "solicitation_type"):
                         if _c in edf.columns:
                             _m |= edf[_c].fillna("").astype(str).str.lower().str.contains(
@@ -296,7 +296,7 @@ with tab_data:
                            f"(all geographies) · page {_pg} of {_pages}")
                 _show_cols = ["opportunity_name", "funder_name", "funding_status",
                               "deadline", "deadline_confidence", "grant_amount",
-                              "currency", "geographic_scope", "solicitation_type",
+                              "currency", "call_geographic_scope", "solicitation_type",
                               "funding_window", "source", "opportunity_url"]
                 _show = fdf[[c for c in _show_cols if c in fdf.columns]]
                 st.dataframe(
@@ -1567,33 +1567,70 @@ with tab_learning:
         "Every scan **reject**, human **decision** (Proceed/Park/Decline) and "
         "👍/👎 **feedback** is logged to `scan_decisions` — the labeled training "
         "set for the scoring model (ML Phase 2/3). Read-only here.")
+    # TRUE counts come from server-side count='exact' queries — NOT from the fetched
+    # display window. PostgREST caps a fetch at ~1000 rows, so when a recent scan floods
+    # that window with fresh system_reject rows, counting over it badly undercounts older
+    # feedback / human-decision signals (they fall outside the window). The signals are
+    # NOT lost — only the window is capped — so the cards must count the whole table.
+    @st.cache_data(ttl=30)
+    def _ld_count(event_type: str | None = None) -> int:
+        try:
+            q = get_client().table("scan_decisions").select("id", count="exact")
+            if event_type:
+                q = q.eq("event_type", event_type)
+            return int(q.execute().count or 0)
+        except Exception:
+            return 0
+
+    @st.cache_data(ttl=30)
+    def _reject_reason_counts() -> dict:
+        """Accurate reason histogram over ALL system_reject rows (paginated label-only
+        fetch), not just the recent display window."""
+        from collections import Counter as _Counter
+        out, start, page = _Counter(), 0, 1000
+        try:
+            while True:
+                chunk = (get_client().table("scan_decisions").select("label")
+                         .eq("event_type", "system_reject")
+                         .range(start, start + page - 1).execute().data or [])
+                if not chunk:
+                    break
+                out.update((r.get("label") or "—") for r in chunk)
+                if len(chunk) < page:
+                    break
+                start += page
+        except Exception:
+            pass
+        return dict(out)
+
+    _total = _ld_count()
     try:
         _ld = (sb.table("scan_decisions").select("*")
-               .order("created_at", desc=True).limit(2000).execute().data or [])
+               .order("created_at", desc=True).limit(1000).execute().data or [])
     except Exception as exc:
         st.warning(f"Couldn't load scan_decisions — did you run migration 027? ({exc})")
         _ld = []
-    if not _ld:
+    if _total == 0:
         st.info("No signals captured yet. Run a scan, set a decision, or hit 👍/👎 "
                 "on a record — they'll appear here.")
     else:
         _ldf = pd.DataFrame(_ld)
         m1, m2, m3, m4, m5 = st.columns(5)
-        _ev = _ldf.get("event_type", pd.Series(dtype=str))
-        m1.metric("Total signals", len(_ldf))
-        m2.metric("System rejects", int((_ev == "system_reject").sum()))
-        m3.metric("Human decisions", int((_ev == "human_decision").sum()))
-        m4.metric("👍/👎 feedback", int((_ev == "feedback").sum()))
-        m5.metric("Reject verdicts",
-                  int((_ev == "reject_verification").sum()))
+        m1.metric("Total signals", _total)
+        m2.metric("System rejects", _ld_count("system_reject"))
+        m3.metric("Human decisions", _ld_count("human_decision"))
+        m4.metric("👍/👎 feedback", _ld_count("feedback"))
+        m5.metric("Reject verdicts", _ld_count("reject_verification"))
         with st.expander("Rejects by reason category", expanded=False):
-            _rej = _ldf[_ev == "system_reject"]
-            if not _rej.empty:
-                _by = (_rej["label"].fillna("—").value_counts()
-                       .rename_axis("reason").reset_index(name="count"))
+            _rc = _reject_reason_counts()
+            if _rc:
+                _by = (pd.DataFrame(sorted(_rc.items(), key=lambda kv: -kv[1]),
+                                    columns=["reason", "count"]))
                 st.dataframe(_by, hide_index=True, width='stretch')
             else:
                 st.caption("No rejects logged yet.")
+        st.caption(f"Table below shows the **{len(_ldf)}** most recent of **{_total}** "
+                   f"total signals (newest first). Counts above are the full-table totals.")
         _cols = [c for c in ["created_at", "event_type", "label", "reason",
                              "opportunity_title", "funding_agency", "source",
                              "submission_deadline", "alignment_score",

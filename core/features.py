@@ -162,7 +162,7 @@ def _resolve_donor(funder: Any) -> dict | None:
 
 def _rfp_compliance(row: dict) -> dict | None:
     """The RFP's own stored compliance_flags (JSON text or dict), if any."""
-    cf = row.get("compliance_flags")
+    cf = row.get("call_compliance_flags")
     if isinstance(cf, dict):
         return cf
     if isinstance(cf, str) and cf.strip():
@@ -258,7 +258,7 @@ def extract(row: dict, policies: dict | None = None, *,
 
     feats["funder_is_usg"] = _funder_is_usg(row.get("funding_agency"), policies)
     feats["log_value_usd"] = _log_value_usd(
-        row.get("estimated_value"), row.get("currency"))
+        row.get("call_award_value"), row.get("currency"))
     feats["channel"] = _channel(row)
     feats["text_len"] = len((row.get("brief_description") or "").strip())
 

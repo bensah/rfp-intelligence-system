@@ -24,7 +24,7 @@ _TABLE = "extracted_solicitations"
 # jsonb columns — serialised to JSON strings on write if a list/dict is passed.
 _JSON_COLS = {
     "eligibility_applicant_types", "eligibility_countries", "eligibility_other",
-    "focus_themes", "program_areas", "geographic_scope", "attachments",
+    "focus_themes", "call_domain_areas", "call_geographic_scope", "attachments",
     "resource_links", "field_provenance", "funding_tiers",
 }
 # Columns the table actually has — anything else in a record dict is dropped so a
@@ -35,11 +35,11 @@ _COLS = {
     "donor_intel_id", "donor_key", "brief_description", "full_description",
     "applicant_fit_profile", "project_stages", "what_is_funded", "what_is_not_funded",
     "eligibility_applicant_types", "eligibility_countries", "eligibility_other",
-    "grant_amount", "award_floor", "award_ceiling", "total_program_funding",
+    "grant_amount", "call_award_floor", "call_award_ceiling", "total_program_funding",
     "expected_awards", "currency", "date_posted", "deadline", "deadline_confidence",
     "funding_status", "funding_window", "expected_award_date", "time_to_award",
     "project_duration", "submission_format", "solicitation_type", "instrument_type",
-    "opportunity_type", "focus_themes", "program_areas", "geographic_scope",
+    "opportunity_type", "focus_themes", "call_domain_areas", "call_geographic_scope",
     "solicitation_language", "attachments", "resource_links", "funding_tiers",
     "source", "source_uid",
     "raw_text", "content_hash", "extraction_confidence", "field_provenance",
