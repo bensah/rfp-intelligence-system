@@ -157,7 +157,7 @@ program_areas:
   - Unspecified Program Area
   - Other
 
-geographic_scope:
+call_geographic_scope:
   - Sub-Saharan Africa
   - West Africa
   - East Africa

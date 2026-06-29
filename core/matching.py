@@ -1,14 +1,17 @@
 """Org × Donor × RFP matching engine → composite Proceed / Park / Decline.
 
-Combines the 9 eligibility CRITERIA (primary, 80%) with DONOR-ORG relationship
-dimensions NOT captured by the criteria (20%): donor thematic fit, donor
-geographic fit, donor route eligibility. The hard MUST gate is preserved — any
-MUST scored "No" forces Decline regardless of the composite.
+Bid Strength = 100% of the 9 weighted eligibility CRITERIA (owner 2026-06-29). The
+former 20% "donor-org extras" (thematic / geographic / route / relationship)
+DUPLICATED MUST-2 / MUST-4 / MUST-5-route / PREFER-7, so it was dropped to stop
+double-counting; those funder signals still count, inside the criteria where they
+belong. The hard MUST gate is preserved — any MUST scored "No" forces Decline
+regardless of the composite. (`donor_org_extras` is retained for diagnostics/display
+only; it no longer affects the composite.)
 
 Field map (air-tight):
   criteria_score  = alignment_score over rfp's 9 criteria (qualification…bid_effort)
   donor_thematic  = org.priority_areas∪domains  ↔ donor.priority_program_areas   (program-area taxonomy overlap)
-  donor_geographic= org.countries_of_operation  ↔ donor.funding_scope_geographic (geo overlap, regions expanded)
+  donor_geographic= org.org_operating_countries  ↔ donor.donor_geographic_scope (geo overlap, regions expanded)
   donor_route     = org.legal_type / org_has_local_board ↔ donor route/eligibility flags
 
 Pure + best-effort: unknown/missing inputs score 0.5 (neutral) rather than 0,
@@ -26,8 +29,8 @@ from core import geographies as _geo
 from core import program_area_classifier as _pa
 from core.scorer import alignment_score, criterion_score
 
-CRITERIA_WEIGHT = 0.80
-EXTRAS_WEIGHT = 0.20
+CRITERIA_WEIGHT = 1.00      # Bid Strength = the 9 weighted criteria (100%)
+EXTRAS_WEIGHT = 0.00        # donor-org extras dropped (duplicated the criteria)
 PROCEED_AT = 70.0          # composite ≥ → Proceed
 PARK_AT = 45.0             # composite ≥ → Park, else Decline
 
@@ -151,12 +154,12 @@ def _thematic_fit(org: dict, donor: dict) -> float:
 
 
 def _geographic_fit(org: dict, donor: dict, rfp: dict | None = None) -> float:
-    org_geo = org.get("countries_of_operation") or []
+    org_geo = org.get("org_operating_countries") or []
     # The funder's geography for THIS opportunity = the donor's profile scope PLUS
     # the RFP's own stated geography (the RFP is the most specific signal, e.g.
     # "Africa, Latin America, the Caribbean").
-    scope = (_as_list(donor.get("funding_scope_geographic"))
-             + _as_list((rfp or {}).get("geographic_scope")))
+    scope = (_as_list(donor.get("donor_geographic_scope"))
+             + _as_list((rfp or {}).get("call_geographic_scope")))
     if not org_geo or not scope:
         return 0.5
     if set(_geo.expand(list(org_geo))) & set(_geo.expand(scope)):

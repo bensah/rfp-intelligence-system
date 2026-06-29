@@ -41,7 +41,7 @@ create table if not exists rfp_submissions (
     brief_description           text,
     date_posted                 date,
     funding_agency              text,
-    geographic_scope            text[],
+    call_geographic_scope            text[],
     program_area                text[],
     focus_theme                 text,
     opportunity_link            text,
