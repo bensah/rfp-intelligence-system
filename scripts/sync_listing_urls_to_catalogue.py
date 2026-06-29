@@ -87,7 +87,7 @@ def main() -> int:
 
     new_rows, seen = [], set(known)
     for d in donors:
-        for url in _split(d.get("opportunity_listing_urls") or ""):
+        for url in _split(d.get("donor_opportunity_listing_urls") or ""):
             if not urlparse(url).netloc:
                 continue
             h = _norm_host(url)

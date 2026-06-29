@@ -66,7 +66,7 @@ def _keys_for(row: dict) -> set[str]:
         k = _norm(row.get(f))
         if k:
             keys.add(k)
-    for a in re.split(r"[;|]", row.get("aliases") or ""):
+    for a in re.split(r"[;|]", row.get("donor_aliases") or ""):
         k = _norm(a)
         if len(k) >= 4:                       # ignore 1-3 char alias noise
             keys.add(k)
@@ -160,9 +160,9 @@ def partnership(row: dict) -> Optional[str]:
 # honoured, but program areas are now primarily captured in priority_program_areas
 # against the shared taxonomy in core.program_area_classifier).
 _HEALTH_FIT_FIELDS = (
-    "infectious_diseases_fit", "hiv_aids_fit", "tb_fit", "malaria_fit",
-    "immunization_vaccines_fit", "mnch_fit", "srhr_family_planning_fit",
-    "nutrition_fit", "ncds_fit", "hss_fit", "digital_health_data_ai_fit",
+    "donor_infectious_diseases_fit", "donor_hiv_aids_fit", "donor_tb_fit", "donor_malaria_fit",
+    "donor_immunization_vaccines_fit", "donor_mnch_fit", "donor_srhr_family_planning_fit",
+    "donor_nutrition_fit", "donor_ncds_fit", "donor_hss_fit", "donor_digital_health_data_ai_fit",
 )
 # Taxonomy category PREFIXES that count as "health" for MUST-2 alignment.
 _HEALTH_CATEGORY_PREFIXES = ("WCH", "NCDs", "IDs", "HSS", "Cross-cutting")

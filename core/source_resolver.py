@@ -172,7 +172,7 @@ def _resolve_via_backlink(items: list[dict], name_tokens: set[str]) -> str | Non
                 continue
             s = _score_domain(href, name_tokens)
             atext = (a.get_text(" ", strip=True) or "").lower()
-            if any(k in atext for k in ("official", "website", "apply",
+            if any(k in atext for k in ("official", "donor_website", "apply",
                                         "source", "visit", "homepage", "learn more")):
                 s += 2.0
             if s > best_s:
@@ -209,7 +209,7 @@ def resolve(title: str, funder: str | None = None, *, num: int = 10) -> str | No
         name_tokens = _name_tokens(title, f)
 
         # 1) Knowledge-graph official website — the most direct primary signal.
-        kg = (raw.get("knowledgeGraph") or {}).get("website")
+        kg = (raw.get("knowledgeGraph") or {}).get("donor_website")
         if kg and _ok_primary(kg):
             return kg
 

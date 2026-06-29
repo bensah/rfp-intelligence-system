@@ -610,8 +610,8 @@ def _has_qualifying_partner(org: dict) -> bool:
 def _has_required_partner(org: dict, rfp: dict, donor: dict) -> bool:
     """A partner matching the donor's required partner TYPE and/or COUNTRY (a 'local
     partner' with no explicit country falls back to the call's geographic scope)."""
-    req_types = {t.lower() for t in _as_list(donor.get("required_partner_type")) if t.lower() != "any"}
-    req_ctrys = {c.lower() for c in _as_list(donor.get("required_partner_country")) if c.lower() != "any"}
+    req_types = {t.lower() for t in _as_list(donor.get("donor_required_partner_type")) if t.lower() != "any"}
+    req_ctrys = {c.lower() for c in _as_list(donor.get("donor_required_partner_country")) if c.lower() != "any"}
     if _truthy(donor.get("donor_local_partner_required")) and not req_ctrys:
         req_ctrys = {c.lower() for c in _as_list(rfp.get("call_geographic_scope"))}
     for p in (org.get("partners") or []):
@@ -673,7 +673,7 @@ def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
     if not have:
         return False
     targets = _name_set([donor.get("donor"), donor.get("donor_short"),
-                         rfp.get("funding_agency")] + _as_list(donor.get("aliases")))
+                         rfp.get("funding_agency")] + _as_list(donor.get("donor_aliases")))
     for a in have:
         for b in targets:
             if a and b and (a == b or (len(a) >= 4 and len(b) >= 4 and (a in b or b in a))):
@@ -857,7 +857,7 @@ def _registered_on_portal(org: dict, rfp: dict, donor: dict | None) -> bool:
         return False
     d = donor or {}
     portals = {clean_portal_url(x) for x in
-               (d.get("donor_submission_portal_url"), d.get("website"),
+               (d.get("donor_submission_portal_url"), d.get("donor_website"),
                 rfp.get("opportunity_link")) if x}
     return bool(regs & {p for p in portals if p})
 
@@ -1003,7 +1003,7 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
         if _flag(donor, _MULTI_FLAGS):
             signals += 1
             score += 1.0 if _truthy(org_settings.get("org_is_multi_country")) else -0.5
-        dhq = (donor.get("hq_country") or "").strip().lower()
+        dhq = (donor.get("donor_hq_country") or "").strip().lower()
         ohq = str(org_settings.get("org_hq_country")
                   or org_settings.get("org_country") or "").strip().lower()
         if dhq and ohq:
@@ -1111,7 +1111,7 @@ def _foreign_pi_partner(org: dict, donor: dict | None) -> bool:
     partner sits OUTSIDE the org's registration countries OR in the donor's HQ
     country (covers donor-country and 3rd-party-OECD PI requirements — CADC case)."""
     regd = {str(c).strip().lower() for c in (org.get("org_registered_countries") or [])}
-    dhq = str((donor or {}).get("hq_country") or "").strip().lower()
+    dhq = str((donor or {}).get("donor_hq_country") or "").strip().lower()
     for p in (org.get("partners") or []):
         if not isinstance(p, dict):
             continue
@@ -1178,7 +1178,7 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     hq_req = [h.lower() for h in _as_list(donor.get("donor_hq_country_required"))]
     detected = bool(hq_req and "any" not in hq_req)
     ohq = str(os.get("org_hq_country") or os.get("org_country") or "").strip().lower()
-    items.append(_qfactor("hq_country", "HQ country", active=detected,
+    items.append(_qfactor("donor_hq_country", "HQ country", active=detected,
                           score=(1.0 if (ohq and ohq in hq_req) else 0.0), hard=True))
 
     # --- D. Registration region — GEO-SCOPE PROXY (owner 2026-06-29). Active when the
@@ -1392,7 +1392,7 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
         dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
     strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0) if rfp_keys else 0.0
     fy = _num(org.get("org_founding_year"))
-    dhq = (donor.get("hq_country") or "").strip().lower()
+    dhq = (donor.get("donor_hq_country") or "").strip().lower()
     ohq = str(osx.get("org_hq_country") or osx.get("org_country") or "").strip().lower()
     out = [
         _factor("comp_track", "Track record in this program area", "RG",
