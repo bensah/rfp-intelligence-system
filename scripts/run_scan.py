@@ -68,6 +68,7 @@ except Exception:
 
 from core.scraper import scan_source  # noqa: E402
 from core.scan_pipeline import ingest_candidates  # noqa: E402
+from core import aggregators  # noqa: E402  — primary/aggregator class for ingest ordering
 from core.page_monitor import check_manual_sources, summarize_change_events  # noqa: E402
 from db.supabase_client import get_client  # noqa: E402
 
@@ -405,11 +406,29 @@ def run(
                 })
     scrape_seconds = time.time() - wall_start
 
-    # Sort by original source order so the printed log matches the YAML
-    # ordering (more readable than completion order).
+    # Phase-2 ingest is SEQUENTIAL and dedup state accumulates, so the FIRST batch
+    # carrying a given call wins. Order batches so that when the same call is
+    # republished in several places, the PRIMARY donor source ingests BEFORE any
+    # aggregator copy (the aggregator's is then suppressed as a duplicate, keeping
+    # the donor's own page as the canonical record). Order: primary → unknown →
+    # aggregator/blog; within each class the LARGEST repositories first (more
+    # listings ⇒ more chances to be the canonical first-seen, and they set the
+    # dedup baseline). Original catalogue order breaks ties so the log stays stable.
+    _CLASS_RANK = {"primary": 0, "unknown": 1, "aggregator": 2, "blog": 2}
     name_index = {s.get("name") or s.get("url") or "(unnamed)": i
                   for i, s in enumerate(all_sources)}
-    scraped.sort(key=lambda b: name_index.get(b["name"], 99999))
+
+    def _ingest_rank(b: dict) -> tuple:
+        src = b.get("source") or {}
+        try:
+            kind = aggregators.classify(src.get("url"), None)[0]
+        except Exception:
+            kind = "unknown"
+        return (_CLASS_RANK.get(kind, 1),
+                -len(b.get("results") or []),
+                name_index.get(b["name"], 99999))
+
+    scraped.sort(key=_ingest_rank)
 
     # -------------------------------------------------------------------
     # Phase 2: sequential ingest (preserves dedup state)
@@ -464,6 +483,18 @@ def run(
             except Exception as _le:           # telemetry must never crash the scan
                 print(f"  (scan_logs insert failed for {name}: {_le})",
                       file=sys.stderr)
+
+    # Refresh the registry's in_catalogue flags once per scan so any PRIMARY newly
+    # discovered via aggregator resolution this run surfaces as "pending · not yet in
+    # catalogue" for a verifier — without waiting for a manual Sync. Best-effort.
+    if not dry_run:
+        try:
+            from core import source_registry as _sr
+            _rc = _sr.reconcile_in_catalogue()
+            if _rc:
+                print(f"Registry reconcile · {_rc}")
+        except Exception as _re:
+            print(f"  (registry reconcile skipped: {_re})", file=sys.stderr)
 
     wall = time.time() - wall_start
     serial_estimate = sum(b["duration"] for b in scraped)
