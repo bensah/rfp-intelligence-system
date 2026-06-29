@@ -608,18 +608,86 @@ def _render_source_registry(user: dict) -> None:
                                 else "page crawl" if field == "ingestion_method"
                                 else "")
 
-    f1, f2 = st.columns([3, 1])
+    f1, f2, f3 = st.columns([3, 1, 1])
     classes = ["All"] + sorted({_eff(r, "source_class", _src_class_of) for r in rows})
     pick = f1.selectbox("Filter by source class", classes, key="srcreg_cls")
-    only_unv = f2.checkbox("Only unverified", value=False, key="srcreg_pend")
+    only_unv = f2.checkbox("Only unverified", value=False, key="srcreg_pend",
+                           help="Hide rows already confirmed — focus on what's left to verify.")
+    only_unpushed = f3.checkbox("Only not-pushed", value=False, key="srcreg_unpushed",
+                                help="Hide rows already pushed to the Catalogue.")
 
     items = []
     for r in rows:
         if pick != "All" and _eff(r, "source_class", _src_class_of) != pick:
             continue
-        if only_unv and _eff(r, "donor_verification_level", _verif_of) in _VERIFIED:
+        if only_unv and (r.get("status") or "").lower() == "confirmed":
+            continue
+        if only_unpushed and r.get("in_catalogue"):
             continue
         items.append(r)
+
+    # ── Clean selectable table — markers (Verified / Pushed) + bulk actions.
+    # Tick rows → Push / Delete / Verify only the SELECTED hosts (no push-all
+    # script). Editing details still happens in the CSV + inline form below.
+    _seldf = pd.DataFrame([{
+        "Host": r.get("host"),
+        "Source name": (r.get("donor_name") or r.get("host"))[:42],
+        "Class": _src_class_of(r),
+        "Verified": "✅" if (r.get("status") or "").lower() == "confirmed" else "—",
+        "Pushed": "✅" if r.get("in_catalogue") else "—",
+        "Method": _norm_method(r.get("ingestion_method")),
+        "Solicitation": "; ".join(r.get("solicitation_types") or []),
+        "Instrument": "; ".join(r.get("instrument_types") or []),
+        "Hits": int(r.get("hits") or 0),
+    } for r in items])
+    st.caption(f"**{len(items)}** hosts · **✅ Verified** = confirmed · **✅ Pushed** = in the "
+               "Catalogue. Tick row(s) for the bulk actions below; edit details in the "
+               "form / CSV further down.")
+    _ev = st.dataframe(
+        _seldf, hide_index=True, width='stretch', selection_mode="multi-row",
+        on_select="rerun", key="srcreg_seltable",
+        column_config={
+            "Verified": st.column_config.TextColumn(width="small"),
+            "Pushed": st.column_config.TextColumn(width="small"),
+            "Hits": st.column_config.NumberColumn(width="small")})
+    _selrows = (_ev.selection.rows if _ev and getattr(_ev, "selection", None) else [])
+    _selhosts = [items[i]["host"] for i in _selrows if i < len(items)]
+    _bp, _bd, _bv = st.columns(3)
+    if _bp.button(f"⬆ Push selected ({len(_selhosts)})", key="srcreg_push_sel",
+                  type="primary", disabled=not _selhosts,
+                  help="Push the selected CONFIRMED-PRIMARY hosts to the Catalogue "
+                       "(deduped by host; non-confirmed-primary rows are skipped)."):
+        res = source_registry.push_primaries(_selhosts, by=email)
+        _sk = res.get("skipped") or []
+        _flash_set("srcreg", f"✅ Catalogue: {len(res['added'])} added · "
+                   f"{len(res.get('updated', []))} updated"
+                   + (f" · {len(_sk)} skipped (not confirmed primary)" if _sk else ""))
+        st.rerun()
+    if _bd.button(f"🗑 Delete selected ({len(_selhosts)})", key="srcreg_del_sel",
+                  disabled=not _selhosts):
+        source_registry.delete_hosts(_selhosts)
+        _flash_set("srcreg", f"🗑 Deleted {len(_selhosts)} host(s).")
+        st.rerun()
+    if _bv.button(f"✓ Mark verified ({len(_selhosts)})", key="srcreg_ver_sel",
+                  disabled=not _selhosts,
+                  help="Set the selected hosts to confirmed (verified)."):
+        _n = sum(1 for h in _selhosts
+                 if source_registry.update_row(h, {"status": "confirmed"}, by=email))
+        _flash_set("srcreg", f"✅ Marked {_n} host(s) verified.")
+        st.rerun()
+    if _selhosts:
+        with st.expander(f"👁 View {len(_selhosts)} selected", expanded=False):
+            _byh = {r["host"]: r for r in items}
+            for _h in _selhosts:
+                _r = _byh.get(_h, {})
+                st.markdown(f"**{_r.get('donor_name') or _h}** · `{_h}`  ·  "
+                            f"{'✅ verified' if (_r.get('status') or '').lower()=='confirmed' else '— unverified'}"
+                            f"  ·  {'✅ pushed' if _r.get('in_catalogue') else '— not pushed'}")
+                st.write({k: _r.get(k) for k in (
+                    "source_class", "access_model", "ingestion_method",
+                    "solicitation_types", "instrument_types", "sample_url",
+                    "hits", "verified_by", "verified_at")})
+    st.divider()
 
     def _sr_apply(r, vals, by):
         sc = vals.get("Source class") or _src_class_of(r)
