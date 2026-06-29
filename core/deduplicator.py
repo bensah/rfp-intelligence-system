@@ -110,7 +110,7 @@ def find_duplicates(
     cand_link = _norm_url(candidate.get("opportunity_link"))
     cand_title = _norm_title(candidate.get("opportunity_title"))
     cand_agency = (candidate.get("funding_agency") or "").strip().lower()
-    cand_deadline = str(candidate.get("submission_deadline") or "").strip()
+    cand_deadline = str(candidate.get("call_submission_deadline") or "").strip()
     cand_value = candidate.get("call_award_value")
 
     matches: list[dict[str, Any]] = []
@@ -151,7 +151,7 @@ def find_duplicates(
             cand_agency
             and cand_deadline
             and (row.get("funding_agency") or "").strip().lower() == cand_agency
-            and str(row.get("submission_deadline") or "").strip() == cand_deadline
+            and str(row.get("call_submission_deadline") or "").strip() == cand_deadline
         ):
             shared = (_distinctive_tokens(cand_title)
                       & _distinctive_tokens(_norm_title(row.get("opportunity_title"))))
@@ -167,7 +167,7 @@ def find_duplicates(
             and cand_deadline
             and cand_value is not None
             and (row.get("funding_agency") or "").strip().lower() == cand_agency
-            and str(row.get("submission_deadline") or "").strip() == cand_deadline
+            and str(row.get("call_submission_deadline") or "").strip() == cand_deadline
             and row.get("call_award_value") == cand_value
         ):
             matches.append({**row, "_reason": "funder + deadline + value match"})

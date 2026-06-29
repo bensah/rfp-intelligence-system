@@ -128,7 +128,7 @@ with st.container(border=True):
     st.markdown("#### 🏷 Identity & eligibility")
     g = st.columns(4)
     _kv(g[0], "Legally registered as", _orgp.legal_type_label(prof.get("org_legal_type")))
-    _kv(g[1], "Founded in the year", prof.get("founding_year"))
+    _kv(g[1], "Founded in the year", prof.get("org_founding_year"))
     _kv(g[2], "Located in", org.get("org_country"))
     _kv(g[3], "Local board", _present(org.get("org_has_local_board")))
     g2 = st.columns(4)
@@ -205,7 +205,7 @@ with st.container(border=True):
 with st.container(border=True):
     st.markdown("#### 🤝 Funders & languages")
     _kv(st, "Donors we've won grants/awards from", ", ".join(prof.get("org_funder_history") or []) or "—")
-    _kv(st, "Donor portal registration active", ", ".join(prof.get("donor_registrations") or []) or "—")
+    _kv(st, "Donor portal registration active", ", ".join(prof.get("org_donor_registrations") or []) or "—")
     _kv(st, "Proposal languages", ", ".join(prof.get("proposal_languages") or []) or "—")
 
 # ── Team ──────────────────────────────────────────────────────────────────────

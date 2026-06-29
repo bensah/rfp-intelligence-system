@@ -38,7 +38,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
     # --- identity ---
     # (org name / short / country / logo / US-entity / local-board live in the
     # existing branding record via core.settings.get_org — not duplicated here.)
-    "founding_year": None,                  # int — track-record length (strategic_fit)
+    "org_founding_year": None,                  # int — track-record length (strategic_fit)
 
     # --- qualification (can we formally apply?) ---
     "org_legal_type": "nonprofit",              # canonical bucket (see core.auto_scorer
@@ -49,7 +49,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
                                             # truth; on save it derives the legacy
                                             # org_is_grassroot / org_is_multi_country settings.
                                             # Validation: legal_type=individual ⇒ individual.
-    "donor_registrations": [],              # e.g. "SAM.gov", "EU PADOR/PIC", "UNGM"
+    "org_donor_registrations": [],              # e.g. "SAM.gov", "EU PADOR/PIC", "UNGM"
     "org_registered_countries": [],             # jurisdictions where legally registered
 
     # --- capacity (can we deliver?) — multi-factorial MUST-3 inputs ---
@@ -128,7 +128,7 @@ PROFILE_FIELDS: tuple[str, ...] = tuple(DEFAULT_PROFILE.keys())
 
 # Free-text "tag list" fields (one value per line in the UI).
 LIST_FIELDS: tuple[str, ...] = (
-    "donor_registrations", "org_registered_countries", "org_operating_countries",
+    "org_donor_registrations", "org_registered_countries", "org_operating_countries",
     "trusted_partners", "trusted_for_profit_partners",
     "trusted_academic_institutions", "org_domain_expertise", "org_priority_areas",
     "org_funder_history", "org_active_donors", "proposal_languages",
@@ -223,6 +223,9 @@ _RENAMED_KEYS = {
     "has_govt_mou": "org_has_govt_mou",
     "has_govt_endorsement": "org_has_govt_endorsement",
     "authorized_signatory_donors": "org_authorized_signatory_donors",
+    # Relationship / competitiveness / bid-effort (axis 6)
+    "donor_registrations": "org_donor_registrations",
+    "founding_year": "org_founding_year",
 }
 
 
