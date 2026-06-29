@@ -96,7 +96,7 @@ def _fetch(year: int) -> pd.DataFrame:
     # Derived columns
     df["_dtd"] = df["submission_deadline"].apply(days_to_deadline)
     df["_dstat"] = df["submission_deadline"].apply(deadline_status)
-    df["_usd"] = df.apply(lambda r: usd_value(r.get("estimated_value"), r.get("currency")), axis=1)
+    df["_usd"] = df.apply(lambda r: usd_value(r.get("call_award_value"), r.get("currency")), axis=1)
 
     # Concatenate Proposal Leads from duplicate group
     dup_res = (
@@ -232,7 +232,7 @@ with st.container(border=True):
     # float (e.g. 5.0) or NaN — `:d` only accepts ints, so coerce + guard.
     top3.metric("Days to deadline",
                 f"{int(dtd):+d}" if pd.notna(dtd) else "—")
-    top4.metric("Value", format_money(row.get("estimated_value"), row.get("currency")))
+    top4.metric("Value", format_money(row.get("call_award_value"), row.get("currency")))
     top4.caption(f"≈ ${row.get('_usd') or 0:,.0f} USD")
 
     d1, d2, d3 = st.columns(3)
@@ -241,7 +241,7 @@ with st.container(border=True):
     d2.markdown(f"**Proposal lead(s)**  \n{row.get('all_leads') or '—'}")
     d2.markdown(f"**Stage**  \n{row.get('stage') or '—'}")
     d3.markdown(f"**Progress status**  \n{row.get('progress_status') or '—'}")
-    d3.markdown(f"**Geography**  \n{', '.join(row.get('geographic_scope') or []) or '—'}")
+    d3.markdown(f"**Geography**  \n{', '.join(row.get('call_geographic_scope') or []) or '—'}")
 
     # ----- Meeting-log review week selector for this RFP -----
     st.markdown("---")
@@ -339,10 +339,10 @@ with st.container(border=True):
         try:
             _fa = (row.get("funding_agency") or "").strip()
             if _fa:
-                _dp = (sb.table("donor_intel").select("submission_portal_url")
+                _dp = (sb.table("donor_intel").select("donor_submission_portal_url")
                        .ilike("donor", _fa).limit(1).execute().data or [])
-                if _dp and _dp[0].get("submission_portal_url"):
-                    _apply_url = _dp[0]["submission_portal_url"]
+                if _dp and _dp[0].get("donor_submission_portal_url"):
+                    _apply_url = _dp[0]["donor_submission_portal_url"]
         except Exception:
             pass
     _apply_url = _apply_url or _call_link
@@ -448,7 +448,7 @@ def _view_rfp(r: dict) -> None:
     _icon, _sbg = BADGE.get(_status, ("⚪", "#eee"))
     _dtd = r.get("_dtd")
     _days = f"{int(_dtd):+d}" if pd.notna(_dtd) else "—"
-    _val = format_money(r.get("estimated_value"), r.get("currency"))
+    _val = format_money(r.get("call_award_value"), r.get("currency"))
     _usd = f"≈ ${float(r.get('_usd') or 0):,.0f} USD"
 
     # ── Header banner ──────────────────────────────────────────────────────
@@ -491,9 +491,9 @@ def _view_rfp(r: dict) -> None:
 
     # ── At-a-glance fields ─────────────────────────────────────────────────
     g1, g2 = st.columns(2)
-    g1.markdown(f"**🌍 Geography**  \n{', '.join(r.get('geographic_scope') or []) or '—'}")
+    g1.markdown(f"**🌍 Geography**  \n{', '.join(r.get('call_geographic_scope') or []) or '—'}")
     g1.markdown(f"**👥 Proposal lead(s)**  \n{r.get('all_leads') or r.get('proposal_lead') or '—'}")
-    g2.markdown(f"**🎯 Focus areas**  \n{', '.join(r.get('program_area') or []) or '—'}")
+    g2.markdown(f"**🎯 Focus areas**  \n{', '.join(r.get('call_domain_areas') or []) or '—'}")
     g2.markdown(f"**⏱ Duration**  \n{r.get('project_duration') or '—'}")
 
     # ── Eligibility outcome — the 9 MUST/PREFER high-level outputs (labels only,

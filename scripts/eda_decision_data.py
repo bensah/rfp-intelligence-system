@@ -40,7 +40,7 @@ pd.set_option("display.max_columns", 40)
 # Fields the model / matching rely on, and how to read them off rfp_submissions.
 _EXTRACTION_FIELDS = [
     "opportunity_title", "brief_description", "submission_deadline",
-    "estimated_value", "currency", "geographic_scope", "program_area",
+    "call_award_value", "currency", "call_geographic_scope", "call_domain_areas",
     "funding_agency", "focus_theme", "date_posted",
 ]
 
@@ -119,8 +119,8 @@ def audit_extraction(subs: list[dict]) -> pd.DataFrame:
 
     # noise spot-checks on the numeric/date/array fields
     _hr("B0 — NOISE / VALIDITY SPOT-CHECKS")
-    if "estimated_value" in live:
-        ev = pd.to_numeric(live["estimated_value"], errors="coerce")
+    if "call_award_value" in live:
+        ev = pd.to_numeric(live["call_award_value"], errors="coerce")
         present = ev.notna().sum()
         print(f"estimated_value: {present}/{len(live)} numeric-parseable; "
               f"<=0: {int((ev <= 0).sum())}; "
@@ -134,7 +134,7 @@ def audit_extraction(subs: list[dict]) -> pd.DataFrame:
         print(f"submission_deadline: {dl.notna().sum()}/{len(live)} parseable; "
               f"in the PAST: {int((dl < today).sum())}; "
               f"> today+2y: {int((dl > today + pd.Timedelta(days=730)).sum())}")
-    if "program_area" in live:
+    if "call_domain_areas" in live:
         # how many carry a generic 'Health' vs specific taxonomy keys
         def _generic(v):
             if isinstance(v, (list, tuple)):
@@ -146,7 +146,7 @@ def audit_extraction(subs: list[dict]) -> pd.DataFrame:
             if not vals:
                 return None
             return all(x.strip().lower() in ("health", "") for x in vals)
-        gen = live["program_area"].apply(_generic)
+        gen = live["call_domain_areas"].apply(_generic)
         print(f"program_area: generic-'Health'-only {int((gen == True).sum())}, "
               f"specific {int((gen == False).sum())}, missing {int(gen.isna().sum())}")
     if "funding_agency" in live:
@@ -302,7 +302,7 @@ def main() -> int:
     subs = _fetch_all(
         "rfp_submissions",
         "uid,form_id,source,opportunity_title,brief_description,submission_deadline,"
-        "estimated_value,currency,geographic_scope,program_area,funding_agency,"
+        "estimated_value,currency,call_geographic_scope,program_area,funding_agency,"
         "focus_theme,date_posted,decision,auto_recommendation,decision_overridden_by,"
         "is_duplicate")
     print(f"rfp_submissions rows: {len(subs)}")

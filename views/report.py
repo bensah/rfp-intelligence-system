@@ -629,7 +629,7 @@ def _load_rfps() -> pd.DataFrame:
         "decision,auto_recommendation,donor_decision,progress_status,stage,"
         "alignment_score,estimated_value,currency,"
         "amount_requested,amount_secured,currency_secured,"
-        "geographic_scope,program_area,decision_overridden_by,"
+        "call_geographic_scope,program_area,decision_overridden_by,"
         "proposal_lead,contributors,reviewers,"
         "lead_applicant,sub_applicant,"
         "is_duplicate,review_week,applicant_role"
@@ -964,7 +964,7 @@ def _safe_for_excel(df: pd.DataFrame) -> pd.DataFrame:
         which is most of the failures we see.
       * inf / -inf                — openpyxl raises ValueError.
       * lists / dicts             — comes from Postgres array columns
-        (geographic_scope, program_area). JSON-stringify them.
+        (call_geographic_scope, program_area). JSON-stringify them.
       * other non-primitive types — fall back to str().
     """
     if df is None or df.empty:
@@ -1987,12 +1987,12 @@ if _show_sec("5"):
                                .str.startswith("proceed")]
         if not proceed_track.empty:
             pipeline_usd = _series_to_usd(
-                proceed_track["estimated_value"],
+                proceed_track["call_award_value"],
                 proceed_track.get("currency", pd.Series(dtype=str)),
             )
             amt_pipeline = float(pipeline_usd.sum())
             no_pipe_cur = proceed_track[
-                proceed_track["estimated_value"].fillna(0) > 0
+                proceed_track["call_award_value"].fillna(0) > 0
             ].get("currency", pd.Series(dtype=str)).fillna("").str.strip()
             n_missing_pipe_cur = int((no_pipe_cur == "").sum())
         else:

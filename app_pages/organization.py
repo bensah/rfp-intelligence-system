@@ -127,7 +127,7 @@ def _kv(container, label, value):
 with st.container(border=True):
     st.markdown("#### 🏷 Identity & eligibility")
     g = st.columns(4)
-    _kv(g[0], "Legally registered as", _orgp.legal_type_label(prof.get("legal_type")))
+    _kv(g[0], "Legally registered as", _orgp.legal_type_label(prof.get("org_legal_type")))
     _kv(g[1], "Founded in the year", prof.get("founding_year"))
     _kv(g[2], "Located in", org.get("org_country"))
     _kv(g[3], "Local board", _present(org.get("org_has_local_board")))
@@ -145,14 +145,14 @@ with st.container(border=True):
     # All three rows share a 4-column grid so values line up vertically
     # (Funding target — mid sits directly under Largest grant managed, etc.).
     c = st.columns(4)
-    _kv(c[0], "Annual budget", _money(prof.get("annual_budget_usd")))
-    _kv(c[1], "Largest grant managed", _money(prof.get("largest_grant_usd")))
-    _kv(c[2], "Co-financing capacity", (prof.get("cofinancing_capacity") or "—").title())
+    _kv(c[0], "Annual budget", _money(prof.get("org_annual_budget")))
+    _kv(c[1], "Largest grant managed", _money(prof.get("org_largest_grant")))
+    _kv(c[2], "Co-financing capacity", (prof.get("org_cofinancing_capacity") or "—").title())
     _kv(c[3], "Org stage", (prof.get("org_stage") or "—").title())
     c2 = st.columns(4)
-    _kv(c2[0], "Funding target — low", _money(prof.get("funding_target_low")))
-    _kv(c2[1], "Funding target — mid", _money(prof.get("funding_target_mid")))
-    _kv(c2[2], "Funding target — max", _money(prof.get("funding_target_max")))
+    _kv(c2[0], "Funding target — low", _money(prof.get("org_min_target")))
+    _kv(c2[1], "Funding target — mid", _money(prof.get("org_mid_target")))
+    _kv(c2[2], "Funding target — max", _money(prof.get("org_max_target")))
     e = st.columns(4)
     _kv(e[0], "Independent entity (not INGO affiliate)", _yn(prof.get("org_is_independent_entity")))
     _kv(e[1], "Holds SAM.gov / UEI", _yn(prof.get("org_has_sam_uei")))
@@ -180,19 +180,19 @@ def _areas_block(title, ratings, selection, caption):
 with st.container(border=True):
     st.markdown("#### 🎯 Program areas (graded 0–5)")
     _areas_block("Domains / areas of expertise (track record → competitiveness)",
-                 prof.get("domain_ratings"), prof.get("domains"),
+                 prof.get("org_domain_ratings"), prof.get("org_domain_expertise"),
                  "Where you have demonstrated experience.")
     st.markdown("")
     _areas_block("Strategic priority areas (strategy → strategic fit)",
-                 prof.get("program_area_ratings"), prof.get("priority_areas"),
+                 prof.get("org_priority_ratings"), prof.get("org_priority_areas"),
                  "Where your strategy says you want to work.")
 
 # ── Geography & partners ──────────────────────────────────────────────────────
 with st.container(border=True):
     st.markdown("#### 🌍 Geography & partners")
     _gc = st.columns(2)
-    _kv(_gc[0], "Countries registered", ", ".join(prof.get("countries_registered") or []) or "—")
-    _kv(_gc[1], "Countries of operation", ", ".join(prof.get("countries_of_operation") or []) or "—")
+    _kv(_gc[0], "Countries registered", ", ".join(prof.get("org_registered_countries") or []) or "—")
+    _kv(_gc[1], "Countries of operation", ", ".join(prof.get("org_operating_countries") or []) or "—")
     _partners = prof.get("partners") or []
     if _partners:
         st.markdown("**Affiliated partners & collaborators**")
@@ -204,7 +204,7 @@ with st.container(border=True):
 # ── Funder relationships & languages ──────────────────────────────────────────
 with st.container(border=True):
     st.markdown("#### 🤝 Funders & languages")
-    _kv(st, "Donors we've won grants/awards from", ", ".join(prof.get("funder_history") or []) or "—")
+    _kv(st, "Donors we've won grants/awards from", ", ".join(prof.get("org_funder_history") or []) or "—")
     _kv(st, "Donor portal registration active", ", ".join(prof.get("donor_registrations") or []) or "—")
     _kv(st, "Proposal languages", ", ".join(prof.get("proposal_languages") or []) or "—")
 

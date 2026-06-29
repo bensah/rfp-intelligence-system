@@ -37,15 +37,15 @@ DONOR = {
         "across two cycles; decisions on the written application only (no interview)."
     ),
     # Funding footprint
-    "award_low_usd": "$25,000",
-    "award_high_usd": "$100,000",
+    "donor_award_low": "$25,000",
+    "donor_award_high": "$100,000",
     "total_annual_funding_global": "Up to $3M / year",
     "projected_budget": "Up to $3M / year",
     "projected_budget_period": "2026 (two cycles)",
     # Structured (JSON list) fields — same shape the Donors edit form writes.
     "funding_mechanism": json.dumps(["Grants"]),
-    "funding_scope_geographic": json.dumps(["Global / worldwide"]),
-    "priority_program_areas": json.dumps(
+    "donor_geographic_scope": json.dumps(["Global / worldwide"]),
+    "donor_priority_areas": json.dumps(
         ["Digital health / data / AI", "Health research"]),
     # Intelligence
     "funding_cycle": "Biannual (twice a year)",
@@ -53,14 +53,14 @@ DONOR = {
     "application_process": "Full proposal (single-stage)",
     "reporting_requirements": "Milestone / deliverable-based",
     "active_route_status": "Active",
-    "direct_local_org_eligible": "Yes — via international partner only",
+    "donor_direct_local_org_eligible": "Yes — via international partner only",
     # Eligibility / route flags (TEXT yes/no/blank)
-    "ngo_eligible": "yes",
-    "for_profit_eligible": "no",
-    "grant_route": "yes",
+    "donor_ngo_eligible": "yes",
+    "donor_for_profit_eligible": "no",
+    "donor_grant_route": "yes",
     "open_call_unsolicited": "yes",
     "online_portal_submission": "yes",
-    "prefinance_required": "none",
+    "donor_prefinance_required": "none",
     "digital_health_data_ai_fit": "yes",
     # Provenance
     "verification_level": "high",

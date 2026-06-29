@@ -67,8 +67,8 @@ def render_submit_form(
     funding_windows = dropdowns.get("funding_window")
     time_to_award = dropdowns.get("time_to_award")
     submission_formats = dropdowns.get("submission_format")
-    program_areas = dropdowns.get("program_areas")
-    geo_scope = dropdowns.get("geographic_scope")
+    program_areas = dropdowns.get("call_domain_areas")
+    geo_scope = dropdowns.get("call_geographic_scope")
     decisions = dropdowns.get("decisions")
     currencies = [c["code"] for c in dropdowns.load().get("currencies", [])]
 
@@ -350,8 +350,8 @@ def render_submit_form(
         "brief_description": _none(brief),
         "date_posted": date_posted.isoformat() if isinstance(date_posted, date) else None,
         "funding_agency": resolved.get("funder"),
-        "geographic_scope": resolved.get("geo"),
-        "program_area": resolved.get("program"),
+        "call_geographic_scope": resolved.get("geo"),
+        "call_domain_areas": resolved.get("program"),
         "focus_theme": _none(focus_theme),
         "opportunity_link": _none(link),
         "applicant_role": _none(role),
@@ -361,7 +361,7 @@ def render_submit_form(
         "submission_deadline": deadline.isoformat() if isinstance(deadline, date) else None,
         "expected_award_date": award_date.isoformat() if isinstance(award_date, date) else None,
         "time_to_award": _none(tta),
-        "estimated_value": float(value) if value else None,
+        "call_award_value": float(value) if value else None,
         "currency": _none(currency),
         "project_duration": int(duration) if duration else None,
         "submission_format": resolved.get("sub_format"),

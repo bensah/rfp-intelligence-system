@@ -182,7 +182,7 @@ def render_org_setup(user, sb):
 
         # Controlled vocabularies — SAME lists the Donor Intelligence profiles use,
         # so org values match donor values directly (no fuzzy mapping):
-        #   geography      -> geographies.GEO_OPTIONS  (donor funding_scope_geographic)
+        #   geography      -> geographies.GEO_OPTIONS  (donor donor_geographic_scope)
         #   program areas  -> program_area_classifier  (donor priority_program_areas)
         #   funders/portal -> the donor_intel catalog (donor + website)
         #   non-profit partners -> core.partners.NONPROFIT_PARTNERS
@@ -213,7 +213,7 @@ def render_org_setup(user, sb):
         fp1, fp2 = st.columns(2)
         _legal_opts = ["nonprofit", "government", "higher_ed", "for_profit",
                        "individual", "tribal"]
-        _legal_cur = _prof.get("legal_type", "nonprofit")
+        _legal_cur = _prof.get("org_legal_type", "nonprofit")
         legal_type = fp1.selectbox(
             "Legal type", _legal_opts,
             index=_legal_opts.index(_legal_cur) if _legal_cur in _legal_opts else 0,
@@ -228,7 +228,7 @@ def render_org_setup(user, sb):
             _entity_cur = "individual"
         else:
             _entity_opts = ["", "grassroot_local", "multi_country"]
-            _entity_cur = _prof.get("entity_type", "") or ""
+            _entity_cur = _prof.get("org_entity_type", "") or ""
             if _entity_cur not in _entity_opts:
                 _entity_cur = ""
         entity_type = fp2.selectbox(
@@ -245,7 +245,7 @@ def render_org_setup(user, sb):
             value=int(_prof["founding_year"]) if _prof.get("founding_year") else 2000,
             step=1, help="Track-record length (strategic fit).")
         _cofin_opts = list(_orgp.COFINANCING_LEVELS)
-        _cofin_cur = _prof.get("cofinancing_capacity", "limited")
+        _cofin_cur = _prof.get("org_cofinancing_capacity", "limited")
         cofin = fp4.selectbox(
             "Co-financing capacity", _cofin_opts,
             index=_cofin_opts.index(_cofin_cur) if _cofin_cur in _cofin_opts else 1,
@@ -259,23 +259,23 @@ def render_org_setup(user, sb):
         fb1, fb2 = st.columns(2)
         annual_budget = fb1.number_input(
             "Annual budget managed (USD/yr, 0 = unset)", min_value=0, step=100000,
-            value=int(_prof["annual_budget_usd"]) if _prof.get("annual_budget_usd") else 0,
+            value=int(_prof["org_annual_budget"]) if _prof.get("org_annual_budget") else 0,
             help="Total funds the org MANAGES/spends per YEAR (annual throughput) — "
                  "NOT one grant. A multi-year grant counts only the portion used "
                  "that year. Capacity (MUST 3).")
         largest_grant = fb2.number_input(
             "Largest SINGLE grant ever (USD, 0 = unset)", min_value=0, step=100000,
-            value=int(_prof["largest_grant_usd"]) if _prof.get("largest_grant_usd") else 0,
+            value=int(_prof["org_largest_grant"]) if _prof.get("org_largest_grant") else 0,
             help="Biggest single grant received from ONE donor over its full life "
                  "(distinct from annual budget). Capacity (MUST 3).")
         fb3, fb4 = st.columns(2)
         lowest_grant = fb3.number_input(
             "Smallest grant managed (USD, 0 = unset)", min_value=0, step=10000,
-            value=int(_prof["lowest_grant_usd"]) if _prof.get("lowest_grant_usd") else 0,
+            value=int(_prof["org_lowest_grant"]) if _prof.get("org_lowest_grant") else 0,
             help="Smallest grant the org has run — range awareness for capacity.")
         n_grants = fb4.number_input(
             "Number of grants managed (0 = unset)", min_value=0, step=1,
-            value=int(_prof["number_of_grants_managed"]) if _prof.get("number_of_grants_managed") else 0,
+            value=int(_prof["org_grants_count"]) if _prof.get("org_grants_count") else 0,
             help="How many grants delivered to date — track-record DEPTH; more "
                  "grants raises how far past your largest grant you can credibly stretch.")
 
@@ -288,11 +288,11 @@ def render_org_setup(user, sb):
         st.markdown("**Preferred award size (USD)**", help=_FUNDING_HELP)
         ft1, ft2, ft3 = st.columns(3)
         ftl = ft1.number_input("Target — low (won't apply below this)", min_value=0, step=50000,
-            value=int(_prof["funding_target_low"]) if _prof.get("funding_target_low") else 0)
+            value=int(_prof["org_min_target"]) if _prof.get("org_min_target") else 0)
         ftm = ft2.number_input("Target — mid (sweet spot / ideal)", min_value=0, step=50000,
-            value=int(_prof["funding_target_mid"]) if _prof.get("funding_target_mid") else 0)
+            value=int(_prof["org_mid_target"]) if _prof.get("org_mid_target") else 0)
         ftx = ft3.number_input("Target — max (top of comfort range)", min_value=0, step=50000,
-            value=int(_prof["funding_target_max"]) if _prof.get("funding_target_max") else 0)
+            value=int(_prof["org_max_target"]) if _prof.get("org_max_target") else 0)
 
         st.markdown("**Eligibility facts**",
                     help="Matched to each donor's documented conditions for "
@@ -316,7 +316,7 @@ def render_org_setup(user, sb):
             help="Some funders fund early-stage organisations only (e.g. DRK).")
         has_pi = st.checkbox(
             "Has a well-established PI (Principal Investigator)",
-            value=bool(_prof.get("has_established_pi", False)),
+            value=bool(_prof.get("org_has_established_pi", False)),
             key="orgp_has_established_pi",
             help="Check if the org can field a well-established PI. Satisfies a call "
                  "that requires an individual / PI based in an in-scope country "
@@ -332,30 +332,30 @@ def render_org_setup(user, sb):
                          "tax-exempt above are part of the same set.")
         cc1, cc2, cc3 = st.columns(3)
         has_audited_financials = cc1.checkbox(
-            "Audited financials", value=bool(_prof.get("has_audited_financials", False)),
+            "Audited financials", value=bool(_prof.get("org_has_audited_financials", False)),
             key="orgp_has_audited_financials",
             help="Recent independently audited financial statements available.")
         has_audit_report = cc2.checkbox(
-            "Audit report on file", value=bool(_prof.get("has_audit_report", False)),
+            "Audit report on file", value=bool(_prof.get("org_has_audit_report", False)),
             key="orgp_has_audit_report",
             help="A formal external audit report can be provided.")
         has_safeguarding_policy = cc3.checkbox(
             "Safeguarding / PSEA policy",
-            value=bool(_prof.get("has_safeguarding_policy", False)),
+            value=bool(_prof.get("org_has_safeguarding_policy", False)),
             key="orgp_has_safeguarding_policy",
             help="A safeguarding / PSEA policy is in place.")
         cc4, cc5, cc6 = st.columns(3)
         has_partner_mou = cc4.checkbox(
-            "Partner MOU(s)", value=bool(_prof.get("has_partner_mou", False)),
+            "Partner MOU(s)", value=bool(_prof.get("org_has_partner_mou", False)),
             key="orgp_has_partner_mou",
             help="Signed MOU(s) with implementing partner(s) in place.")
         has_govt_mou = cc5.checkbox(
-            "Government MOU", value=bool(_prof.get("has_govt_mou", False)),
+            "Government MOU", value=bool(_prof.get("org_has_govt_mou", False)),
             key="orgp_has_govt_mou",
             help="Signed MOU with the host-government authority in place.")
         has_govt_endorsement = cc6.checkbox(
             "Govt endorsement letter",
-            value=bool(_prof.get("has_govt_endorsement", False)),
+            value=bool(_prof.get("org_has_govt_endorsement", False)),
             key="orgp_has_govt_endorsement",
             help="A host-government endorsement / support letter can be obtained "
                  "when a donor requires it.")
@@ -364,7 +364,7 @@ def render_org_setup(user, sb):
         # if its donor is in this list (e.g. Wellcome Trust).
         authorized_signatory_donors = _ms(
             st, "Authorized signatory obtained from (donors)", _donor_names,
-            "authorized_signatory_donors",
+            "org_authorized_signatory_donors",
             help="Donors you have already secured an authorized-signatory sign-off "
                  "from. Matched by name to a call that requires one (MUST-5).")
         # Funding routes the org can RECEIVE through — matched (≥1 overlap) to the
@@ -385,10 +385,10 @@ def render_org_setup(user, sb):
         # ── Geography & languages (moved up, right after the eligibility facts) ──
         geo1, geo2 = st.columns(2)
         registrations_sel = _ms(geo1, "Countries registered", _geo.COUNTRIES,
-            "countries_registered",
+            "org_registered_countries",
             help="Legal-registration jurisdictions (qualification).")
         countries_op_sel = _ms(geo2, "Countries of operation", _geo.GEO_OPTIONS,
-            "countries_of_operation",
+            "org_operating_countries",
             help="Where you operate directly — same geo vocabulary as donor scope "
                  "(geographic fit).")
         langs_sel = _ms(st, "Proposal languages", _LANGS, "proposal_languages",
@@ -417,13 +417,13 @@ def render_org_setup(user, sb):
         #    not) → feeds STRATEGIC FIT (MUST-2), matched to donor priorities.
         domains_sel, domain_ratings = program_area_matrix_editor(
             "Domains / areas of expertise (track record)",
-            _prof.get("domains"), _prof.get("domain_ratings"), "orgp_domains",
+            _prof.get("org_domain_expertise"), _prof.get("org_domain_ratings"), "orgp_domains",
             help="Where you have demonstrated experience — grade 0–5 how strong your "
                  "track record is (e.g. malaria 5 = many funded/ongoing projects; "
                  "health workforce 1 = a minor past project). Drives competitiveness.")
         priorities_sel, priority_ratings = program_area_matrix_editor(
             "Strategic priority areas (strategy)",
-            _prof.get("priority_areas"), _prof.get("program_area_ratings"),
+            _prof.get("org_priority_areas"), _prof.get("org_priority_ratings"),
             "orgp_priority_areas",
             help="Where your strategy says you want to work — even with no footprint "
                  "yet (e.g. nutrition 5 = a top priority you're pursuing). Drives "
@@ -505,7 +505,7 @@ def render_org_setup(user, sb):
         # Active Donors — current grantee relationships (MUST-1 item I). Same donor
         # vocabulary as the funder history below so values match donor intel directly.
         active_donors_sel = _ms(st, "Active Donors — donors currently funding us",
-            _donor_names, "active_donors",
+            _donor_names, "org_active_donors",
             help="Donors with an OPEN/active grant to the org right now. If a call bars "
                  "CURRENT grantees, listing the donor here disqualifies us "
                  "(qualification, MUST-1 item I). Past/closed grants go under "
@@ -514,7 +514,7 @@ def render_org_setup(user, sb):
         # ── Funders & donor registrations (registrations swapped to here) ────
         fr1, fr2 = st.columns(2)
         funders_sel = _ms(fr1, "Donors we've already won grants / awards from",
-            _donor_names, "funder_history",
+            _donor_names, "org_funder_history",
             help="Pick from the Donor Intelligence catalog (or type to add) — "
                  "past / current funders (funder relationship).")
         donor_regs_sel = _ms(fr2, "Donor portal registration active",
@@ -525,36 +525,36 @@ def render_org_setup(user, sb):
 
         if st.button("💾 Save fit profile", type="primary", key="save_org_fit_profile"):
             _orgp.set_profile({
-                "legal_type": legal_type,
-                "entity_type": entity_type,
+                "org_legal_type": legal_type,
+                "org_entity_type": entity_type,
                 "founding_year": int(founding_year) or None,
-                "cofinancing_capacity": cofin,
-                "annual_budget_usd": int(annual_budget) or None,
-                "largest_grant_usd": int(largest_grant) or None,
-                "lowest_grant_usd": int(lowest_grant) or None,
-                "number_of_grants_managed": int(n_grants) or None,
-                "funding_target_low": int(ftl) or None,
-                "funding_target_mid": int(ftm) or None,
-                "funding_target_max": int(ftx) or None,
+                "org_cofinancing_capacity": cofin,
+                "org_annual_budget": int(annual_budget) or None,
+                "org_largest_grant": int(largest_grant) or None,
+                "org_lowest_grant": int(lowest_grant) or None,
+                "org_grants_count": int(n_grants) or None,
+                "org_min_target": int(ftl) or None,
+                "org_mid_target": int(ftm) or None,
+                "org_max_target": int(ftx) or None,
                 "org_is_independent_entity": bool(org_independent),
                 "org_has_sam_uei": bool(org_sam_uei),
                 "org_tax_exempt": bool(org_tax_exempt),
                 "org_stage": org_stage,
-                "has_established_pi": bool(has_pi),
-                "has_audited_financials": bool(has_audited_financials),
-                "has_audit_report": bool(has_audit_report),
-                "has_safeguarding_policy": bool(has_safeguarding_policy),
-                "has_partner_mou": bool(has_partner_mou),
-                "has_govt_mou": bool(has_govt_mou),
-                "has_govt_endorsement": bool(has_govt_endorsement),
-                "authorized_signatory_donors": authorized_signatory_donors,
+                "org_has_established_pi": bool(has_pi),
+                "org_has_audited_financials": bool(has_audited_financials),
+                "org_has_audit_report": bool(has_audit_report),
+                "org_has_safeguarding_policy": bool(has_safeguarding_policy),
+                "org_has_partner_mou": bool(has_partner_mou),
+                "org_has_govt_mou": bool(has_govt_mou),
+                "org_has_govt_endorsement": bool(has_govt_endorsement),
+                "org_authorized_signatory_donors": authorized_signatory_donors,
                 "org_funding_routes": org_funding_routes,
                 "partners": partners_struct,
-                "domains": domains_sel,
-                "domain_ratings": domain_ratings,
-                "priority_areas": priorities_sel,
-                "program_area_ratings": priority_ratings,
-                "countries_of_operation": countries_op_sel,
+                "org_domain_expertise": domains_sel,
+                "org_domain_ratings": domain_ratings,
+                "org_priority_areas": priorities_sel,
+                "org_priority_ratings": priority_ratings,
+                "org_operating_countries": countries_op_sel,
                 # Partners now live in the single `partners` table above. The flat
                 # lists are kept (consolidated) only for back-compat readers:
                 # trusted_partners = every partner name (geographic 'via a partner'
@@ -562,10 +562,10 @@ def render_org_setup(user, sb):
                 "trusted_partners": [p["name"] for p in partners_struct],
                 "trusted_for_profit_partners": [],
                 "trusted_academic_institutions": [],
-                "countries_registered": registrations_sel,
+                "org_registered_countries": registrations_sel,
                 "donor_registrations": donor_regs_sel,
-                "funder_history": funders_sel,
-                "active_donors": active_donors_sel,
+                "org_funder_history": funders_sel,
+                "org_active_donors": active_donors_sel,
                 "proposal_languages": langs_sel,
             }, updated_by=user.get("email"))
             # Competitiveness inputs live in org settings (partial upsert — set_org
