@@ -342,7 +342,7 @@ _META = {"id", "updated_at", "created_at", "canonical_key", "category_clean",
 _SHORT_TEXT = ["donor", "donor_short", "donor_category", "donor_type", "website",
                "award_low_usd", "award_high_usd",
                "total_annual_funding_global", "funding_mechanism"]
-_LONG_TEXT = ["aliases", "funding_scope_geographic", "active_route_status",
+_LONG_TEXT = ["aliases", "donor_geographic_scope", "active_route_status",
               "direct_local_org_eligible", "priority_program_areas",
               "verification_caveats", "evidence_summary", "notes",
               "source_urls", "opportunity_listing_urls"]
@@ -385,7 +385,7 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
 # Columns kept for backward-compat but no longer surfaced anywhere (not edited,
 # not shown in View, not in share/PDF). verification_level already captures data
 # confidence, so the free-text "verification caveats" was redundant + confusing.
-# funded_geographies is an unused column (the geo field is funding_scope_geographic).
+# funded_geographies is an unused column (the geo field is donor_geographic_scope).
 _HIDDEN_FIELDS = {"verification_caveats", "funded_geographies"}
 
 _NON_FLAG = (set(_META) | set(_SHORT_TEXT) | set(_LONG_TEXT)
@@ -494,7 +494,7 @@ def _cell(v):
 
 
 # Fields stored as JSON lists — rendered as comma lists in share/export.
-_LIST_FIELDS = {"funding_scope_geographic", "priority_program_areas",
+_LIST_FIELDS = {"donor_geographic_scope", "priority_program_areas",
                 "funding_mechanism", "funders_collaborators",
                 # MUST-1 multi-selects (migration 049) — stored as JSON lists.
                 "hq_country_required", "registration_region", "required_partner_type",
@@ -755,7 +755,7 @@ def _summary_lines(row: dict) -> list[str]:
     except (ValueError, TypeError):
         _pa_ratings_s = {}
     _scope_pairs = [(lbl, v) for lbl, v in (
-        ("Funding scope — geographies", listf("funding_scope_geographic")),
+        ("Funding scope — geographies", listf("donor_geographic_scope")),
         (_label("in_scope"), _disp(row.get("in_scope"))),
         (_label("out_of_scope"), _disp(row.get("out_of_scope"))),
     ) if v]
@@ -1132,9 +1132,9 @@ def _edit_dialog(row: dict) -> None:
         edited["priority_program_areas"] = json.dumps(_sel)
         edited["program_area_ratings"] = json.dumps(_ratings)
         st.divider()
-        edited["funding_scope_geographic"] = json.dumps(_multi_with_options(
+        edited["donor_geographic_scope"] = json.dumps(_multi_with_options(
             "Funding scope — geographies (UN regions / tiers / countries)",
-            _geo.GEO_OPTIONS, row.get("funding_scope_geographic"),
+            _geo.GEO_OPTIONS, row.get("donor_geographic_scope"),
             key=f"fsg_{ck}",
             help="Where the donor funds. Drives the 'Funds in' filter + coverage view."))
         _sc1, _sc2 = st.columns(2)
@@ -1809,7 +1809,7 @@ def _view_dialog(row: dict) -> None:
                     hide_index=True, width='stretch')
 
     # ── 🎯 Scope & fit — strategic priority areas (graded) / geo / in-out ────
-    _scope = _to_list(row.get("funding_scope_geographic"))
+    _scope = _to_list(row.get("donor_geographic_scope"))
     _areas = _to_list(row.get("priority_program_areas"))
     _in_scope = _disp(row.get("in_scope"))
     _out_scope = _disp(row.get("out_of_scope"))
@@ -2074,10 +2074,10 @@ _appl_flags = [_APPL_FLAG[a] for a in appl if _APPL_FLAG.get(a) in fdf.columns]
 if _appl_flags:
     fdf = fdf[fdf[_appl_flags].apply(
         lambda r: any(str(r[c]).strip().lower() == "yes" for c in _appl_flags), axis=1)]
-# Funds-in filter — match donor funding_scope_geographic, expanding region <-> country.
-if funds_in and "funding_scope_geographic" in fdf.columns:
+# Funds-in filter — match donor donor_geographic_scope, expanding region <-> country.
+if funds_in and "donor_geographic_scope" in fdf.columns:
     _want_geo = _geo.expand(funds_in)
-    fdf = fdf[fdf["funding_scope_geographic"].apply(
+    fdf = fdf[fdf["donor_geographic_scope"].apply(
         lambda v: bool(_geo.expand(_to_list(v)) & _want_geo))]
 fdf = fdf.reset_index(drop=True)
 

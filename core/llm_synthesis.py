@@ -61,7 +61,7 @@ def _org_block(org: dict) -> str:
     pa = org.get("priority_areas") or org.get("domains") or []
     funders = org.get("funder_history") or []
     return (
-        f"- Operates in: {', '.join(org.get('countries_of_operation') or []) or '—'}\n"
+        f"- Operates in: {', '.join(org.get('org_operating_countries') or []) or '—'}\n"
         f"- Annual budget managed: {_money(org.get('annual_budget_usd'))}/yr; "
         f"largest single grant ever: {_money(org.get('largest_grant_usd'))}; "
         f"# grants managed: {org.get('number_of_grants_managed') or '—'}; "
@@ -113,7 +113,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "ORG CONTEXT:\n" + _org_block(org) + "\n\n"
         f"OPPORTUNITY:\n- Title: {title}\n"
         f"- Funder: {candidate.get('funding_agency') or '—'}\n"
-        f"- Geography: {candidate.get('geographic_scope') or '—'}; "
+        f"- Geography: {candidate.get('call_geographic_scope') or '—'}; "
         f"Deadline: {candidate.get('submission_deadline') or '—'}; "
         f"Value: {_money(candidate.get('estimated_value'))} "
         f"{candidate.get('currency') or ''}\n"

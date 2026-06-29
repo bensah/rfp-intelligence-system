@@ -667,7 +667,7 @@ def _enrich_developmentaid(cand: dict[str, Any]) -> dict[str, Any] | None:
         cand["funding_agency"] = m.group("donor").strip()
     countries = [c.strip() for c in (m.group("countries") or "").split(",") if c.strip()]
     if countries:
-        cand["geographic_scope"] = countries
+        cand["call_geographic_scope"] = countries
     sectors = [s.strip() for s in (m.group("sectors") or "").split(",") if s.strip()]
     if sectors:
         cand["program_area"] = sectors
@@ -905,7 +905,7 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
 
     # Eligibility — append to brief_description so the country gate in
     # auto_scorer.country_eligible() sees it. (The gate scans
-    # title + brief_description + geographic_scope + focus_theme + funder.)
+    # title + brief_description + call_geographic_scope + focus_theme + funder.)
     elig = _extract_eligibility_from_text(text)
     if elig:
         existing = cand.get("brief_description") or ""
@@ -1189,7 +1189,7 @@ def _scan_researchnet(name: str, url: str) -> list[dict[str, Any]]:
             # the default scope. The geo gate then drops Canada-only calls and
             # keeps only those whose text opens beyond Canada (international / LMIC
             # / a named in-scope region) — the "scope beyond Canada" rule.
-            "geographic_scope": ["Canada"],
+            "call_geographic_scope": ["Canada"],
             "_source_origin": f"{name} (RSS)",
         })
     return out
@@ -1612,8 +1612,8 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
             "foreign", "international", "non-u.s", "non-us",
             "outside the united states", "low- and middle-income", "lmic",
             "developing countr", "any country", "worldwide", "globally"))
-        if not _foreign_ok and not cand.get("geographic_scope"):
-            cand["geographic_scope"] = ["United States"]
+        if not _foreign_ok and not cand.get("call_geographic_scope"):
+            cand["call_geographic_scope"] = ["United States"]
         if cand.get("_applicant_types"):
             cand["eligibility_applicant_types"] = cand["_applicant_types"]
         cs = syn.get("costSharing")
@@ -1830,7 +1830,7 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
 def _scan_worldbank_procurement(name: str, url: str) -> list[dict[str, Any]]:
     """World Bank procurement notices (procnotices API). Free; WB data is
     CC-BY 4.0. Skips 'Contract Award' notices (already awarded) — keeps open bids
-    / EOIs / GPNs / RFQs. Country → geographic_scope so the geo gate can act."""
+    / EOIs / GPNs / RFQs. Country → call_geographic_scope so the geo gate can act."""
     out: list[dict[str, Any]] = []
     try:
         r = _http.get(
@@ -1864,7 +1864,7 @@ def _scan_worldbank_procurement(name: str, url: str) -> list[dict[str, Any]]:
             "brief_description": desc[:1800] or None,
             "date_posted": _wb_date(n.get("noticedate")),
             "submission_deadline": _parse_iso_date(str(n.get("submission_date") or "")[:10]),
-            "geographic_scope": [ctry] if ctry else None,
+            "call_geographic_scope": [ctry] if ctry else None,
             "_source_origin": name,
         })
     return _dedup_by_link_or_title(out)
@@ -1906,7 +1906,7 @@ def _scan_ocds(name: str, url: str, *, notice_base: str, geo: str
             "brief_description": _clean(t.get("description") or "")[:1800] or None,
             "date_posted": _parse_iso_date(str(rel.get("date") or "")[:10]),
             "submission_deadline": _parse_iso_date(str(tp.get("endDate") or "")[:10]),
-            "geographic_scope": [geo],
+            "call_geographic_scope": [geo],
             "_source_origin": name,
         })
     return _dedup_by_link_or_title(out)
@@ -1960,7 +1960,7 @@ def _scan_ted(name: str, url: str) -> list[dict[str, Any]]:
             "brief_description": None,
             "date_posted": _parse_iso_date(str(n.get("PD") or "")[:10]),
             "submission_deadline": deadline,
-            "geographic_scope": cy if isinstance(cy, list) else ([cy] if cy else None),
+            "call_geographic_scope": cy if isinstance(cy, list) else ([cy] if cy else None),
             "_source_origin": name,
         })
     return _dedup_by_link_or_title(out)
@@ -2023,7 +2023,7 @@ def _scan_ungm(name: str, url: str) -> list[dict[str, Any]]:
                 "funding_agency": f"UN — {agency}" if agency else "UN (UNGM)",
                 "brief_description": None,
                 "submission_deadline": deadline,
-                "geographic_scope": [country] if country else None,
+                "call_geographic_scope": [country] if country else None,
                 "_source_origin": name,
             })
     return _dedup_by_link_or_title(out)
@@ -2070,7 +2070,7 @@ def _scan_unops(name: str, url: str) -> list[dict[str, Any]]:
                 str(n.get("submissionDueDate") or "")[:10]),
             "estimated_value": n.get("fundingAvailable"),
             "currency": (n.get("currency") or {}).get("code"),
-            "geographic_scope": geos or None,
+            "call_geographic_scope": geos or None,
             "_source_origin": name,
         })
     return _dedup_by_link_or_title(out)

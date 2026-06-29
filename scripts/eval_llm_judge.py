@@ -86,7 +86,7 @@ def load_ground_truth(event: str, limit: int) -> list[dict]:
     sb = get_client()
     rows = (sb.table("scan_decisions")
             .select("opportunity_title, opportunity_link, funding_agency, "
-                    "geographic_scope, label, created_at")
+                    "call_geographic_scope, label, created_at")
             .eq("event_type", event)
             .order("created_at", desc=True).limit(5000).execute().data or [])
     seen, out = set(), []
@@ -138,7 +138,7 @@ def main() -> int:
         body = "" if args.no_fetch else fetch_body(link)
         cand = {"opportunity_title": title, "opportunity_link": link,
                 "funding_agency": r.get("funding_agency"),
-                "brief_description": body or r.get("geographic_scope") or title}
+                "brief_description": body or r.get("call_geographic_scope") or title}
         t0 = time.time()
         j = llm_judge.judge(cand, pol, model=args.model)
         dt = time.time() - t0

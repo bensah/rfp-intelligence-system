@@ -40,7 +40,7 @@ pd.set_option("display.max_columns", 40)
 # Fields the model / matching rely on, and how to read them off rfp_submissions.
 _EXTRACTION_FIELDS = [
     "opportunity_title", "brief_description", "submission_deadline",
-    "estimated_value", "currency", "geographic_scope", "program_area",
+    "estimated_value", "currency", "call_geographic_scope", "program_area",
     "funding_agency", "focus_theme", "date_posted",
 ]
 
@@ -302,7 +302,7 @@ def main() -> int:
     subs = _fetch_all(
         "rfp_submissions",
         "uid,form_id,source,opportunity_title,brief_description,submission_deadline,"
-        "estimated_value,currency,geographic_scope,program_area,funding_agency,"
+        "estimated_value,currency,call_geographic_scope,program_area,funding_agency,"
         "focus_theme,date_posted,decision,auto_recommendation,decision_overridden_by,"
         "is_duplicate")
     print(f"rfp_submissions rows: {len(subs)}")

@@ -122,7 +122,7 @@ def _full_text(candidate: dict[str, Any]) -> str:
         " ".join([
             candidate.get("opportunity_title") or "",
             candidate.get("brief_description") or "",
-            " ".join(candidate.get("geographic_scope") or []),
+            " ".join(candidate.get("call_geographic_scope") or []),
             candidate.get("focus_theme") or "",
             candidate.get("funding_agency") or "",
         ])
@@ -138,7 +138,7 @@ def _geo_text(candidate: dict[str, Any]) -> str:
         " ".join([
             candidate.get("opportunity_title") or "",
             candidate.get("brief_description") or "",
-            " ".join(candidate.get("geographic_scope") or []),
+            " ".join(candidate.get("call_geographic_scope") or []),
             candidate.get("focus_theme") or "",
         ])
     )
@@ -1555,7 +1555,7 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
     # only on an explicit False. Bounded: most rows have a scope (skip), and
     # llm_judge has a per-process call cap. Org-facing only (geo_org_gates).
     if geo_org_gates and llm_adjudicate:
-        _geo = candidate.get("geographic_scope")
+        _geo = candidate.get("call_geographic_scope")
         _has_geo = (bool(_geo) if isinstance(_geo, (list, tuple))
                     else bool(str(_geo or "").strip()))
         if not _has_geo:
@@ -1749,7 +1749,7 @@ def _decision_from_criteria(values: dict[str, str]) -> str:
     return "Park"
 
 
-def _extract_geographic_scope(text: str, policies: dict[str, Any]) -> list[str]:
+def _extract_call_geographic_scope(text: str, policies: dict[str, Any]) -> list[str]:
     """Detect KNOWN_COUNTRIES mentions in the candidate's text. Returns the
     list of country names verbatim (case-preserved via the matched form).
     Restricted to eligible-list countries + broad regions when present, so
@@ -1981,7 +1981,7 @@ def _is_blank_cheque(candidate: dict[str, Any]) -> bool:
             return any(str(i).strip() for i in x)
         return bool(str(x).strip())
 
-    if _listed(candidate.get("geographic_scope")):
+    if _listed(candidate.get("call_geographic_scope")):
         return False
     pa = candidate.get("program_area")
     pa_list = pa if isinstance(pa, (list, tuple)) else ([pa] if pa else [])
@@ -2000,7 +2000,7 @@ def auto_score(
 
     Output keys: feasibility, qualification, ..., bid_effort,
     alignment_score, auto_recommendation, decision, decline_flags_present,
-    geographic_scope (if detected), program_area (if detected).
+    call_geographic_scope (if detected), program_area (if detected).
     """
     text = _full_text(candidate)
     # Criteria are now OBJECTIVELY DERIVED from org × RFP (× donor) facts — the
@@ -2056,9 +2056,9 @@ def auto_score(
     scorer_input = {k: values[k] for k in values if k != "feasibility"}
     score, _legacy_rec = score_submission(scorer_input, decline_flags)
 
-    # SCORE = composite (0.80 criteria + 0.20 donor-org extras), shown on the
-    # Bid-Strength gauge. We keep the composite for the SCORE, but the DECISION
-    # comes from the explicit rule below (not the composite's own thresholds).
+    # SCORE = composite = the 9 weighted criteria (100%; the 0.20 donor-org extras
+    # were dropped 2026-06-29 as duplicative), shown on the Bid-Strength gauge. We keep
+    # the composite for the SCORE, but the DECISION comes from the explicit rule below.
     rec = _decision_from_criteria(values)   # fallback if matching is unavailable
     try:
         from core import matching as _matching
@@ -2154,10 +2154,10 @@ def auto_score(
     }
     # Auto-populated companion fields — only set if the candidate hasn't
     # already provided them, so explicit scraper-extracted values win.
-    if not candidate.get("geographic_scope"):
-        geo = _extract_geographic_scope(text, policies)
+    if not candidate.get("call_geographic_scope"):
+        geo = _extract_call_geographic_scope(text, policies)
         if geo:
-            out["geographic_scope"] = geo
+            out["call_geographic_scope"] = geo
     # program_area: classify from the description. REPLACE a generic crawled
     # value (e.g. "Health" — not a taxonomy key) with specific areas so
     # strategic_fit can match the org; leave an already-taxonomy-keyed value

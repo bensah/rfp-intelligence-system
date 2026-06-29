@@ -153,7 +153,7 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # that name-drops "South Africa") — so the LLM scope, when consulted, OVERRIDES
     # the regex part below (handler scope is always kept).
     handler_geo: set[str] = set()
-    cand_geo = candidate.get("geographic_scope")
+    cand_geo = candidate.get("call_geographic_scope")
     if isinstance(cand_geo, (list, tuple)):
         handler_geo = {str(g).strip() for g in cand_geo if str(g).strip()}
     elif isinstance(cand_geo, str) and cand_geo.strip():
@@ -254,7 +254,7 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # LLM scope (when consulted) is more accurate than regex at telling the CALL's
     # geography from incidental mentions → it REPLACES the regex guesses (handler
     # scope is always kept). e.g. GC India RFP that name-drops "South Africa".
-    _llm_geo = {str(g).strip() for g in (_llm("geographic_scope") or []) if str(g).strip()}
+    _llm_geo = {str(g).strip() for g in (_llm("call_geographic_scope") or []) if str(g).strip()}
     if _llm_geo:
         geo = handler_geo | _llm_geo
 
@@ -274,7 +274,7 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
         "solicitation_type": sol_type,
         "instrument_type": instr_type,
         "opportunity_type": candidate.get("opportunity_type"),
-        "geographic_scope": sorted(geo),
+        "call_geographic_scope": sorted(geo),
         "eligibility_applicant_types": candidate.get("eligibility_applicant_types") or [],
         "grant_amount": g_amt,
         "currency": g_cur,
@@ -342,7 +342,7 @@ if __name__ == "__main__":  # offline smoke test (gate + build, no store write)
         rec, reason = build_record(c, pol, scan_year=2026)
         print(f"\n### {c['opportunity_title'][:55]}  -> {reason}")
         if rec:
-            for k in ("geographic_scope", "deadline", "deadline_confidence",
+            for k in ("call_geographic_scope", "deadline", "deadline_confidence",
                       "funding_window", "grant_amount", "currency",
                       "solicitation_type", "funding_status"):
                 print(f"   {k}: {rec[k]}")

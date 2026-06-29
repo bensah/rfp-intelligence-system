@@ -12,7 +12,7 @@ Definitions encoded (see the bid/no-bid questionnaire):
                        correlated with the DONOR's graded priorities → Strongly
                        aligns / Limited priority / Off-strategy (experience excluded)
   capacity             rfp.estimated_value vs org.largest_grant_usd / annual_budget_usd
-  geographic_fit       rfp.geographic_scope vs org.countries_of_operation / trusted_partners
+  geographic_fit       rfp.call_geographic_scope vs org.org_operating_countries / trusted_partners
   cofinancing          rfp cost-share requirement vs org.cofinancing_capacity
   funding_quality      rfp.estimated_value tiers
   funder_relationship  rfp.funding_agency in org.funder_history
@@ -466,8 +466,8 @@ def _geo_partner_in_scope(org: dict, scope: Any) -> bool:
 
 
 def _geo_scope(rfp: dict, donor: dict | None) -> list[str]:
-    """Call geographic_scope ∪ donor funding_scope_geographic — deduped (case-insensitive)."""
-    raw = _as_list(rfp.get("geographic_scope")) + _as_list((donor or {}).get("funding_scope_geographic"))
+    """Call call_geographic_scope ∪ donor donor_geographic_scope — deduped (case-insensitive)."""
+    raw = _as_list(rfp.get("call_geographic_scope")) + _as_list((donor or {}).get("donor_geographic_scope"))
     seen, out = set(), []
     for s in raw:
         k = str(s).strip().lower()
@@ -492,8 +492,8 @@ def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
                     "via": "no geographic scope stated"}
     scope_us = any(str(s).strip().lower() in _US_NAMES for s in scope)
     org_us = str((org_settings or {}).get("org_is_us_entity", "")).lower() == "true"
-    registered = org.get("countries_registered") or []
-    operation = org.get("countries_of_operation") or []
+    registered = org.get("org_registered_countries") or []
+    operation = org.get("org_operating_countries") or []
     if _covers_scope(registered, scope) or (scope_us and org_us):
         return {"active": True, "score": 1.0, "label": "Yes, our own presence",
                 "scope": scope, "via": "registered / based in scope"}
@@ -613,7 +613,7 @@ def _has_required_partner(org: dict, rfp: dict, donor: dict) -> bool:
     req_types = {t.lower() for t in _as_list(donor.get("required_partner_type")) if t.lower() != "any"}
     req_ctrys = {c.lower() for c in _as_list(donor.get("required_partner_country")) if c.lower() != "any"}
     if _truthy(donor.get("local_partner_required")) and not req_ctrys:
-        req_ctrys = {c.lower() for c in _as_list(rfp.get("geographic_scope"))}
+        req_ctrys = {c.lower() for c in _as_list(rfp.get("call_geographic_scope"))}
     for p in (org.get("partners") or []):
         if not isinstance(p, dict):
             continue
@@ -1090,8 +1090,8 @@ def _region_covered(region: Any, org: dict) -> bool:
     OPERATES there. Country/UN-region matching goes through geo expansion; an
     inclusive tier (LMIC / developing / global / multi-country) is reachable via the
     org's OWN presence, so ANY registered/operating country satisfies it."""
-    regd = org.get("countries_registered") or []
-    ops = org.get("countries_of_operation") or []
+    regd = org.get("org_registered_countries") or []
+    ops = org.get("org_operating_countries") or []
     if _covers(region, regd) or _covers(region, ops):
         return True
     if _is_inclusive_geo(_as_list(region)) and (regd or ops):
@@ -1110,7 +1110,7 @@ def _foreign_pi_partner(org: dict, donor: dict | None) -> bool:
     type ∈ research/NGO/for-profit AND status ∈ implementing/collaborator AND the
     partner sits OUTSIDE the org's registration countries OR in the donor's HQ
     country (covers donor-country and 3rd-party-OECD PI requirements — CADC case)."""
-    regd = {str(c).strip().lower() for c in (org.get("countries_registered") or [])}
+    regd = {str(c).strip().lower() for c in (org.get("org_registered_countries") or [])}
     dhq = str((donor or {}).get("hq_country") or "").strip().lower()
     for p in (org.get("partners") or []):
         if not isinstance(p, dict):
@@ -1187,8 +1187,8 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     reg_req = _as_list(donor.get("registration_region"))
     explicit_any = any(r.lower() == "any" for r in reg_req)
     region = ([] if explicit_any else
-              (reg_req or _as_list(rfp.get("geographic_scope"))
-               or _as_list(donor.get("funding_scope_geographic"))))
+              (reg_req or _as_list(rfp.get("call_geographic_scope"))
+               or _as_list(donor.get("donor_geographic_scope"))))
     if not region and not explicit_any and _is_us_federal(rfp):
         region = ["United States"]               # US-federal / US-only → must be US-registered
     items.append(_qfactor("local_registration", "Registration region",
