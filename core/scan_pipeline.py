@@ -20,6 +20,8 @@ from typing import Any
 
 from core import deep_read, source_resolver, live_check, seen_ledger
 from core import aggregators, source_registry, scraper, type_detect
+from core import extract as extraction        # extraction-first global store (shadow)
+from core import deadline_extract             # confidence-gated deadline backstop
 from core.auto_scorer import (auto_score, is_eligible, is_index_page,
                               theme_eligible)
 from core.deduplicator import find_duplicates
@@ -28,6 +30,45 @@ from core.review_week import review_week_label
 from db.supabase_client import get_client
 
 log = logging.getLogger(__name__)
+
+
+def _iso_date(v: Any) -> str | None:
+    """Coerce a date/datetime OR an ISO-ish string to 'YYYY-MM-DD', else None.
+    Handles BOTH the scraper (date objects) and screening (Supabase returns dates
+    as ISO strings). The old `.isoformat() if hasattr(...)` pattern silently
+    dropped string deadlines — which is why screened rows lost their deadlines."""
+    if v is None:
+        return None
+    if hasattr(v, "isoformat"):
+        return v.isoformat()[:10]
+    s = str(v).strip()
+    return s[:10] if (len(s) >= 10 and s[4] == "-" and s[7] == "-"
+                      and s[:4].isdigit()) else None
+
+
+def _apply_llm_judgment(cand: dict[str, Any]) -> None:
+    """Fill missing structured fields from a stashed LLM judgment (set by
+    auto_scorer when it consulted the judge during the gate). ADDITIVE only —
+    regex/handler values always win; we just stop throwing away what the judge
+    already extracted (deadline / amount / type / geography). Mutates `cand`."""
+    j = cand.get("_llm_judgment")
+    if not isinstance(j, dict):
+        return
+    if not cand.get("submission_deadline") and j.get("submission_deadline"):
+        cand["submission_deadline"] = j["submission_deadline"]
+    if cand.get("estimated_value") in (None, "", 0, "0") and j.get("estimated_value") is not None:
+        cand["estimated_value"] = j["estimated_value"]
+        if not cand.get("currency") and j.get("currency"):
+            cand["currency"] = j["currency"]
+    if not cand.get("solicitation_type") and j.get("solicitation_type"):
+        cand["solicitation_type"] = j["solicitation_type"]
+    if not cand.get("instrument_type") and j.get("instrument_type"):
+        cand["instrument_type"] = j["instrument_type"]
+    _geo = cand.get("geographic_scope")
+    _has_geo = (bool(_geo) if isinstance(_geo, (list, tuple))
+                else bool(str(_geo or "").strip()))
+    if not _has_geo and j.get("geographic_scope"):
+        cand["geographic_scope"] = j["geographic_scope"]
 
 
 # Fields that the scraper provides. Re-scans may fill these in if currently
@@ -129,10 +170,8 @@ def _build_row(
         "aggregator_url": candidate.get("_aggregator_link"),
         "funding_agency": candidate.get("funding_agency"),
         "brief_description": candidate.get("brief_description"),
-        "date_posted": posted.isoformat() if hasattr(posted, "isoformat") else None,
-        "submission_deadline": (
-            deadline.isoformat() if hasattr(deadline, "isoformat") else None
-        ),
+        "date_posted": _iso_date(posted),
+        "submission_deadline": _iso_date(deadline),
         "review_week": review_week_label(),
         # ---- Pipeline defaults for auto-scanned rows ---------------------
         # Every newly-inserted scan row enters the workflow with a known
@@ -159,9 +198,9 @@ def _build_row(
         val = candidate.get(col)
         if not _is_blank(val):
             row[col] = val
-    ead = candidate.get("expected_award_date")
-    if hasattr(ead, "isoformat"):
-        row["expected_award_date"] = ead.isoformat()
+    ead = _iso_date(candidate.get("expected_award_date"))
+    if ead:
+        row["expected_award_date"] = ead
     return row
 
 
@@ -186,10 +225,8 @@ def _build_merge_payload(
         "opportunity_id": candidate.get("opportunity_id"),
         "funding_agency": candidate.get("funding_agency"),
         "brief_description": candidate.get("brief_description"),
-        "date_posted": posted.isoformat() if hasattr(posted, "isoformat") else None,
-        "submission_deadline": (
-            deadline.isoformat() if hasattr(deadline, "isoformat") else None
-        ),
+        "date_posted": _iso_date(posted),
+        "submission_deadline": _iso_date(deadline),
         # Structured donor fields — gap-filled on rescan so EXISTING empty rows
         # get backfilled (estimated_value / program_area / geography / …).
         "estimated_value": candidate.get("estimated_value"),
@@ -247,6 +284,8 @@ def ingest_candidates(
     *,
     existing: list[dict[str, Any]] | None = None,
     dry_run: bool = False,
+    extract_only: bool = False,
+    llm_adjudicate: bool = False,
 ) -> tuple[int, int, int]:
     """Process a list of candidate dicts.
 
@@ -292,6 +331,7 @@ def ingest_candidates(
     duplicate_unchanged = 0
     suppressed_seen = 0
     rejected = 0
+    extracted = 0           # extract_only mode: rows written to the global store
     _reject_records: list[dict] = []   # ML Phase 1 — labeled rejects for learning
     _source_encounters: list[dict] = []  # host registry — aggregator vs primary log
     _live_checks = 0                   # bounded HTTP liveness fetches this run
@@ -360,14 +400,42 @@ def ingest_candidates(
                                      or type_detect.detect_solicitation(cand))
         cand["instrument_type"] = (cand.get("instrument_type")
                                    or type_detect.detect_instrument(cand))
+        # Deadline backstop: if the scraper captured no deadline, run the
+        # confidence-gated extractor on the page text. A HIGH/MEDIUM date lets the
+        # gate reject expired calls that would otherwise slip through (the scraper
+        # misses deadlines in prose / FR "date limite" / mixed formats). Low-
+        # confidence guesses are ignored so a genuinely rolling call isn't dropped.
+        if not cand.get("submission_deadline") and not cand.get("extraction_uid"):
+            try:
+                from datetime import date as _date
+                _dl = deadline_extract.extract_deadline(
+                    cand.get("_page_text") or cand.get("brief_description") or "",
+                    scan_year=_date.today().year,
+                    title=cand.get("opportunity_title") or "")
+                if (_dl["deadline"] and _dl["confidence"] in ("high", "medium")
+                        and _dl["method"] != "default-rolling"):
+                    cand["submission_deadline"] = _dl["deadline"]
+            except Exception as _exc:
+                log.debug("deadline backstop skipped: %s", _exc)
         # First-pass eligibility gate (cheap: URL/title/keyword/deadline/scope).
-        ok, reason = is_eligible(cand, policies)
+        ok, reason = is_eligible(cand, policies, geo_org_gates=not extract_only,
+                                 llm_adjudicate=llm_adjudicate)
         _source_encounters.append({
             "url": _orig_link, "title": cand.get("opportunity_title"),
             "detected": _kind, "accepted": ok,
             "solicitation_type": cand.get("solicitation_type"),
             "instrument_type": cand.get("instrument_type")})
         if not ok:
+            # Geography / org rejects are still valid GLOBAL rows (geography is NOT
+            # an extraction gate — DATA_SCHEMA_ETL.md §3). Shadow-capture them to
+            # extracted_solicitations before dropping from THIS tenant's Screened
+            # flow. Best-effort; never affects the scan.
+            try:
+                if (not cand.get("extraction_uid")
+                        and is_eligible(cand, policies, geo_org_gates=False)[0]):
+                    extraction.extract_and_store(cand, policies)
+            except Exception as _exc:
+                log.debug("shadow extract (reject path) skipped: %s", _exc)
             rejected += 1
             log.info("reject: %s — %s", cand.get("opportunity_title", "")[:60], reason)
             _reject_records.append({**cand, "_reject_reason": reason})
@@ -380,7 +448,8 @@ def ingest_candidates(
         # Catches dead links (404 / soft-404 "page not found" bodies) and expired
         # deadlines buried in prose the listing snippet didn't carry.
         _thin = not (cand.get("brief_description") or "").strip()
-        if (not dry_run and (_thin or not cand.get("submission_deadline"))
+        if (not dry_run and not cand.get("extraction_uid")
+                and (_thin or not cand.get("submission_deadline"))
                 and _live_checks < _live_check_max):
             _live_checks += 1
             try:
@@ -389,7 +458,8 @@ def ingest_candidates(
                 fetched = False
                 log.debug("live-check skipped: %s", exc)
             if fetched:
-                ok, reason = is_eligible(cand, policies)
+                ok, reason = is_eligible(cand, policies, geo_org_gates=not extract_only,
+                                 llm_adjudicate=llm_adjudicate)
                 if not ok:
                     rejected += 1
                     log.info("reject (post live-check): %s — %s",
@@ -404,15 +474,49 @@ def ingest_candidates(
         # rejects. No-ops where Chromium isn't available (Streamlit Cloud);
         # active in the GitHub Actions scan (bounded by RFPIS_DEEP_READ_MAX).
         _thin = not (cand.get("brief_description") or "").strip()
-        if (not cand.get("submission_deadline") or _thin) and deep_read.available():
+        if ((not cand.get("submission_deadline") or _thin)
+                and not cand.get("extraction_uid") and deep_read.available()):
             if deep_read.enrich(cand):
-                ok, reason = is_eligible(cand, policies)
+                ok, reason = is_eligible(cand, policies, geo_org_gates=not extract_only,
+                                 llm_adjudicate=llm_adjudicate)
                 if not ok:
                     rejected += 1
                     log.info("reject (post deep-read): %s — %s",
                              cand.get("opportunity_title", "")[:60], reason)
                     _reject_records.append({**cand, "_reject_reason": reason})
                     continue
+
+        # Persist anything the gate's LLM judge already extracted (deadline /
+        # amount / type / geography) instead of discarding it — additive, regex
+        # values win. Flows into BOTH the global store and the Screened insert.
+        _apply_llm_judgment(cand)
+
+        # Capture the fully-enriched candidate to the GLOBAL extracted store —
+        # UNLESS it already came FROM the store (screening / "My eligible funding"
+        # carries extraction_uid). Skipping re-extraction here is what keeps
+        # screening fast: no crawl, no LLM re-extraction, just scoring + insert.
+        _stored_uid, _store_reason = None, "extraction_uid (already stored)"
+        if not cand.get("extraction_uid"):
+            try:
+                _stored_uid, _store_reason = extraction.extract_and_store(cand, policies)
+            except Exception as _exc:
+                _store_reason = f"error: {_exc}"
+                log.debug("extract_and_store skipped: %s", _exc)
+        if extract_only:
+            # PURE extraction (Run Extraction): write to the global store only —
+            # no per-tenant Screened insert/scoring. Screening is the separate
+            # "My eligible funding" run (run_screening). DATA_SCHEMA_ETL.md §2-3.
+            # The store has its OWN gate (incl. LLM theme adjudication), so honour
+            # its verdict: a row the store rejected (e.g. off-theme) is NOT counted
+            # as extracted.
+            if _stored_uid or cand.get("extraction_uid"):
+                extracted += 1
+            else:
+                rejected += 1
+                log.info("extract reject: %s — %s",
+                         cand.get("opportunity_title", "")[:60], _store_reason)
+                _reject_records.append({**cand, "_reject_reason": _store_reason})
+            continue
 
         # Find duplicates using a minimal projection (find_duplicates only
         # reads these keys).
@@ -421,10 +525,7 @@ def ingest_candidates(
             "opportunity_title": cand["opportunity_title"],
             "opportunity_link": cand.get("opportunity_link"),
             "funding_agency": cand.get("funding_agency"),
-            "submission_deadline": (
-                cand["submission_deadline"].isoformat()
-                if hasattr(cand.get("submission_deadline"), "isoformat") else None
-            ),
+            "submission_deadline": _iso_date(cand.get("submission_deadline")),
             "estimated_value": None,
         }
         matches = find_duplicates(probe, existing=existing)
@@ -483,6 +584,94 @@ def ingest_candidates(
 
         # INSERT PATH — totally new RFP.
         row = _build_row(cand, serial=i, ts=ts, policies=policies)
+        # Direct application-portal URL (from extraction) so Tracking can show an
+        # "Apply" button; fall back to the opportunity link.
+        row["apply_url"] = (cand.get("apply_url") or cand.get("opportunity_link"))
+        # LLM review-synthesis — ONLY for gate-passed rows we're about to insert
+        # (Decline/Park/Proceed); rejected candidates never reach here, so we
+        # never spend tokens on them. One call writes the reasoning fields a
+        # reviewer needs: synthesised brief, focus areas, top risk, decision
+        # rationale (drafts; human edits win — risk/rationale only set if blank).
+        if not dry_run:
+            try:
+                from core import llm_synthesis, org_profile as _orgp
+                if llm_synthesis.is_enabled():
+                    _crit = {k: row.get(k) for k in (
+                        "qualification", "strategic_fit", "capacity", "geographic_fit",
+                        "cofinancing", "funding_quality", "funder_relationship",
+                        "competitiveness", "bid_effort")}
+                    _syn = llm_synthesis.synthesize(
+                        cand, _orgp.get_profile(), row.get("auto_recommendation"), _crit)
+                    if _syn:
+                        if _syn.get("brief_description"):
+                            row["brief_description"] = _syn["brief_description"]
+                        if _syn.get("program_areas"):
+                            row["program_area"] = _syn["program_areas"]
+                        if _syn.get("key_risks") and not row.get("key_risks"):
+                            row["key_risks"] = _syn["key_risks"]
+                        if _syn.get("decision_rationale") and not row.get("decision_note"):
+                            row["decision_note"] = _syn["decision_rationale"]
+                        if _syn.get("how_to_apply"):
+                            row["how_to_apply"] = _syn["how_to_apply"]
+                        if _syn.get("compliance_requirements"):
+                            row["compliance_requirements"] = _syn["compliance_requirements"]
+                        # CLOSE THE LOOP: feed the LLM-extracted RFP compliance flags
+                        # into MUST-5, then re-derive cofinancing + re-score so the
+                        # stored decision reflects hard-gates the call itself states.
+                        _flags = _syn.get("compliance_flags") or {}
+                        if _flags:
+                            import json as _json
+                            row["compliance_flags"] = _json.dumps(_flags)   # persist for Review re-merge
+                            from core import criteria_derive as _cdv, matching as _mm
+                            from core import settings as _settings
+                            from core.scorer import CRITERIA as _CR
+                            from core.auto_scorer import recommend_from_composite as _rec
+                            _prof = _orgp.get_profile()
+                            _dn = None
+                            try:
+                                _fa = (row.get("funding_agency") or "").strip()
+                                if _fa:
+                                    _dq = (sb.table("donor_intel").select("*")
+                                           .ilike("donor", _fa).limit(1).execute().data or [])
+                                    _dn = _dq[0] if _dq else None
+                            except Exception:
+                                _dn = None
+                            # Re-derive BOTH call-flag-sensitive labels: MUST-1
+                            # qualification + MUST-5 cofinancing. If EITHER changed,
+                            # recompute the composite + fatal gate so the stored
+                            # decision reflects hard-gates the call itself states.
+                            _changed = False
+                            _newqual = _cdv.derive_qualification(
+                                _prof, row, _dn, _settings.get_org(), rfp_compliance=_flags)
+                            if _newqual and _newqual != row.get("qualification"):
+                                row["qualification"] = _newqual
+                                _changed = True
+                            _newcap = _cdv.derive_capacity(
+                                _prof, row, _dn, _settings.get_org(), rfp_compliance=_flags)
+                            if _newcap and _newcap != row.get("capacity"):
+                                row["capacity"] = _newcap
+                                _changed = True
+                            _newcof = _cdv.derive_cofinancing(
+                                _prof, row, _dn, rfp_compliance=_flags,
+                                org_settings=_settings.get_org())
+                            if _newcof and _newcof != row.get("cofinancing"):
+                                row["cofinancing"] = _newcof
+                                _changed = True
+                            if _changed:
+                                _cv = {k: row.get(k) for k in _CR}
+                                _mres = _mm.composite_match({**row, **_cv}, _prof, _dn,
+                                                            _settings.get_org())
+                                row["alignment_score"] = round(_mres["composite"], 1)
+                                # Re-evaluate the fatal gate with the RFP's own
+                                # compliance flags folded in (a call-stated floor
+                                # can now flip the decision even with no donor row).
+                                _isf, _ = _cdv.fatal_decline(
+                                    _prof, row, _dn, _settings.get_org(),
+                                    rfp_compliance=_flags)
+                                row["auto_recommendation"] = _rec(
+                                    _cv, _mres["composite"], fatal=_isf)
+            except Exception as _exc:
+                log.debug("llm_synthesis skipped: %s", _exc)
         if not dry_run:
             try:
                 sb.table("rfp_submissions").insert(row).execute()
@@ -534,6 +723,102 @@ def ingest_candidates(
         "suppressed_seen=%d rejected=%d",
         inserted, updated, duplicate_unchanged, suppressed_seen, rejected,
     )
+    if extract_only:
+        # "new" column carries the extracted count; nothing inserted into Screened.
+        return (extracted, 0, rejected)
     # Previously-seen suppressions are de-dup outcomes, not new rows — fold them
     # into the duplicate count so KPIs/logs don't read them as fresh finds.
     return (inserted + updated, duplicate_unchanged + suppressed_seen, rejected)
+
+
+# ---------------------------------------------------------------------------
+# Screening run (extraction-first, tenant-side) — DATA_SCHEMA_ETL.md §2.
+# "Find my matches": read the GLOBAL extracted_solicitations store and re-screen
+# it against THIS tenant's policies — NO external crawl, so it's fast (seconds).
+# Reuses ingest_candidates (same gate + scoring + dedup + insert), so Screened
+# results are identical to a live scan, minus the slow network round-trips.
+# ---------------------------------------------------------------------------
+def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
+    """Reconstruct a scan-candidate dict from a stored extracted_solicitations row
+    so it can flow back through ingest_candidates. raw_text is supplied as
+    _page_text so the thin-candidate enrichment (live-check / deep-read) is skipped
+    — the data is already extracted, so screening stays crawl-free."""
+    geo = row.get("geographic_scope")
+    if not isinstance(geo, (list, tuple)):
+        geo = [geo] if geo else []
+    return {
+        "opportunity_title": row.get("opportunity_name"),
+        "opportunity_link": row.get("opportunity_url"),
+        "opportunity_id": row.get("opportunity_id"),
+        "brief_description": row.get("brief_description"),
+        # Use the SHORT synthesized brief for the gate (the row already passed the
+        # extraction theme/not-rfp gate) — avoids re-running heavy regex over the
+        # full 20k-char raw_text, which is what made screening slow.
+        "_page_text": (row.get("brief_description")
+                       or (row.get("raw_text") or "")[:3000]),
+        "funding_agency": row.get("funder_name"),
+        "submission_deadline": row.get("deadline"),
+        "estimated_value": row.get("grant_amount"),
+        "currency": row.get("currency"),
+        "geographic_scope": list(geo),
+        "solicitation_type": row.get("solicitation_type"),
+        "instrument_type": row.get("instrument_type"),
+        "opportunity_type": row.get("opportunity_type"),
+        # Restore applicant types for the applicant-type match gate during screening.
+        "_applicant_types": row.get("eligibility_applicant_types") or None,
+        "date_posted": row.get("date_posted"),
+        "source": row.get("source"),
+        "_source_origin": row.get("source"),
+        "_source_class": "primary",       # already extracted from a primary source
+        "extraction_uid": row.get("uid"),
+    }
+
+
+# Marker stored in scan_logs.source for a screening ("Find my matches") run, so the
+# UI can split Extraction history (the crawl) from Found-matches history (screening).
+MATCH_RUN_LABEL = "🎯 Find my matches"
+
+
+def run_screening(*, dry_run: bool = False, status: str = "Open",
+                  triggered_by: str = "manual") -> dict:
+    """Re-screen the internal extracted store against this tenant's policies.
+    Returns {considered, eligible, added, already_tracked, rejected}. `eligible` =
+    rows that passed the gate; `added` = TRULY new rfp_submissions inserts (vs
+    `already_tracked` = eligible ones merge-updated because they were already in the
+    pipeline). No external network calls."""
+    import time as _time
+    from core import extracted_store
+    t0 = _time.time()
+
+    def _count() -> int:
+        try:
+            return get_client().table("rfp_submissions").select(
+                "id", count="exact").limit(1).execute().count or 0
+        except Exception:
+            return 0
+
+    rows = extracted_store.list_extracted(status=status, limit=5000)
+    cands = [_candidate_from_extracted(r) for r in rows if r.get("opportunity_url")]
+    if not cands:
+        res = {"considered": 0, "eligible": 0, "added": 0,
+               "already_tracked": 0, "rejected": 0}
+    else:
+        before = 0 if dry_run else _count()
+        # llm_adjudicate=True: regex-first, then LLM ONLY for silent-geography
+        # survivors (bounded by the per-process LLM call cap).
+        eligible, dup, rejected = ingest_candidates(
+            cands, dry_run=dry_run, llm_adjudicate=True)
+        added = max(0, (_count() - before)) if not dry_run else 0
+        res = {"considered": len(cands), "eligible": eligible, "added": added,
+               "already_tracked": max(0, eligible - added), "rejected": rejected}
+    if not dry_run:                              # log for the Eligible-funding history
+        try:
+            get_client().table("scan_logs").insert({
+                "source": MATCH_RUN_LABEL, "triggered_by": triggered_by,
+                "rfps_found": res["considered"], "rfps_new": res["eligible"],
+                "rfps_duplicate": res["already_tracked"], "rfps_rejected": res["rejected"],
+                "duration_sec": round(_time.time() - t0, 3), "errors": None,
+            }).execute()
+        except Exception as exc:
+            log.debug("run_screening log failed: %s", exc)
+    return res

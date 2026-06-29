@@ -777,19 +777,58 @@ def _theme_hit(kw: str, text: str) -> bool:
     return bool(re.search(r"\b" + re.escape(kw) + end, text, re.IGNORECASE))
 
 
-def theme_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
+def theme_eligible(candidate: dict[str, Any], policies: dict[str, Any],
+                   *, llm_theme: bool = False) -> tuple[bool, str]:
     themes = policies.get("themes", {}) or {}
     required = themes.get("required_any") or []
     excluded = themes.get("excluded_any") or []
     text = _full_text(candidate)
+    title = candidate.get("opportunity_title") or ""
+    req_hits = [kw for kw in required if kw and _theme_hit(kw, text)]
+    req_hit = bool(req_hits)
+    exc_in_title = any(_theme_hit(e, title) for e in excluded if e)
+    exc_in_body = any(_theme_hit(e, text) for e in excluded if e)
 
-    if excluded and any(_theme_hit(e, text) for e in excluded if e):
-        return False, "matches excluded theme"
-    if not required:
-        return True, "no theme requirements set"
-    if any(_theme_hit(kw, text) for kw in required if kw):
-        return True, "matches required theme keyword"
-    return False, "no required theme keyword matched"
+    def _regex_verdict() -> tuple[bool, str]:
+        # An excluded term is a HARD reject only when the call is actually ABOUT
+        # it (term in the TITLE) OR when the call is off-theme anyway (no required
+        # match). An INCIDENTAL body mention inside an on-theme call is NOT a
+        # reject — e.g. a global-health RFP that name-drops "clinical trial and
+        # regulatory infrastructure" isn't a Phase-II clinical-trial call.
+        if excluded and (exc_in_title or (exc_in_body and not req_hit)):
+            return False, "matches excluded theme"
+        if not required:
+            return True, "no theme requirements set"
+        if req_hit:
+            return True, "matches required theme keyword"
+        return False, "no required theme keyword matched"
+
+    # LLM adjudication on the AMBIGUOUS cases only — where substring matching is
+    # unreliable: a conflict (excluded AND required both hit), or a THIN required
+    # match (≤2 distinct keywords) that may be incidental (e.g. an animal-ag RFP
+    # matching "influenza"/"pandemic"). The judge reads the whole page and rules
+    # on-theme vs incidental. Cheap: the verdict is content-hash cached, so the
+    # enrichment call in core.extract reuses it. Gated to the extraction gate
+    # (llm_theme=True) so tenant screening stays regex-fast. A clear regex verdict
+    # (no required hit at all, or a strong ≥3-keyword match) skips the LLM.
+    ambiguous = req_hit and ((exc_in_title or exc_in_body) or len(req_hits) <= 2)
+    if llm_theme and ambiguous:
+        try:
+            from core import llm_judge
+            if llm_judge.is_enabled():
+                body = (candidate.get("_page_text")
+                        or candidate.get("brief_description") or "")
+                j = llm_judge.judge(
+                    {"opportunity_title": title,
+                     "opportunity_link": candidate.get("opportunity_link"),
+                     "brief_description": body}, policies)
+                if j and j.get("theme_relevant") is True:
+                    return True, "theme (LLM): on-theme"
+                if j and j.get("theme_relevant") is False:
+                    return False, "theme (LLM): off-theme (incidental keyword)"
+        except Exception:
+            pass
+    return _regex_verdict()
 
 
 # Closure phrases — donors who run "rolling" calls (no deadline) but
@@ -816,6 +855,17 @@ _CLOSURE_PHRASE_RE = re.compile(
     # Title/snippet shorthand: "(2026, now closed)", "(closed)", "— now closed".
     r"|\bnow\s+closed\b"
     r"|\(\s*closed\s*\)"
+    # Status badge "Closed call" / "Call closed" (research.swiss etc.).
+    r"|\bclosed call\b"
+    r"|\bcall closed\b"
+    r"|\bstatus:\s*closed\b"
+    # "This RFP closed on May 11, 2026" + the thank-you-to-applicants wrap-up
+    # (Coefficient Giving biosecurity case). Date-anchored → high precision.
+    r"|\b(?:rfp|rfa|rfq|call|round|competition|programme?|program|fund|window)\s+"
+    r"(?:is\s+|was\s+|has\s+(?:been\s+)?|now\s+)?closed\b"
+    r"|\bclosed\s+on\s+[A-Z][a-z]+\.?\s+\d{1,2},?\s+\d{4}"
+    r"|thank\s+(?:everyone|you|all|those)[^.]{0,60}?"
+    r"(?:who\s+)?(?:submitted|applied|expressed\s+interest)"
     # Past-tense "this round is over" language (Global Affairs Canada case:
     # "the assessment of the proposals … has concluded and applicants have
     # been informed of their results").
@@ -1323,11 +1373,40 @@ _DONOR_INVEST_TITLE_RE = re.compile(
 _OFF_MISSION_AWARD_RE = re.compile(
     r"\b(course grants?|core facilit|shared facilit|instrumentation grant"
     r"|academy award|curriculum grant|teaching grant)\b", re.IGNORECASE)
+# Announcement of a FUTURE / upcoming call — topics or plans for a later cycle,
+# not an open call now (e.g. GACD "Future GACD funding call topics 2025 to 2027").
+# These are valuable for a future public "Announcements" section but must NOT enter
+# as live RFPs. Matched on the TITLE to stay conservative (a live call may mention
+# future dates in its body). opportunity_type = "announcement" downstream.
+_FUTURE_ANNOUNCE_RE = re.compile(
+    r"\b(future\b[^.]{0,40}\bcall topics?"
+    r"|call topics?\b[^.]{0,20}\b20\d\d"
+    r"|upcoming\s+(?:call|funding|grant|competition|opportunit)"
+    r"|forthcoming\s+(?:call|funding|grant|competition)"
+    r"|future\s+funding\s+(?:call|round|opportunit))",
+    re.IGNORECASE)
 
 
-def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
+# Coefficient Giving fund-overview parent page: /funds/<slug>/ with no further
+# sub-path. The real call always lives one level deeper (a "Request for Proposals"
+# tab), so the bare fund page is never an RFP.
+_CG_FUND_PARENT_RE = re.compile(
+    r"coefficientgiving\.org/funds/[a-z0-9-]+/?(?:[?#].*)?$", re.I)
+
+
+def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
+                *, geo_org_gates: bool = True,
+                llm_adjudicate: bool = False,
+                llm_theme: bool = False) -> tuple[bool, str]:
     """Combined gate: search-URL, language, feasibility, deadline, country,
-    theme. Logged in scan output for transparency."""
+    theme. Logged in scan output for transparency.
+
+    `geo_org_gates=False` skips the GEOGRAPHY + ORG-relative gates (US-domestic,
+    geographic-exclusion, applicant-type, country, feasibility) so the same gate
+    can serve the EXTRACTION stage (DATA_SCHEMA_ETL.md §3): geography moves to the
+    per-tenant scorer (tier 2), and the global store keeps every geography. The
+    keep-set (not-an-rfp, opportunity-type, language, off-theme, deadline-past)
+    is unchanged. Default True preserves the existing Screened-pipeline behaviour."""
     # Search/filter result URLs are not grant detail pages — they re-list
     # grants on click. Reject before any other check.
     link = candidate.get("opportunity_link") or ""
@@ -1344,6 +1423,12 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     # Listing / index of calls (never a single opportunity) — crawl seed only.
     if _LISTING_URL_RE.search(link):
         return False, "URL lists / indexes calls, not a single call"
+    # Coefficient Giving fund PARENT page (/funds/<slug>/) only describes what they
+    # fund — a real RFP lives ONLY in a tabbed sub-page beneath it. Reject the
+    # parent so it never lands as a false call, regardless of how it was found.
+    if _CG_FUND_PARENT_RE.search(link):
+        return False, ("not-an-rfp: Coefficient Giving fund overview page "
+                       "(RFPs live in a sub-page tab, not the fund landing page)")
     _t = (candidate.get("opportunity_title") or "").strip()
     if _LISTING_TITLE_RE.match(_t):
         return False, "title is a generic calls-listing heading, not a single call"
@@ -1363,6 +1448,11 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     # Internal course / facility / academy award — not a programme solicitation.
     if _OFF_MISSION_AWARD_RE.search(_t):
         return False, "not-an-rfp: internal course / facility / academy award (off-mission)"
+    # Announcement of a FUTURE / upcoming call (topics for a later cycle) — not open
+    # now. Correct reason for GACD "Future … call topics 2025-2027" (was mislabelled
+    # geography). Candidate for the public "Announcements" section later.
+    if _FUTURE_ANNOUNCE_RE.search(_t):
+        return False, "not-an-rfp: announcement of a future / upcoming call (not open yet)"
     # Non-primary sources never get stored: competitor AGGREGATORS (DevelopmentAid,
     # GrantBite, …) — a crawl SEED only; the pipeline resolves theme-relevant hits
     # to the donor's OWN page first, so anything still on an aggregator host here
@@ -1413,8 +1503,16 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     ok, reason = language_eligible(candidate)
     if not ok:
         return False, f"language: {reason}"
+    # Org-facing only (skipped during extraction so the public store keeps them):
+    # recognition PRIZES aren't proposal calls, and FORTHCOMING/announcement entries
+    # aren't open yet — neither belongs in a tenant's screened feed.
+    if geo_org_gates:
+        if (candidate.get("solicitation_type") or "").strip().lower() == "prize":
+            return False, "type: recognition prize (not a proposal call)"
+        if (candidate.get("opportunity_type") or "").strip().lower() == "announcement":
+            return False, "not-an-rfp: forthcoming / announcement (not open yet)"
     rejected, reason = feasibility_hard_reject(candidate, policies)
-    if rejected:
+    if geo_org_gates and rejected:
         return False, f"feasibility: {reason}"
     # Closure phrase — catches rolling-deadline donors who've explicitly
     # paused intake ("no longer accepting applications"). Run before
@@ -1423,23 +1521,23 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     if rejected:
         return False, reason
     rejected, reason = us_domestic_only_reject(candidate, policies)
-    if rejected:
+    if geo_org_gates and rejected:
         return False, f"geography: {reason}"
     # Region/country-exclusive scope that leaves our org out (EU / Mediterranean /
     # India-only / Canada-only …). Runs before the lenient regional/silent gate so
     # an exclusive call isn't parked just because it also name-drops an in-region
     # country (e.g. GCGH "India-based … only" that also mentions South Africa).
     rejected, reason = geographic_exclusion_reject(candidate, policies)
-    if rejected:
+    if geo_org_gates and rejected:
         return False, reason
     # Applicant-type match — does the call admit the deploying org's type at all?
     rejected, reason = applicant_type_mismatch_reject(candidate, policies)
-    if rejected:
+    if geo_org_gates and rejected:
         return False, f"eligibility: {reason}"
     ok, reason = country_eligible(candidate, policies)
-    if not ok:
+    if geo_org_gates and not ok:
         return False, f"country: {reason}"
-    ok, reason = theme_eligible(candidate, policies)
+    ok, reason = theme_eligible(candidate, policies, llm_theme=llm_theme)
     if not ok:
         return False, f"theme: {reason}"
     # Deadline LAST: only attribute a "deadline" reject when the call is
@@ -1451,6 +1549,34 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bo
     ok, reason = deadline_in_future(candidate)
     if not ok:
         return False, f"deadline: {reason}"
+    # LLM fallback (matching) — regex-first: only when the candidate PASSED every
+    # regex gate but its geography is SILENT (no scope captured), so the regex geo
+    # gate couldn't judge it. Ask the LLM whether the org's country qualifies; reject
+    # only on an explicit False. Bounded: most rows have a scope (skip), and
+    # llm_judge has a per-process call cap. Org-facing only (geo_org_gates).
+    if geo_org_gates and llm_adjudicate:
+        _geo = candidate.get("geographic_scope")
+        _has_geo = (bool(_geo) if isinstance(_geo, (list, tuple))
+                    else bool(str(_geo or "").strip()))
+        if not _has_geo:
+            try:
+                from core import llm_judge
+                if llm_judge.is_enabled():
+                    _j = llm_judge.judge({
+                        "opportunity_title": candidate.get("opportunity_title"),
+                        "opportunity_link": candidate.get("opportunity_link"),
+                        "brief_description": (candidate.get("_page_text")
+                                              or candidate.get("brief_description")),
+                    }, policies)
+                    if _j:
+                        # Don't discard the structured verdict — stash it on the
+                        # candidate so the pipeline can persist deadline / amount /
+                        # type / geography it recovered (it already paid for the call).
+                        candidate["_llm_judgment"] = _j
+                        if _j.get("country_eligible") is False:
+                            return False, "geography (LLM): org country not eligible"
+            except Exception:
+                pass
     return True, "eligible"
 
 
@@ -1493,6 +1619,24 @@ _MUST_KEYS = ("qualification", "strategic_fit", "capacity",
               "geographic_fit", "cofinancing")
 _PREFER_KEYS = ("funding_quality", "funder_relationship",
                 "competitiveness", "bid_effort")
+
+
+def recommend_from_composite(crit_vals: dict[str, Any], composite: float,
+                             *, fatal: bool = False) -> str:
+    """THE canonical Auto-decision rule (single source — used by auto_score and by
+    any path that re-derives a criterion, e.g. the MUST-5 LLM feedback loop).
+
+    2026-06-26: the gate is now a NON-DYNAMIC fatal-factor check, not 'any MUST<2'.
+    `fatal` comes from `criteria_derive.fatal_decline` — True only when the org
+    EXPLICITLY fails a structural eligibility gate it can't fix before the deadline
+    (legal identity, no geographic reach, a donor stage/budget/track-record floor,
+    or an inaccessible funding route). Dynamic gaps (no SAM/MOU yet) no longer
+    hard-decline — they lower the composite and usually Park for review; MUST
+    weight (.65) still sinks genuinely weak bids below the band.
+      fatal → Decline · else ≥90 Proceed · 70–89 Park · <70 Decline."""
+    if fatal:
+        return "Decline"
+    return "Proceed" if composite >= 90 else "Park" if composite >= 70 else "Decline"
 
 # Internal scoring vocab ("Yes"/"Partial"/"No") → DB / UI dropdown vocab
 # ("True"/"Partial"/"False"). Applied right before auto_score returns so
@@ -1912,21 +2056,36 @@ def auto_score(
     scorer_input = {k: values[k] for k in values if k != "feasibility"}
     score, _legacy_rec = score_submission(scorer_input, decline_flags)
 
-    # Recommendation — PATH B (agreed 2026-06-19): composite_match =
-    #   0.80*criteria_score + 0.20*donor-org extras, with a HARD MUST gate
-    #   (any MUST scored No → Decline), thresholds ≥70 Proceed / 45–69 Park.
-    # Falls back to the criteria-only decision tree if matching is unavailable.
-    rec = _decision_from_criteria(values)
+    # SCORE = composite (0.80 criteria + 0.20 donor-org extras), shown on the
+    # Bid-Strength gauge. We keep the composite for the SCORE, but the DECISION
+    # comes from the explicit rule below (not the composite's own thresholds).
+    rec = _decision_from_criteria(values)   # fallback if matching is unavailable
     try:
         from core import matching as _matching
         from core import org_profile as _orgp
         from core import settings as _settings
         _m = _matching.composite_match(
             {**candidate, **values}, _orgp.get_profile(), _donor_row, _settings.get_org())
-        rec = _m["decision"]
         score = _m["composite"]
     except Exception:
         pass
+
+    # DECISION RULE (2026-06-26, supersedes the blanket MUST-gate). Auto-Decline
+    # ONLY on a NON-DYNAMIC fatal factor (criteria_derive.fatal_decline) — a
+    # structural ineligibility the org can't fix before the deadline (legal
+    # identity, no geographic reach, a donor stage/budget/track-record floor, or
+    # an inaccessible funding route). Otherwise band the composite: ≥90 Proceed ·
+    # 70–89 Park · <70 Decline. Dynamic gaps (no SAM/MOU yet) lower the score and
+    # usually Park for review; the high MUST weight (.65) still sinks weak bids.
+    try:
+        from core import criteria_derive as _cd
+        from core import org_profile as _op
+        from core import settings as _st
+        _is_fatal, _ = _cd.fatal_decline(
+            _op.get_profile(), candidate, _donor_row, _st.get_org())
+    except Exception:
+        _is_fatal = False
+    rec = recommend_from_composite(values, score, fatal=_is_fatal)
 
     # SPARSE-TEXT GUARD: if the candidate text is too thin to make a fair
     # judgement (typical for listing-page anchors where we only got a
@@ -1939,35 +2098,14 @@ def auto_score(
     if rec == "Decline" and text_chars < 200:
         rec = "Park"
 
-    # MISSING-DEADLINE GUARD: many donor landing pages publish the actual
-    # closing date in a banner image, an embedded calendar widget, or a
-    # cross-site companion page (e.g. Fondation Pierre Fabre's call-for-
-    # projects detail page where the application window only appears as
-    # text inside a graphic). The regex pipeline cannot read those, so
-    # the candidate currently passes is_eligible() with
-    # deadline_in_future = permissive(None). That's how expired calls
-    # were slipping through as "Proceed".
-    #
-    # Treat missing deadlines as uncertainty, not "open". Downgrade any
-    # Proceed → Park when no deadline could be extracted, so the
-    # reviewer manually confirms the call is still open before any
-    # outbound effort. False-positive cost: a real, deadline-less call
-    # lands in Park instead of Proceed (cheap to promote). False-
-    # negative cost (current): expired calls land in Proceed (expensive
-    # to clean up + risks the team chasing dead RFPs).
-    if rec == "Proceed" and not candidate.get("submission_deadline"):
-        rec = "Park"
-
-    # GEO GUARD (REJECT→PARK): geography no longer drops a candidate (see
-    # country_eligible). Instead, a call that doesn't clearly match an eligible
-    # country — region-wide ("sub-Saharan Africa"), LMIC-framed, geo-silent, or
-    # naming a non-eligible country — is PARKED for human confirmation rather
-    # than auto-Proceeded. Clearly-eligible-country (or open-to-international)
-    # calls still Proceed. Cheap false-positive (a regional fit lands in Park,
-    # one click to promote) vs the costly false-negative we had (valid regional
-    # calls dropped entirely).
-    if rec == "Proceed" and _geo_strength(candidate, policies) != "strong":
-        rec = "Park"
+    # NOTE (2026-06-25): the old "Proceed→Park" downgrades for missing-deadline
+    # and weak/region-wide geography were REMOVED. They made the decision
+    # unpredictable (an all-MUSTs-2, 90+ score call landed in Park because its
+    # geography was "LMICs"). Geography is now fully judged by MUST-4
+    # (geographic_fit, which credits inclusive tiers like LMICs as own-presence),
+    # and the decision is the clean MUST-gate + score-band rule above. Expired
+    # calls are already dropped upstream by the extraction/eligibility deadline
+    # gate, so they don't reach scoring as Proceed.
 
     # BLANK-CHEQUE GUARD (final say): a candidate with no substantive data to judge
     # (no deadline, value, geography, specific program area, or real description)
@@ -2004,11 +2142,12 @@ def auto_score(
         "alignment_score": score,
         "auto_recommendation": rec,
         "decline_flags_present": decline_flags,
-        # Auto-promote the recommendation into `decision` so the Tracking
-        # page (filters decision = Proceed) immediately reflects post-scan
-        # triage without requiring a human click per row. Reviewers can
-        # override anything on the Review tab.
-        "decision": rec,
+        # `decision` is the HUMAN's call and stays NULL (= "Pending") until a
+        # reviewer decides — it must never be pre-filled from the model, or the
+        # learning signal is polluted (we'd be training on our own guess). The
+        # system's suggestion lives in `auto_recommendation` ("Auto-decision");
+        # screened/tracking views coalesce decision→auto_recommendation only for
+        # display bucketing, never for the stored value.
         # Default the applicant role. Park / Decline rows still get a role
         # so the team has context if they choose to review.
         "applicant_role": applicant_role,
@@ -2026,13 +2165,17 @@ def auto_score(
     # high-level categories when we (re)classify.
     from core.program_area_classifier import (
         PROGRAM_AREA_KEYWORDS as _PAK, UNSPECIFIED as _UNSPEC,
-        category_full as _catfull,
+        category_full as _catfull, subarea_label as _sublab,
     )
     _cur_pa = candidate.get("program_area")
     _cur_list = _cur_pa if isinstance(_cur_pa, (list, tuple)) else ([_cur_pa] if _cur_pa else [])
-    if not any(str(v) in _PAK for v in _cur_list):
+    # match on either the canonical key OR the bare sub-label (stored form)
+    if not any(str(v) in _PAK or str(v) in {_sublab(k) for k in _PAK} for v in _cur_list):
         prog = [a for a in (_extract_program_area(text, policies) or []) if a != _UNSPEC]
         if prog:
-            out["program_area"] = prog
+            # STORE the bare sub-label ("Mental Health"), never the prefixed key
+            # ("NCDs - Mental Health") — the category prefix is dropped everywhere
+            # per policy. focus_theme keeps the category (computed from the key).
             out["focus_theme"] = "; ".join(sorted({_catfull(a) for a in prog}))
+            out["program_area"] = [_sublab(a) for a in prog]
     return out
