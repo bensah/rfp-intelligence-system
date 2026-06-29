@@ -488,7 +488,7 @@ def _factor_html(ckey: str) -> str:
     return "".join(out)
 
 
-def _qual_rule(scores: list[float]) -> str:
+def _qual_rule(scores: list[float], by_key=None) -> str:
     """MUST-1 roll-up: any 0 → No · any 0.5 → Mostly · all 1 → Yes."""
     if any(s <= 0.0 for s in scores):
         return "No, not eligible"
@@ -497,13 +497,13 @@ def _qual_rule(scores: list[float]) -> str:
     return "Yes, fully"
 
 
-def _strat_rule(scores: list[float]) -> str:
+def _strat_rule(scores: list[float], by_key=None) -> str:
     """MUST-2 roll-up: BEST-aligned theme wins — 1 → Strongly · 0.5 → Limited · else Off."""
     best = max(scores, default=0.0)
     return {1.0: "Strongly aligns", 0.5: "Limited priority"}.get(best, "Off-strategy")
 
 
-def _cap_rule(scores: list[float]) -> str:
+def _cap_rule(scores: list[float], by_key=None) -> str:
     """MUST-3 roll-up (gate, like MUST-1): any 0 → No, beyond us · any 0.5 → stretch ·
     all 1 → comfortably."""
     if any(s <= 0.0 for s in scores):
@@ -513,7 +513,7 @@ def _cap_rule(scores: list[float]) -> str:
     return "Yes, comfortably"
 
 
-def _geo_rule(scores: list[float]) -> str:
+def _geo_rule(scores: list[float], by_key=None) -> str:
     """MUST-4 roll-up: single tiered component — 1 → own presence · 0.5 → via a
     partner · else no presence."""
     best = max(scores, default=0.0)
@@ -521,7 +521,7 @@ def _geo_rule(scores: list[float]) -> str:
             0.5: "Yes, via a partner"}.get(best, "No presence there")
 
 
-def _cofin_rule(scores: list[float]) -> str:
+def _cofin_rule(scores: list[float], by_key=None) -> str:
     """MUST-5 roll-up (gate, like MUST-1): any 0 → required · any 0.5 (soft
     cost-share/prefinance) → with effort · all 1 → none required."""
     if any(s <= 0.0 for s in scores):
@@ -531,6 +531,56 @@ def _cofin_rule(scores: list[float]) -> str:
     return "Yes, none required"
 
 
+# ── PREFER roll-up rules (component scores → the criterion's response label) ────────
+# Same contract as the MUST rules so PREFER 6-9 render with the SAME component editor.
+# Labels MUST match core.scorer.CRITERION_RESPONSES for that key (so Save stores a
+# valid value). Two need keyed access (`by_key`): relationship (grantee outranks
+# contact) and bid-effort (a time × team matrix).
+def _fq_rule(scores: list[float], by_key=None) -> str:
+    """PREFER-6 funding quality: ratio of active size-fit components."""
+    if not scores:
+        return "Not sure"
+    r = sum(scores) / len(scores)
+    return "High" if r >= 0.75 else ("Moderate" if r >= 0.4 else "Low")
+
+
+def _rel_rule(scores: list[float], by_key=None) -> str:
+    """PREFER-7 donor relationship (OR-tiers): grantee is strongest, then any contact."""
+    bk = by_key or {}
+    if bk.get("rel_grantee", 0.0) >= 1.0:
+        return "Current/past grantee"
+    if bk.get("rel_grantee", 0.0) >= 0.5 or bk.get("rel_contact", 0.0) >= 0.5:
+        return "Some contact"
+    return "None"
+
+
+def _comp_rule(scores: list[float], by_key=None) -> str:
+    """PREFER-8 competitiveness: track record dominates, else the overall signal ratio."""
+    if not scores:
+        return "Not sure"
+    bk = by_key or {}
+    r = sum(scores) / len(scores)
+    track = bk.get("comp_track")
+    if (track is not None and track >= 1.0) or r >= 0.66:
+        return "Strong (limited field / incumbent / clear edge)"
+    if (track is not None and track >= 0.5) or r >= 0.34:
+        return "Moderate"
+    return "Weak (wide-open)"
+
+
+def _bid_rule(scores: list[float], by_key=None) -> str:
+    """PREFER-9 bid effort: a time × business-development-team matrix. The reviewer can
+    set the time component to 1 (ample) / 0.5 (tight) / 0 (not enough)."""
+    bk = by_key or {}
+    t = bk.get("bid_time", 1.0)               # inactive (no deadline) → assume ample
+    has_team = bk.get("bid_team", 0.0) >= 1.0
+    if t >= 1.0:
+        return "Ample time, sufficient resources" if has_team else "Ample time, but no dedicated team"
+    if t >= 0.5:
+        return "Tight but doable, with a team" if has_team else "Tight, and no dedicated team"
+    return "Not enough time, even with a team" if has_team else "Not enough time, no team"
+
+
 def _snap(v) -> float:
     """Coerce any input to the nearest allowed component score: 0 / 0.5 / 1."""
     try:
@@ -538,6 +588,17 @@ def _snap(v) -> float:
     except (TypeError, ValueError):
         v = 0.0
     return max(0.0, min(1.0, round(v * 2) / 2))
+
+
+def _factor_score(it: dict) -> float:
+    """A component's editable 0/0.5/1 score. MUST score-factors carry `score`; the
+    PREFER met-based factors don't, so map met → score (True→1 · False→0 · None→0.5)
+    so both kinds render in the same numeric component editor."""
+    sc = it.get("score")
+    if sc is not None:
+        return _snap(sc)
+    met = it.get("met")
+    return 1.0 if met is True else (0.0 if met is False else 0.5)
 
 
 def _crit_label_color(lbl: str) -> str:
@@ -569,11 +630,13 @@ def _item_score_editor(uid: str, key: str, items: list[dict], opts: list[str],
     # Classification = rule over the CURRENT active component values (session, else the
     # derived default). Computed BEFORE the inputs so the inline label reflects edits.
     scores = []
+    by_key = {}
     for it in active:
         qk = f"qnum_{uid}_{key}_{it['key']}"
-        dflt = it.get("score")
-        scores.append(_snap(st.session_state.get(qk, float(dflt) if dflt is not None else 0.0)))
-    lbl = rule(scores)
+        sc = _snap(st.session_state.get(qk, _factor_score(it)))
+        scores.append(sc)
+        by_key[str(it.get("key"))] = sc
+    lbl = rule(scores, by_key)
     st.markdown(
         f"<div style='font-size:0.95rem;margin:0.15rem 0 0.1rem'>"
         f"<span style='font-weight:700'>{_esc(LABELS[key])}</span>&nbsp; → &nbsp;"
@@ -592,10 +655,9 @@ def _item_score_editor(uid: str, key: str, items: list[dict], opts: list[str],
             + ("" if is_act else " · not required") + "</div>", unsafe_allow_html=True)
         if is_act:
             qk = f"qnum_{uid}_{key}_{ik}"
-            _dflt = it.get("score")
             c2.number_input(
                 it.get("name") or ik, min_value=0.0, max_value=1.0, step=0.5,
-                value=float(_dflt) if _dflt is not None else 0.0,
+                value=_factor_score(it),
                 key=qk, on_change=_mk_snap(qk), format="%.1f", label_visibility="collapsed")
         else:
             c2.number_input(                       # empty/disabled until activated
@@ -628,16 +690,18 @@ with grid_col:
         with target:
             if edit_mode:
                 opts = CRITERION_RESPONSES.get(key, [])
-                # MUST-1 and MUST-2 are COMPOSITES — edit each item's score (0/0.5/1);
-                # the label derives from the items and flips the stored verdict on Save.
-                if key in ("qualification", "strategic_fit", "capacity",
-                           "geographic_fit", "cofinancing"):
+                # ALL 9 criteria are edited via their component sub-factors (0/0.5/1);
+                # the label derives from the components and flips the stored verdict on
+                # Save. PREFER 6-9 now render the SAME component editor as MUST 1-5.
+                _RULES = {"qualification": _qual_rule, "strategic_fit": _strat_rule,
+                          "capacity": _cap_rule, "geographic_fit": _geo_rule,
+                          "cofinancing": _cofin_rule, "funding_quality": _fq_rule,
+                          "funder_relationship": _rel_rule, "competitiveness": _comp_rule,
+                          "bid_effort": _bid_rule}
+                if key in _RULES:
                     _items = _bd.get(key) or []     # ALL components (active + inactive)
-                    _rule = {"qualification": _qual_rule, "strategic_fit": _strat_rule,
-                             "capacity": _cap_rule, "geographic_fit": _geo_rule,
-                             "cofinancing": _cofin_rule}[key]
                     edited_values[key] = _item_score_editor(
-                        row["uid"], key, _items, opts, current, _rule)
+                        row["uid"], key, _items, opts, current, _RULES[key])
                 else:
                     idx = opts.index(current) if current in opts else 0
                     edited_values[key] = st.selectbox(
