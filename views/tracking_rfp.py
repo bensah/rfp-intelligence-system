@@ -96,7 +96,7 @@ def _fetch(year: int) -> pd.DataFrame:
     # Derived columns
     df["_dtd"] = df["submission_deadline"].apply(days_to_deadline)
     df["_dstat"] = df["submission_deadline"].apply(deadline_status)
-    df["_usd"] = df.apply(lambda r: usd_value(r.get("estimated_value"), r.get("currency")), axis=1)
+    df["_usd"] = df.apply(lambda r: usd_value(r.get("call_award_value"), r.get("currency")), axis=1)
 
     # Concatenate Proposal Leads from duplicate group
     dup_res = (
@@ -232,7 +232,7 @@ with st.container(border=True):
     # float (e.g. 5.0) or NaN — `:d` only accepts ints, so coerce + guard.
     top3.metric("Days to deadline",
                 f"{int(dtd):+d}" if pd.notna(dtd) else "—")
-    top4.metric("Value", format_money(row.get("estimated_value"), row.get("currency")))
+    top4.metric("Value", format_money(row.get("call_award_value"), row.get("currency")))
     top4.caption(f"≈ ${row.get('_usd') or 0:,.0f} USD")
 
     d1, d2, d3 = st.columns(3)
@@ -448,7 +448,7 @@ def _view_rfp(r: dict) -> None:
     _icon, _sbg = BADGE.get(_status, ("⚪", "#eee"))
     _dtd = r.get("_dtd")
     _days = f"{int(_dtd):+d}" if pd.notna(_dtd) else "—"
-    _val = format_money(r.get("estimated_value"), r.get("currency"))
+    _val = format_money(r.get("call_award_value"), r.get("currency"))
     _usd = f"≈ ${float(r.get('_usd') or 0):,.0f} USD"
 
     # ── Header banner ──────────────────────────────────────────────────────

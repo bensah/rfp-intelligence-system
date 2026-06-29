@@ -136,7 +136,7 @@ def _build_messages(candidate: dict[str, Any], policies: dict[str, Any]) -> list
         '  "submission_deadline": final closing date as "YYYY-MM-DD", or null if '
         "none / rolling / clearly past.\n"
         '  "is_closed": true if the page says the call is closed/concluded/past.\n'
-        '  "estimated_value": numeric award amount (no symbols), or null. READ '
+        '  "call_award_value": numeric award amount (no symbols), or null. READ '
         "amounts written in prose too — e.g. 'up to $200,000', 'grants of EUR 1–3 "
         "million', 'maximum award US$2M'. For staged calls use the LARGEST tier.\n"
         '  "currency": ISO code (USD/EUR/GBP…) or null.\n'
@@ -223,7 +223,7 @@ def _normalise(p: dict[str, Any], model: str) -> dict[str, Any]:
     dl = p.get("submission_deadline")
     if not (isinstance(dl, str) and _ISO_DATE_RE.match(dl)):
         dl = None
-    val = p.get("estimated_value")
+    val = p.get("call_award_value")
     try:
         val = float(val) if val is not None and str(val) != "" else None
     except (TypeError, ValueError):
@@ -240,7 +240,7 @@ def _normalise(p: dict[str, Any], model: str) -> dict[str, Any]:
         "solicitation_type": _s(p.get("solicitation_type")),
         "instrument_type": _s(p.get("instrument_type")),
         "submission_deadline": dl,
-        "estimated_value": val,
+        "call_award_value": val,
         "currency": _s(p.get("currency")),
         "funding_tiers": tiers,
         "call_geographic_scope": scope,

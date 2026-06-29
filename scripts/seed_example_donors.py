@@ -67,8 +67,8 @@ NIHR = {
         "Guided by the '4 Is' framework: Impact, Inclusion, Innovation, Investment "
         "(value for money, ODA compliance, sustainability beyond the grant). The "
         "themed call rotates annually; 2026 is the first dedicated AMR theme."),
-    "award_low_usd": "£0.5M",
-    "award_high_usd": "£5M",
+    "donor_award_low": "£0.5M",
+    "donor_award_high": "£5M",
     "total_annual_funding_global": "~£20–30M (2026 AMR themed call, estimated)",
     "total_awards": "253 (163 active + 90 completed since 2016)",
     "total_funding_to_date": "£734.5M (GHR, since 2016)",
@@ -233,8 +233,8 @@ DIV = {
         "Growth, WASH, Energy, Environment, and Democracy/Rights/Governance. Three "
         "investment principles: evidence of impact, cost-effectiveness, and durable "
         "scale (reaching at least 1M people, with a sustainable financing pathway)."),
-    "award_low_usd": "$200K",
-    "award_high_usd": "$1.5M",
+    "donor_award_low": "$200K",
+    "donor_award_high": "$1.5M",
     "total_awards": None,
     "total_funding_to_date": None,
     "funding_mechanism": json.dumps(["Grants"]),
@@ -504,7 +504,7 @@ LIVELIHOOD_IMPACT_FUND = {
         "Livelihoods & economic self-sufficiency — vocational / skills training, jobs, "
         "financial inclusion and economic empowerment, judged on measurable income growth."),
     "funding_mechanism": json.dumps(["Grants"]),
-    "award_low_usd": "$100K", "award_high_usd": "$300K",
+    "donor_award_low": "$100K", "donor_award_high": "$300K",
     "donor_priority_areas": json.dumps([
         "ECON - Jobs & Skills", "EDU - Higher Education & TVET",
         "ECON - Financial Inclusion", "ECON - Social Protection", "GES - Youth Empowerment"]),

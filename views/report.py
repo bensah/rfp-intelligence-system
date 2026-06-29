@@ -1987,12 +1987,12 @@ if _show_sec("5"):
                                .str.startswith("proceed")]
         if not proceed_track.empty:
             pipeline_usd = _series_to_usd(
-                proceed_track["estimated_value"],
+                proceed_track["call_award_value"],
                 proceed_track.get("currency", pd.Series(dtype=str)),
             )
             amt_pipeline = float(pipeline_usd.sum())
             no_pipe_cur = proceed_track[
-                proceed_track["estimated_value"].fillna(0) > 0
+                proceed_track["call_award_value"].fillna(0) > 0
             ].get("currency", pd.Series(dtype=str)).fillna("").str.strip()
             n_missing_pipe_cur = int((no_pipe_cur == "").sum())
         else:
