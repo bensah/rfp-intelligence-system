@@ -18,6 +18,7 @@ Filters (active by default):
 """
 from __future__ import annotations
 
+import html as _html
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -26,6 +27,8 @@ import streamlit as st
 
 from core import dropdowns, settings
 from core.currency import format_money
+from core.scorer import criterion_score
+from core.records import clean_record, clean_df
 from core.pipeline import days_to_deadline, deadline_status, usd_value
 from core.review_week import all_weeks_for_year, week_bounds
 from db.supabase_client import get_client
@@ -39,7 +42,10 @@ today = date.today()
 
 st.markdown(
     f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
-    f"margin:0.15rem 0 0.5rem;'>YTD Proceed Pipeline ({year})</h2>",
+    f"margin:0.15rem 0 0.5rem;'>YTD Proceed Pipeline ({year})</h2>"
+    # Compact metric-value font so long values (e.g. '€1,500,000') fit the card.
+    "<style>[data-testid='stMetricValue']{font-size:1.4rem;line-height:1.2;"
+    "white-space:normal;overflow:visible;}</style>",
     unsafe_allow_html=True,
 )
 st.caption(
@@ -62,7 +68,7 @@ def _fetch(year: int) -> pd.DataFrame:
         .in_("decision", ["Proceed", "Proceed as sub"])
         .execute()
     )
-    df = pd.DataFrame(res.data or [])
+    df = clean_df(pd.DataFrame(res.data or []))
     if df.empty:
         return df
 
@@ -74,11 +80,11 @@ def _fetch(year: int) -> pd.DataFrame:
     dd_lower = df["donor_decision"].fillna("").str.lower()
     df = df[dd_lower.isin({"", "not submitted"})].copy()
     if "progress_status" in df:
-        # Exclude only rows that have actually been submitted to a donor
-        # (Completed = submitted). Discontinued / Missed stay visible so
-        # the team can see what was dropped or missed.
+        # Progress status OVERRIDES: a Completed (submitted) or Discontinued row
+        # drops off the active pipeline entirely — it must not appear in the card,
+        # the dropdown, or the table even though its decision is still "Proceed".
         df = df[~df["progress_status"].fillna("").astype(str).str.strip()
-                .str.lower().isin({"completed"})].copy()
+                .str.lower().isin({"completed", "discontinued"})].copy()
 
     # Not overdue (allow null deadlines)
     df["_deadline_date"] = pd.to_datetime(df["submission_deadline"], errors="coerce", format="ISO8601").dt.date
@@ -109,7 +115,10 @@ def _fetch(year: int) -> pd.DataFrame:
 
     def _leads(r):
         leads = [r.get("proposal_lead")] + extra_leads.get(r["uid"], [])
-        return ", ".join(sorted({l for l in leads if l}))
+        # NaN (a float) is truthy, so guard on type — a blank pandas cell would
+        # otherwise slip past `if l` and break ", ".join (expected str, got float).
+        return ", ".join(sorted({l.strip() for l in leads
+                                 if isinstance(l, str) and l.strip()}))
 
     df["all_leads"] = df.apply(_leads, axis=1)
     df = df.sort_values(by="_dtd", na_position="last").reset_index(drop=True)
@@ -140,6 +149,8 @@ k4.metric("Pipeline value (USD)", f"${float(df['_usd'].sum()):,.0f}")
 # RFP selector — combo dropdown
 # -----------------------------------------------------------------------------
 SELECTED_UID_KEY = "tracking_selected_uid"
+PICK_KEY = "tracking_pick_label"          # selectbox widget state
+TABLE_KEY = "tracking_browse"             # dataframe widget state
 
 
 def _label(r: dict) -> str:
@@ -148,23 +159,45 @@ def _label(r: dict) -> str:
 
 labels = [_label(r) for _, r in df.iterrows()]
 uid_by_label = {_label(r): r["uid"] for _, r in df.iterrows()}
+label_by_uid = {uid: lbl for lbl, uid in uid_by_label.items()}
+_uids = df["uid"].tolist()
 
-stored_uid = st.session_state.get(SELECTED_UID_KEY)
-default_idx = next(
-    (i for i, r in enumerate(df.itertuples()) if r.uid == stored_uid),
-    0,
-)
+# Single source of truth = SELECTED_UID_KEY. The selectbox AND the table both write
+# it ONLY from their own on-change callbacks (which run once, before the next render),
+# so the two widgets never fight across reruns — this is what kills the flicker /
+# auto-uncheck loop. No manual st.rerun() anywhere.
+if st.session_state.get(SELECTED_UID_KEY) not in _uids:
+    st.session_state[SELECTED_UID_KEY] = _uids[0]
+if st.session_state.get(PICK_KEY) not in labels:        # keep selectbox in sync
+    st.session_state[PICK_KEY] = label_by_uid[st.session_state[SELECTED_UID_KEY]]
 
-picked_label = st.selectbox(
-    "Select RFP to review",
-    labels,
-    index=default_idx,
+
+def _on_pick() -> None:
+    st.session_state[SELECTED_UID_KEY] = uid_by_label.get(
+        st.session_state.get(PICK_KEY), st.session_state[SELECTED_UID_KEY])
+
+
+def _on_table_select() -> None:
+    state = st.session_state.get(TABLE_KEY)
+    sel = getattr(state, "selection", None)
+    if sel is None and isinstance(state, dict):
+        sel = state.get("selection")
+    rows = getattr(sel, "rows", None)
+    if rows is None and isinstance(sel, dict):
+        rows = sel.get("rows")
+    if rows:
+        uid = _uids[rows[0]]
+        st.session_state[SELECTED_UID_KEY] = uid
+        st.session_state[PICK_KEY] = label_by_uid.get(uid, st.session_state.get(PICK_KEY))
+
+
+st.selectbox(
+    "Select RFP to review", labels, key=PICK_KEY, on_change=_on_pick,
     help="Or click a row in the table at the bottom.",
 )
-selected_uid = uid_by_label[picked_label]
-st.session_state[SELECTED_UID_KEY] = selected_uid
+selected_uid = st.session_state[SELECTED_UID_KEY]
 
-row = df[df["uid"] == selected_uid].iloc[0].to_dict()
+row = clean_record(df[df["uid"] == selected_uid].iloc[0].to_dict())
 
 st.divider()
 
@@ -281,6 +314,45 @@ with st.container(border=True):
 
 
 # -----------------------------------------------------------------------------
+# How to apply — funding-call link + AI-written step-by-step + the Apply button
+# (opens the funder's application portal in a new tab). Helps the client go from
+# "this is a fit" straight to applying, without leaving the platform.
+# -----------------------------------------------------------------------------
+with st.container(border=True):
+    st.markdown("### 📝 How to apply")
+    _how = (row.get("how_to_apply") or "").strip()
+    if _how:
+        # Escape $ so the steps don't render as LaTeX; LLM returns "1. …" lines.
+        st.markdown(_how.replace("$", "\\$"))
+    else:
+        st.caption("_The step-by-step guide is written by the AI during extraction. "
+                   "It'll appear here once this opportunity has been processed "
+                   "(run the synthesis backfill / next extraction)._")
+    # Funding-call link goes right AFTER the steps.
+    _call_link = row.get("opportunity_link")
+    if _call_link:
+        st.markdown(f"📄 [Access opportunity here]({_call_link})")
+    # Apply button — specific apply_url, else the donor's persistent submission
+    # portal (so future calls from the same funder inherit it), else the call link.
+    _apply_url = row.get("apply_url")
+    if not _apply_url:
+        try:
+            _fa = (row.get("funding_agency") or "").strip()
+            if _fa:
+                _dp = (sb.table("donor_intel").select("submission_portal_url")
+                       .ilike("donor", _fa).limit(1).execute().data or [])
+                if _dp and _dp[0].get("submission_portal_url"):
+                    _apply_url = _dp[0]["submission_portal_url"]
+        except Exception:
+            pass
+    _apply_url = _apply_url or _call_link
+    if _apply_url:
+        ac1, _acsp = st.columns([2, 5])
+        ac1.link_button("🚀 Apply on the funder's portal ↗", _apply_url,
+                        type="primary", width='stretch')
+
+
+# -----------------------------------------------------------------------------
 # Browse table — all active Proceed RFPs YTD (click to swap selection)
 # -----------------------------------------------------------------------------
 st.markdown("")
@@ -303,20 +375,186 @@ browse = pd.DataFrame({
     "USD value": df["_usd"].astype(float),
 })
 
-event = st.dataframe(
+st.dataframe(
     browse,
     width='stretch',
     hide_index=True,
     selection_mode="single-row",
-    on_select="rerun",
+    on_select=_on_table_select,          # callback updates the shared selection
+    key=TABLE_KEY,                       # keyed → selection persists (no auto-uncheck)
     column_config={
         "Days":      st.column_config.NumberColumn("Days to deadline"),
         "USD value": st.column_config.NumberColumn("USD value", format="$%.0f"),
     },
 )
-sel = event.selection.rows if event and getattr(event, "selection", None) else []
-if sel:
-    new_uid = df.iloc[sel[0]]["uid"]
-    if new_uid != selected_uid:
-        st.session_state[SELECTED_UID_KEY] = new_uid
+
+
+# -----------------------------------------------------------------------------
+# Quick edit — Role / Stage / Lead(s) for the selected RFP, without leaving the
+# Tracking page. (Full field editing still lives on the Data page.)
+# -----------------------------------------------------------------------------
+@st.dialog("Edit RFP — Role / Stage / Lead", width="large")
+def _edit_tracking(r: dict) -> None:
+    st.markdown(f"**`{r['uid']}`** — {r.get('opportunity_title') or ''}")
+    _roles = list(dropdowns.get("applicant_roles") or ["Prime", "Sub", "Technical"])
+    _cur_role = r.get("applicant_role")
+    if _cur_role and _cur_role not in _roles:
+        _roles = [_cur_role] + _roles
+    role = st.selectbox("Role", _roles,
+                        index=_roles.index(_cur_role) if _cur_role in _roles else 0)
+    _stages = list(dropdowns.get("stages") or [
+        "Identification & screening", "Go/no-go decision & bid planning",
+        "Proposal development", "Final packaging & submission",
+        "Post-submission follow-up"])
+    _cur_stage = r.get("stage")
+    if _cur_stage and _cur_stage not in _stages:
+        _stages = [_cur_stage] + _stages
+    stage = st.selectbox("Stage", _stages,
+                         index=_stages.index(_cur_stage) if _cur_stage in _stages else 0)
+    lead = st.text_input("Proposal lead(s)", value=(r.get("proposal_lead") or ""))
+    if st.button("💾 Save changes", type="primary", width='stretch'):
+        sb.table("rfp_submissions").update({
+            "applicant_role": role, "stage": stage,
+            "proposal_lead": (lead.strip() or None),
+        }).eq("uid", r["uid"]).execute()
+        st.cache_data.clear()
+        st.success(f"Saved {r['uid']}.")
         st.rerun()
+
+
+def _esc(v) -> str:
+    return _html.escape(str(v if v not in (None, "") else "—"))
+
+
+def _view_meta_card(label: str, value: str, sub: str = "") -> str:
+    """One compact metric tile for the details dialog."""
+    return (
+        f"<div style='flex:1 1 22%;min-width:128px;background:#f8fafc;"
+        f"border:1px solid #e2e8f0;border-radius:8px;padding:8px 11px'>"
+        f"<div style='font-size:.68rem;color:#64748b;text-transform:uppercase;"
+        f"letter-spacing:.04em;font-weight:600'>{_esc(label)}</div>"
+        f"<div style='font-size:.96rem;font-weight:700;color:#0f172a;"
+        f"line-height:1.25;margin-top:2px'>{_esc(value)}</div>"
+        + (f"<div style='font-size:.7rem;color:#94a3b8;margin-top:1px'>{_esc(sub)}</div>"
+           if sub else "")
+        + "</div>"
+    )
+
+
+@st.dialog("RFP details", width="large")
+def _view_rfp(r: dict) -> None:
+    """Read-only, top-to-bottom view of every detail for one Proceed RFP."""
+    _status = r.get("_dstat") or "On Track"
+    _icon, _sbg = BADGE.get(_status, ("⚪", "#eee"))
+    _dtd = r.get("_dtd")
+    _days = f"{int(_dtd):+d}" if pd.notna(_dtd) else "—"
+    _val = format_money(r.get("estimated_value"), r.get("currency"))
+    _usd = f"≈ ${float(r.get('_usd') or 0):,.0f} USD"
+
+    # ── Header banner ──────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='background:linear-gradient(95deg,#0f766e,#0d9488);color:#fff;"
+        "padding:15px 18px;border-radius:11px'>"
+        f"<div style='font-size:1.2rem;font-weight:700;line-height:1.3'>"
+        f"{_esc(r.get('opportunity_title'))}</div>"
+        f"<div style='opacity:.92;margin-top:3px;font-size:.95rem'>"
+        f"{_esc(r.get('funding_agency'))}</div>"
+        "<div style='margin-top:9px;display:flex;gap:7px;flex-wrap:wrap;align-items:center'>"
+        "<span style='background:rgba(255,255,255,.22);padding:3px 11px;border-radius:20px;"
+        f"font-size:.78rem;font-weight:600'>{_esc(r.get('decision'))}</span>"
+        f"<span style='background:{_sbg};color:#1f2937;padding:3px 11px;border-radius:20px;"
+        f"font-size:.78rem;font-weight:600'>{_icon} {_esc(_status)}</span>"
+        f"<span style='opacity:.85;font-size:.76rem;font-family:monospace'>"
+        f"{_esc(r.get('uid'))}</span>"
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Metric tiles ───────────────────────────────────────────────────────
+    tiles = [
+        ("Value", _val, _usd),
+        ("Days to deadline", _days, ""),
+        ("Deadline", r.get("submission_deadline") or "—", ""),
+        ("Expected award", r.get("expected_award_date") or "—", ""),
+        ("Applicant role", r.get("applicant_role") or "—", ""),
+        ("Funding window", r.get("funding_window") or "—", ""),
+        ("Stage", r.get("stage") or "—", ""),
+        ("Progress", r.get("progress_status") or "—", ""),
+    ]
+    if r.get("alignment_score") not in (None, ""):
+        tiles.insert(1, ("Bid strength", f"{r.get('alignment_score')}/100", ""))
+    st.markdown(
+        "<div style='display:flex;flex-wrap:wrap;gap:8px;margin:11px 0 4px'>"
+        + "".join(_view_meta_card(*t) for t in tiles) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── At-a-glance fields ─────────────────────────────────────────────────
+    g1, g2 = st.columns(2)
+    g1.markdown(f"**🌍 Geography**  \n{', '.join(r.get('geographic_scope') or []) or '—'}")
+    g1.markdown(f"**👥 Proposal lead(s)**  \n{r.get('all_leads') or r.get('proposal_lead') or '—'}")
+    g2.markdown(f"**🎯 Focus areas**  \n{', '.join(r.get('program_area') or []) or '—'}")
+    g2.markdown(f"**⏱ Duration**  \n{r.get('project_duration') or '—'}")
+
+    # ── Eligibility outcome — the 9 MUST/PREFER high-level outputs (labels only,
+    #    no component breakdown). Colour: green=Yes/Strong · amber=partial/Not sure
+    #    (Park) · red=fail. "Not sure" (None) reads amber, per the scoring model.
+    st.divider()
+    st.markdown("**🧮 Eligibility outcome**")
+    _elig = [
+        ("qualification", "MUST 1 · Legal status & qualification"),
+        ("strategic_fit", "MUST 2 · Strategic fit"),
+        ("capacity", "MUST 3 · Implementation capacity"),
+        ("geographic_fit", "MUST 4 · Geographic fit"),
+        ("cofinancing", "MUST 5 · Cofinancing & compliance"),
+        ("funding_quality", "PREFER 6 · Funding quality"),
+        ("funder_relationship", "PREFER 7 · Donor relationship"),
+        ("competitiveness", "PREFER 8 · Competitiveness"),
+        ("bid_effort", "PREFER 9 · Bid effort"),
+    ]
+    _palette = {2: ("#15803d", "#f0fdf4"), 1: ("#b45309", "#fffbeb"),
+                0: ("#b91c1c", "#fef2f2")}
+    _rows = []
+    for _k, _name in _elig:
+        _v = r.get(_k)
+        _fg, _bg = _palette.get(criterion_score(_v), ("#b45309", "#fffbeb"))  # None→amber (Park)
+        _rows.append(
+            f"<div style='flex:1 1 46%;min-width:210px;border-left:4px solid {_fg};"
+            f"background:{_bg};border-radius:6px;padding:6px 11px'>"
+            f"<div style='font-size:.68rem;color:#64748b;font-weight:600'>{_esc(_name)}</div>"
+            f"<div style='font-size:.9rem;font-weight:700;color:{_fg}'>"
+            f"{_esc(_v if _v not in (None, '') else 'Not sure')}</div></div>")
+    st.markdown(
+        "<div style='display:flex;flex-wrap:wrap;gap:7px;margin-top:4px'>"
+        + "".join(_rows) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Narrative sections (only render what exists) ───────────────────────
+    def _section(title: str, body) -> None:
+        body = (str(body) or "").strip()
+        if body:
+            st.markdown(f"**{title}**")
+            st.markdown(body.replace("$", "\\$"))
+
+    st.divider()
+    _section("📋 Brief description", r.get("brief_description"))
+    _section("🧭 Why this decision", r.get("decision_note"))
+    _section("⚠️ Key risks", r.get("key_risks"))
+    _section("✅ Compliance requirements", r.get("compliance_requirements"))
+    _section("📝 How to apply", r.get("how_to_apply"))
+
+    # ── Links / apply ──────────────────────────────────────────────────────
+    _link = r.get("opportunity_link")
+    if _link:
+        st.markdown(f"📄 [Access opportunity here]({_link})")
+    _apply = r.get("apply_url") or _link
+    if _apply:
+        st.link_button("🚀 Apply on the funder's portal ↗", _apply, type="primary")
+
+
+_vb, _eb1, _ebsp = st.columns([2, 2, 4])
+if _vb.button("👁 View full details", type="primary", width='stretch'):
+    _view_rfp(row)
+if _eb1.button("✏ Edit (Role / Stage / Lead)", width='stretch'):
+    _edit_tracking(row)

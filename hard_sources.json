@@ -1,0 +1,338 @@
+[
+{
+"uid": 129,
+"host": "aics.gov.it",
+"url": "https://www.aics.gov.it/home-eng/opportunities/noprofit-development/",
+"donor": "aics.gov.it",
+"v": "DEAD"
+},
+{
+"uid": 113,
+"host": "bloomberg.org",
+"url": "https://www.bloomberg.org/grants/",
+"donor": "bloomberg.org",
+"v": "DEAD"
+},
+{
+"uid": 110,
+"host": "bmz.de",
+"url": "https://www.bmz.de/en/ministry/tenders",
+"donor": "bmz.de",
+"v": "DEAD"
+},
+{
+"uid": 62,
+"host": "cgdev.org",
+"url": "https://www.cgdev.org/",
+"donor": "cgdev.org",
+"v": "DEAD"
+},
+{
+"uid": 146,
+"host": "crs.org",
+"url": "https://www.crs.org/bid-opportunities",
+"donor": "crs.org",
+"v": "DEAD"
+},
+{
+"uid": 103,
+"host": "ddcf.org",
+"url": "https://www.ddcf.org/grants/",
+"donor": "ddcf.org",
+"v": "DEAD"
+},
+{
+"uid": 109,
+"host": "divportal.usaid.gov",
+"url": "https://divportal.usaid.gov",
+"donor": "divportal.usaid.gov",
+"v": "DEAD"
+},
+{
+"uid": 137,
+"host": "eda.admin.ch",
+"url": "https://www.eda.admin.ch/deza/en/home/partnerships-mandates/mandates-contributions.html",
+"donor": "eda.admin.ch",
+"v": "DEAD"
+},
+{
+"uid": 138,
+"host": "endfund.org",
+"url": "https://endfund.org/",
+"donor": "endfund.org",
+"v": "DEAD"
+},
+{
+"uid": 112,
+"host": "eufundingportal.eu",
+"url": "https://eufundingportal.eu/eu-calls-for-proposals",
+"donor": "eufundingportal.eu",
+"v": "DEAD"
+},
+{
+"uid": 140,
+"host": "fcdo.proactisportal.com",
+"url": "https://fcdo.proactisportal.com/",
+"donor": "fcdo.proactisportal.com",
+"v": "DEAD"
+},
+{
+"uid": 98,
+"host": "frld.org",
+"url": "https://www.frld.org/nodebim",
+"donor": "frld.org",
+"v": "DEAD"
+},
+{
+"uid": 127,
+"host": "globalfinancingfacility.org",
+"url": "https://www.globalfinancingfacility.org/sites/gff_new/files/documents/GFF-CSO-Host-Organziation-Call-for-Proposals.pdf",
+"donor": "globalfinancingfacility.org",
+"v": "DEAD"
+},
+{
+"uid": 95,
+"host": "grants.nih.gov",
+"url": "https://grants.nih.gov/grants/guide/pa-files/PAR-25-242.html",
+"donor": "grants.nih.gov",
+"v": "DEAD"
+},
+{
+"uid": 128,
+"host": "hrsa.gov",
+"url": "https://www.hrsa.gov/grants",
+"donor": "hrsa.gov",
+"v": "DEAD"
+},
+{
+"uid": 147,
+"host": "ifad.org",
+"url": "https://www.ifad.org/en/grants",
+"donor": "ifad.org",
+"v": "DEAD"
+},
+{
+"uid": 131,
+"host": "kfw-entwicklungsbank.de",
+"url": "https://www.kfw-entwicklungsbank.de/International-financing/KfW-Development-Bank/About-us/Procurement/",
+"donor": "kfw-entwicklungsbank.de",
+"v": "DEAD"
+},
+{
+"uid": 134,
+"host": "mulagofoundation.org",
+"url": "https://www.mulagofoundation.org/funding",
+"donor": "mulagofoundation.org",
+"v": "DEAD"
+},
+{
+"uid": 116,
+"host": "state.gov",
+"url": "https://www.state.gov/grants/",
+"donor": "state.gov",
+"v": "DEAD"
+},
+{
+"uid": 82,
+"host": "ted.europa.eu",
+"url": "https://ted.europa.eu/en/notice/426168-2026",
+"donor": "ted.europa.eu",
+"v": "DEAD"
+},
+{
+"uid": 126,
+"host": "unaids.org",
+"url": "https://www.unaids.org/en/aboutunaids/workatunaidssecretariat/requestforproposals",
+"donor": "unaids.org",
+"v": "DEAD"
+},
+{
+"uid": 141,
+"host": "undp.org",
+"url": "https://www.undp.org/funding",
+"donor": "undp.org",
+"v": "DEAD"
+},
+{
+"uid": 155,
+"host": "unhcr.org",
+"url": "https://www.unhcr.org/supply/procurement",
+"donor": "unhcr.org",
+"v": "DEAD"
+},
+{
+"uid": 102,
+"host": "usaid.gov",
+"url": "https://www.usaid.gov/div",
+"donor": "usaid.gov",
+"v": "DEAD"
+},
+{
+"uid": 160,
+"host": "wateraid.org",
+"url": "https://www.wateraid.org/tz/work-with-us/procurements",
+"donor": "wateraid.org",
+"v": "DEAD"
+},
+{
+"uid": 120,
+"host": "wkkf.org",
+"url": "https://www.wkkf.org/grants",
+"donor": "wkkf.org",
+"v": "DEAD"
+},
+{
+"uid": 118,
+"host": "worlddiabetesfoundation.org",
+"url": "https://worlddiabetesfoundation.org/what-we-fund",
+"donor": "worlddiabetesfoundation.org",
+"v": "DEAD"
+},
+{
+"uid": 61,
+"host": "catalyticopportunityfund.org",
+"url": "https://www.catalyticopportunityfund.org/h-iud",
+"donor": "catalyticopportunityfund.org",
+"v": "DEEP-DIVE"
+},
+{
+"uid": 38,
+"host": "povertyactionlab.org",
+"url": "https://www.povertyactionlab.org/",
+"donor": "Abdul Latif Jameel Poverty Action Lab",
+"v": "MANUAL"
+},
+{
+"uid": 135,
+"host": "aecid.es",
+"url": "https://www.aecid.es/subvenciones-a-ongd",
+"donor": "aecid.es",
+"v": "MANUAL"
+},
+{
+"uid": 121,
+"host": "amplifychange.org",
+"url": "https://amplifychange.org/apply",
+"donor": "amplifychange.org",
+"v": "MANUAL"
+},
+{
+"uid": 114,
+"host": "apply07.grants.gov",
+"url": "https://apply07.grants.gov/apply/opportunities/instructions/PKG00276629-instructions.pdf",
+"donor": "apply07.grants.gov",
+"v": "MANUAL"
+},
+{
+"uid": 122,
+"host": "awdf.org",
+"url": "https://awdf.org/apply-for-a-grant/",
+"donor": "awdf.org",
+"v": "MANUAL"
+},
+{
+"uid": 106,
+"host": "barrfoundation.org",
+"url": "https://www.barrfoundation.org/grantmaking/grants-database",
+"donor": "barrfoundation.org",
+"v": "MANUAL"
+},
+{
+"uid": 163,
+"host": "care.org",
+"url": "https://www.care.org/about-us/contact-us/request-for-proposals/",
+"donor": "care.org",
+"v": "MANUAL"
+},
+{
+"uid": 108,
+"host": "carnegie.org",
+"url": "https://www.carnegie.org/grants/grants-database/",
+"donor": "carnegie.org",
+"v": "MANUAL"
+},
+{
+"uid": 96,
+"host": "cdn.pfizer.com",
+"url": "https://cdn.pfizer.com/pfizercom/2026-03/2026%20I&I%20G%20ATM-AVI%20RES_final.pdf?VersionId=t8oiDED_IGZ7YwTKutPKtlqSrVvysUtU",
+"donor": "cdn.pfizer.com",
+"v": "MANUAL"
+},
+{
+"uid": 101,
+"host": "coefficientgiving.org",
+"url": "https://coefficientgiving.org/funds/farm-animal-welfare/request-for-proposals-alternative-protein-rd ",
+"donor": "coefficientgiving.org",
+"v": "MANUAL"
+},
+{
+"uid": 104,
+"host": "drkfoundation.org",
+"url": "https://www.drkfoundation.org/apply-for-funding/",
+"donor": "drkfoundation.org",
+"v": "MANUAL"
+},
+{
+"uid": 76,
+"host": "ec.europa.eu",
+"url": "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/HORIZON-JU-CBE-2026-IAFlag-04",
+"donor": "ec.europa.eu",
+"v": "MANUAL"
+},
+{
+"uid": 10,
+"host": "docs.google.com",
+"url": "",
+"donor": "Google Docs Artifact Host",
+"v": "MANUAL"
+},
+{
+"uid": 115,
+"host": "hiltonfoundation.org",
+"url": "https://www.hiltonfoundation.org/grants/overview/",
+"donor": "hiltonfoundation.org",
+"v": "MANUAL"
+},
+{
+"uid": 151,
+"host": "ifs.se",
+"url": "https://www.ifs.se",
+"donor": "ifs.se",
+"v": "MANUAL"
+},
+{
+"uid": 100,
+"host": "in.linkedin.com",
+"url": "https://in.linkedin.com/company/hpv-vaccine-acceleration-program-partners-initiative-happi-consortium",
+"donor": "in.linkedin.com",
+"v": "MANUAL"
+},
+{
+"uid": 150,
+"host": "livesandlivelihoodsfund.org",
+"url": "https://www.livesandlivelihoodsfund.org/en/apply-for-funding-guide",
+"donor": "livesandlivelihoodsfund.org",
+"v": "MANUAL"
+},
+{
+"uid": 132,
+"host": "macfound.org",
+"url": "https://www.macfound.org/grants",
+"donor": "macfound.org",
+"v": "MANUAL"
+},
+{
+"uid": 159,
+"host": "savethechildren.org",
+"url": "https://www.savethechildren.org/us/about-us/contact-us/rfp",
+"donor": "savethechildren.org",
+"v": "MANUAL"
+},
+{
+"uid": 77,
+"host": "webgate.ec.europa.eu",
+"url": "https://webgate.ec.europa.eu/prospect/external/publishedcalls.htm?callId=186091",
+"donor": "webgate.ec.europa.eu",
+"v": "MANUAL"
+}
+]
