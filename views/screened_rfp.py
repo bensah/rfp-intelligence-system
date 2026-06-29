@@ -137,7 +137,7 @@ with st.expander("Filters", expanded=False):
     f_feas = fc2.multiselect("Feasibility", sorted(df["feasibility"].dropna().unique().tolist()))
     geo_opts = sorted({g for arr in df["call_geographic_scope"].dropna() for g in (arr or [])})
     f_geo = fc3.multiselect("Geographic scope", geo_opts)
-    prog_opts = sorted({p for arr in df["program_area"].dropna() for p in (arr or [])})
+    prog_opts = sorted({p for arr in df["call_domain_areas"].dropna() for p in (arr or [])})
     f_prog = fc4.multiselect("Program area", prog_opts)
 
 mask = pd.Series(True, index=df.index)
@@ -148,7 +148,7 @@ if f_feas:
 if f_geo:
     mask &= df["call_geographic_scope"].apply(lambda v: bool(set(v or []) & set(f_geo)))
 if f_prog:
-    mask &= df["program_area"].apply(lambda v: bool(set(v or []) & set(f_prog)))
+    mask &= df["call_domain_areas"].apply(lambda v: bool(set(v or []) & set(f_prog)))
 fdf = df[mask].copy()
 
 

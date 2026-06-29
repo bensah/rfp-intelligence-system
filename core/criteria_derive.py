@@ -105,7 +105,7 @@ def _usd(rfp: dict) -> float | None:
 
 def _rfp_program_keys(rfp: dict) -> set[str]:
     """Canonical program-area keys for an RFP — empty if generic ('Health')."""
-    pa = _as_list(rfp.get("program_area"))
+    pa = _as_list(rfp.get("call_domain_areas"))
     if not pa or not any(p in _PA_KEYS for p in pa):
         return set()                       # generic / unclassified → can't judge
     return _pa.expand(pa)
@@ -216,18 +216,18 @@ def _strategic_items(org: dict, rfp: dict, donor: dict | None = None) -> list[di
     min(band(org), band(call)) when the org shares it, else 0. None when there are NO
     call themes or NO org themes → 'Not sure'."""
     donor = donor or {}
-    call = _theme_scores_flat(rfp.get("program_area"), {}, 5.0)
-    for k, v in _theme_scores_flat(donor.get("priority_program_areas"),
-                                   _ratings(donor.get("program_area_ratings")), 5.0).items():
+    call = _theme_scores_flat(rfp.get("call_domain_areas"), {}, 5.0)
+    for k, v in _theme_scores_flat(donor.get("donor_priority_areas"),
+                                   _ratings(donor.get("donor_priority_ratings")), 5.0).items():
         call[k] = max(call.get(k, 0.0), v)
     if not call:
         return None                           # nothing imposed → Not sure
-    if _as_list(org.get("priority_areas")):
-        org_tokens = _theme_scores(org.get("priority_areas"),
-                                   _ratings(org.get("program_area_ratings")), 5.0)
+    if _as_list(org.get("org_priority_areas")):
+        org_tokens = _theme_scores(org.get("org_priority_areas"),
+                                   _ratings(org.get("org_priority_ratings")), 5.0)
     else:                                     # fallback: track-record domains
-        org_tokens = _theme_scores(org.get("domains"),
-                                   _ratings(org.get("domain_ratings")), 5.0)
+        org_tokens = _theme_scores(org.get("org_domain_expertise"),
+                                   _ratings(org.get("org_domain_ratings")), 5.0)
     if not org_tokens:
         return None                           # no org strategy/domain data → Not sure
     items: list[dict] = []
@@ -968,9 +968,9 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
     # signal. Build the org's 0–5 domain (experience) vector and read the best
     # rating across the call's program keys: strong record = an edge; none = wide open.
     rfp_keys = _rfp_program_keys(rfp)
-    if rfp_keys and (org.get("domains") or org.get("domain_ratings")):
+    if rfp_keys and (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
         from core.matching import _priority_vector       # local import (no cycle)
-        dvec = _priority_vector(org.get("domains"), org.get("domain_ratings"))
+        dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
         if dvec:
             signals += 1
             strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0)  # 0–5
@@ -1387,9 +1387,9 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
     osx = org_settings or {}
     rfp_keys = _rfp_program_keys(rfp)
     dvec = {}
-    if rfp_keys and (org.get("domains") or org.get("domain_ratings")):
+    if rfp_keys and (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
         from core.matching import _priority_vector
-        dvec = _priority_vector(org.get("domains"), org.get("domain_ratings"))
+        dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
     strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0) if rfp_keys else 0.0
     fy = _num(org.get("founding_year"))
     dhq = (donor.get("hq_country") or "").strip().lower()

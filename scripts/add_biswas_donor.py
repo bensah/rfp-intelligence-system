@@ -45,7 +45,7 @@ DONOR = {
     # Structured (JSON list) fields — same shape the Donors edit form writes.
     "funding_mechanism": json.dumps(["Grants"]),
     "donor_geographic_scope": json.dumps(["Global / worldwide"]),
-    "priority_program_areas": json.dumps(
+    "donor_priority_areas": json.dumps(
         ["Digital health / data / AI", "Health research"]),
     # Intelligence
     "funding_cycle": "Biannual (twice a year)",

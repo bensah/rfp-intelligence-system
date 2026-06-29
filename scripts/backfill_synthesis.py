@@ -44,8 +44,8 @@ def _one(row: dict, org: dict, sb=None, org_set: dict | None = None) -> tuple[st
     upd: dict = {}
     if syn.get("brief_description"):
         upd["brief_description"] = syn["brief_description"]
-    if syn.get("program_areas"):
-        upd["program_area"] = syn["program_areas"]
+    if syn.get("call_domain_areas"):
+        upd["call_domain_areas"] = syn["call_domain_areas"]
     if syn.get("key_risks") and not (row.get("key_risks") or "").strip():
         upd["key_risks"] = syn["key_risks"]
     if syn.get("decision_rationale") and not (row.get("decision_note") or "").strip():

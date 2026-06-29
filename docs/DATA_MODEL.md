@@ -49,7 +49,7 @@ Use = which criterion consumes it.**
 | `call_geographic_scope` | call.`geographic_scope` | Geography this call targets · call LLM/regex · M4 scope, M1 reg-proxy |
 | `fund_geographic_scope` | *(derived)* | `donor_geographic_scope ∪ call_geographic_scope`, deduped · code · M4 denominator |
 
-### 2.2 Program areas / themes  → MUST-2 (and PREFER-8 track record)
+### 2.2 Program areas / themes  → MUST-2 (and PREFER-8 track record)   ✅ MIGRATED (migration 055)
 | New name | Old name | Def · Src · Use |
 |---|---|---|
 | `org_priority_areas` | org.`priority_areas` | Org's strategic priority sub-areas (taxonomy keys) · org input · M2 numerator |
@@ -141,4 +141,4 @@ Use = which criterion consumes it.**
 ---
 
 ## 6. Execution plan (after sign-off)
-Per-axis, each a single reviewable PR-style step: **(1) Geography ✅ done (migration 054) → (2) Program areas → (3) Award/funding → (4) Eligibility → (5) Compliance → (6) Relationship/competitiveness/bid-effort → (7) Workflow/outputs → (8) Non-comparison families.** Each step = `ALTER TABLE RENAME COLUMN` migration (idempotent) + JSON-key migration for org_profile + code update (criteria_derive, matching, features, scan_pipeline, llm_synthesis, views, scripts) + verify, with this doc's per-field one-liners filled in for that axis. ML feature names (`core/features`, `decision_model`) updated in lockstep.
+Per-axis, each a single reviewable PR-style step: **(1) Geography ✅ done (migration 054) → (2) Program areas ✅ done (migration 055) → (3) Award/funding → (4) Eligibility → (5) Compliance → (6) Relationship/competitiveness/bid-effort → (7) Workflow/outputs → (8) Non-comparison families.** Each step = `ALTER TABLE RENAME COLUMN` migration (idempotent) + JSON-key migration for org_profile + code update (criteria_derive, matching, features, scan_pipeline, llm_synthesis, views, scripts) + verify, with this doc's per-field one-liners filled in for that axis. ML feature names (`core/features`, `decision_model`) updated in lockstep.
