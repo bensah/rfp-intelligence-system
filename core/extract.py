@@ -125,7 +125,7 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     amt, cur = _amount(title, text)
     # A source handler may already carry a STRUCTURED amount (e.g. EU F&T
     # budgetOverview) — that's authoritative; prefer it over regex/LLM.
-    _cand_val = candidate.get("estimated_value")
+    _cand_val = candidate.get("call_award_value")
     if _cand_val not in (None, "", 0, "0"):
         try:
             amt = float(_cand_val)
@@ -137,8 +137,8 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     cand = dict(candidate)
     if not cand.get("submission_deadline") and dl["deadline"]:
         cand["submission_deadline"] = dl["deadline"]
-    if cand.get("estimated_value") in (None, "", 0, "0") and amt is not None:
-        cand["estimated_value"] = amt
+    if cand.get("call_award_value") in (None, "", 0, "0") and amt is not None:
+        cand["call_award_value"] = amt
 
     # llm_theme=True: let the LLM adjudicate AMBIGUOUS theme calls (excluded/
     # required conflict or a thin incidental keyword match) at the extraction
@@ -153,7 +153,7 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # that name-drops "South Africa") — so the LLM scope, when consulted, OVERRIDES
     # the regex part below (handler scope is always kept).
     handler_geo: set[str] = set()
-    cand_geo = candidate.get("geographic_scope")
+    cand_geo = candidate.get("call_geographic_scope")
     if isinstance(cand_geo, (list, tuple)):
         handler_geo = {str(g).strip() for g in cand_geo if str(g).strip()}
     elif isinstance(cand_geo, str) and cand_geo.strip():
@@ -202,8 +202,8 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # amount + currency: regex first, LLM fallback.
     g_amt, g_cur = amt, cur
     _amt_is_llm = False
-    if g_amt is None and _llm("estimated_value") is not None:
-        g_amt = _llm("estimated_value")
+    if g_amt is None and _llm("call_award_value") is not None:
+        g_amt = _llm("call_award_value")
         _amt_is_llm = True
         prov["grant_amount"] = {"method": "llm", "confidence": "medium", "source_tier": "T1"}
     elif g_amt is not None:
@@ -254,7 +254,7 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # LLM scope (when consulted) is more accurate than regex at telling the CALL's
     # geography from incidental mentions → it REPLACES the regex guesses (handler
     # scope is always kept). e.g. GC India RFP that name-drops "South Africa".
-    _llm_geo = {str(g).strip() for g in (_llm("geographic_scope") or []) if str(g).strip()}
+    _llm_geo = {str(g).strip() for g in (_llm("call_geographic_scope") or []) if str(g).strip()}
     if _llm_geo:
         geo = handler_geo | _llm_geo
 
@@ -274,12 +274,12 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
         "solicitation_type": sol_type,
         "instrument_type": instr_type,
         "opportunity_type": candidate.get("opportunity_type"),
-        "geographic_scope": sorted(geo),
+        "call_geographic_scope": sorted(geo),
         "eligibility_applicant_types": candidate.get("eligibility_applicant_types") or [],
         "grant_amount": g_amt,
         "currency": g_cur,
-        "award_floor": floor,
-        "award_ceiling": ceil,
+        "call_award_floor": floor,
+        "call_award_ceiling": ceil,
         "funding_tiers": tiers,
         "deadline": d_val,
         "deadline_confidence": d_conf,
@@ -342,7 +342,7 @@ if __name__ == "__main__":  # offline smoke test (gate + build, no store write)
         rec, reason = build_record(c, pol, scan_year=2026)
         print(f"\n### {c['opportunity_title'][:55]}  -> {reason}")
         if rec:
-            for k in ("geographic_scope", "deadline", "deadline_confidence",
+            for k in ("call_geographic_scope", "deadline", "deadline_confidence",
                       "funding_window", "grant_amount", "currency",
                       "solicitation_type", "funding_status"):
                 print(f"   {k}: {rec[k]}")

@@ -52,14 +52,14 @@ def main(commit: bool) -> int:
 
     updates = []
     for r in rows:
-        if not _is_generic(r.get("program_area")):
+        if not _is_generic(r.get("call_domain_areas")):
             continue                                 # already has taxonomy keys
         text = f"{r.get('opportunity_title') or ''} {r.get('brief_description') or ''}"
         areas = [a for a in classify_program_areas(text) if a != UNSPECIFIED]
         if not areas:
             continue                                 # classifier couldn't place it
         cats = sorted({category_full(a) for a in areas})
-        updates.append((r.get("uid"), _as_list(r.get("program_area")), areas, cats))
+        updates.append((r.get("uid"), _as_list(r.get("call_domain_areas")), areas, cats))
 
     print(f"{len(rows)} RFPs; {len(updates)} with a generic/empty program_area "
           f"re-classified from the description:")
@@ -76,7 +76,7 @@ def main(commit: bool) -> int:
     for uid, _old, areas, cats in updates:
         try:
             sb.table("rfp_submissions").update({
-                "program_area": areas,
+                "call_domain_areas": areas,
                 "focus_theme": "; ".join(cats),
             }).eq("uid", uid).execute()
             n += 1

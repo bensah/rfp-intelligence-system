@@ -172,7 +172,7 @@ DISPLAY = [
     "funding_agency",
     "applicant_role",
     "submission_deadline",
-    "estimated_value",
+    "call_award_value",
     "currency",
     "_value_usd",       # derived: live USD conversion "≈ $X (CUR Y @ date)"
     "alignment_score",
@@ -252,7 +252,7 @@ if "search_date" in table:
 if "alignment_score" in table and "_prob" in visible_cols:
     table["_prob"] = table["alignment_score"].apply(_prob_tier)
 if "_value_usd" in table.columns:
-    _ev = (view_df["estimated_value"] if "estimated_value" in view_df.columns
+    _ev = (view_df["call_award_value"] if "call_award_value" in view_df.columns
            else [None] * len(table))
     _cc = (view_df["currency"] if "currency" in view_df.columns
            else [None] * len(table))
@@ -307,7 +307,7 @@ _explicit_cfg = {
     "funding_agency": st.column_config.TextColumn("Funder"),
     "applicant_role": st.column_config.TextColumn("Role", width="small"),
     "submission_deadline": st.column_config.DateColumn("Deadline"),
-    "estimated_value": st.column_config.NumberColumn("Value", format="%.0f"),
+    "call_award_value": st.column_config.NumberColumn("Value", format="%.0f"),
     "currency": st.column_config.TextColumn("Currency", width="small"),
     "_value_usd": st.column_config.TextColumn("Value (USD)", width="medium"),
     "alignment_score": st.column_config.NumberColumn("Score", format="%.1f"),
@@ -462,9 +462,9 @@ def view_dialog(row: dict) -> None:
     _dec = _dec_raw if (isinstance(_dec_raw, str) and _dec_raw.strip()) else "Pending"
     _auto = row.get("auto_recommendation") or "—"
     _sc = row.get("alignment_score")
-    _val = format_money(row.get("estimated_value"), row.get("currency"))
+    _val = format_money(row.get("call_award_value"), row.get("currency"))
     try:
-        _usd = usd_value(row.get("estimated_value"), row.get("currency"))
+        _usd = usd_value(row.get("call_award_value"), row.get("currency"))
     except Exception:
         _usd = None
     _dtd = days_to_deadline(row.get("submission_deadline"))
@@ -520,9 +520,9 @@ def view_dialog(row: dict) -> None:
 
     # ── At-a-glance ────────────────────────────────────────────────────────
     g1, g2 = st.columns(2)
-    g1.markdown(f"**🌍 Geography**  \n{_disp(row.get('geographic_scope'))}")
+    g1.markdown(f"**🌍 Geography**  \n{_disp(row.get('call_geographic_scope'))}")
     g1.markdown(f"**👥 Proposal lead(s)**  \n{_disp(row.get('proposal_lead'))}")
-    g2.markdown(f"**🎯 Focus areas**  \n{_disp(row.get('program_area'))}")
+    g2.markdown(f"**🎯 Focus areas**  \n{_disp(row.get('call_domain_areas'))}")
     g2.markdown(f"**📌 Stage / Progress**  \n{_disp(row.get('stage'))} · {_disp(row.get('progress_status'))}")
 
     # ── Eligibility outcome — high-level MUST/PREFER labels only ───────────
@@ -598,7 +598,7 @@ def view_dialog(row: dict) -> None:
         ("Other opportunity fields", [
             ("Instrument", "instrument_type"), ("Focus theme", "focus_theme"),
             ("Date posted", "date_posted"), ("Currency", "currency"),
-            ("Estimated value", "estimated_value"), ("Search date", "search_date")]),
+            ("Estimated value", "call_award_value"), ("Search date", "search_date")]),
     ]
     for _gname, _fields in _GROUPS:
         _filled = sum(1 for _, k in _fields if _disp(row.get(k)) != "—")
@@ -704,7 +704,7 @@ def edit_dialog(row: dict) -> None:
         c10, c11, c12 = st.columns([2, 1, 1])
         link_in = c10.text_input("Opportunity link", value=_str(row.get("opportunity_link")), key=f"e_link_{row['uid']}")
         val_in = c11.number_input("Estimated value", min_value=0.0, step=10000.0,
-                                  value=_num(row.get("estimated_value")), key=f"e_val_{row['uid']}")
+                                  value=_num(row.get("call_award_value")), key=f"e_val_{row['uid']}")
         cur_options = [c["code"] for c in dropdowns.load().get("currencies", [])]
         with c12:
             cur_in = _opt("Currency", "cur", cur_options, row.get("currency"))
@@ -714,14 +714,14 @@ def edit_dialog(row: dict) -> None:
         focus_in = c14.text_input("Focus theme", value=_str(row.get("focus_theme")), key=f"e_focus_{row['uid']}")
         geo_in = st.multiselect(
             "Geographic scope",
-            _multi_options(dropdowns.get("geographic_scope"), row.get("geographic_scope")),
-            default=_multi_default(row.get("geographic_scope")),
+            _multi_options(dropdowns.get("call_geographic_scope"), row.get("call_geographic_scope")),
+            default=_multi_default(row.get("call_geographic_scope")),
             key=f"e_geo_{row['uid']}",
         )
         prog_in = st.multiselect(
             "Program area(s)",
-            _multi_options(dropdowns.get("program_areas"), row.get("program_area")),
-            default=_multi_default(row.get("program_area")),
+            _multi_options(dropdowns.get("call_domain_areas"), row.get("call_domain_areas")),
+            default=_multi_default(row.get("call_domain_areas")),
             key=f"e_prog_{row['uid']}",
         )
 
@@ -927,12 +927,12 @@ def edit_dialog(row: dict) -> None:
             "time_to_award": _val(tta_in),
             "submission_format": _val(fmt_in),
             "opportunity_link": _val(link_in),
-            "estimated_value": float(val_in) if val_in else None,
+            "call_award_value": float(val_in) if val_in else None,
             "currency": _val(cur_in),
             "project_duration": int(dur_in) if dur_in else None,
             "focus_theme": _val(focus_in),
-            "geographic_scope": geo_in or None,
-            "program_area": prog_in or None,
+            "call_geographic_scope": geo_in or None,
+            "call_domain_areas": prog_in or None,
             "feasibility": _val(feas_in),
             **vals,
             "decline_flags_present": decline_bool,
@@ -1030,9 +1030,9 @@ def _markdown_summary(row: dict) -> str:
         f"- **Applicant role:** {row.get('applicant_role') or '—'}\n"
         f"- **Window:** {row.get('funding_window') or '—'}\n"
         f"- **Deadline:** {row.get('submission_deadline') or '—'}\n"
-        f"- **Estimated value:** {row.get('estimated_value') or '—'} {row.get('currency') or ''}\n"
-        f"- **Geography:** {', '.join(row.get('geographic_scope') or []) or '—'}\n"
-        f"- **Program area:** {', '.join(row.get('program_area') or []) or '—'}\n"
+        f"- **Estimated value:** {row.get('call_award_value') or '—'} {row.get('currency') or ''}\n"
+        f"- **Geography:** {', '.join(row.get('call_geographic_scope') or []) or '—'}\n"
+        f"- **Program area:** {', '.join(row.get('call_domain_areas') or []) or '—'}\n"
         f"- **Alignment score:** {row.get('alignment_score') or 0:.1f} / 100\n"
         f"- **Auto-decision:** {row.get('auto_recommendation') or '—'}\n"
         f"- **Decision:** {row.get('decision') if (isinstance(row.get('decision'), str) and row.get('decision').strip()) else 'Pending'}\n"
