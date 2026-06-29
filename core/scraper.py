@@ -896,10 +896,10 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
 
     # Award amount — fill estimated_value from the title or body when the source
     # didn't provide one (Stanford seed funding et al. bury it in the page text).
-    if cand.get("estimated_value") in (None, "", 0):
+    if cand.get("call_award_value") in (None, "", 0):
         amt, cur = _extract_amount(cand.get("opportunity_title") or "", text or "")
         if amt is not None:
-            cand["estimated_value"] = amt
+            cand["call_award_value"] = amt
             if cur and not cand.get("currency"):
                 cand["currency"] = cur
 
@@ -1509,17 +1509,17 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
         for raw in money_paths:
             money = _coerce_money(raw)
             if money is not None:
-                cand["estimated_value"] = money
+                cand["call_award_value"] = money
                 cand["currency"] = "USD"
                 break
 
         # --- distinct award-scope fields (public-site reporting) ---
         af = _coerce_money(syn.get("awardFloor"))
         if af is not None:
-            cand["award_floor"] = af
+            cand["call_award_floor"] = af
         ac = _coerce_money(syn.get("awardCeiling"))
         if ac is not None:
-            cand["award_ceiling"] = ac
+            cand["call_award_ceiling"] = ac
         tot = _coerce_money(syn.get("estimatedFunding"))
         if tot is not None:
             cand["total_program_funding"] = tot
@@ -1816,7 +1816,7 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
                 "brief_description": _clean(it.get("summary") or "")[:1800] or None,
                 "date_posted": _parse_iso_date(_first(md, "startDate")[:10]),
                 "submission_deadline": _parse_iso_date(_first(md, "deadlineDate")[:10]),
-                "estimated_value": amt,
+                "call_award_value": amt,
                 "currency": cur,
                 "solicitation_type": "Prize" if is_prize else None,
                 "instrument_type": "Award" if is_prize else (
@@ -2068,7 +2068,7 @@ def _scan_unops(name: str, url: str) -> list[dict[str, Any]]:
             "date_posted": _parse_iso_date(str(n.get("postingDate") or "")[:10]),
             "submission_deadline": _parse_iso_date(
                 str(n.get("submissionDueDate") or "")[:10]),
-            "estimated_value": n.get("fundingAvailable"),
+            "call_award_value": n.get("fundingAvailable"),
             "currency": (n.get("currency") or {}).get("code"),
             "call_geographic_scope": geos or None,
             "_source_origin": name,

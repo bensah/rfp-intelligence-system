@@ -35,7 +35,7 @@ _COLS = {
     "donor_intel_id", "donor_key", "brief_description", "full_description",
     "applicant_fit_profile", "project_stages", "what_is_funded", "what_is_not_funded",
     "eligibility_applicant_types", "eligibility_countries", "eligibility_other",
-    "grant_amount", "award_floor", "award_ceiling", "total_program_funding",
+    "grant_amount", "call_award_floor", "call_award_ceiling", "total_program_funding",
     "expected_awards", "currency", "date_posted", "deadline", "deadline_confidence",
     "funding_status", "funding_window", "expected_award_date", "time_to_award",
     "project_duration", "submission_format", "solicitation_type", "instrument_type",

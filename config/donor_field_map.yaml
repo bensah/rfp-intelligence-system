@@ -54,7 +54,7 @@ canonical_columns:
   - applicant_role               # text  — Prime / Sub / Technical / Other
   - funding_window          # text  — One-off / Rolling / Annual / etc.
   - funding_type            # text  — Grant / Cooperative Agreement / Award etc.
-  - estimated_value         # numeric — total program funding
+  - call_award_value         # numeric — total program funding
   - currency                # text  — ISO 4217 code (USD, EUR, …)
   - project_duration        # integer — months
   - submission_format       # text  — concept note, full proposal, EOI, …
@@ -99,9 +99,9 @@ grants_gov:
     opportunityTitle:                                   opportunity_title
     "agencyDetails.agencyName":                         funding_agency   # "Dept. of the Army -- USAMRAA"
     "synopsis.synopsisDesc":                            { to: brief_description, as: html_to_text, max_chars: 1800 }
-    "synopsis.estimatedFunding":                        { to: estimated_value,   as: money }
+    "synopsis.estimatedFunding":                        { to: call_award_value,   as: money }
     # Backup if estimatedFunding is blank (some agencies only publish per-award ceiling)
-    "synopsis.awardCeiling":                            { to: estimated_value,   as: money, only_if_blank: true }
+    "synopsis.awardCeiling":                            { to: call_award_value,   as: money, only_if_blank: true }
     "synopsis.responseDate":                            { to: submission_deadline, as: date }
     "synopsis.postingDate":                             { to: date_posted,         as: date }
     "synopsis.applicantTypes[*].description":           { to: notes,              as: prefix, prefix: "Eligible applicants" }
@@ -130,7 +130,7 @@ developmentaid:
   detail_fetch: requests                     # detail pages are server-rendered HTML
   detail_field_map:
     # CSS selectors on the detail page. Pattern: dt:contains(label) + dd
-    "dt:contains('Project value') ~ dd":          { to: estimated_value,     as: money }
+    "dt:contains('Project value') ~ dd":          { to: call_award_value,     as: money }
     "dt:contains('Currency') ~ dd":               opportunity_currency
     "dt:contains('Beneficiary countries') ~ dd":  { to: call_geographic_scope,    as: country_list }
     "dt:contains('Sectors') ~ dd":                { to: call_domain_areas,        as: list }
@@ -174,7 +174,7 @@ ec_sedia:
 # every other source falls into this bucket and gets only:
 #   opportunity_title, opportunity_link, funding_agency (from source name),
 #   brief_description (best-effort from page text or meta), submission_deadline
-#   (regex-extracted), call_domain_areas / estimated_value / call_geographic_scope all
+#   (regex-extracted), call_domain_areas / call_award_value / call_geographic_scope all
 #   blank unless the LLM layer (off by default) fills them.
 # ---------------------------------------------------------------------------
 generic:
@@ -216,7 +216,7 @@ dedup_signals:
 
   - name: funder_deadline_value_triple
     description: |
-      All three of (funder, deadline, estimated_value) match and none is
+      All three of (funder, deadline, call_award_value) match and none is
       null. Useful for cases where titles drift but the underlying call is
       identifiable by its envelope.
-    fields: [funding_agency, submission_deadline, estimated_value]
+    fields: [funding_agency, submission_deadline, call_award_value]

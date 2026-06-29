@@ -102,7 +102,7 @@ def main(argv: list[str]) -> int:
             "opportunity_link": r.get("opportunity_link"),
             "funding_agency": r.get("funding_agency"),
             "submission_deadline": str(r.get("submission_deadline") or "") or None,
-            "estimated_value": r.get("estimated_value"),
+            "call_award_value": r.get("call_award_value"),
         }
         m = find_duplicates(probe, existing=kept)
         if m:

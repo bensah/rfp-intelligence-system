@@ -123,7 +123,7 @@ def funding_quality(row: dict, *, false_below: float = 50_000,
     """Typical funding tier from the donor's award range — the PREFER 6
     fallback when the RFP itself publishes no amount. Uses the award ceiling
     (what the donor CAN fund); falls back to the floor."""
-    hi = parse_money(row.get("award_high_usd")) or parse_money(row.get("award_low_usd"))
+    hi = parse_money(row.get("donor_award_high")) or parse_money(row.get("donor_award_low"))
     if hi is None:
         return None
     if hi >= partial_below:
@@ -222,7 +222,7 @@ def apply_to_values(values: dict, candidate: dict, policies: dict) -> Optional[d
 
 
 def _rfp_amount(candidate: dict) -> float:
-    raw = candidate.get("estimated_value")
+    raw = candidate.get("call_award_value")
     try:
         return float(raw) if raw not in (None, "", 0) else 0.0
     except (TypeError, ValueError):
