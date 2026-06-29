@@ -48,7 +48,7 @@ canonical_columns:
   - date_posted             # date  — when the donor published the call
   - submission_deadline     # date  — final application closing date
   - expected_award_date     # date  — when decisions land
-  - geographic_scope        # text[]— countries / regions in scope
+  - call_geographic_scope        # text[]— countries / regions in scope
   - program_area            # text[]— donor's own category labels
   - focus_theme             # text  — deploying-org's internal theme tag
   - applicant_role               # text  — Prime / Sub / Technical / Other
@@ -132,7 +132,7 @@ developmentaid:
     # CSS selectors on the detail page. Pattern: dt:contains(label) + dd
     "dt:contains('Project value') ~ dd":          { to: estimated_value,     as: money }
     "dt:contains('Currency') ~ dd":               opportunity_currency
-    "dt:contains('Beneficiary countries') ~ dd":  { to: geographic_scope,    as: country_list }
+    "dt:contains('Beneficiary countries') ~ dd":  { to: call_geographic_scope,    as: country_list }
     "dt:contains('Sectors') ~ dd":                { to: program_area,        as: list }
     "dt:contains('Donor') ~ dd":                  funding_agency
     "dt:contains('Eligible applicants') ~ dd":    { to: notes, as: prefix, prefix: "Eligible" }
@@ -174,7 +174,7 @@ ec_sedia:
 # every other source falls into this bucket and gets only:
 #   opportunity_title, opportunity_link, funding_agency (from source name),
 #   brief_description (best-effort from page text or meta), submission_deadline
-#   (regex-extracted), program_area / estimated_value / geographic_scope all
+#   (regex-extracted), program_area / estimated_value / call_geographic_scope all
 #   blank unless the LLM layer (off by default) fills them.
 # ---------------------------------------------------------------------------
 generic:

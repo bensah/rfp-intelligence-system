@@ -10,7 +10,7 @@ aliases (so it enriches the rows you already have, in place — no duplicates) a
 falls back to creating the row if absent. Upsert is PARTIAL: only the columns
 below are written; every other field on the row is left untouched.
 
-List fields (funding_mechanism, priority_program_areas, funding_scope_geographic)
+List fields (funding_mechanism, priority_program_areas, donor_geographic_scope)
 and the JSON blocks (funding_tiers_json, past_projects_json) are stored exactly as
 the app stores them (json.dumps), so the Donors page renders them natively.
 """
@@ -108,7 +108,7 @@ NIHR = {
         "WCH - Vaccines": 3,
         "HSS - Health Financing": 2,
     }),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Southern Asia"]),
     "in_scope": (
         "WHO priority bacterial & fungal pathogens (excl. TB); late-phase evaluations "
@@ -305,7 +305,7 @@ DIV = {
         "GOV - Democracy & Civic Participation": 2,
         "HUM - Emergency Response": 1,
     }),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Asia"]),
     "funders_collaborators": json.dumps([
         "Coefficient Giving", "GiveWell", "Livelihood Impact Fund", "CRI Foundation",
@@ -441,7 +441,7 @@ COEFFICIENT_GIVING = {
         "IDs - Pandemic Response": 5, "Cross-cutting - Research": 5,
         "WCH - Vaccines": 3, "Cross-cutting - Diagnostics": 3,
         "Cross-cutting - Digital Health (+AI)": 3}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Global / worldwide", "Low- and middle-income countries (LMICs)"]),
     "eligibility_notes": (
         "Largely proactive / invitation-driven grantmaking sourced through its own "
@@ -477,7 +477,7 @@ GIVEWELL = {
     "program_area_ratings": json.dumps({
         "IDs - Malaria & NTDs": 5, "WCH - Nutrition": 4, "WCH - Vaccines": 4,
         "WASH - Safe Water": 4, "WCH - MNCH": 3, "Cross-cutting - Research": 4}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa", "Asia"]),
     "eligibility_notes": (
         "Highly selective and research-led: funds a small set of vetted Top Charities "
@@ -512,7 +512,7 @@ LIVELIHOOD_IMPACT_FUND = {
         "ECON - Jobs & Skills": 5, "EDU - Higher Education & TVET": 4,
         "ECON - Financial Inclusion": 4, "ECON - Social Protection": 3,
         "GES - Youth Empowerment": 3}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Sub-Saharan Africa", "Low- and middle-income countries (LMICs)"]),
     "eligibility_notes": (
         "Trust-based, multi-year funding to vetted high-impact organisations; strongly "
@@ -549,7 +549,7 @@ CRI_FOUNDATION = {
     "program_area_ratings": json.dumps({
         "Cross-cutting - Research": 5, "IDs - Malaria & NTDs": 4, "WCH - MNCH": 4,
         "HSS - Health Workforce": 3, "WCH - Nutrition": 3}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Sub-Saharan Africa", "Low- and middle-income countries (LMICs)"]),
     "eligibility_notes": (
         "Funds evidence-based or evidence-generating organisations with rigorous "
@@ -588,7 +588,7 @@ GLOBAL_DEV_INCUBATOR = {
         "Cross-cutting - Digital Health (+AI)": 4, "ECON - Financial Inclusion": 4,
         "AGRI - Smallholder Productivity": 4, "ECON - Jobs & Skills": 3,
         "ENV - Climate Adaptation & Resilience": 3, "HSS - Health Workforce": 3}),
-    "funding_scope_geographic": json.dumps([
+    "donor_geographic_scope": json.dumps([
         "Low- and middle-income countries (LMICs)", "Sub-Saharan Africa"]),
     "eligibility_notes": (
         "Operates as an incubator / intermediary — partners with funders and "
