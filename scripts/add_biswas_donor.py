@@ -55,8 +55,8 @@ DONOR = {
     "active_route_status": "Active",
     "direct_local_org_eligible": "Yes — via international partner only",
     # Eligibility / route flags (TEXT yes/no/blank)
-    "ngo_eligible": "yes",
-    "for_profit_eligible": "no",
+    "donor_ngo_eligible": "yes",
+    "donor_for_profit_eligible": "no",
     "grant_route": "yes",
     "open_call_unsolicited": "yes",
     "online_portal_submission": "yes",

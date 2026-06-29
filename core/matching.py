@@ -188,9 +188,9 @@ def _route_fit(org: dict, donor: dict, org_settings: dict) -> float:
     """
     if not donor:
         return 0.5
-    org_np = str(org.get("legal_type") or "nonprofit").lower() in (
+    org_np = str(org.get("org_legal_type") or "nonprofit").lower() in (
         "nonprofit", "non-profit", "ngo", "charity")
-    ngo_elig = donor.get("ngo_eligible")
+    ngo_elig = donor.get("donor_ngo_eligible")
     direct = _truthy(donor.get("direct_local_org_eligible"))
     sub_only = _truthy(donor.get("subrecipient_partner_possible"))
     grant = _truthy(donor.get("grant_route"))
@@ -252,7 +252,7 @@ def _relationship_fit(org: dict, donor: dict, org_settings: dict) -> float:
     org_ids.discard("")
     if funders and org_ids and _names_overlap(org_ids, funders):
         return 1.0   # our org (or a listed partner) is a funder/collaborator of this donor
-    org_hist = {_norm_name(x) for x in (org.get("funder_history") or [])}
+    org_hist = {_norm_name(x) for x in (org.get("org_funder_history") or [])}
     if donor_names and org_hist and _names_overlap(org_hist, donor_names):
         return 1.0   # we have previously been funded by this donor
     return 0.5
