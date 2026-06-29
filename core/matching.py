@@ -42,7 +42,7 @@ _MUST = ("qualification", "strategic_fit", "capacity", "geographic_fit", "cofina
 
 # Real donor_intel columns (migration 020) that, when truthy, require a local
 # board / local registration — penalised if the org lacks one.
-_LOCAL_BOARD_FLAGS = ("local_board_required", "local_registration_required")
+_LOCAL_BOARD_FLAGS = ("donor_local_board_required", "donor_local_registration_required")
 
 
 def _as_list(v: Any) -> list[str]:
@@ -191,11 +191,11 @@ def _route_fit(org: dict, donor: dict, org_settings: dict) -> float:
     org_np = str(org.get("org_legal_type") or "nonprofit").lower() in (
         "nonprofit", "non-profit", "ngo", "charity")
     ngo_elig = donor.get("donor_ngo_eligible")
-    direct = _truthy(donor.get("direct_local_org_eligible"))
-    sub_only = _truthy(donor.get("subrecipient_partner_possible"))
-    grant = _truthy(donor.get("grant_route"))
-    loan = _truthy(donor.get("loan_dev_finance_route"))
-    proc = _truthy(donor.get("procurement_tender_route"))
+    direct = _truthy(donor.get("donor_direct_local_org_eligible"))
+    sub_only = _truthy(donor.get("donor_subrecipient_partner_possible"))
+    grant = _truthy(donor.get("donor_grant_route"))
+    loan = _truthy(donor.get("donor_loan_dev_finance_route"))
+    proc = _truthy(donor.get("donor_procurement_tender_route"))
     has_partner = bool(org.get("partners") or org.get("trusted_partners"))
 
     # Explicitly NGO-ineligible and we're a nonprofit → only via a direct-local

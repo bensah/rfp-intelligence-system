@@ -162,7 +162,7 @@ def _resolve_donor(funder: Any) -> dict | None:
 
 def _rfp_compliance(row: dict) -> dict | None:
     """The RFP's own stored compliance_flags (JSON text or dict), if any."""
-    cf = row.get("compliance_flags")
+    cf = row.get("call_compliance_flags")
     if isinstance(cf, dict):
         return cf
     if isinstance(cf, str) and cf.strip():

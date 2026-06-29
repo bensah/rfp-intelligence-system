@@ -100,11 +100,11 @@ _LABEL_OVERRIDES = {
     "donor_type": "Donor type (descriptive)",
     "is_dual_role_implementer": "Also an implementer that publishes calls?",
     "opportunity_listing_urls": "Opportunity listing URL(s)",
-    "local_board_required": "Local board members required",
+    "donor_local_board_required": "Local board members required",
     # MUST-5 cofinancing & compliance (migration 052). The portal URL reuses the
     # existing submission_portal_url (matched against the org's donor_registrations).
-    "govt_mou_required": "Government MOU required",
-    "funding_platform_registration_required": "Funding-platform registration required",
+    "donor_govt_mou_required": "Government MOU required",
+    "donor_funding_platform_registration_required": "Funding-platform registration required",
     # PREFER-8 competitiveness (migration 053)
     "multi_country_encouraged": "Encourages multi-country proposals",
     "summary_description": "Summary",
@@ -119,7 +119,7 @@ _LABEL_OVERRIDES = {
     "funding_programs": "Funding programs / windows",
     "eligibility_notes": "Who can apply / lead",
     "application_deadlines": "Key dates / deadlines",
-    "submission_portal_url": "Submission portal (URL)",
+    "donor_submission_portal_url": "Submission portal (URL)",
     "strategic_fit_notes": "Ideal applicant & what this funder rewards",
     "gaps_risks": "Common pitfalls & disqualifiers",
     "recommended_approach": "How to position a competitive application",
@@ -131,9 +131,9 @@ _LABEL_OVERRIDES = {
     "required_partner_type": "Required partner type",
     "required_partner_country": "Required partner country",
     "max_request_pct_of_budget": "Max request (% of project budget)",
-    "min_cofinancing_secured_pct": "Min co-financing secured (%)",
+    "donor_min_cofinancing_secured_pct": "Min co-financing secured (%)",
     "independent_entity_required": "Independent entity required (no INGO affiliates)",
-    "welcome_registration_required": "Pre-registration / senior-leadership approval required",
+    "donor_welcome_registration_required": "Pre-registration / senior-leadership approval required",
     # MUST-1 rework (migration 049)
     "donor_entity_type_required": "Entity type required",
     "donor_registration_region": "Registration region/country required",
@@ -343,7 +343,7 @@ _SHORT_TEXT = ["donor", "donor_short", "donor_category", "donor_type", "website"
                "donor_award_low", "donor_award_high",
                "total_annual_funding_global", "funding_mechanism"]
 _LONG_TEXT = ["aliases", "donor_geographic_scope", "active_route_status",
-              "direct_local_org_eligible", "donor_priority_areas",
+              "donor_direct_local_org_eligible", "donor_priority_areas",
               "verification_caveats", "evidence_summary", "notes",
               "source_urls", "opportunity_listing_urls"]
 # Institutional / official donor contact (one set per donor — the donor_intel
@@ -353,7 +353,7 @@ _CONTACT = ["hq_address", "hq_country", "main_phone", "general_email",
             "contact_persons", "contact_emails", "contact_phones",
             "contact_linkedin_urls"]
 _CHOICE = {
-    "prefinance_required": ["", "none", "partial", "reimbursement_only"],
+    "donor_prefinance_required": ["", "none", "partial", "reimbursement_only"],
     "verification_level": ["", "high", "medium", "low"],
     "is_dual_role_implementer": ["", "yes", "no"],
 }
@@ -372,12 +372,12 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
             "strategic_priorities", "in_scope",
             "out_of_scope", "selection_criteria", "funding_programs",
             "funding_tiers_json", "eligibility_notes", "application_deadlines",
-            "submission_portal_url", "strategic_fit_notes", "gaps_risks",
+            "donor_submission_portal_url", "strategic_fit_notes", "gaps_risks",
             "recommended_approach", "donor_priority_ratings", "funders_collaborators",
             # Hard eligibility conditions (migration 032) — VALUED (not flags).
             "donor_hq_country_required", "org_stage_required", "donor_max_annual_budget",
             "donor_min_track_record", "required_partner_type", "required_partner_country",
-            "max_request_pct_of_budget", "min_cofinancing_secured_pct",
+            "max_request_pct_of_budget", "donor_min_cofinancing_secured_pct",
             # MUST-1 rework conditions (migration 049) — VALUED text, not flags.
             "donor_entity_type_required", "donor_registration_region",
             "donor_requires_pi", "donor_pi_country_scope", "donor_max_prior_grant",
@@ -393,9 +393,9 @@ _NON_FLAG = (set(_META) | set(_SHORT_TEXT) | set(_LONG_TEXT)
 
 _FLAGS = [c for c in df.columns if c not in _NON_FLAG]
 _ELIG = [
-    "donor_ngo_eligible", "donor_for_profit_eligible", "govt_or_ccm_route_required",
-    "grant_route", "procurement_tender_route", "loan_dev_finance_route",
-    "subrecipient_partner_possible", "open_call_unsolicited",
+    "donor_ngo_eligible", "donor_for_profit_eligible", "donor_govt_or_ccm_route_required",
+    "donor_grant_route", "donor_procurement_tender_route", "donor_loan_dev_finance_route",
+    "donor_subrecipient_partner_possible", "open_call_unsolicited",
     "invitation_solicited", "two_stage_application", "online_portal_submission",
     "lmic_africa_focus", "global_multi_country_scope",
 ]
@@ -547,9 +547,9 @@ _COMPLETENESS_TEXT = [
     "donor_award_low", "donor_award_high", "total_annual_funding_global",
     "total_awards", "total_funding_to_date", "current_awards", "past_awards",
     "projected_budget", "funding_programs", "in_scope", "out_of_scope",
-    "direct_local_org_eligible", "active_route_status", "prefinance_required",
+    "donor_direct_local_org_eligible", "active_route_status", "donor_prefinance_required",
     "application_process", "funding_cycle", "reporting_requirements",
-    "application_deadlines", "submission_portal_url", "recent_activity",
+    "application_deadlines", "donor_submission_portal_url", "recent_activity",
     "eligibility_notes", "selection_criteria", "strategic_fit_notes",
     "gaps_risks", "recommended_approach", "verification_level",
     "evidence_summary", "notes", "source_urls",
@@ -772,14 +772,14 @@ def _summary_lines(row: dict) -> list[str]:
     section("Eligibility & process", [
         ("Eligibility & routes", flags("Eligibility & routes")),
         ("Requirements & compliance", flags("Requirements & compliance")),
-        ("Direct local org eligible", _disp(row.get("direct_local_org_eligible"))),
+        ("Direct local org eligible", _disp(row.get("donor_direct_local_org_eligible"))),
         ("Route status", _disp(row.get("active_route_status"))),
-        ("Prefinance", choice("prefinance_required")),
+        ("Prefinance", choice("donor_prefinance_required")),
         ("Application process", _disp(row.get("application_process"))),
         ("Funding cycle", _disp(row.get("funding_cycle"))),
         ("Reporting requirements", _disp(row.get("reporting_requirements"))),
         (_label("application_deadlines"), _disp(row.get("application_deadlines"))),
-        (_label("submission_portal_url"), _disp(row.get("submission_portal_url"))),
+        (_label("donor_submission_portal_url"), _disp(row.get("donor_submission_portal_url"))),
         ("Recent activity", _disp(row.get("recent_activity"))),
         (_label("eligibility_notes"), _disp(row.get("eligibility_notes"))),
         (_label("selection_criteria"), _disp(row.get("selection_criteria"))),
@@ -790,7 +790,7 @@ def _summary_lines(row: dict) -> list[str]:
         (_label("required_partner_type"), listf("required_partner_type")),
         (_label("required_partner_country"), listf("required_partner_country")),
         (_label("max_request_pct_of_budget"), _disp(row.get("max_request_pct_of_budget"))),
-        (_label("min_cofinancing_secured_pct"), _disp(row.get("min_cofinancing_secured_pct"))),
+        (_label("donor_min_cofinancing_secured_pct"), _disp(row.get("donor_min_cofinancing_secured_pct"))),
         (_label("donor_entity_type_required"), choice("donor_entity_type_required")),
         (_label("donor_registration_region"), listf("donor_registration_region")),
         (_label("donor_requires_pi"), choice("donor_requires_pi")),
@@ -1153,18 +1153,18 @@ def _edit_dialog(row: dict) -> None:
         st.divider()
         _r1, _r2 = st.columns(2)
         with _r1:
-            edited["direct_local_org_eligible"] = _single_with_other(
+            edited["donor_direct_local_org_eligible"] = _single_with_other(
                 "Direct local org eligible", LOCAL_ORG_ELIGIBLE,
-                row.get("direct_local_org_eligible"), key=f"dle_{ck}")
+                row.get("donor_direct_local_org_eligible"), key=f"dle_{ck}")
         with _r2:
             edited["active_route_status"] = _single_with_other(
                 "Route status", ROUTE_STATUSES, row.get("active_route_status"), key=f"rstat_{ck}")
         _pc1, _pc2 = st.columns(2)
         with _pc1:
-            _pf_opts = _CHOICE["prefinance_required"]
-            _cur_pf = row.get("prefinance_required") or ""
-            edited["prefinance_required"] = st.selectbox(
-                _label("prefinance_required"), _pf_opts,
+            _pf_opts = _CHOICE["donor_prefinance_required"]
+            _cur_pf = row.get("donor_prefinance_required") or ""
+            edited["donor_prefinance_required"] = st.selectbox(
+                _label("donor_prefinance_required"), _pf_opts,
                 index=_pf_opts.index(_cur_pf) if _cur_pf in _pf_opts else 0,
                 key=f"prefinance_required_{ck}", format_func=_pretty_choice)
         with _pc2:
@@ -1184,8 +1184,8 @@ def _edit_dialog(row: dict) -> None:
         edited["application_deadlines"] = _dl1.text_input(
             _label("application_deadlines"), row.get("application_deadlines") or "",
             key=f"appdl_{ck}", help="Key dates, e.g. 'Stage 1 outline: 1pm UK, 8 Jul 2026'.")
-        edited["submission_portal_url"] = _dl2.text_input(
-            _label("submission_portal_url"), row.get("submission_portal_url") or "",
+        edited["donor_submission_portal_url"] = _dl2.text_input(
+            _label("donor_submission_portal_url"), row.get("donor_submission_portal_url") or "",
             key=f"portal_{ck}")
         edited["recent_activity"] = st.text_input(
             "Recent activity / last funded", row.get("recent_activity") or "",
@@ -1243,8 +1243,8 @@ def _edit_dialog(row: dict) -> None:
         edited["max_request_pct_of_budget"] = _hc1.text_input(
             _label("max_request_pct_of_budget"), row.get("max_request_pct_of_budget") or "",
             key=f"maxpct_{ck}", help="e.g. '50' — request may be ≤50% of the project budget.")
-        edited["min_cofinancing_secured_pct"] = _hc2.text_input(
-            _label("min_cofinancing_secured_pct"), row.get("min_cofinancing_secured_pct") or "",
+        edited["donor_min_cofinancing_secured_pct"] = _hc2.text_input(
+            _label("donor_min_cofinancing_secured_pct"), row.get("donor_min_cofinancing_secured_pct") or "",
             key=f"mincofin_{ck}", help="e.g. '25' — must have ≥25% secured from other sources.")
 
         # MUST-1 (Legal status & qualification) rework conditions — migration 049.
@@ -1845,13 +1845,13 @@ def _view_dialog(row: dict) -> None:
     # ── ✅ Eligibility & process — routes/requirements flags + logistics ─────
     _elig_kv = []
     for _lbl, _col in (("Route status", "active_route_status"),
-                       ("Direct local org eligible", "direct_local_org_eligible"),
-                       ("Prefinance", "prefinance_required"),
+                       ("Direct local org eligible", "donor_direct_local_org_eligible"),
+                       ("Prefinance", "donor_prefinance_required"),
                        ("Application process", "application_process"),
                        ("Funding cycle", "funding_cycle"),
                        ("Reporting requirements", "reporting_requirements"),
                        (_label("application_deadlines"), "application_deadlines"),
-                       (_label("submission_portal_url"), "submission_portal_url"),
+                       (_label("donor_submission_portal_url"), "donor_submission_portal_url"),
                        ("Recent activity", "recent_activity"),
                        (_label("donor_hq_country_required"), "donor_hq_country_required"),
                        (_label("org_stage_required"), "org_stage_required"),
@@ -1860,7 +1860,7 @@ def _view_dialog(row: dict) -> None:
                        (_label("required_partner_type"), "required_partner_type"),
                        (_label("required_partner_country"), "required_partner_country"),
                        (_label("max_request_pct_of_budget"), "max_request_pct_of_budget"),
-                       (_label("min_cofinancing_secured_pct"), "min_cofinancing_secured_pct"),
+                       (_label("donor_min_cofinancing_secured_pct"), "donor_min_cofinancing_secured_pct"),
                        (_label("donor_entity_type_required"), "donor_entity_type_required"),
                        (_label("donor_registration_region"), "donor_registration_region"),
                        (_label("donor_requires_pi"), "donor_requires_pi"),
@@ -1872,7 +1872,7 @@ def _view_dialog(row: dict) -> None:
             v = ", ".join(_vals) if _vals else None
         else:
             v = _md(row.get(_col)) or _disp(row.get(_col))
-            if v and _col in ("prefinance_required", "donor_entity_type_required", "donor_requires_pi",
+            if v and _col in ("donor_prefinance_required", "donor_entity_type_required", "donor_requires_pi",
                               "donor_pi_country_scope", "donor_prior_beneficiary_rule"):
                 v = _pretty_choice(v)
         if v:
@@ -1891,7 +1891,7 @@ def _view_dialog(row: dict) -> None:
             if _elig_kv:
                 _sub("Application logistics")
                 for _lbl, _col, v in _elig_kv:
-                    if _col == "submission_portal_url" and v.startswith("http"):
+                    if _col == "donor_submission_portal_url" and v.startswith("http"):
                         st.markdown(f"- **{_lbl}:** [{v}]({v})")
                     else:
                         st.markdown(f"- **{_lbl}:** {v}")
@@ -2069,7 +2069,7 @@ if areas_f and "donor_priority_areas" in fdf.columns:
         lambda v: bool(_pa.expand(_to_list(v)) & _want_pa))]
 # Applicant-type filter (OR across selected types) using existing eligibility flags.
 _APPL_FLAG = {"NGO": "donor_ngo_eligible", "For-profit / private": "donor_for_profit_eligible",
-              "Sub-recipient / partner": "subrecipient_partner_possible"}
+              "Sub-recipient / partner": "donor_subrecipient_partner_possible"}
 _appl_flags = [_APPL_FLAG[a] for a in appl if _APPL_FLAG.get(a) in fdf.columns]
 if _appl_flags:
     fdf = fdf[fdf[_appl_flags].apply(

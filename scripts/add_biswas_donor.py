@@ -53,14 +53,14 @@ DONOR = {
     "application_process": "Full proposal (single-stage)",
     "reporting_requirements": "Milestone / deliverable-based",
     "active_route_status": "Active",
-    "direct_local_org_eligible": "Yes — via international partner only",
+    "donor_direct_local_org_eligible": "Yes — via international partner only",
     # Eligibility / route flags (TEXT yes/no/blank)
     "donor_ngo_eligible": "yes",
     "donor_for_profit_eligible": "no",
-    "grant_route": "yes",
+    "donor_grant_route": "yes",
     "open_call_unsolicited": "yes",
     "online_portal_submission": "yes",
-    "prefinance_required": "none",
+    "donor_prefinance_required": "none",
     "digital_health_data_ai_fit": "yes",
     # Provenance
     "verification_level": "high",
