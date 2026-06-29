@@ -50,6 +50,25 @@ def load() -> dict[str, Any]:
 
 
 def get(key: str, default: list | None = None) -> list:
+    # SINGLE-SOURCE vocabularies: program areas + geographies derive from the
+    # canonical modules (program_area_classifier / geographies) so EVERY form and
+    # feature uses the SAME list — no drifting YAML copies (the cause of "IDs -"
+    # prefixes + lowercase "canada" in some forms but not others). Program areas
+    # are returned as bare SUB-AREA names (no "Category -" prefix); matching
+    # re-maps them via program_area_classifier.expand(). Geographies are
+    # Sentence-cased UN regions / income tiers / countries.
+    if key == "program_areas":
+        try:
+            from core import program_area_classifier as _pa
+            return [s for subs in _pa.TAXONOMY.values() for s in subs]
+        except Exception:
+            pass
+    if key == "geographic_scope":
+        try:
+            from core import geographies as _geo
+            return list(_geo.GEO_OPTIONS)
+        except Exception:
+            pass
     return load().get(key, default or [])
 
 

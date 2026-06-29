@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RFPIS — Requirements (RFP ⊕ Donor) → Org match → Decision</title>
+<style>
+  :root{
+    --text-primary:#1f2328;--text-secondary:#555;--text-tertiary:#9ca3af;
+    --bg-primary:#fff;--bg-secondary:#f5f5f4;--border-default:#e3e3e0;
+    --font-sans:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    --font-mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  body{background:#fafaf9;margin:0;padding:28px 18px;font-family:var(--font-sans);color:var(--text-primary)}
+  .wrap{max-width:940px;margin:0 auto;font-size:13px;line-height:1.45}
+  h1{font-size:19px;margin:0 0 2px}
+  .sub{font-size:12px;color:var(--text-secondary);margin:0 0 14px}
+  .legend{display:flex;align-items:center;flex-wrap:wrap;gap:14px;font-size:11.5px;color:var(--text-secondary);background:var(--bg-secondary);border:1px solid var(--border-default);border-radius:8px;padding:8px 12px;margin-bottom:8px}
+  .lg{display:inline-flex;align-items:center;gap:5px}
+  .d{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .d.r{background:#2563eb}.d.o{background:#d97706}.d.g{background:#059669}
+  .note{font-size:11.5px;color:#4b5563;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:8px 12px;margin-bottom:16px}
+  .note b{color:#1e3a8a}
+  /* top input cards */
+  .cards{display:grid;grid-template-columns:1fr 70px 1fr;gap:0;align-items:center;margin-bottom:6px}
+  .card{border:1px solid var(--border-default);border-radius:10px;padding:12px 14px;background:var(--bg-primary)}
+  .card.req{border-top:3px solid #7c3aed}
+  .card.org{border-top:3px solid #059669}
+  .card h3{margin:0 0 6px;font-size:13.5px;display:flex;align-items:center;gap:6px}
+  .card .role{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border-radius:4px;padding:1px 6px}
+  .role.den{background:#ede9fe;color:#6d28d9}.role.num{background:#dcfce7;color:#166534}
+  .card ul{margin:0;padding-left:15px;color:var(--text-secondary);font-size:11.5px;columns:2;column-gap:16px}
+  .card.org ul{columns:1}
+  .vs{text-align:center;font-weight:700;color:var(--text-tertiary);font-size:13px}
+  .vs small{display:block;font-weight:400;font-size:9.5px;color:#9ca3af;margin-top:2px}
+  .matchhdr{text-align:center;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-secondary);margin:16px 0 8px}
+  /* mapping lattice */
+  .map{display:flex;flex-direction:column;gap:5px}
+  .mrow{display:grid;grid-template-columns:1fr 26px 150px 26px 1fr;align-items:center;gap:0;
+        border:1px solid var(--border-default);border-radius:8px;background:var(--bg-primary);padding:6px 4px}
+  .mrow.must{border-left:3px solid #be123c}.mrow.pref{border-left:3px solid #1d4ed8}
+  .req{text-align:right;font-size:11px;color:var(--text-secondary);padding-right:6px}
+  .req b,.org b{color:var(--text-primary);font-weight:600}
+  .org{text-align:left;font-size:11px;color:var(--text-secondary);padding-left:6px}
+  .arrow{text-align:center;color:#9ca3af;font-size:15px}
+  .crit{text-align:center}
+  .crit .nm{font-size:11.5px;font-weight:600;line-height:1.2}
+  .crit .w{font-size:9.5px;color:var(--text-tertiary);font-variant-numeric:tabular-nums}
+  .badge{font-size:8.5px;font-weight:700;border-radius:3px;padding:1px 4px;color:#fff;margin-right:3px}
+  .badge.must{background:#be123c}.badge.pref{background:#1d4ed8}
+  .src{display:inline-block;font-size:9px;font-weight:700;border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle}
+  .src.r{background:#dbeafe;color:#1e40af}.src.d{background:#fef3c7;color:#92400e}
+  /* aggregation + decision */
+  .arrowdown{text-align:center;color:#9ca3af;font-size:14px;margin:8px 0}
+  .agg{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .box{border:1px solid var(--border-default);border-radius:8px;padding:11px;background:var(--bg-secondary)}
+  .box.a{border-top:3px solid #be123c}.box.b{border-top:3px solid #d97706}
+  .box h4{margin:0 0 4px;font-size:12.5px}
+  .box .f{font-family:var(--font-mono);font-size:11.5px;background:var(--bg-primary);border:1px solid var(--border-default);border-radius:6px;padding:5px 7px;margin:3px 0}
+  .small{font-size:10.5px;color:var(--text-tertiary)}
+  .composite{text-align:center;font-size:14px;background:#ecfdf5;border:1.5px solid #6ee7b7;color:#065f46;border-radius:8px;padding:12px;margin-top:10px;font-variant-numeric:tabular-nums}
+  .composite b{color:#047857}
+  .decision{border:1px solid var(--border-default);border-radius:8px;padding:12px;background:var(--bg-primary);margin-top:10px}
+  .dgate{margin-bottom:8px}
+  .pill{font-size:11px;font-weight:600;border-radius:20px;padding:2px 10px}
+  .pill.proceed{background:#dcfce7;color:#166534}.pill.park{background:#fef9c3;color:#854d0e}.pill.decline{background:#fee2e2;color:#991b1b}.pill.pending{background:#e5e7eb;color:#374151}
+  .dbands{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .human{text-align:center;background:var(--bg-secondary);border:1px dashed var(--border-default);border-radius:8px;padding:11px;margin-top:10px;font-size:12.5px}
+  @media print{body{background:#fff}}
+  @media(max-width:680px){.card ul{columns:1}.mrow{grid-template-columns:1fr 20px 120px 20px 1fr}.cards{grid-template-columns:1fr}.vs{padding:6px 0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RFPIS — Requirements (RFP ⊕ Donor) → Org match → Decision</h1>
+  <p class="sub">Source of truth: criteria_derive.py · scoring_weights.yaml · matching.py · auto_scorer. Updated 2026-06-26.</p>
+
+  <div class="legend">
+    <span class="lg"><i class="d r"></i>RFP (the call)</span>
+    <span class="lg"><i class="d o"></i>Donor profile</span>
+    <span class="lg"><i class="d g"></i>Org (you)</span>
+    <span class="lg">score per criterion: <b>2 / 1 / 0</b></span>
+  </div>
+  <div class="note"><b>Two different splits — don't conflate.</b> The <b>80 / 20</b> Bid-Strength weight is <i>opportunity-fit (A) vs funder-fit (B)</i>, NOT RFP vs Donor. By requirement <i>source</i>, the RFP⊕Donor denominator is ≈ <b>48% RFP / 52% Donor</b> (RFP-primary on fit criteria, Donor-primary on the gates) — so we keep 80/20 and don't add a separate RFP:Donor knob (it would double-count).</div>
+
+  <!-- INPUT CARDS: denominator vs numerator -->
+  <div class="cards">
+    <div class="card req">
+      <h3>Requirements <span class="role den">denominator</span></h3>
+      <div class="small" style="margin-bottom:4px"><i class="d r"></i> RFP &nbsp;<i class="d o"></i> Donor — the call states what it can, the donor profile fills the rest</div>
+      <ul>
+        <li>eligible applicant types</li><li>HQ / registration rules</li>
+        <li>geographic scope</li><li>award size / ceiling</li>
+        <li>deadline</li><li>program area / theme</li>
+        <li>cost-share &amp; compliance</li><li>stage / budget / track floors</li>
+        <li>funding route</li><li>funders &amp; collaborators</li>
+      </ul>
+    </div>
+    <div class="vs">vs<small>matched 1:1</small></div>
+    <div class="card org">
+      <h3>Org <span class="role num">numerator</span></h3>
+      <ul>
+        <li>legal type · HQ · countries registered</li>
+        <li>countries of operation · partners</li>
+        <li>largest grant · budget · targets · stage</li>
+        <li>priority areas + domain ratings</li>
+        <li>funder history · portal registrations</li>
+        <li>cofinancing capacity · SAM · tax-exempt · BD team</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="matchhdr">↓ each requirement is matched one-to-one against the org capability that satisfies it ↓</div>
+
+  <!-- MAPPING LATTICE: requirement → criterion ← org -->
+  <div class="map">
+    <div class="mrow must"><div class="req"><b>Eligible types · HQ · registration</b><span class="src d">D</span> · individual-PI<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M1</span>Legal status &amp; qualification</div><div class="w">w .15 · 🔒 fatal</div></div><div class="arrow">←</div><div class="org"><b>legal_type · HQ · countries_registered</b></div></div>
+
+    <div class="mrow must"><div class="req">priority_program_areas<span class="src d">D</span> · program_area<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M2</span>Strategic fit</div><div class="w">w .15 · 📏</div></div><div class="arrow">←</div><div class="org"><b>priority_areas + ratings</b></div></div>
+
+    <div class="mrow must"><div class="req">award_ceiling / value<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M3</span>Implementation capacity</div><div class="w">w .15 · 📏</div></div><div class="arrow">←</div><div class="org"><b>largest_grant · target_max · experience</b></div></div>
+
+    <div class="mrow must"><div class="req">geographic_scope<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M4</span>Geographic fit</div><div class="w">w .10 · 🔒 fatal at 0</div></div><div class="arrow">←</div><div class="org"><b>countries_of_operation · partners</b></div></div>
+
+    <div class="mrow must"><div class="req">cost-share · SAM · tax · partner · audit<span class="src d">D</span> · compliance_flags<span class="src r">R</span> · stage/budget/track floors<span class="src d">D</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M5</span>Cofinancing &amp; compliance</div><div class="w">w .10 · ⚙ + 🔒 floors</div></div><div class="arrow">←</div><div class="org"><b>cofinancing_capacity · registrations · partners · stage · budget</b></div></div>
+
+    <div class="mrow pref"><div class="req">award value<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P6</span>Funding quality</div><div class="w">w .08 · 📏</div></div><div class="arrow">←</div><div class="org"><b>funding_target band</b></div></div>
+
+    <div class="mrow pref"><div class="req">funders_collaborators<span class="src d">D</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P7</span>Donor relationship</div><div class="w">w .08</div></div><div class="arrow">←</div><div class="org"><b>funder_history · partners</b></div></div>
+
+    <div class="mrow pref"><div class="req">grassroots / board / multi-country reqs<span class="src d">D</span> · program_area<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P8</span>Competitiveness</div><div class="w">w .10 · 📏</div></div><div class="arrow">←</div><div class="org"><b>domain ratings · age · HQ match</b></div></div>
+
+    <div class="mrow pref"><div class="req">submission_deadline<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P9</span>Bid effort</div><div class="w">w .09</div></div><div class="arrow">←</div><div class="org"><b>org_has_bd_team</b></div></div>
+
+    <div class="mrow pref" style="border-left:3px solid #d97706"><div class="req">priorities · scope · route · funders<span class="src d">D</span></div><div class="arrow">→</div><div class="crit"><div class="nm">Funder-fit (4 extras)</div><div class="w">the 20% · B</div></div><div class="arrow">←</div><div class="org"><b>priorities · countries · type · history</b></div></div>
+  </div>
+
+  <div class="arrowdown">▼</div>
+
+  <!-- AGGREGATION -->
+  <div class="agg">
+    <div class="box a"><h4>A · Criteria score (opportunity-fit)</h4><div class="f">Σ (weight × value⁄2) × 100</div><div class="small">The 9 criteria above. MUST weights .65 + PREFER .35 = 1.0.</div></div>
+    <div class="box b"><h4>B · Funder-fit score</h4><div class="f">mean(4 extras) × 100</div><div class="small">thematic · geographic · route · relationship (each 0 / .5 / 1).</div></div>
+  </div>
+
+  <div class="composite">Bid Strength = <b>0.80 × A</b> (opportunity-fit) + <b>0.20 × B</b> (funder-fit)</div>
+
+  <div class="arrowdown">▼</div>
+
+  <div class="decision">
+    <div class="dgate">🚦 <b>Fatal-factor gate:</b> if the org <u>explicitly fails</u> any 🔒 non-dynamic factor (legal identity · no geographic reach · a donor stage/budget/track-record floor · inaccessible funding route) → <span class="pill decline">Decline</span> <span class="small">(can't be fixed before the deadline)</span></div>
+    <div class="dbands"><span class="small">else band the composite (⚙ dynamic gaps Park, not Decline):</span>
+      <span class="pill proceed">≥ 90 Proceed</span><span class="pill park">70–89 Park</span><span class="pill decline">&lt; 70 Decline</span></div>
+  </div>
+
+  <div class="arrowdown">▼</div>
+
+  <div class="human">👤 <b>Human decision</b> stays <span class="pill pending">Pending</span> until a reviewer confirms — the Auto-decision is a recommendation, never the stored final call.</div>
+</div>
+</body>
+</html>
