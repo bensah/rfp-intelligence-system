@@ -190,7 +190,7 @@ def program_alignment(row: dict) -> tuple[Optional[str], Optional[str]]:
     a thin keyword read is never penalised by the matrix. None = defer."""
     health_fit = (any(_yes(row, f) for f in _HEALTH_FIT_FIELDS)
                   or _has_health_program_area(row))
-    lmic = _yes(row, "lmic_africa_focus") or _yes(row, "global_multi_country_scope")
+    lmic = _yes(row, "donor_lmic_africa_focus") or _yes(row, "donor_global_multi_country_scope")
     must1 = must2 = None
     if health_fit:
         must2 = "Yes"             # donor funds in our health program areas

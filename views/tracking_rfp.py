@@ -87,15 +87,15 @@ def _fetch(year: int) -> pd.DataFrame:
                 .str.lower().isin({"completed", "discontinued"})].copy()
 
     # Not overdue (allow null deadlines)
-    df["_deadline_date"] = pd.to_datetime(df["submission_deadline"], errors="coerce", format="ISO8601").dt.date
+    df["_deadline_date"] = pd.to_datetime(df["call_submission_deadline"], errors="coerce", format="ISO8601").dt.date
     df = df[df["_deadline_date"].isna() | (df["_deadline_date"] >= today)].copy()
 
     if df.empty:
         return df
 
     # Derived columns
-    df["_dtd"] = df["submission_deadline"].apply(days_to_deadline)
-    df["_dstat"] = df["submission_deadline"].apply(deadline_status)
+    df["_dtd"] = df["call_submission_deadline"].apply(days_to_deadline)
+    df["_dstat"] = df["call_submission_deadline"].apply(deadline_status)
     df["_usd"] = df.apply(lambda r: usd_value(r.get("call_award_value"), r.get("currency")), axis=1)
 
     # Concatenate Proposal Leads from duplicate group
@@ -236,7 +236,7 @@ with st.container(border=True):
     top4.caption(f"≈ ${row.get('_usd') or 0:,.0f} USD")
 
     d1, d2, d3 = st.columns(3)
-    d1.markdown(f"**Submission deadline**  \n{row.get('submission_deadline') or '—'}")
+    d1.markdown(f"**Submission deadline**  \n{row.get('call_submission_deadline') or '—'}")
     d1.markdown(f"**Expected award**  \n{row.get('expected_award_date') or '—'}")
     d2.markdown(f"**Proposal lead(s)**  \n{row.get('all_leads') or '—'}")
     d2.markdown(f"**Stage**  \n{row.get('stage') or '—'}")
@@ -474,7 +474,7 @@ def _view_rfp(r: dict) -> None:
     tiles = [
         ("Value", _val, _usd),
         ("Days to deadline", _days, ""),
-        ("Deadline", r.get("submission_deadline") or "—", ""),
+        ("Deadline", r.get("call_submission_deadline") or "—", ""),
         ("Expected award", r.get("expected_award_date") or "—", ""),
         ("Applicant role", r.get("applicant_role") or "—", ""),
         ("Funding window", r.get("funding_window") or "—", ""),

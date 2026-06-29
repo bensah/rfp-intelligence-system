@@ -96,7 +96,7 @@ st.subheader("Per-grant detail")
 # Approved first, then Under Review; within each by submission deadline desc
 priority = active.assign(
     _ord=active["_approved"].astype(int) * 2 + active["_pending"].astype(int)
-).sort_values(["_ord", "submission_deadline"], ascending=[False, False])
+).sort_values(["_ord", "call_submission_deadline"], ascending=[False, False])
 
 # Title first (fully visible) — UID and decision as suffix so the title gets
 # all the horizontal space. Iterate over priority.itertuples() and build the

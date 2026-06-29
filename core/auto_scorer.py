@@ -1046,7 +1046,7 @@ def deadline_in_future(candidate: dict[str, Any]) -> tuple[bool, str]:
     """
     from datetime import date as _date, datetime as _dt
     today = _date.today()
-    deadline = candidate.get("submission_deadline")
+    deadline = candidate.get("call_submission_deadline")
     if not deadline:
         # Stale-posting rule: a non-rolling call with no deadline whose page was
         # POSTED long ago is almost certainly closed (e.g. the FPF 'Seven
@@ -1269,7 +1269,7 @@ def _has_rfp_acronym(raw_text: str) -> bool:
 def _has_request_details(candidate: dict[str, Any]) -> bool:
     """Concrete signs of an actual call: a submission deadline or an award
     amount. (Description alone doesn't count — hub pages have descriptions.)"""
-    if candidate.get("submission_deadline"):
+    if candidate.get("call_submission_deadline"):
         return True
     ev = candidate.get("call_award_value")
     try:
@@ -1965,7 +1965,7 @@ def _is_blank_cheque(candidate: dict[str, Any]) -> bool:
     yielded just a title). Such a row must not earn a positive score off the
     fabricated optimistic defaults (qualification "Yes, fully" when nothing is
     documented, etc.) — there's nothing to bid on, so it is declined."""
-    if candidate.get("submission_deadline"):
+    if candidate.get("call_submission_deadline"):
         return False
     val = candidate.get("call_award_value")
     try:

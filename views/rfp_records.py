@@ -171,7 +171,7 @@ DISPLAY = [
     "opportunity_link",   # clickable on first view (no audit mode needed)
     "funding_agency",
     "applicant_role",
-    "submission_deadline",
+    "call_submission_deadline",
     "call_award_value",
     "currency",
     "_value_usd",       # derived: live USD conversion "≈ $X (CUR Y @ date)"
@@ -238,9 +238,9 @@ else:
     visible_cols = DISPLAY
 
 table = view_df.reindex(columns=visible_cols).copy()
-if "submission_deadline" in table:
-    table["submission_deadline"] = pd.to_datetime(
-        table["submission_deadline"], errors="coerce", format="ISO8601").dt.date
+if "call_submission_deadline" in table:
+    table["call_submission_deadline"] = pd.to_datetime(
+        table["call_submission_deadline"], errors="coerce", format="ISO8601").dt.date
 if "search_date" in table:
     # Actual scan date + time (from search_date), not the "Week 23" label.
     # format="ISO8601" is REQUIRED: auto/manual rows carry microseconds
@@ -306,7 +306,7 @@ _explicit_cfg = {
     ),
     "funding_agency": st.column_config.TextColumn("Funder"),
     "applicant_role": st.column_config.TextColumn("Role", width="small"),
-    "submission_deadline": st.column_config.DateColumn("Deadline"),
+    "call_submission_deadline": st.column_config.DateColumn("Deadline"),
     "call_award_value": st.column_config.NumberColumn("Value", format="%.0f"),
     "currency": st.column_config.TextColumn("Currency", width="small"),
     "_value_usd": st.column_config.TextColumn("Value (USD)", width="medium"),
@@ -467,7 +467,7 @@ def view_dialog(row: dict) -> None:
         _usd = usd_value(row.get("call_award_value"), row.get("currency"))
     except Exception:
         _usd = None
-    _dtd = days_to_deadline(row.get("submission_deadline"))
+    _dtd = days_to_deadline(row.get("call_submission_deadline"))
     _pfg, _pbg = _DECISION_PILL.get(str(_dec).strip().lower(), ("#475569", "#e2e8f0"))
 
     def _disp(v) -> str:
@@ -506,7 +506,7 @@ def view_dialog(row: dict) -> None:
     tiles += [
         ("Value", _val, (f"≈ ${_usd:,.0f} USD" if _usd else "")),
         ("Days to deadline", f"{int(_dtd):+d}" if _dtd is not None else "—", ""),
-        ("Deadline", row.get("submission_deadline") or "—", ""),
+        ("Deadline", row.get("call_submission_deadline") or "—", ""),
         ("Funding window", row.get("funding_window") or "—", ""),
         ("Solicitation type", row.get("solicitation_type") or "—", ""),
         ("Duration", row.get("project_duration") or "—", ""),
@@ -690,7 +690,7 @@ def edit_dialog(row: dict) -> None:
         brief_in = st.text_area("Brief description", value=_str(row.get("brief_description")), height=110, key=f"e_brief_{row['uid']}")
         c3, c4, c5 = st.columns(3)
         dp = c3.date_input("Date posted", value=_date(row.get("date_posted")), key=f"e_dp_{row['uid']}")
-        dl = c4.date_input("Submission deadline", value=_date(row.get("submission_deadline")), key=f"e_dl_{row['uid']}")
+        dl = c4.date_input("Submission deadline", value=_date(row.get("call_submission_deadline")), key=f"e_dl_{row['uid']}")
         ad = c5.date_input("Expected award", value=_date(row.get("expected_award_date")), key=f"e_ad_{row['uid']}")
         c6, c7, c8, c9 = st.columns(4)
         with c6:
@@ -920,7 +920,7 @@ def edit_dialog(row: dict) -> None:
             "funding_agency": funder_in.strip(),
             "brief_description": _val(brief_in),
             "date_posted": dp.isoformat() if isinstance(dp, date) else None,
-            "submission_deadline": dl.isoformat() if isinstance(dl, date) else None,
+            "call_submission_deadline": dl.isoformat() if isinstance(dl, date) else None,
             "expected_award_date": ad.isoformat() if isinstance(ad, date) else None,
             "applicant_role": _val(role_in),
             "funding_window": _val(win_in),
@@ -1029,7 +1029,7 @@ def _markdown_summary(row: dict) -> str:
         f"- **Funder:** {row.get('funding_agency') or '—'}\n"
         f"- **Applicant role:** {row.get('applicant_role') or '—'}\n"
         f"- **Window:** {row.get('funding_window') or '—'}\n"
-        f"- **Deadline:** {row.get('submission_deadline') or '—'}\n"
+        f"- **Deadline:** {row.get('call_submission_deadline') or '—'}\n"
         f"- **Estimated value:** {row.get('call_award_value') or '—'} {row.get('currency') or ''}\n"
         f"- **Geography:** {', '.join(row.get('call_geographic_scope') or []) or '—'}\n"
         f"- **Program area:** {', '.join(row.get('call_domain_areas') or []) or '—'}\n"

@@ -106,7 +106,7 @@ _LABEL_OVERRIDES = {
     "donor_govt_mou_required": "Government MOU required",
     "donor_funding_platform_registration_required": "Funding-platform registration required",
     # PREFER-8 competitiveness (migration 053)
-    "multi_country_encouraged": "Encourages multi-country proposals",
+    "donor_multi_country_encouraged": "Encourages multi-country proposals",
     "summary_description": "Summary",
     "donor_values": "Values",
     "strategy_url": "Strategy (URL)",
@@ -123,7 +123,7 @@ _LABEL_OVERRIDES = {
     "strategic_fit_notes": "Ideal applicant & what this funder rewards",
     "gaps_risks": "Common pitfalls & disqualifiers",
     "recommended_approach": "How to position a competitive application",
-    "funders_collaborators": "Funders & Collaborators",
+    "donor_funders_collaborators": "Funders & Collaborators",
     "donor_hq_country_required": "Applicant must be HQ'd in",
     "org_stage_required": "Org stage required",
     "donor_max_annual_budget": "Max annual budget (eligibility ceiling)",
@@ -373,7 +373,7 @@ _PROFILE = ["founded", "summary_description", "mission", "vision", "donor_values
             "out_of_scope", "selection_criteria", "funding_programs",
             "funding_tiers_json", "eligibility_notes", "application_deadlines",
             "donor_submission_portal_url", "strategic_fit_notes", "gaps_risks",
-            "recommended_approach", "donor_priority_ratings", "funders_collaborators",
+            "recommended_approach", "donor_priority_ratings", "donor_funders_collaborators",
             # Hard eligibility conditions (migration 032) — VALUED (not flags).
             "donor_hq_country_required", "org_stage_required", "donor_max_annual_budget",
             "donor_min_track_record", "required_partner_type", "required_partner_country",
@@ -397,7 +397,7 @@ _ELIG = [
     "donor_grant_route", "donor_procurement_tender_route", "donor_loan_dev_finance_route",
     "donor_subrecipient_partner_possible", "open_call_unsolicited",
     "invitation_solicited", "two_stage_application", "online_portal_submission",
-    "lmic_africa_focus", "global_multi_country_scope",
+    "donor_lmic_africa_focus", "donor_global_multi_country_scope",
 ]
 _FIT = [c for c in _FLAGS if c.endswith("_fit")]
 _REQ = [c for c in _FLAGS if c not in _ELIG and c not in _FIT]
@@ -495,7 +495,7 @@ def _cell(v):
 
 # Fields stored as JSON lists — rendered as comma lists in share/export.
 _LIST_FIELDS = {"donor_geographic_scope", "donor_priority_areas",
-                "funding_mechanism", "funders_collaborators",
+                "funding_mechanism", "donor_funders_collaborators",
                 # MUST-1 multi-selects (migration 049) — stored as JSON lists.
                 "donor_hq_country_required", "donor_registration_region", "required_partner_type",
                 "required_partner_country"}
@@ -738,7 +738,7 @@ def _summary_lines(row: dict) -> list[str]:
         ("Past awards", _disp(row.get("past_awards"))),
         ("Projected budget", _pb),
         ("Funding mechanism", _disp_field(row, "funding_mechanism")),
-        (_label("funders_collaborators"), _disp_field(row, "funders_collaborators")),
+        (_label("donor_funders_collaborators"), _disp_field(row, "donor_funders_collaborators")),
         (_label("funding_programs"), _disp(row.get("funding_programs"))),
     ])
     _tiers = _funding_tiers(row)
@@ -1002,9 +1002,9 @@ def _edit_dialog(row: dict) -> None:
         # Funders & Collaborators — the funders/partners behind or alongside this
         # donor, picked from the shared partner+donor vocabulary (multi-select;
         # type to add). Replaces the old free-text "Parent / funded by".
-        edited["funders_collaborators"] = json.dumps(_multi_with_options(
-            _label("funders_collaborators"), _PARTNER_OPTIONS,
-            row.get("funders_collaborators"), key=f"fundcollab_{ck}",
+        edited["donor_funders_collaborators"] = json.dumps(_multi_with_options(
+            _label("donor_funders_collaborators"), _PARTNER_OPTIONS,
+            row.get("donor_funders_collaborators"), key=f"fundcollab_{ck}",
             help="Who funds / partners with this donor (donors, philanthropies, pooled "
                  "funds, INGOs, …). Same list as the org 'Trusted partners' — type to add "
                  "a private firm or academic institution. If your org is in this list and "
@@ -1715,7 +1715,7 @@ def _view_dialog(row: dict) -> None:
         _subparts.append(_html.escape(_cat))
     if _disp(row.get("founded")):
         _subparts.append(f"Founded {_html.escape(_disp(row.get('founded')))}")
-    _hdr_funders = _to_list(row.get("funders_collaborators"))
+    _hdr_funders = _to_list(row.get("donor_funders_collaborators"))
     if _hdr_funders:
         _shown = ", ".join(_hdr_funders[:3]) + ("…" if len(_hdr_funders) > 3 else "")
         _subparts.append("Partnered with " + _html.escape(_shown))
@@ -1782,7 +1782,7 @@ def _view_dialog(row: dict) -> None:
             facts.append((lbl, v))
     _mech = _to_list(row.get("funding_mechanism"))
     _programs = _disp(row.get("funding_programs"))
-    _funders = _to_list(row.get("funders_collaborators"))
+    _funders = _to_list(row.get("donor_funders_collaborators"))
     _tiers = _funding_tiers(row)
     if facts or _mech or _programs or _funders or _tiers:
         with st.container(border=True):
@@ -1795,7 +1795,7 @@ def _view_dialog(row: dict) -> None:
                 _sub("Funding mechanism")
                 st.markdown(_chips(_mech), unsafe_allow_html=True)
             if _funders:
-                _sub(_label("funders_collaborators"))
+                _sub(_label("donor_funders_collaborators"))
                 st.markdown(_chips(_funders), unsafe_allow_html=True)
             if _programs:
                 _sub(_label("funding_programs"))
@@ -1984,10 +1984,10 @@ def _view_dialog(row: dict) -> None:
 # ---------------------------------------------------------------------------
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Donors mapped", len(df))
-if "lmic_africa_focus" in df:
-    k2.metric("LMIC / Africa focus", int((df["lmic_africa_focus"] == "yes").sum()))
-if "global_multi_country_scope" in df:
-    k3.metric("Global / multi-country", int((df["global_multi_country_scope"] == "yes").sum()))
+if "donor_lmic_africa_focus" in df:
+    k2.metric("LMIC / Africa focus", int((df["donor_lmic_africa_focus"] == "yes").sum()))
+if "donor_global_multi_country_scope" in df:
+    k3.metric("Global / multi-country", int((df["donor_global_multi_country_scope"] == "yes").sum()))
 if "verification_level" in df:
     k4.metric("High-confidence", int((df["verification_level"] == "high").sum()))
 
