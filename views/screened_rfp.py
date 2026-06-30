@@ -19,7 +19,7 @@ import streamlit as st
 from core import dropdowns, settings
 from core.currency import format_money
 from core.review_week import all_weeks_for_year, review_week_label, upcoming_review_week_label
-from core.records import clean_df
+from core.records import clean_df, drop_concluded
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -84,6 +84,9 @@ def _weeks_with_data() -> list[str]:
 
 
 df = _fetch(selected_week)
+# Drop concluded grants (won/submitted) — they belong in Grants + the Home Summary,
+# not the active screening list (e.g. HAPPI: Completed + Approved).
+df = drop_concluded(df)
 # Canonical (non-duplicate) rows — what we actually "screened" this week.
 # A row flagged as duplicate-of an RFP in another week shouldn't keep the
 # page open by itself, so we treat unique-empty as "nothing screened".
