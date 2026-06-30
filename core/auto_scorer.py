@@ -226,6 +226,28 @@ _US_DOMESTIC_ONLY_PATTERN = re.compile(
 )
 
 
+# Explicit FOREIGN-EXCLUSION — "Foreign entities are not eligible …", "international
+# applicants are ineligible", "not eligible … foreign". This is a US-only signal that
+# carries NO "domestic"/"US" token, so the _US_DOMESTIC_ONLY_PATTERN above misses it —
+# which is exactly why grants.gov calls saying "Foreign entities are not eligible to
+# compete for, or receive, awards" slipped through. Negation-aware on purpose so it
+# never fires on the inclusive "Foreign and domestic organizations are eligible".
+_FOREIGN_EXCLUDED_PATTERN = re.compile(
+    r"(?:foreign|international|non[\-\s]*u\.?s\.?|overseas)\s+"
+    r"(?:[a-z/,&'\-]+\s+){0,3}?(?:are|is|will\s+be|may\s+be|shall\s+be)?\s*"
+    r"(?:not\s+eligible|ineligible)"
+    r"|(?:not\s+eligible|ineligible)[^.]{0,40}?"
+    r"(?:foreign|international|non[\-\s]*u\.?s\.?|overseas)",
+    re.IGNORECASE,
+)
+
+
+def foreign_applicants_excluded(text: str | None) -> bool:
+    """True when the text EXPLICITLY bars foreign/international/non-US applicants
+    (a US-only signal even without the word 'domestic')."""
+    return bool(text) and bool(_FOREIGN_EXCLUDED_PATTERN.search(text))
+
+
 def grants_gov_domestic_only(elig_text: str | None) -> bool:
     """True when a Grants.gov eligibility description EXPLICITLY restricts to
     US/domestic applicants AND carries no foreign/international-eligible
@@ -233,6 +255,9 @@ def grants_gov_domestic_only(elig_text: str | None) -> bool:
     risking valid international calls (which fail this test)."""
     if not elig_text:
         return False
+    # Explicit foreign exclusion is decisive (e.g. "Foreign entities are not eligible").
+    if foreign_applicants_excluded(elig_text):
+        return True
     if _has_inclusive_eligibility(elig_text):
         return False
     return bool(_US_DOMESTIC_ONLY_PATTERN.search(elig_text))
@@ -888,6 +913,11 @@ def closed_call_hard_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
     Conservative on phrasing — only matches unambiguous closure language,
     not generic occurrences of "closed" (e.g. "closed-loop systems").
     """
+    # Explicit portal status (e.g. EU SEDIA status=Closed) OVERRIDES everything — a
+    # two-stage topic stays Closed even with a future second deadline.
+    if candidate.get("_closed") is True \
+            or str(candidate.get("call_status") or "").strip().lower() == "closed":
+        return True, "portal status: closed"
     text = _full_text(candidate)
     m = _CLOSURE_PHRASE_RE.search(text)
     if m:
@@ -913,6 +943,39 @@ def feasibility_hard_reject(candidate: dict[str, Any], policies: dict[str, Any])
     hits = [kw for kw in negatives if kw and kw.lower() in text]
     if hits:
         return True, f"feasibility negative keyword: {hits[0]!r}"
+    return False, ""
+
+
+# Construction / civil-works PROCUREMENT — unambiguous architecture-engineering-works
+# tenders (FR + EN). These are off-domain for the organisation even when health words appear, because
+# the health word is just WHAT is being built (e.g. "construction d'un Laboratoire P2",
+# "installation de cliniques modulaires"). Conservative on purpose (the user warned against
+# over-hardening): only matches works-procurement phrasing, never a health-programming call
+# that merely mentions a clinic/lab.
+_CONSTRUCTION_WORKS_RE = re.compile(
+    r"\b(?:"
+    r"bureau\s+d['’\s]*[ée]tude"                       # design office (FR)
+    r"|ma[iî]tr[iî]se\s+d['’\s]*(?:œuvre|oeuvre)"       # works supervision (FR)
+    r"|surveillance\s+des\s+chantiers?"
+    r"|suivi\s+(?:et\s+)?(?:de\s+)?(?:contr[oô]le\s+)?(?:des\s+)?(?:travaux|chantiers?)"
+    r"|travaux\s+(?:préparatoires|de\s+(?:construction|réhabilitation|g[ée]nie))"
+    r"|g[ée]nie\s+civil"
+    r"|cliniques?\s+modulaires?"
+    r"|civil\s+works?|works?\s+supervision|construction\s+supervision|works?\s+contract"
+    r"|construction\s+of\s+(?:a\s+|an\s+|the\s+)?(?:building|laborator|clinic|hospital|"
+    r"warehouse|road|facilit)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def construction_works_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
+    """Hard reject for construction / civil-works PROCUREMENT tenders (design office,
+    works supervision, building construction). Off-domain for the organisation even when a clinic /
+    lab is the thing being built."""
+    m = _CONSTRUCTION_WORKS_RE.search(_full_text(candidate))
+    if m:
+        return True, f"off-theme: construction / civil works procurement ({m.group(0)!r})"
     return False, ""
 
 
@@ -1537,6 +1600,10 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
     ok, reason = country_eligible(candidate, policies)
     if geo_org_gates and not ok:
         return False, f"country: {reason}"
+    # Construction / civil-works procurement — off-domain even with health words present.
+    rejected, reason = construction_works_reject(candidate)
+    if rejected:
+        return False, f"theme: {reason}"
     ok, reason = theme_eligible(candidate, policies, llm_theme=llm_theme)
     if not ok:
         return False, f"theme: {reason}"
