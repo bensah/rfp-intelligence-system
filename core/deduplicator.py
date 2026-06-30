@@ -38,13 +38,74 @@ TITLE_THRESHOLD = 0.90
 _PUNCT = re.compile(r"[^a-z0-9\s]+")
 _WS = re.compile(r"\s+")
 
+# Leading solicitation-type phrase ("Call for letters of interest: …", "Request for
+# proposals — …", "EOI: …"). Stripped for MATCHING only (the stored opportunity_title
+# keeps the full original) so two sources that wrap the same call differently
+# ("Call for letters of interest: Addressing …" vs "Addressing … (Letters of …)") line up.
+_SOLICIT_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"call\s+for\s+(?:letters?\s+of\s+interest|expressions?\s+of\s+interest|proposals?|"
+    r"applications?|concept\s+notes?|tenders?)"
+    r"|requests?\s+for\s+(?:proposals?|applications?|expressions?\s+of\s+interest|"
+    r"information|quotations?)"
+    r"|expressions?\s+of\s+interest|letters?\s+of\s+interest"
+    r"|notice\s+of\s+funding\s+opportunity|funding\s+opportunity\s+announcement"
+    r"|invitation\s+to\s+(?:tender|bid)"
+    r"|eoi|loi|nofo|rfp|rfa|rfq|cfp|cfa"
+    r")\b\s*[:\-–—]*\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_solicit_prefix(title: str) -> str:
+    out = _SOLICIT_PREFIX_RE.sub("", title, count=1)
+    # Don't strip a title down to near-nothing (e.g. a bare "Call for proposals").
+    return out if len(out.strip()) >= 8 else title
+
 
 def _norm_title(s: str | None) -> str:
     if not s:
         return ""
-    s = s.lower()
+    s = _strip_solicit_prefix(s).lower()
     s = _PUNCT.sub(" ", s)
     return _WS.sub(" ", s).strip()
+
+
+# Funder equivalence — collapse an acronym with its full name ("IDRC" ⇄ "International
+# Development Research Centre") and drop a leading "ACRONYM - Donor Name" migration
+# prefix, so an Excel-imported funder and a re-scanned full-name funder line up. Used
+# only inside the deadline-corroborated rules (4/5), so an initials coincidence can't
+# merge two calls on its own — it still needs the same deadline + title/value overlap.
+_FUNDER_INITIAL_SKIP = {"of", "the", "and", "for", "de", "du", "des", "la", "le", "et"}
+
+
+def _funder_core(s: str | None) -> str:
+    raw = (s or "")
+    raw = raw.split(" - ", 1)[1] if " - " in raw else raw   # drop "ACRONYM - " prefix
+    return _WS.sub(" ", _PUNCT.sub(" ", raw.lower())).strip()
+
+
+def _funder_initials(s: str | None) -> str:
+    raw = (s or "")
+    raw = raw.split(" - ", 1)[1] if " - " in raw else raw
+    words = re.findall(r"[A-Za-z][A-Za-z'&\-]*", raw)
+    return "".join(w[0].upper() for w in words if w.lower() not in _FUNDER_INITIAL_SKIP)
+
+
+def _funders_equivalent(a: str | None, b: str | None) -> bool:
+    ca, cb = _funder_core(a), _funder_core(b)
+    if not ca or not cb:
+        return False
+    if ca == cb:
+        return True
+    if len(ca) >= 5 and len(cb) >= 5 and (ca in cb or cb in ca):
+        return True
+    # acronym ⇄ full-name initials (IDRC ⇄ International Development Research Centre)
+    for short, full in ((a, b), (b, a)):
+        s = re.sub(r"[^A-Za-z]", "", (short or "")).upper()
+        if 2 <= len(s) <= 6 and s == _funder_initials(full):
+            return True
+    return False
 
 
 def _norm_url(u: str | None) -> str:
@@ -150,7 +211,7 @@ def find_duplicates(
         if (
             cand_agency
             and cand_deadline
-            and (row.get("funding_agency") or "").strip().lower() == cand_agency
+            and _funders_equivalent(candidate.get("funding_agency"), row.get("funding_agency"))
             and str(row.get("call_submission_deadline") or "").strip() == cand_deadline
         ):
             shared = (_distinctive_tokens(cand_title)
@@ -166,7 +227,7 @@ def find_duplicates(
             cand_agency
             and cand_deadline
             and cand_value is not None
-            and (row.get("funding_agency") or "").strip().lower() == cand_agency
+            and _funders_equivalent(candidate.get("funding_agency"), row.get("funding_agency"))
             and str(row.get("call_submission_deadline") or "").strip() == cand_deadline
             and row.get("call_award_value") == cand_value
         ):
