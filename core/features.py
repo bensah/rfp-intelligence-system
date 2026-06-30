@@ -64,7 +64,7 @@ _COMPONENT_KEYS: tuple[str, ...] = (
     "safeguarding", "partner_mou", "govt_mou", "govt_endorsement", "local_board",
     "authorized_signatory", "partnership", "platform_reg", "route",
     # PREFER-6 funding_quality
-    "fq_floor", "fq_ceiling", "fq_value",
+    "fq_floor", "fq_ceiling", "fq_value", "fq_duration",
     # PREFER-7 funder_relationship
     "rel_grantee", "rel_contact",
     # PREFER-8 competitiveness
