@@ -50,12 +50,12 @@ _SCORE_MAP = {
     "yes, comfortably": 2, "yes, but a stretch": 1, "no, beyond us": 0,
     # geographic_fit
     "yes, our own presence": 2, "yes, via a partner": 1, "no presence there": 0,
-    # cofinancing — "Can we meet any co-financing/match + the funder's compliance
-    # requirements?" Yes (none required, or we can cover it) = 2, Partial with
-    # effort = 1, No (it's required and we can't) = 0. Legacy "yes / none required"
-    # / bare "no" kept for old stored rows.
-    "yes, none required": 2, "partial, with effort": 1, "no, required": 0,
-    "yes / none required": 2,
+    # cofinancing — MUST-5 now spans co-financing AND the funder's compliance gates
+    # (SAM/tax-exempt/safeguarding/…), so the labels read Met / Not Met: fully met = 2,
+    # partial with effort = 1, not met = 0. OLD labels kept as aliases so existing
+    # stored rows still score and remap to the new label by score (match_response).
+    "yes, fully met": 2, "partial, with effort": 1, "not met": 0,
+    "yes, none required": 2, "no, required": 0, "yes / none required": 2,
     # funding_quality
     "high": 2, "moderate": 1, "low": 0,
     # funder_relationship
@@ -164,7 +164,7 @@ CRITERION_RESPONSES: dict[str, list[str]] = {
     "geographic_fit": [
         "Yes, our own presence", "Yes, via a partner", "No presence there", "Not sure"],
     "cofinancing": [
-        "Yes, none required", "Partial, with effort", "No, required", "Not sure"],
+        "Yes, fully met", "Partial, with effort", "Not met", "Not sure"],
     "funding_quality": ["High", "Moderate", "Low", "Not sure"],
     "funder_relationship": [
         "Current/past grantee", "Some contact", "None", "Not sure"],

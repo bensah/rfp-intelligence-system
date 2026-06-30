@@ -818,23 +818,25 @@ def cofinancing_bid_strength(org: dict, rfp: dict, donor: dict | None = None,
 def derive_cofinancing(org: dict, rfp: dict, donor: dict | None = None,
                        rfp_compliance: dict | None = None,
                        org_settings: dict | None = None) -> str | None:
-    """MUST-5 label (gate logic over ACTIVE components only): any 0 → 'No, required';
-    any 0.5 → 'Partial, with effort'; all 1 → 'Yes, none required'. NO active component
-    (nothing the call/donor imposes) → 'Not sure' → scores value 1 (Park)."""
+    """MUST-5 label (gate logic over ACTIVE components only): any 0 → 'Not met';
+    any 0.5 → 'Partial, with effort'; all 1 → 'Yes, fully met'. NO active component
+    (nothing the call/donor imposes) → 'Not sure' → scores value 1 (Park). MUST-5 spans
+    co-financing AND the compliance gates (SAM/tax-exempt/…), so ANY unmet requirement —
+    a hard non-dynamic gate OR co-financing — forces 'Not met' even if the rest are met."""
     scores = [f["score"] for f in compliance_factors(
         org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
         if f["active"] and f["score"] is not None]
     if not scores:
         return "Not sure"
     if any(s <= 0.0 for s in scores):
-        return "No, required"
+        return "Not met"
     if any(s == 0.5 for s in scores):
         return "Partial, with effort"
-    return "Yes, none required"
+    return "Yes, fully met"
 
 
-def derive_funding_quality(rfp: dict, org: dict | None = None,
-                           policies: dict | None = None) -> str | None:
+def _award_quality_label(rfp: dict, org: dict | None = None,
+                         policies: dict | None = None) -> str | None:
     """ORG-RELATIVE attractiveness of the award SIZE. Bands the RFP value against
     the org's preferred targets (low/mid/max) using GEOMETRIC midpoints
     (money is multiplicative): cut1=sqrt(low*mid), cut2=sqrt(mid*max).
@@ -870,6 +872,36 @@ def derive_funding_quality(rfp: dict, org: dict | None = None,
     if val >= mid2:
         return "Moderate"
     return "Low"
+
+
+def _duration_score(rfp: dict) -> float | None:
+    """PREFER-6 duration tier (project_duration, in MONTHS): <=6 -> 0 (low) ·
+    >6 and <12 -> 0.5 (moderate) · >=12 -> 1 (high). None when no duration is
+    captured -> contributes nothing (the criterion stays 'Not sure' on its own)."""
+    d = _num(rfp.get("project_duration"))
+    if d is None:
+        return None
+    if d <= 6:
+        return 0.0
+    if d < 12:
+        return 0.5
+    return 1.0
+
+
+def derive_funding_quality(rfp: dict, org: dict | None = None,
+                           policies: dict | None = None) -> str | None:
+    """PREFER-6 = award-SIZE attractiveness JOINED with project DURATION (owner
+    2026-06-30): longer projects are more fundable/strategic. Average whichever of
+    the two signals are present and band the result (>=0.75 High · >=0.4 Moderate ·
+    else Low); 'Not sure' only when NEITHER award value nor duration is known."""
+    award = _award_quality_label(rfp, org, policies)
+    a = {"High": 1.0, "Moderate": 0.5, "Low": 0.0}.get(award)   # None if "Not sure"/None
+    d = _duration_score(rfp)
+    parts = [s for s in (a, d) if s is not None]
+    if not parts:
+        return "Not sure"
+    avg = sum(parts) / len(parts)
+    return "High" if avg >= 0.75 else ("Moderate" if avg >= 0.4 else "Low")
 
 
 def _registered_on_portal(org: dict, rfp: dict, donor: dict | None) -> bool:
@@ -920,15 +952,22 @@ def _funder_in_history(funding_agency: Any, hist: list[str]) -> bool:
     "EU"/"WHO" can't spuriously match "European…"/"WHObla…") — exact match always
     counts. Mirrors core.matching._names_overlap to keep PREFER-7 and funder-fit
     consistent."""
-    fa = _norm_rel(funding_agency)
-    if not fa:
+    raw = str(funding_agency or "")
+    # "ACRONYM - Donor Name" (Excel migration) → also try the name after the separator,
+    # so "BMGF - Gates Foundation" matches a "Gates Foundation" funder-history entry.
+    variants = {_norm_rel(raw)}
+    if " - " in raw:
+        variants.add(_norm_rel(raw.split(" - ", 1)[1]))
+    variants.discard("")
+    if not variants:
         return False
     for h in hist:
         hn = _norm_rel(h)
         if not hn:
             continue
-        if fa == hn or (len(fa) >= 4 and len(hn) >= 4 and (fa in hn or hn in fa)):
-            return True
+        for fa in variants:
+            if fa == hn or (len(fa) >= 4 and len(hn) >= 4 and (fa in hn or hn in fa)):
+                return True
     return False
 
 
@@ -952,9 +991,17 @@ def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) 
     return "None"
 
 
+def _is_completed(rfp: dict) -> bool:
+    """The submission is already in (Progress status = Completed), so deadline runway
+    is moot — it was clearly submitted on time."""
+    return str(rfp.get("progress_status") or "").strip().lower() == "completed"
+
+
 def derive_bid_effort(rfp: dict, org_settings: dict | None = None) -> str | None:
     bd = str((org_settings or {}).get("org_has_bd_team", "false")).lower() == "true"
-    return bid_effort_label(days_until(rfp.get("call_submission_deadline")), bd)
+    # Already submitted (Completed) → treat time as ample (it was met), don't penalise.
+    days = 10_000 if _is_completed(rfp) else days_until(rfp.get("call_submission_deadline"))
+    return bid_effort_label(days, bd)
 
 
 # Real donor_intel requirement columns (migration 020). Values are text
@@ -1387,11 +1434,13 @@ def _strategic_factors(org: dict, rfp: dict, donor: dict | None = None) -> list[
 
 
 def _funding_quality_factors(rfp: dict, org: dict | None = None) -> list[dict]:
-    """PREFER-6 sub-factors: award size vs the org's preferred band."""
+    """PREFER-6 sub-factors: award size vs the org's preferred band, JOINED with the
+    project duration tier (<=6mo low · 6-12 moderate · >=12 high)."""
     org = org or {}
     val = _usd(rfp)
     lo = _num(org.get("org_min_target"))
     mx = _num(org.get("org_max_target"))
+    _dur = _duration_score(rfp)
     return [
         _factor("fq_floor", "At/above your minimum target size", "RG",
                 (val >= lo) if (val and lo) else None, active=bool(lo)),
@@ -1399,6 +1448,9 @@ def _funding_quality_factors(rfp: dict, org: dict | None = None) -> list[dict]:
                 (val <= mx) if (val and mx) else None, active=bool(mx)),
         _factor("fq_value", "Award value stated by the call", "R",
                 bool(val), active=True),
+        # Duration tier as a 0/0.5/1 score-factor (absent → inactive → Not sure).
+        _qfactor("fq_duration", "Project duration (longer preferred)",
+                 active=_dur is not None, score=_dur, hard=False, source="R"),
     ]
 
 
@@ -1441,12 +1493,17 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
 def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dict]:
     """PREFER-9 sub-factors: time-to-deadline × a business-development team."""
     osx = org_settings or {}
-    days = days_until(rfp.get("call_submission_deadline"))
     bd = str(osx.get("org_has_bd_team", "false")).lower() == "true"
+    if _is_completed(rfp):
+        # Already submitted → the time gate was met; show it as such, not "not enough".
+        time_name, time_met, time_active = "Submitted on time (already completed)", True, True
+    else:
+        days = days_until(rfp.get("call_submission_deadline"))
+        time_name = "Enough time before the deadline (>14d)"
+        time_met = (days is not None and days > 14) if days is not None else None
+        time_active = days is not None
     return [
-        _factor("bid_time", "Enough time before the deadline (>14d)", "R",
-                (days is not None and days > 14) if days is not None else None,
-                active=days is not None),
+        _factor("bid_time", time_name, "R", time_met, active=time_active),
         _factor("bid_team", "Has a business-development team", "G", bool(bd), active=True),
     ]
 
