@@ -62,13 +62,15 @@ _COMPONENT_KEYS: tuple[str, ...] = (
     # MUST-5 cofinancing & compliance
     "cofinance", "audited_financials", "audit_report", "sam_uei", "tax_exempt",
     "safeguarding", "partner_mou", "govt_mou", "govt_endorsement", "local_board",
-    "authorized_signatory", "partnership", "platform_reg", "route",
+    "authorized_signatory", "partnership",
     # PREFER-6 funding_quality
     "fq_floor", "fq_ceiling", "fq_value", "fq_duration",
     # PREFER-7 funder_relationship
     "rel_grantee", "rel_contact",
-    # PREFER-8 competitiveness
-    "comp_track", "comp_age", "comp_portal", "comp_grassroots", "comp_multi", "comp_hq",
+    # PREFER-8 competitiveness (funding-platform registration = comp_portal; funding
+    # route = comp_route — both moved here from MUST-5, Bid Strength only)
+    "comp_track", "comp_age", "comp_portal", "comp_route",
+    "comp_grassroots", "comp_multi", "comp_hq",
     # PREFER-9 bid_effort
     "bid_time", "bid_team",
 )
