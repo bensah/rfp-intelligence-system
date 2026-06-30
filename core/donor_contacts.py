@@ -19,12 +19,12 @@ log = logging.getLogger(__name__)
 
 
 def _key_for_funder(funder: Any) -> str | None:
-    """donor_intel.canonical_key for a call's funder, or None if the donor isn't in
-    the intel matrix yet (auto-creating the donor is the separate ETL/enrichment step)."""
+    """donor_intel.canonical_key for a call's funder — via donor_enrich.ensure_donor, so a
+    named, on-theme funder not yet in the matrix is conservatively auto-created (a stub) and
+    the contacts then have a donor to attach to. None for a generic / uncreatable funder."""
     try:
-        from core.donor_intel import match_donor
-        d = match_donor(funder)
-        return (d or {}).get("canonical_key") or None
+        from core.donor_enrich import ensure_donor
+        return ensure_donor(funder)
     except Exception:
         return None
 
