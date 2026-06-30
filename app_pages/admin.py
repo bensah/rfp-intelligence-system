@@ -900,7 +900,7 @@ with tab_data:
             st.rerun()
 
 with tab_sources:
-    st.subheader("Donor sources catalog")
+    st.subheader("Funding sources catalog")
     st.caption(
         "Curated per-source funding URLs. The Friday scan + manual scan iterate "
         "over every **active** row here, in addition to the keyword-wide sources "
@@ -963,7 +963,7 @@ with tab_sources:
                  f"{len(skipped)} already present.", icon="📥")
 
     # ----- Add / Edit / Delete dialogs --------------------------------------
-    @st.dialog("Add donor source", width="large")
+    @st.dialog("Add funding source", width="large")
     def _add_source_dialog():
         with st.form("add_donor_source_form", clear_on_submit=False):
             c1, c2 = st.columns(2)
@@ -1010,7 +1010,7 @@ with tab_sources:
             except Exception as exc:
                 st.error(f"Could not add: {exc}")
 
-    @st.dialog("Edit donor source", width="large")
+    @st.dialog("Edit funding source", width="large")
     def _edit_source_dialog(_row):
         with st.form("edit_donor_source_form"):
             c1, c2 = st.columns(2)
@@ -1062,9 +1062,9 @@ with tab_sources:
             except Exception as exc:
                 st.error(f"Could not save: {exc}")
 
-    @st.dialog("Delete donor sources", width="medium")
+    @st.dialog("Delete funding sources", width="medium")
     def _delete_sources_dialog(_ids, _names):
-        st.error(f"Permanently delete **{len(_ids)}** donor source(s)? "
+        st.error(f"Permanently delete **{len(_ids)}** funding source(s)? "
                  f"This cannot be undone.")
         st.markdown("\n".join(f"- {n}" for n in _names[:12])
                     + ("\n- …" if len(_names) > 12 else ""))
@@ -1276,7 +1276,7 @@ with tab_scan:
     st.subheader("Trigger a manual scan")
     from core.scan_runner import scannable_source_count as _src_count
     st.caption(
-        "Two workflows. **⛏ Run Extraction** crawls every catalogued donor source "
+        "Two workflows. **⛏ Run Extraction** crawls every catalogued funding source "
         f"and extracts opportunities into the global store — a full run ({_src_count()} "
         "sources with detail-page + PDF + LLM enrichment) is the slow backend job "
         "(**~20-40 minutes**, no org screening). **🎯 My Eligible Funding** then "
@@ -1359,7 +1359,7 @@ with tab_scan:
     _match_slot = _bc2.empty()
     _do_extract = _ext_slot.button(
         "⛏ Run Extraction", type="secondary", key="admin_extract_btn", width='stretch',
-        help="Platform job: crawl all donor sources and extract into the global "
+        help="Platform job: crawl all funding sources and extract into the global "
              "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
              "(~20-40 min for a full run).")
     _do_match = _match_slot.button(
