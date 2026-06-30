@@ -123,6 +123,67 @@ def mark_human_verified(field_provenance: Any, fields) -> dict:
     return fp
 
 
+def enrich_donor_requirements_from_call(candidate: dict) -> int:
+    """Fill a donor's BLANK requirement fields from a call's extracted compliance signals
+    (call_compliance_flags). A flag the call EXPLICITLY imposes → the donor's matching
+    '*_required' field is set 'yes' (Required) — but ONLY if it's currently blank and not
+    human-verified (fill_blank_from_call), tagged 'from_call' so the form can show it as a
+    suggestion. Auto-creates the donor (conservatively) if needed. Returns #fields filled.
+    Best-effort; never raises. (Silence in a call never writes 'Not Required' — absence of a
+    signal is not evidence; the field stays blank.)"""
+    flags = candidate.get("call_compliance_flags")
+    if isinstance(flags, str):
+        try:
+            flags = json.loads(flags)
+        except Exception:
+            flags = None
+    if not isinstance(flags, dict) or not flags:
+        return 0
+    key = ensure_donor(candidate.get("funding_agency"))
+    if not key:
+        return 0
+    try:
+        from core.criteria_derive import _eff_column
+    except Exception:
+        return 0
+    # Map the call's bare flag keys → donor requirement columns; only '*_required' gates
+    # (a call imposing a requirement is donor-level enough to SUGGEST; silence is ignored).
+    updates: dict[str, str] = {}
+    for k, v in flags.items():
+        if not v:
+            continue
+        col = _eff_column(k)
+        if col.endswith("_required"):
+            updates[col] = "yes"
+    if not updates:
+        return 0
+    try:
+        from db.supabase_client import get_client, safe_execute
+        sb = get_client()
+        rows = safe_execute(
+            sb.table("donor_intel").select("*").eq("canonical_key", key)) or []
+        donor = rows[0] if rows else {}
+        patch, prov = fill_blank_from_call(donor, updates)
+        if not patch:
+            return 0
+        fp = donor.get("field_provenance")
+        fp = dict(fp) if isinstance(fp, dict) else {}
+        fp.update(prov)
+        patch["canonical_key"] = key
+        patch["field_provenance"] = json.dumps(fp)
+        sb.table("donor_intel").upsert(patch, on_conflict="canonical_key").execute()
+        try:
+            from core.donor_intel import clear_cache
+            clear_cache()
+        except Exception:
+            pass
+        log.info("E3 enriched donor %s with %d call-derived requirement(s)", key, len(prov))
+        return len(prov)
+    except Exception as exc:
+        log.debug("enrich_donor_requirements_from_call failed: %s", exc)
+        return 0
+
+
 def fill_blank_from_call(donor: dict, updates: dict) -> tuple[dict, dict]:
     """Compute a fill-BLANK-only patch + provenance bumps for a donor from call-derived
     `updates`. NEVER overwrites a field a human verified or any non-blank value; only
