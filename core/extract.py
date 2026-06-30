@@ -158,7 +158,9 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
         handler_geo = {str(g).strip() for g in cand_geo if str(g).strip()}
     elif isinstance(cand_geo, str) and cand_geo.strip():
         handler_geo = {cand_geo.strip()}
-    geo = handler_geo | set(geographies.regions_in_text(blob.lower()))
+    # broad_geos_in_text covers UN regions AND income/development TIERS (LMICs, LDCs,
+    # Global South) — regions_in_text missed the tiers, so those signals were lost.
+    geo = handler_geo | set(geographies.broad_geos_in_text(blob.lower()))
 
     # LLM FALLBACK (regex-first) — call the LLM when regex left a real gap (no
     # amount, or no/low-confidence deadline), OR when the text looks STAGED /
@@ -257,6 +259,11 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     _llm_geo = {str(g).strip() for g in (_llm("call_geographic_scope") or []) if str(g).strip()}
     if _llm_geo:
         geo = handler_geo | _llm_geo
+    # Normalise EVERY captured term to the broad-geography vocabulary so scope is
+    # comparable across sources (canonical countries + LMIC/SSA/Global-South signals);
+    # terms not in the library are kept verbatim (free-text scope is allowed).
+    geo = {geographies.canonical_geo(g) for g in geo}
+    geo.discard("")
 
     funding_status = "Closed" if (llm and llm.get("is_closed")) else "Open"
     overall_conf = "high" if (llm and llm.get("confidence") == "high") else d_conf
