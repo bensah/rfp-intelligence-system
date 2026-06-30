@@ -1773,9 +1773,19 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
     hardcoded EU: EDCTP3 / Global-Health JUs target sub-Saharan Africa). The query
     body must be a multipart part with explicit application/json, else the API 500s."""
     out: list[dict[str, Any]] = []
+    # forthcoming + open. For a TARGETED query (e.g. text="EDCTP3", a small result
+    # set) ALSO pull CLOSED (31094503): the portal flips a two-stage topic to Closed
+    # once stage-1 passes even though a later stage-2 deadline is still in the future,
+    # so the deadline alone reads "open". We ingest those Closed topics and let the gate
+    # reject them (logged for the learning loop + flips a row we caught while it was
+    # open). The generic "***" sweep stays open-only so closed history can't crowd the
+    # bounded result window.
+    _statuses = ["31094501", "31094502"]
+    if text and text != "***":
+        _statuses.append("31094503")                     # closed
     q = {"bool": {"must": [
         {"terms": {"type": ["1", "2"]}},                  # 1=tender, 2=grant
-        {"terms": {"status": ["31094501", "31094502"]}},  # forthcoming, open
+        {"terms": {"status": _statuses}},
     ]}}
 
     def _first(md: dict, k: str) -> str:
@@ -1814,6 +1824,10 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
             # status 31094501 = forthcoming (future) → announcement, not a live call.
             opp_type = ("announcement" if status == "31094501"
                         else "award" if is_prize else "grant")
+            # 31094503 = CLOSED. The portal's explicit closed flag OVERRIDES the deadline
+            # (a two-stage topic stays Closed even with a future stage-2 date) — the gate
+            # hard-rejects on this.
+            _is_closed = status == "31094503"
             out.append({
                 "opportunity_title": title,
                 "opportunity_link": it.get("url"),
@@ -1829,6 +1843,7 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
                 "instrument_type": "Award" if is_prize else (
                     "Grant" if _first(md, "type") == "2" else "Contract"),
                 "opportunity_type": opp_type,
+                "_closed": _is_closed,
                 "_source_origin": f"{name} (status={status})",
             })
     return _dedup_by_link_or_title(out)
