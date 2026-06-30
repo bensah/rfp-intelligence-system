@@ -946,6 +946,39 @@ def feasibility_hard_reject(candidate: dict[str, Any], policies: dict[str, Any])
     return False, ""
 
 
+# Construction / civil-works PROCUREMENT — unambiguous architecture-engineering-works
+# tenders (FR + EN). These are off-domain for the organisation even when health words appear, because
+# the health word is just WHAT is being built (e.g. "construction d'un Laboratoire P2",
+# "installation de cliniques modulaires"). Conservative on purpose (the user warned against
+# over-hardening): only matches works-procurement phrasing, never a health-programming call
+# that merely mentions a clinic/lab.
+_CONSTRUCTION_WORKS_RE = re.compile(
+    r"\b(?:"
+    r"bureau\s+d['’\s]*[ée]tude"                       # design office (FR)
+    r"|ma[iî]tr[iî]se\s+d['’\s]*(?:œuvre|oeuvre)"       # works supervision (FR)
+    r"|surveillance\s+des\s+chantiers?"
+    r"|suivi\s+(?:et\s+)?(?:de\s+)?(?:contr[oô]le\s+)?(?:des\s+)?(?:travaux|chantiers?)"
+    r"|travaux\s+(?:préparatoires|de\s+(?:construction|réhabilitation|g[ée]nie))"
+    r"|g[ée]nie\s+civil"
+    r"|cliniques?\s+modulaires?"
+    r"|civil\s+works?|works?\s+supervision|construction\s+supervision|works?\s+contract"
+    r"|construction\s+of\s+(?:a\s+|an\s+|the\s+)?(?:building|laborator|clinic|hospital|"
+    r"warehouse|road|facilit)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def construction_works_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
+    """Hard reject for construction / civil-works PROCUREMENT tenders (design office,
+    works supervision, building construction). Off-domain for the organisation even when a clinic /
+    lab is the thing being built."""
+    m = _CONSTRUCTION_WORKS_RE.search(_full_text(candidate))
+    if m:
+        return True, f"off-theme: construction / civil works procurement ({m.group(0)!r})"
+    return False, ""
+
+
 # US-domestic-only signal — the decisive geography reject for a non-US
 # deployment. See docs/SCAN_CLASSIFICATION_ALGORITHM.md §6 (the "domestic"
 # test from HRSA-26-083: "All domestic public or private … entities").
@@ -1567,6 +1600,10 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
     ok, reason = country_eligible(candidate, policies)
     if geo_org_gates and not ok:
         return False, f"country: {reason}"
+    # Construction / civil-works procurement — off-domain even with health words present.
+    rejected, reason = construction_works_reject(candidate)
+    if rejected:
+        return False, f"theme: {reason}"
     ok, reason = theme_eligible(candidate, policies, llm_theme=llm_theme)
     if not ok:
         return False, f"theme: {reason}"
