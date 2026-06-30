@@ -62,3 +62,12 @@ def confidence_band(donor_pct: int, call_pct: int) -> tuple[str, int]:
     blended = round(0.6 * call_pct + 0.4 * donor_pct)
     band = "High" if blended >= 75 else ("Medium" if blended >= 45 else "Low")
     return band, blended
+
+
+def confidence_adjusted(decision: str, band: str) -> tuple[str, str | None]:
+    """E3d: LOW data confidence widens the Park band — a thin-data 'Proceed' is parked
+    for review (don't commit on weak data). Returns (decision, note|None). Other
+    decisions and Medium/High confidence pass through unchanged."""
+    if band == "Low" and str(decision or "").strip().lower().startswith("proceed"):
+        return "Park", "thin data — verify the donor mapping / call before Proceeding"
+    return decision, None
