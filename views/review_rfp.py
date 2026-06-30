@@ -21,7 +21,7 @@ from core.review_week import all_weeks_for_year, review_week_label, upcoming_rev
 from core.scorer import (
     CRITERIA, CRITERION_RESPONSES, criterion_score, default_response, score_submission,
 )
-from core.records import clean_df
+from core.records import clean_df, drop_concluded
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -69,6 +69,9 @@ with wc:
     )
 
 df = _fetch(sel_week)
+# Concluded grants (won/submitted) are tracked under Grants + counted in Summary —
+# keep them out of the active Review list (e.g. HAPPI: Completed + Approved).
+df = drop_concluded(df)
 if df.empty:
     with rc:
         st.selectbox(f"RFPs in {sel_week} (0)", ["(no records)"], disabled=True)
