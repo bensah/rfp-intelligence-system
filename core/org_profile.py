@@ -118,6 +118,10 @@ DEFAULT_PROFILE: dict[str, Any] = {
     # MUST-1 item I — donors CURRENTLY funding us (a current-grant exclusion in a
     # call disqualifies us; distinct from funder_history = past/previous grants).
     "org_active_donors": [],
+    # Donors we've ENGAGED with (meetings, concept notes, EOIs) but have NOT yet been
+    # funded by — a warm relationship weaker than a past grant. Feeds PREFER-7 as the
+    # "Donor engaged" component (a call from one of these scores 1).
+    "org_engaged_donors": [],
 
     # --- bid_effort ---
     "proposal_languages": ["English"],      # languages we can write a competitive bid in
@@ -131,8 +135,8 @@ LIST_FIELDS: tuple[str, ...] = (
     "org_donor_registrations", "org_registered_countries", "org_operating_countries",
     "trusted_partners", "trusted_for_profit_partners",
     "trusted_academic_institutions", "org_domain_expertise", "org_priority_areas",
-    "org_funder_history", "org_active_donors", "proposal_languages",
-    "org_authorized_signatory_donors", "org_funding_routes",
+    "org_funder_history", "org_active_donors", "org_engaged_donors",
+    "proposal_languages", "org_authorized_signatory_donors", "org_funding_routes",
 )
 
 COFINANCING_LEVELS: tuple[str, ...] = ("none", "limited", "moderate", "strong")
