@@ -782,8 +782,17 @@ with gauge_col:
              "Decline": ("#fde2e2", "#b3261e")}.get(_dec, ("#eee", "#333"))
     _fit = ("Strong fit" if _comp >= 70 else "Moderate fit" if _comp >= 45 else "Weak fit")
 
+    # CONFIDENCE — how much DATA backs this prediction (donor mapping + call extraction).
+    # A "Proceed" on a 30%-mapped donor is shakier than one on 90% — surface it so the
+    # reviewer can weight the suggestion. (E3c: data quality → prediction confidence.)
+    from core import data_quality as _dq2
+    _dpct, _, _ = _dq2.donor_completeness(_donor)
+    _cpct, _, _ = _dq2.call_completeness(row)
+    _band, _bpct = _dq2.confidence_band(_dpct, _cpct)
+    _bcol = {"High": "#00703C", "Medium": "#8a6d00", "Low": "#b3261e"}[_band]
+
     # GREEN BOX — Bid Strength is the BOLD headline, placed ABOVE the meter; the
-    # system suggestion takes the smaller secondary style below it.
+    # system suggestion + confidence take the smaller secondary style below it.
     st.markdown(
         f"<div style='text-align:center;background:{_pill[0]};border-radius:10px;"
         f"padding:10px 14px;margin-bottom:10px'>"
@@ -793,6 +802,9 @@ with gauge_col:
            f"{_esc(_trigger)} → Decline.</div>" if _is_fatal else "")
         + f"<div style='color:#3a3a3a;font-size:0.9rem;margin-top:5px'>"
           f"System suggestion: <b>{_sys_dec}</b></div>"
+        + f"<div style='color:{_bcol};font-size:0.78rem;margin-top:4px'>"
+          f"Confidence: <b>{_band}</b> · data {_bpct}% "
+          f"(donor {_dpct}% · call {_cpct}%)</div>"
         + "</div>",
         unsafe_allow_html=True,
     )
