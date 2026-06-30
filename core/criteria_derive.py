@@ -72,7 +72,14 @@ def _as_list(v: Any) -> list[str]:
     if v is None:
         return []
     if isinstance(v, (list, tuple)):
-        return [str(x).strip() for x in v if str(x).strip()]
+        out: list[str] = []
+        for x in v:
+            s = str(x).strip()
+            if s.startswith("["):              # double-encoded: a list element that is
+                out.extend(_as_list(s))        # itself a JSON-stringified list
+            elif s:
+                out.append(s)
+        return out
     s = str(v).strip()
     if s.startswith("["):                      # JSON list (donor multi-selects)
         try:
@@ -890,17 +897,38 @@ def _duration_score(rfp: dict) -> float | None:
 
 def derive_funding_quality(rfp: dict, org: dict | None = None,
                            policies: dict | None = None) -> str | None:
-    """PREFER-6 = award-SIZE attractiveness JOINED with project DURATION (owner
-    2026-06-30): longer projects are more fundable/strategic. Average whichever of
-    the two signals are present and band the result (>=0.75 High · >=0.4 Moderate ·
-    else Low); 'Not sure' only when NEITHER award value nor duration is known."""
+    """PREFER-6 label, kept CONSISTENT with its displayed component count (owner
+    2026-06-30): the mean of the MET/ACTIVE sub-factors. A component that doesn't
+    apply — e.g. a project DURATION the call never states — is EXCLUDED entirely; its
+    absence neither helps nor hurts, so an org that meets every STATED component scores
+    High rather than being dragged to Moderate. When the org hasn't set its min/ceiling
+    targets there are no size components to count, so we fall back to the org-relative
+    award-SIZE band (duration blended only if present). 'Not sure' when the award value
+    is unstated (can't size the award → Park)."""
+    if _usd(rfp) is None:
+        return "Not sure"
+    org = org or {}
+    has_band = bool(_num(org.get("org_min_target")) and _num(org.get("org_max_target")))
+    parts: list[float] = []
+    for f in _funding_quality_factors(rfp, org):
+        if not f.get("active"):
+            continue                                   # inapplicable → excluded
+        s = f.get("score")
+        if s is not None:
+            parts.append(float(s))
+        elif f.get("met") is not None:
+            parts.append(1.0 if f.get("met") else 0.0)
+    if has_band and parts:
+        avg = sum(parts) / len(parts)
+        return "High" if avg >= 0.75 else ("Moderate" if avg >= 0.4 else "Low")
+    # No org band configured → size on the award-VALUE band; duration only if present.
     award = _award_quality_label(rfp, org, policies)
     a = {"High": 1.0, "Moderate": 0.5, "Low": 0.0}.get(award)   # None if "Not sure"/None
     d = _duration_score(rfp)
-    parts = [s for s in (a, d) if s is not None]
-    if not parts:
+    blend = [s for s in (a, d) if s is not None]
+    if not blend:
         return "Not sure"
-    avg = sum(parts) / len(parts)
+    avg = sum(blend) / len(blend)
     return "High" if avg >= 0.75 else ("Moderate" if avg >= 0.4 else "Low")
 
 
