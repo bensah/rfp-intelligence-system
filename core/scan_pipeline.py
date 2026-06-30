@@ -681,6 +681,14 @@ def ingest_candidates(
                 sb.table("rfp_submissions").insert(row).execute()
                 # Tombstone immediately so it's remembered even if later deleted.
                 seen_ledger.record_one(row, reason="ingested")
+                # Enrich the donor CRM with any contacts the call carried (e.g. UNGM
+                # notice Contacts tab). No-op unless the candidate has _contacts AND its
+                # funder resolves to a donor_intel row. Best-effort — never breaks ingest.
+                try:
+                    from core import donor_contacts as _dc
+                    _dc.push_from_candidate(cand)
+                except Exception as _dexc:
+                    log.debug("donor_contacts push skipped: %s", _dexc)
                 existing.append({
                     "id": None,
                     "uid": row["uid"],

@@ -1988,12 +1988,134 @@ def _scan_ted(name: str, url: str) -> list[dict[str, Any]]:
     return _dedup_by_link_or_title(out)
 
 
+# ── UNGM notice-detail enrichment ────────────────────────────────────────────
+# The public notice page is SERVER-rendered, so the Documents / Contacts / UNSPSC
+# tabs are all in the HTML (no AJAX). We download + read the primary RFP + General-
+# Terms PDFs to give the extractor the REAL call text, and capture contacts + UNSPSC
+# codes for donor-intel enrichment. Best-effort; never raises into a scan.
+_UNGM_DOC_RE = re.compile(
+    r'href="(/Public/Notice/DownloadDocument\?noticeId=\d+&(?:amp;)?documentId=\d+)"'
+    r'[^>]*>(.*?)</a>', re.S | re.I)
+_UNGM_PRIMARY_HINT = re.compile(
+    r'\b(rfp|rfq|rfi|itb|eoi|request\s+for|tender|proposal|solicitation|bid|notice)\b', re.I)
+_UNGM_TERMS_HINT = re.compile(r'\b(general\s+terms|terms\s+and\s+conditions|conditions)\b', re.I)
+# Enrichment is a per-notice fetch (+ PDF downloads), so bound it to the newest N.
+_UNGM_DETAIL_CAP = 40
+
+
+def _ungm_documents(html_text: str) -> list[dict[str, str]]:
+    out, seen = [], set()
+    for href, raw in _UNGM_DOC_RE.findall(html_text):
+        name = _clean(re.sub(r"<[^>]+>", "", html.unescape(raw)))
+        link = "https://www.ungm.org" + html.unescape(href)
+        if name and link not in seen:
+            seen.add(link)
+            out.append({"name": name, "url": link})
+    return out[:25]
+
+
+def _ungm_contacts(soup: BeautifulSoup) -> list[dict[str, str]]:
+    out = []
+    for item in soup.select("#contactDetails .ungm-list-item"):
+        c: dict[str, str] = {}
+        for row in item.select(".row"):
+            lab = row.select_one(".label")
+            val = row.select_one(".value")
+            if not (lab and val):
+                continue
+            label = _clean(lab.get_text(" ", strip=True)).rstrip(":").lower()
+            value = _clean(val.get_text(" ", strip=True))
+            if not value:
+                continue
+            if "email" in label:
+                c["email"] = value
+            elif "first name" in label:
+                c["first_name"] = value
+            elif "surname" in label or "last name" in label:
+                c["surname"] = value
+            elif "phone" in label or "telephone" in label:
+                c["phone"] = value
+            elif "title" in label or "role" in label or "function" in label:
+                c["role"] = value
+        full = _clean(" ".join(x for x in (c.get("first_name"), c.get("surname")) if x))
+        if not full:
+            t = item.select_one(".title")
+            if t:
+                full = _clean(t.get_text(" ", strip=True)).split(" - ")[0]
+        if full or c.get("email"):
+            out.append({"name": full, "email": c.get("email", ""),
+                        "phone": c.get("phone", ""), "role": c.get("role", "")})
+    return out[:50]
+
+
+def _ungm_unspsc(soup: BeautifulSoup) -> list[dict[str, str]]:
+    out, seen = [], set()
+    for node in soup.select("div.unspscNode > span.nodeName"):
+        parts = [_clean(s.get_text(strip=True)) for s in node.select("span.floatLeft")]
+        parts = [p for p in parts if p and p != "-"]
+        if len(parts) >= 2 and parts[0].isdigit() and parts[0] not in seen:
+            seen.add(parts[0])
+            out.append({"code": parts[0], "name": parts[1]})
+    return out[:40]
+
+
+def _enrich_ungm_notice(nid: str, cand: dict[str, Any]) -> None:
+    """Pull per-notice detail: scan the primary RFP + General-Terms PDFs into the call
+    text, and capture documents / contacts / UNSPSC codes. Best-effort; never raises."""
+    try:
+        r = _http.get(f"https://www.ungm.org/Public/Notice/{nid}",
+                      headers={"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        page = r.text
+    except Exception as exc:
+        log.debug("ungm detail %s failed: %s", nid, exc)
+        return
+    try:
+        soup = BeautifulSoup(page, "html.parser")
+        docs = _ungm_documents(page)
+        if docs:
+            cand["documents"] = docs
+        contacts = _ungm_contacts(soup)
+        if contacts:
+            cand["_contacts"] = contacts          # → donor_contacts (writer wired next)
+        unspsc = _ungm_unspsc(soup)
+        if unspsc:
+            cand["_unspsc"] = unspsc
+        # Scan the primary RFP + a General-Terms PDF (bounded) into the call text so the
+        # downstream LLM/regex extractor reads the REAL call, not just the listing title.
+        pdfs = [d for d in docs if d["name"].lower().endswith(".pdf")]
+        primary = [d for d in pdfs if _UNGM_PRIMARY_HINT.search(d["name"])][:1]
+        terms = [d for d in pdfs if _UNGM_TERMS_HINT.search(d["name"]) and d not in primary][:1]
+        pick = (primary + terms) or pdfs[:1]
+        texts = []
+        # UNGM's DownloadDocument requires a Referer (the notice page) or it returns 0 bytes.
+        _dl_hdrs = {"User-Agent": USER_AGENT,
+                    "Referer": f"https://www.ungm.org/Public/Notice/{nid}"}
+        for d in pick[:2]:
+            try:
+                dr = _http.get(d["url"], headers=_dl_hdrs, timeout=HTTP_TIMEOUT)
+                if getattr(dr, "ok", False) and len(dr.content) <= ENRICH_PDF_MAX_BYTES:
+                    t = _extract_pdf_text(dr.content)
+                    if t:
+                        texts.append(f"[{d['name']}] {t}")
+            except Exception:
+                continue
+        if texts:
+            extra = _clean(" ".join(texts))
+            cand["_page_text"] = _clean(((cand.get("_page_text") or "") + " " + extra))[:12000]
+            if not cand.get("brief_description"):
+                cand["brief_description"] = extra[:1800]
+    except Exception as exc:
+        log.debug("ungm enrich parse %s failed: %s", nid, exc)
+
+
 def _scan_ungm(name: str, url: str) -> list[dict[str, Any]]:
     """UNGM (UN Global Marketplace) — the official developer API is gated, but the
     public site's own search endpoint POST /Public/Notice/Search is keyless and
     returns notice rows as HTML (data-noticeid + title/deadline/agency/type/country).
     Reads only the FREE public listing (UNGM Pro features are paid + unused)."""
     out: list[dict[str, Any]] = []
+    enriched = 0                                # per-notice detail fetches are bounded
     endpoint = "https://www.ungm.org/Public/Notice/Search"
     hdrs = {"User-Agent": USER_AGENT, "Accept": "text/html",
             "Content-Type": "application/json"}
@@ -2038,7 +2160,7 @@ def _scan_ungm(name: str, url: str) -> list[dict[str, Any]]:
                     break
             cells = [_clean(c.get_text(" ", strip=True)) for c in row.select("div.tableCell")]
             country = cells[-1] if cells else ""
-            out.append({
+            cand = {
                 "opportunity_title": title,
                 "opportunity_link": f"https://www.ungm.org/Public/Notice/{nid}",
                 "opportunity_id": ref or None,
@@ -2047,7 +2169,13 @@ def _scan_ungm(name: str, url: str) -> list[dict[str, Any]]:
                 "call_submission_deadline": deadline,
                 "call_geographic_scope": [country] if country else None,
                 "_source_origin": name,
-            })
+            }
+            # Enrich the newest N notices with their tab detail (documents → scanned
+            # PDF text, contacts, UNSPSC). Bounded so a scan isn't N detail fetches.
+            if enriched < _UNGM_DETAIL_CAP:
+                _enrich_ungm_notice(nid, cand)
+                enriched += 1
+            out.append(cand)
     return _dedup_by_link_or_title(out)
 
 
