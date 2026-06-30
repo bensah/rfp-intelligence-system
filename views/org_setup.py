@@ -190,7 +190,7 @@ def render_org_setup(user, sb):
         _donor_names = []
         _portals = sorted({p for p in map(clean_portal_url, DONOR_PORTALS) if p})
         try:
-            _dn = sb.table("donor_intel").select("donor, website").execute().data or []
+            _dn = sb.table("donor_intel").select("donor, donor_website").execute().data or []
             _donor_names = sorted({(d.get("donor") or "").strip()
                                    for d in _dn if (d.get("donor") or "").strip()})
             # Clean every seed + catalog website to a bare host, then de-duplicate.
@@ -359,16 +359,8 @@ def render_org_setup(user, sb):
             key="orgp_has_govt_endorsement",
             help="A host-government endorsement / support letter can be obtained "
                  "when a donor requires it.")
-        # Authorized-signatory — NOT a yes/no: list the donors we've ALREADY obtained
-        # an authorized-signatory sign-off from; a call that requires it scores 1 only
-        # if its donor is in this list (e.g. Wellcome Trust).
-        authorized_signatory_donors = _ms(
-            st, "Authorized signatory obtained from (donors)", _donor_names,
-            "org_authorized_signatory_donors",
-            help="Donors you have already secured an authorized-signatory sign-off "
-                 "from. Pick from the Donor Intelligence catalog or type to add; a call "
-                 "that requires one scores 1 only if its donor is in this list. Matching "
-                 "is robust to acronyms / short / full names (MUST-5).")
+        # (Authorized-signatory donors moved down to the donor-relationship group with
+        #  the other donor pickers — see "Donors we've engaged with" below.)
         # Funding routes the org can RECEIVE through — matched (≥1 overlap) to the
         # call/donor's offered routes; no overlap → that MUST-5 gate scores 0.
         _route_labels = [lbl for _, lbl in _ROUTE_OPTIONS]
@@ -513,14 +505,26 @@ def render_org_setup(user, sb):
                  "(qualification, MUST-1 item I). Past/closed grants go under "
                  "'Donors we've already won grants / awards from' below.")
 
-        # Donors engaged but NOT yet funded by — a warm relationship weaker than a grant.
-        # Same controlled donor vocabulary (catalog + type-to-add); feeds PREFER-7.
-        engaged_donors_sel = _ms(st, "Donors we've engaged with — no grant yet",
+        # Donor-relationship pickers grouped together. Both draw the SAME controlled
+        # donor vocabulary (the 190-donor Donor Intelligence catalog); to add a donor not
+        # in the catalog, type its name and pick the "Add …" option that appears.
+        dr1, dr2 = st.columns(2)
+        engaged_donors_sel = _ms(dr1, "Donors we've engaged with — no grant yet",
             _donor_names, "org_engaged_donors",
             help="Donors you've had meaningful contact with — meetings, concept notes, "
                  "expressions of interest — but haven't yet won an award from. A call "
                  "from one of these counts as a warm relationship (PREFER-7, 'Donor "
-                 "engaged'). Pick from the Donor Intelligence catalog or type to add.")
+                 "engaged'). Pick from the catalog, or type a name not listed to add it.")
+        # Authorized-signatory — NOT a yes/no: the donors we've ALREADY obtained an
+        # authorized-signatory sign-off from; a call that requires it scores 1 only if its
+        # donor is in this list (e.g. Wellcome Trust). MUST-5.
+        authorized_signatory_donors = _ms(dr2,
+            "Authorized signatory obtained from (donors)", _donor_names,
+            "org_authorized_signatory_donors",
+            help="Donors you have already secured an authorized-signatory sign-off from. "
+                 "A call that requires one scores 1 only if its donor is in this list; "
+                 "matching is robust to acronyms / short / full names (MUST-5). Pick from "
+                 "the catalog, or type a name not listed to add it.")
 
         # ── Funders & donor registrations (registrations swapped to here) ────
         fr1, fr2 = st.columns(2)
