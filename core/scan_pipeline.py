@@ -689,6 +689,13 @@ def ingest_candidates(
                     _dc.push_from_candidate(cand)
                 except Exception as _dexc:
                     log.debug("donor_contacts push skipped: %s", _dexc)
+                # E3: fill BLANK donor requirements from this call's compliance signals
+                # (from_call provenance, never overwrites human/non-blank). Best-effort.
+                try:
+                    from core import donor_enrich as _de
+                    _de.enrich_donor_requirements_from_call(cand)
+                except Exception as _eexc:
+                    log.debug("donor requirement enrichment skipped: %s", _eexc)
                 existing.append({
                     "id": None,
                     "uid": row["uid"],
