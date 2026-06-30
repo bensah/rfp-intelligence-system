@@ -805,6 +805,8 @@ with gauge_col:
     _cpct, _, _ = _dq2.call_completeness(row)
     _band, _bpct = _dq2.confidence_band(_dpct, _cpct)
     _bcol = {"High": "#00703C", "Medium": "#8a6d00", "Low": "#b3261e"}[_band]
+    # E3d: LOW confidence widens the Park band — a thin-data Proceed parks for review.
+    _sug_adj, _conf_note = _dq2.confidence_adjusted(_sys_dec, _band)
 
     # GREEN BOX — Bid Strength is the BOLD headline, placed ABOVE the meter; the
     # system suggestion + confidence take the smaller secondary style below it.
@@ -816,10 +818,14 @@ with gauge_col:
         + (f"<div style='color:#b3261e;font-size:0.8rem;margin-top:4px'>⚠ Fatal gate: "
            f"{_esc(_trigger)} → Decline.</div>" if _is_fatal else "")
         + f"<div style='color:#3a3a3a;font-size:0.9rem;margin-top:5px'>"
-          f"System suggestion: <b>{_sys_dec}</b></div>"
+          f"System suggestion: <b>{_sug_adj}</b>"
+          + (f" <span style='color:#8a6d00'>(was {_esc(_sys_dec)})</span>"
+             if _sug_adj != _sys_dec else "") + "</div>"
         + f"<div style='color:{_bcol};font-size:0.78rem;margin-top:4px'>"
           f"Confidence: <b>{_band}</b> · data {_bpct}% "
           f"(donor {_dpct}% · call {_cpct}%)</div>"
+        + (f"<div style='color:#8a6d00;font-size:0.74rem;margin-top:3px'>⚠ {_esc(_conf_note)}</div>"
+           if _conf_note else "")
         + "</div>",
         unsafe_allow_html=True,
     )
