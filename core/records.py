@@ -83,3 +83,25 @@ def clean_df(df):
     except Exception:  # never let sanitisation break a page
         pass
     return df
+
+
+def drop_concluded(df):
+    """Drop CONCLUDED solicitations from the ACTIVE pipeline views (Screen / Review /
+    Tracking): a row whose donor_decision is anything other than blank / 'Not submitted',
+    OR whose progress_status is Completed / Discontinued. These are won/closed and are
+    tracked under Grants (and still counted in the Home Summary), so they must not clutter
+    the active screening/review/tracking lists. Mirrors the inline Tracking filter so all
+    three views agree. No-op on an empty / column-less frame; never raises."""
+    try:
+        if df is None or getattr(df, "empty", True):
+            return df
+        out = df
+        if "donor_decision" in out.columns:
+            dd = out["donor_decision"].fillna("").astype(str).str.strip().str.lower()
+            out = out[dd.isin({"", "not submitted"})]
+        if "progress_status" in out.columns:
+            ps = out["progress_status"].fillna("").astype(str).str.strip().str.lower()
+            out = out[~ps.isin({"completed", "discontinued"})]
+        return out.copy()
+    except Exception:
+        return df
