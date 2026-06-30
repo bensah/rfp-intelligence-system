@@ -696,12 +696,34 @@ def _org_route_set(org: dict) -> set[str]:
     return out
 
 
-def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
-    """True when THIS call's donor is in the org's list of donors it has already
-    obtained an authorized-signatory sign-off from (org.authorized_signatory_donors)."""
-    have = _name_set(org.get("org_authorized_signatory_donors"))
-    if not have:
+def _canonical_donor_match(names: Any, donor: dict | None, rfp: dict) -> bool:
+    """True when any donor in `names` (an org's stored donor list) refers to THIS call's
+    donor. ROBUST matching (owner 2026-06-30): both sides are first resolved to a
+    donor_intel canonical_key via match_donor, so an acronym ("BMGF"), a short name
+    ("Gates Foundation") and the full legal name ("Bill & Melinda Gates Foundation") all
+    resolve to the same donor however the user typed it. Falls back to normalised exact /
+    ≥4-char substring matching for free-typed donors not yet in the catalog."""
+    names = [n.get("name") if isinstance(n, dict) else n for n in (names or [])]
+    names = [str(n).strip() for n in names if str(n or "").strip()]
+    if not names:
         return False
+    donor = donor or {}
+    # 1) canonical-key match — robust to acronym / full-name / alias / minor variants.
+    try:
+        from core.donor_intel import match_donor
+        call_keys = {k for k in (
+            (donor.get("canonical_key") or "").strip(),
+            ((match_donor(rfp.get("funding_agency")) or {}).get("canonical_key") or "").strip(),
+        ) if k}
+        if call_keys:
+            for n in names:
+                m = match_donor(n)
+                if m and (m.get("canonical_key") or "").strip() in call_keys:
+                    return True
+    except Exception:
+        pass
+    # 2) fallback — normalised exact / ≥4-char substring match (free-typed donors).
+    have = _name_set(names)
     targets = _name_set([donor.get("donor"), donor.get("donor_short"),
                          rfp.get("funding_agency")] + _as_list(donor.get("donor_aliases")))
     for a in have:
@@ -709,6 +731,12 @@ def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
             if a and b and (a == b or (len(a) >= 4 and len(b) >= 4 and (a in b or b in a))):
                 return True
     return False
+
+
+def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
+    """True when THIS call's donor is in the org's list of donors it has already
+    obtained an authorized-signatory sign-off from (org.authorized_signatory_donors)."""
+    return _canonical_donor_match(org.get("org_authorized_signatory_donors"), donor, rfp)
 
 
 def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
@@ -1000,16 +1028,20 @@ def _norm_rel(s: Any) -> str:
 
 def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) -> str | None:
     """FUNDER OR PARTNER relationship (PREFER 7). Past grantee of this donor
-    (org.funder_history ∋ donor) → "Current/past grantee" (strongest). Else a
-    SHARED COLLABORATOR — an org we partner with is also among the donor's
-    partners/collaborators — OR we're registered on their portal → "Some contact"
-    (a warm route in). Else "None"; None only when we hold no relationship data."""
+    (org.funder_history ∋ donor) → "Current/past grantee" (strongest). Else a warm
+    route in → "Some contact": we've ENGAGED this donor before (org.engaged_donors),
+    OR a SHARED COLLABORATOR — an org we partner with is also among the donor's
+    partners/collaborators — OR we're registered on their portal. Else "None"; None
+    only when we hold no relationship data."""
     hist = [h for h in (org.get("org_funder_history") or []) if h]
     if _funder_in_history(rfp.get("funding_agency"), hist):
         return "Current/past grantee"
-    if _shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor):
+    if (_canonical_donor_match(org.get("org_engaged_donors"), donor, rfp)
+            or _shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor)):
         return "Some contact"
-    if not hist and not (org.get("org_donor_registrations") or []) and not (org.get("trusted_partners") or []):
+    if (not hist and not (org.get("org_donor_registrations") or [])
+            and not (org.get("trusted_partners") or [])
+            and not (org.get("org_engaged_donors") or [])):
         return None                    # no relationship data on file → Not sure
     return "None"
 
@@ -1399,10 +1431,14 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
     grantee = _funder_in_history(rfp.get("funding_agency"),
                                  [h for h in (org.get("org_funder_history") or []) if h])
     contact = bool(_shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor))
+    # Donor engaged — we've had prior contact (meetings / concept notes / EOIs) with this
+    # call's donor though no funding yet. Matched robustly to org.engaged_donors.
+    engaged = _canonical_donor_match(org.get("org_engaged_donors"), donor, rfp)
     # OR-tiers: any one satisfies PREFER 7 (grantee is the strongest). Tagged
     # so the Review panel shows them as alternative routes, not all-required.
     return [
         _factor("rel_grantee", "Past / current grantee of this donor", "DO", grantee),
+        _factor("rel_engaged", "Donor engaged (prior contact, no funding yet)", "DO", engaged),
         _factor("rel_contact", "Shared collaborator or registered", "DO", contact),
     ]
 

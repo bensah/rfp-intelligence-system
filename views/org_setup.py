@@ -366,7 +366,9 @@ def render_org_setup(user, sb):
             st, "Authorized signatory obtained from (donors)", _donor_names,
             "org_authorized_signatory_donors",
             help="Donors you have already secured an authorized-signatory sign-off "
-                 "from. Matched by name to a call that requires one (MUST-5).")
+                 "from. Pick from the Donor Intelligence catalog or type to add; a call "
+                 "that requires one scores 1 only if its donor is in this list. Matching "
+                 "is robust to acronyms / short / full names (MUST-5).")
         # Funding routes the org can RECEIVE through — matched (≥1 overlap) to the
         # call/donor's offered routes; no overlap → that MUST-5 gate scores 0.
         _route_labels = [lbl for _, lbl in _ROUTE_OPTIONS]
@@ -511,6 +513,15 @@ def render_org_setup(user, sb):
                  "(qualification, MUST-1 item I). Past/closed grants go under "
                  "'Donors we've already won grants / awards from' below.")
 
+        # Donors engaged but NOT yet funded by — a warm relationship weaker than a grant.
+        # Same controlled donor vocabulary (catalog + type-to-add); feeds PREFER-7.
+        engaged_donors_sel = _ms(st, "Donors we've engaged with — no grant yet",
+            _donor_names, "org_engaged_donors",
+            help="Donors you've had meaningful contact with — meetings, concept notes, "
+                 "expressions of interest — but haven't yet won an award from. A call "
+                 "from one of these counts as a warm relationship (PREFER-7, 'Donor "
+                 "engaged'). Pick from the Donor Intelligence catalog or type to add.")
+
         # ── Funders & donor registrations (registrations swapped to here) ────
         fr1, fr2 = st.columns(2)
         funders_sel = _ms(fr1, "Donors we've already won grants / awards from",
@@ -566,6 +577,7 @@ def render_org_setup(user, sb):
                 "org_donor_registrations": donor_regs_sel,
                 "org_funder_history": funders_sel,
                 "org_active_donors": active_donors_sel,
+                "org_engaged_donors": engaged_donors_sel,
                 "proposal_languages": langs_sel,
             }, updated_by=user.get("email"))
             # Competitiveness inputs live in org settings (partial upsert — set_org
