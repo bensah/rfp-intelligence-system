@@ -150,8 +150,12 @@ def _build_messages(candidate: dict[str, Any], policies: dict[str, Any]) -> list
         "when the call funds in STAGES with different ceilings (e.g. 'Proof of "
         "Concept up to $200,000' + 'Transition to Scale up to $2,000,000' -> two "
         "objects). [] for a single-amount call. amounts numeric, no symbols.\n"
-        '  "call_geographic_scope": array of countries/regions/tiers the call targets '
-        "(e.g. [\"Sub-Saharan Africa\"], [\"India\"], [\"LMICs\"]); [] if none.\n"
+        '  "call_geographic_scope": array of EVERY eligible geography the call names — '
+        "list ALL eligible COUNTRIES individually (do not summarise '40 countries' — "
+        "enumerate them), AND any broad region/tier SIGNAL (e.g. \"Sub-Saharan Africa\", "
+        "\"LMICs\", \"Global South\", \"Asia\", \"Least Developed Countries\"). Include "
+        "both when both are given (e.g. a region label plus its listed countries). Use the "
+        "term as written; [] if the call states no geography.\n"
         '  "country_eligible": true if the org\'s eligible country qualifies under '
         "the call's geography (directly, or via a containing region/tier); false if "
         "the call is scoped to a region/country that excludes the org; null if the "
