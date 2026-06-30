@@ -755,8 +755,6 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
          bool(org.get("org_has_audited_financials"))),
         ("audit_report", "Audit report", _need("donor_audit_report_required"),
          bool(org.get("org_has_audit_report"))),
-        ("sam_uei", "SAM.gov / UEI registration",
-         _need("donor_sam_uei_registration_required") or _is_us_federal(rfp), _sam_ok),
         ("tax_exempt", "Tax-exempt status", _need("donor_tax_exempt_status_required"),
          bool(org.get("org_tax_exempt"))),
         ("safeguarding", "Safeguarding policy", _need("donor_safeguarding_policy_required"),
@@ -774,6 +772,16 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
         items.append(_qfactor(key, name, active=active,
                               score=(1.0 if ok else 0.0), hard=True))
 
+    # SAM.gov / UEI registration applies ONLY to US-federal (grants.gov) calls (or a donor
+    # that explicitly demands it). For every other donor it's irrelevant → a permissive
+    # pass (score 1, "no restriction"), NOT a 'Not sure' that drags the criterion down.
+    if _need("donor_sam_uei_registration_required") or _is_us_federal(rfp):
+        items.append(_qfactor("sam_uei", "SAM.gov / UEI registration",
+                              active=True, score=(1.0 if _sam_ok else 0.0), hard=True))
+    else:
+        items.append(_qfactor("sam_uei", "SAM.gov / UEI registration",
+                              active=True, score=1.0, hard=False, default=True))
+
     # Authorized-signatory — matched to the org's list of donors it has ALREADY
     # obtained an authorized signatory from (not a generic checkbox).
     a_sig = _need("donor_authorized_signatory_signoff_required", "donor_welcome_registration_required")
@@ -788,27 +796,14 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     a_part = _need("donor_partnership_mandatory")
     items.append(_qfactor("partnership", "Mandatory partnership", active=a_part,
                           score=(1.0 if _has_qualifying_partner(org) else 0.0), hard=True))
-    # Funding-platform registration — donor's submission portal in the org's active
-    # registrations (donor.submission_portal_url ∩ org.donor_registrations).
-    a_plat = _truthy(donor.get("donor_funding_platform_registration_required"))
-    items.append(_qfactor("platform_reg", "Funding-platform registration", active=a_plat,
-                          score=(1.0 if _registered_on_portal(org, rfp, donor) else 0.0),
-                          hard=True))
 
-    # Funding-route match — ACTIVE when the call/donor offers route(s); the org must be
-    # able to RECEIVE through ≥1 of them. Org hasn't declared its routes → no penalty.
-    offered = _offered_routes(donor)
-    org_routes = _org_route_set(org)
-    a_route = bool(offered)
-    ok = bool(org_routes & offered) if org_routes else True
-    items.append(_qfactor("route", "Funding route accessible", active=a_route,
-                          score=(1.0 if ok else 0.0), hard=True))
-    # Only the funding-route gate is a structural (non-acquirable) auto-Decline; the
-    # other hard gates are acquirable before the deadline (see fatal_decline). Reflect
-    # that so the Review card shows 🔒 on `route` alone, not on every row.
+    # NOTE: Funding-platform registration and Funding-route accessibility are NOT MUST
+    # gates (owner 2026-06-30) — neither is a hard eligibility floor. They live under
+    # PREFER-8 Competitiveness (comp_portal / comp_route), where they only inform Bid
+    # Strength. So MUST-5 has NO structural auto-Decline: every remaining hard credential
+    # gate is acquirable before the deadline → none is fatal.
     for it in items:
-        if it["key"] != "route":
-            it["fatal"] = False
+        it["fatal"] = False
     return items
 
 
@@ -1418,9 +1413,9 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     """THE auto-Decline gate (replaces the blanket 'any MUST<2 → Decline').
     Returns (decline?, trigger_name). True ONLY when a 🔒 non-dynamic factor is
     EXPLICITLY failed (met is False) — a structural ineligibility the org can't
-    fix before the deadline: a MUST-1 identity gate, no geographic reach, or a
-    MUST-5 fatal floor (stage/budget/track/route). Unknowns (None) never trigger
-    a decline — they only soften the score (→ usually Park for review)."""
+    fix before the deadline: a MUST-1 identity gate or no geographic reach. (MUST-5
+    has no fatal floor — its credential gates are acquirable.) Unknowns (None) never
+    trigger a decline — they only soften the score (→ usually Park for review)."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     for f in qualification_factors(org, rfp, eff, org_settings):
@@ -1428,12 +1423,9 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
             return True, f["name"]
     if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
         return True, "Geographic reach (no presence or partner)"
-    # MUST-5: only the funding-route gate is a structural (non-acquirable) blocker.
-    # The other hard compliance gates lower the label/score but are acquirable before
-    # the deadline → they do NOT auto-decline. (track_floor moved to MUST-1.)
-    for f in compliance_factors(org, rfp, eff, org_settings):
-        if f["active"] and f["key"] == "route" and f["met"] is False:
-            return True, f["name"]
+    # MUST-5 has NO structural auto-Decline gate (owner 2026-06-30): the hard credential
+    # gates are all acquirable before the deadline, and funding-route / funding-platform
+    # moved to PREFER-8 (Bid Strength only). So MUST-5 never forces a decline here.
     return False, None
 
 
@@ -1507,6 +1499,16 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
         _factor("comp_portal", "Familiar with the donor's portal", "DG",
                 _registered_on_portal(org, rfp, donor), active=True),
     ]
+    # Funding route accessible — moved here from MUST-5 (no longer a hard gate, owner
+    # 2026-06-30): a soft competitiveness signal that only informs Bid Strength. Active
+    # when the donor/call offers route(s); met when the org can RECEIVE through ≥1 of
+    # them. Org hasn't declared its routes → 'Not sure' (None), excluded — no penalty.
+    offered = _offered_routes(donor)
+    if offered:
+        org_routes = _org_route_set(org)
+        out.append(_factor("comp_route", "Funding route accessible", "DG",
+                           (bool(org_routes & offered) if org_routes else None),
+                           active=True))
     if _flag(donor, _GRASSROOT_FLAGS):
         out.append(_factor("comp_grassroots", "Grassroots / local-org status", "DG",
                            _truthy(osx.get("org_is_grassroot"))))
@@ -1542,9 +1544,9 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     """THE auto-Decline gate (replaces the blanket 'any MUST<2 → Decline').
     Returns (decline?, trigger_name). True ONLY when a 🔒 non-dynamic factor is
     EXPLICITLY failed (met is False) — a structural ineligibility the org can't
-    fix before the deadline: a MUST-1 identity gate, no geographic reach, or a
-    MUST-5 fatal floor (stage/budget/track/route). Unknowns (None) never trigger
-    a decline — they only soften the score (→ usually Park for review)."""
+    fix before the deadline: a MUST-1 identity gate or no geographic reach. (MUST-5
+    has no fatal floor — its credential gates are acquirable.) Unknowns (None) never
+    trigger a decline — they only soften the score (→ usually Park for review)."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     for f in qualification_factors(org, rfp, eff, org_settings):
@@ -1552,12 +1554,9 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
             return True, f["name"]
     if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
         return True, "Geographic reach (no presence or partner)"
-    # MUST-5: only the funding-route gate is a structural (non-acquirable) blocker.
-    # The other hard compliance gates lower the label/score but are acquirable before
-    # the deadline → they do NOT auto-decline. (track_floor moved to MUST-1.)
-    for f in compliance_factors(org, rfp, eff, org_settings):
-        if f["active"] and f["key"] == "route" and f["met"] is False:
-            return True, f["name"]
+    # MUST-5 has NO structural auto-Decline gate (owner 2026-06-30): the hard credential
+    # gates are all acquirable before the deadline, and funding-route / funding-platform
+    # moved to PREFER-8 (Bid Strength only). So MUST-5 never forces a decline here.
     return False, None
 
 
