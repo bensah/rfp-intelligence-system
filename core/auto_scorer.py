@@ -226,6 +226,28 @@ _US_DOMESTIC_ONLY_PATTERN = re.compile(
 )
 
 
+# Explicit FOREIGN-EXCLUSION — "Foreign entities are not eligible …", "international
+# applicants are ineligible", "not eligible … foreign". This is a US-only signal that
+# carries NO "domestic"/"US" token, so the _US_DOMESTIC_ONLY_PATTERN above misses it —
+# which is exactly why grants.gov calls saying "Foreign entities are not eligible to
+# compete for, or receive, awards" slipped through. Negation-aware on purpose so it
+# never fires on the inclusive "Foreign and domestic organizations are eligible".
+_FOREIGN_EXCLUDED_PATTERN = re.compile(
+    r"(?:foreign|international|non[\-\s]*u\.?s\.?|overseas)\s+"
+    r"(?:[a-z/,&'\-]+\s+){0,3}?(?:are|is|will\s+be|may\s+be|shall\s+be)?\s*"
+    r"(?:not\s+eligible|ineligible)"
+    r"|(?:not\s+eligible|ineligible)[^.]{0,40}?"
+    r"(?:foreign|international|non[\-\s]*u\.?s\.?|overseas)",
+    re.IGNORECASE,
+)
+
+
+def foreign_applicants_excluded(text: str | None) -> bool:
+    """True when the text EXPLICITLY bars foreign/international/non-US applicants
+    (a US-only signal even without the word 'domestic')."""
+    return bool(text) and bool(_FOREIGN_EXCLUDED_PATTERN.search(text))
+
+
 def grants_gov_domestic_only(elig_text: str | None) -> bool:
     """True when a Grants.gov eligibility description EXPLICITLY restricts to
     US/domestic applicants AND carries no foreign/international-eligible
@@ -233,6 +255,9 @@ def grants_gov_domestic_only(elig_text: str | None) -> bool:
     risking valid international calls (which fail this test)."""
     if not elig_text:
         return False
+    # Explicit foreign exclusion is decisive (e.g. "Foreign entities are not eligible").
+    if foreign_applicants_excluded(elig_text):
+        return True
     if _has_inclusive_eligibility(elig_text):
         return False
     return bool(_US_DOMESTIC_ONLY_PATTERN.search(elig_text))
