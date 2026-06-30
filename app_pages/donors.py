@@ -49,7 +49,9 @@ if _flash_warn:
 
 st.caption(
     "Country-agnostic donor metadata powering RFP eligibility screening. "
-    "A ticked box = yes; unticked = no (blank stays unknown until edited)."
+    "Requirements: blank = unanswered (missing data); set Required / Not Required / Not "
+    "Sure once addressed. Not Sure & Not Required both score as Not Required — only blank "
+    "is counted as incomplete, so completeness reflects true data quality."
 )
 
 
@@ -599,7 +601,9 @@ def _completeness(row: dict) -> tuple[int, int, int]:
         if c in _FIT:
             continue
         total += 1
-        if str(row.get(c) or "").strip().lower() in ("yes", "no"):
+        # Any explicit response counts as answered — Required/Not Required AND an
+        # explicit "Not sure" (the question was engaged). Only blank is missing data.
+        if str(row.get(c) or "").strip().lower() in ("yes", "no", "not_sure"):
             have += 1
     pct = round(100 * have / total) if total else 0
     return pct, have, total
@@ -870,12 +874,27 @@ def _yes(v) -> bool:
     return str(v).strip().lower() == "yes"
 
 
+# A donor REQUIREMENT has FOUR states — and "Not Sure" is NOT the same as blank:
+#   blank "—"   → genuinely UNANSWERED (missing data — counts against completeness)
+#   Required    → "yes"   · Not required → "no"   · Not sure → "not_sure"
+# The three explicit responses all mean "a human/extractor ENGAGED with this question"
+# (so they count toward data completeness); only blank is missing. Default for an
+# untouched field is BLANK, never Not Sure — else missing data would look answered.
+# SCORING is unchanged: core.criteria_derive._truthy activates only on "yes"/"required",
+# so "no", "not_sure" AND blank all read as Not Required (current logic/defaults).
+# Eligibility CAPABILITIES (NGO eligible, grant route, …) stay yes/no checkboxes.
+_TRISTATE_GROUPS = {"Requirements & compliance"}
+_TRISTATE_OPTS = ["—", "Required", "Not required", "Not sure"]
+_TRISTATE_TO_VAL = {"—": None, "Required": "yes", "Not required": "no", "Not sure": "not_sure"}
+_VAL_TO_TRISTATE = {"yes": "Required", "no": "Not required", "not_sure": "Not sure"}
+
+
 def _checkbox_matrix(row: dict, *, editable: bool, key_prefix: str,
                      groups: list[str] | None = None) -> dict:
-    """Render the flag groups as a multi-column checkbox grid. Returns the
-    edited {col: 'yes'|'no'|<original-if-untouched-blank>} when editable.
-    `groups` limits rendering to the named flag groups (so the tabbed edit form
-    can place each group on its own tab); None = all groups."""
+    """Render the flag groups. Requirements render as a tri-state selector
+    (Required / Not Required / Not Sure); other groups stay checkboxes. Returns the
+    edited {col: 'yes'|'no'|None|<original-if-untouched-blank>} when editable.
+    `groups` limits rendering to the named flag groups; None = all groups."""
     edited: dict = {}
     for group, cols in _FLAG_GROUPS.items():
         if groups is not None and group not in groups:
@@ -883,20 +902,29 @@ def _checkbox_matrix(row: dict, *, editable: bool, key_prefix: str,
         if not cols:
             continue
         st.markdown(f"**{group}**")
+        tristate = group in _TRISTATE_GROUPS
         grid = st.columns(3)
         for i, c in enumerate(cols):
             orig = row.get(c)
-            checked = grid[i % 3].checkbox(
-                _label(c), value=_yes(orig),
-                key=f"{key_prefix}_{c}", disabled=not editable,
-            )
-            if editable:
-                if checked:
-                    edited[c] = "yes"
-                elif orig in (None, ""):
-                    edited[c] = orig          # leave unknown untouched
-                else:
-                    edited[c] = "no"
+            if tristate:
+                cur = _VAL_TO_TRISTATE.get(str(orig or "").strip().lower(), "—")
+                sel = grid[i % 3].selectbox(
+                    _label(c), _TRISTATE_OPTS, index=_TRISTATE_OPTS.index(cur),
+                    key=f"{key_prefix}_{c}", disabled=not editable)
+                if editable:
+                    edited[c] = _TRISTATE_TO_VAL[sel]    # "yes"/"no"/"not_sure"/None(blank)
+            else:
+                checked = grid[i % 3].checkbox(
+                    _label(c), value=_yes(orig),
+                    key=f"{key_prefix}_{c}", disabled=not editable,
+                )
+                if editable:
+                    if checked:
+                        edited[c] = "yes"
+                    elif orig in (None, ""):
+                        edited[c] = orig          # leave unknown untouched
+                    else:
+                        edited[c] = "no"
     return edited
 
 
