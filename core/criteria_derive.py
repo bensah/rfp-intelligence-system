@@ -922,15 +922,22 @@ def _funder_in_history(funding_agency: Any, hist: list[str]) -> bool:
     "EU"/"WHO" can't spuriously match "European…"/"WHObla…") — exact match always
     counts. Mirrors core.matching._names_overlap to keep PREFER-7 and funder-fit
     consistent."""
-    fa = _norm_rel(funding_agency)
-    if not fa:
+    raw = str(funding_agency or "")
+    # "ACRONYM - Donor Name" (Excel migration) → also try the name after the separator,
+    # so "BMGF - Gates Foundation" matches a "Gates Foundation" funder-history entry.
+    variants = {_norm_rel(raw)}
+    if " - " in raw:
+        variants.add(_norm_rel(raw.split(" - ", 1)[1]))
+    variants.discard("")
+    if not variants:
         return False
     for h in hist:
         hn = _norm_rel(h)
         if not hn:
             continue
-        if fa == hn or (len(fa) >= 4 and len(hn) >= 4 and (fa in hn or hn in fa)):
-            return True
+        for fa in variants:
+            if fa == hn or (len(fa) >= 4 and len(hn) >= 4 and (fa in hn or hn in fa)):
+                return True
     return False
 
 
@@ -954,9 +961,17 @@ def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) 
     return "None"
 
 
+def _is_completed(rfp: dict) -> bool:
+    """The submission is already in (Progress status = Completed), so deadline runway
+    is moot — it was clearly submitted on time."""
+    return str(rfp.get("progress_status") or "").strip().lower() == "completed"
+
+
 def derive_bid_effort(rfp: dict, org_settings: dict | None = None) -> str | None:
     bd = str((org_settings or {}).get("org_has_bd_team", "false")).lower() == "true"
-    return bid_effort_label(days_until(rfp.get("call_submission_deadline")), bd)
+    # Already submitted (Completed) → treat time as ample (it was met), don't penalise.
+    days = 10_000 if _is_completed(rfp) else days_until(rfp.get("call_submission_deadline"))
+    return bid_effort_label(days, bd)
 
 
 # Real donor_intel requirement columns (migration 020). Values are text
@@ -1443,12 +1458,17 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
 def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dict]:
     """PREFER-9 sub-factors: time-to-deadline × a business-development team."""
     osx = org_settings or {}
-    days = days_until(rfp.get("call_submission_deadline"))
     bd = str(osx.get("org_has_bd_team", "false")).lower() == "true"
+    if _is_completed(rfp):
+        # Already submitted → the time gate was met; show it as such, not "not enough".
+        time_name, time_met, time_active = "Submitted on time (already completed)", True, True
+    else:
+        days = days_until(rfp.get("call_submission_deadline"))
+        time_name = "Enough time before the deadline (>14d)"
+        time_met = (days is not None and days > 14) if days is not None else None
+        time_active = days is not None
     return [
-        _factor("bid_time", "Enough time before the deadline (>14d)", "R",
-                (days is not None and days > 14) if days is not None else None,
-                active=days is not None),
+        _factor("bid_time", time_name, "R", time_met, active=time_active),
         _factor("bid_team", "Has a business-development team", "G", bool(bd), active=True),
     ]
 

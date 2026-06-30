@@ -90,20 +90,31 @@ def _load_index() -> dict[str, dict]:
 
 
 def match_donor(funder: Any) -> Optional[dict]:
-    """Best-effort match of an RFP funder string to a donor_intel row."""
-    nf = _norm(funder)
-    if not nf:
+    """Best-effort match of an RFP funder string to a donor_intel row.
+
+    Excel-migrated funders are stored as "ACRONYM - Donor Name" (e.g. "BMGF - Gates
+    Foundation"), while donor_intel holds just the name ("Gates Foundation" / "Bill &
+    Melinda Gates Foundation"). The leading acronym blocks a plain match, so we also
+    try the name AFTER the first " - " separator (and the acronym before it). This is
+    why HAPPI's MUST-5 / PREFER-7 came back unmatched."""
+    raw = str(funder or "")
+    cands = [_norm(raw)]
+    if " - " in raw:
+        acr, name = raw.split(" - ", 1)
+        cands += [_norm(name), _norm(acr)]      # prefer the donor name, then the acronym
+    cands = [c for c in dict.fromkeys(cands) if c]   # de-dup, drop blanks, keep order
+    if not cands:
         return None
     idx = _load_index()
-    if nf in idx:
-        return idx[nf]
-    # Containment either direction ("GIF - Global Innovation Fund" ⊇
-    # "global innovation fund"). Prefer the longest matching key.
-    best = None
-    best_len = 0
-    for k, r in idx.items():
-        if len(k) >= 5 and (k in nf or nf in k) and len(k) > best_len:
-            best, best_len = r, len(k)
+    for c in cands:                              # exact key hit on any candidate
+        if c in idx:
+            return idx[c]
+    # Containment either direction over any candidate; prefer the longest matching key.
+    best, best_len = None, 0
+    for c in cands:
+        for k, r in idx.items():
+            if len(k) >= 5 and (k in c or c in k) and len(k) > best_len:
+                best, best_len = r, len(k)
     return best
 
 
