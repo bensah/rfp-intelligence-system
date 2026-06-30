@@ -111,11 +111,12 @@ def _usd(rfp: dict) -> float | None:
 
 
 def _rfp_program_keys(rfp: dict) -> set[str]:
-    """Canonical program-area keys for an RFP — empty if generic ('Health')."""
-    pa = _as_list(rfp.get("call_domain_areas"))
-    if not pa or not any(p in _PA_KEYS for p in pa):
-        return set()                       # generic / unclassified → can't judge
-    return _pa.expand(pa)
+    """Canonical program-area keys for an RFP — empty if generic ('Health') or
+    unclassified. call_domain_areas may store canonical keys, category names, OR bare
+    sub-area LABELS (the extractor saves labels like 'SRH', not keys like 'WCH - SRH'),
+    so resolve them ALL via program_area_classifier.expand — which returns empty for a
+    generic umbrella term ('Health') we can't judge a specific track record against."""
+    return _pa.expand(_as_list(rfp.get("call_domain_areas")))
 
 
 # --- per-criterion derivations (return a CRITERION_RESPONSES label or None) ---
@@ -1093,14 +1094,11 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
     # Track record on the RFP's EXACT program area — the strongest competitiveness
     # signal. Build the org's 0–5 domain (experience) vector and read the best
     # rating across the call's program keys: strong record = an edge; none = wide open.
-    rfp_keys = _rfp_program_keys(rfp)
-    if rfp_keys and (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
-        from core.matching import _priority_vector       # local import (no cycle)
-        dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
-        if dvec:
-            signals += 1
-            strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0)  # 0–5
-            score += 1.5 if strength >= 4 else (0.5 if strength >= 2 else -1.0)
+    _tr = _track_record_band(org, rfp, donor)
+    if _tr is not None:
+        signals += 1
+        _sc = _tr[0]                                       # 0 / 0.5 / 1 (org ÷ donor band)
+        score += 1.5 if _sc >= 1.0 else (0.5 if _sc >= 0.5 else -1.0)
 
     fy = _num(org.get("org_founding_year"))
     if fy:
@@ -1129,7 +1127,7 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
         if _flag(donor, _MULTI_FLAGS):
             signals += 1
             score += 1.0 if _truthy(org_settings.get("org_is_multi_country")) else -0.5
-        dhq = (donor.get("donor_hq_country") or "").strip().lower()
+        dhq = _funder_country(rfp, donor).strip().lower()
         ohq = str(org_settings.get("org_hq_country")
                   or org_settings.get("org_country") or "").strip().lower()
         if dhq and ohq:
@@ -1510,6 +1508,58 @@ def _funding_quality_factors(rfp: dict, org: dict | None = None) -> list[dict]:
     ]
 
 
+# Currency → funder HQ country (LAST-RESORT inference; owner 2026-06-30). USD is too
+# universal to localise (everyone advertises in $), but a call denominated in a national
+# currency strongly implies the funder's country (CAD → Canada, GBP → UK, …).
+_CURRENCY_COUNTRY = {
+    "CAD": "Canada", "GBP": "United Kingdom", "AUD": "Australia", "JPY": "Japan",
+    "CHF": "Switzerland", "SEK": "Sweden", "NOK": "Norway", "DKK": "Denmark",
+    "INR": "India", "ZAR": "South Africa", "NZD": "New Zealand",
+}
+
+
+def _funder_country(rfp: dict, donor: dict | None) -> str:
+    """Best-effort funder HQ country, in priority order: donor_intel HQ → a country named
+    on the call (funder location / agency country) → a national award currency
+    (CAD→Canada, GBP→UK, …; USD is too universal to localise). '' when undeterminable."""
+    donor = donor or {}
+    for v in (donor.get("donor_hq_country"), rfp.get("funder_country"),
+              rfp.get("funding_agency_country"), rfp.get("funder_location")):
+        s = str(v or "").strip()
+        if s:
+            return s
+    return _CURRENCY_COUNTRY.get(str(rfp.get("currency") or "").strip().upper(), "")
+
+
+def _track_record_band(org: dict, rfp: dict, donor: dict | None):
+    """PREFER-8 track record — the org's TRACK-RECORD rating (0–5) in the call's program
+    area, judged against the DONOR's PRIORITY for that area (default 5 when the donor
+    isn't graded for it). Returns (score 0/0.5/1, org_rating, donor_priority, area_label)
+    or None when the call has no classifiable program area / the org has no expertise.
+    Scored on the WEAKER of the two — band(min(org, donor)): a strong track record in an
+    area the donor barely prioritises is no edge, and vice-versa. 4–5 → High (1.0) · 2–3
+    → Moderate (0.5) · else Low (0.0). The call area with the best band wins (tie → the
+    org's strongest). So org 3 vs donor 5 → Moderate (3/5); org 5 vs donor 5 → High."""
+    rfp_keys = _rfp_program_keys(rfp)
+    if not rfp_keys or not (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
+        return None
+    from core.matching import _priority_vector
+    dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
+    donor = donor or {}
+    dprio = _theme_scores_flat(donor.get("donor_priority_areas"),
+                               _ratings(donor.get("donor_priority_ratings")), 5.0)
+    best = None                                  # (score, org_rating, donor_priority, key)
+    for k in sorted(rfp_keys):
+        org_r = max(0.0, float(dvec.get(k, 0.0) or 0.0))
+        donor_p = float(dprio.get(k, 5.0) or 5.0)
+        cand = (_band(min(org_r, donor_p)), org_r, donor_p, k)
+        if best is None or cand > best:          # max band, then org rating, then donor
+            best = cand
+    score, org_r, donor_p, k = best
+    label = _pa.subarea_label(k) if (k and " - " in k) else k
+    return score, org_r, donor_p, label
+
+
 def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
                              org_settings: dict | None = None) -> list[dict]:
     """PREFER-8 sub-factors mirroring derive_competitiveness signals."""
@@ -1517,18 +1567,22 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
     org = org or {}
     donor = donor or {}
     osx = org_settings or {}
-    rfp_keys = _rfp_program_keys(rfp)
-    dvec = {}
-    if rfp_keys and (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
-        from core.matching import _priority_vector
-        dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
-    strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0) if rfp_keys else 0.0
     fy = _num(org.get("org_founding_year"))
-    dhq = (donor.get("donor_hq_country") or "").strip().lower()
+    dhq = _funder_country(rfp, donor).strip().lower()
     ohq = str(osx.get("org_hq_country") or osx.get("org_country") or "").strip().lower()
+    # Track record — a GRADED component (org rating ÷ donor priority), shown with its
+    # band + ratio so the user can see why (e.g. "Moderate (3/5)").
+    _tr = _track_record_band(org, rfp, donor)
+    comp_track = _qfactor("comp_track", "Track record in this program area",
+                          active=_tr is not None, score=(_tr[0] if _tr else None),
+                          hard=False, source="RG")
+    if _tr is not None:
+        _sc, _orgr, _dprio, _area = _tr
+        _bandlbl = "High" if _sc >= 1.0 else ("Moderate" if _sc >= 0.5 else "Low")
+        comp_track["_detail"] = (f"{_bandlbl} (your {_orgr:g} vs donor {_dprio:g}"
+                                 + (f" · {_area}" if _area else "") + ")")
     out = [
-        _factor("comp_track", "Track record in this program area", "RG",
-                (strength >= 2) if rfp_keys else None, active=bool(rfp_keys)),
+        comp_track,
         _factor("comp_age", "Established (10+ years)", "G",
                 (fy is not None and (date.today().year - int(fy)) >= 10) if fy else None,
                 active=bool(fy)),
