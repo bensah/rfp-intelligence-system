@@ -889,6 +889,18 @@ _TRISTATE_TO_VAL = {"—": None, "Required": "yes", "Not required": "no", "Not s
 _VAL_TO_TRISTATE = {"yes": "Required", "no": "Not required", "not_sure": "Not sure"}
 
 
+def _prov_of(row: dict, col: str):
+    """Provenance tag for a donor field (human_verified | from_call | auto_created), or
+    None. field_provenance is jsonb — a dict from Supabase, or a JSON string."""
+    fp = row.get("field_provenance")
+    if isinstance(fp, str) and fp.strip():
+        try:
+            fp = json.loads(fp)
+        except Exception:
+            fp = {}
+    return fp.get(col) if isinstance(fp, dict) else None
+
+
 def _checkbox_matrix(row: dict, *, editable: bool, key_prefix: str,
                      groups: list[str] | None = None) -> dict:
     """Render the flag groups. Requirements render as a tri-state selector
@@ -908,9 +920,15 @@ def _checkbox_matrix(row: dict, *, editable: bool, key_prefix: str,
             orig = row.get(c)
             if tristate:
                 cur = _VAL_TO_TRISTATE.get(str(orig or "").strip().lower(), "—")
+                # 🔵 = auto-suggested from a call (from_call provenance), not yet
+                # human-confirmed — so the reviewer can tell it apart and verify it.
+                _suggested = _prov_of(row, c) == "from_call"
                 sel = grid[i % 3].selectbox(
-                    _label(c), _TRISTATE_OPTS, index=_TRISTATE_OPTS.index(cur),
-                    key=f"{key_prefix}_{c}", disabled=not editable)
+                    _label(c) + (" 🔵" if _suggested else ""), _TRISTATE_OPTS,
+                    index=_TRISTATE_OPTS.index(cur),
+                    key=f"{key_prefix}_{c}", disabled=not editable,
+                    help=("🔵 Auto-suggested from a call — review to confirm."
+                          if _suggested else None))
                 if editable:
                     edited[c] = _TRISTATE_TO_VAL[sel]    # "yes"/"no"/"not_sure"/None(blank)
             else:
@@ -1487,6 +1505,21 @@ def _edit_dialog(row: dict) -> None:
         _dropped = sorted(_label(k) for k, v in payload.items()
                           if k not in _cols and v not in (None, ""))
         payload = {k: v for k, v in payload.items() if k in _cols}
+
+        # Provenance: a Save means the reviewer reviewed the visible requirements, so mark
+        # every non-blank requirement human-verified (the source of truth — auto-enrichment
+        # never overwrites these, and the 🔵 "suggested" badge clears). Blank stays untagged.
+        if "field_provenance" in _cols:
+            from core.donor_enrich import mark_human_verified
+            _fp = row.get("field_provenance")
+            if isinstance(_fp, str) and _fp.strip():
+                try:
+                    _fp = json.loads(_fp)
+                except Exception:
+                    _fp = {}
+            _fp = _fp if isinstance(_fp, dict) else {}
+            _verified = [c for c in _REQ if str(payload.get(c) or "").strip()]
+            payload["field_provenance"] = json.dumps(mark_human_verified(_fp, _verified))
 
         # Reconcile contacts: replace this donor's set with the edited rows.
         recs = []
