@@ -221,7 +221,9 @@ def _fmt(v) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     if isinstance(v, list):
-        return ", ".join(map(str, v)) or "—"
+        # normalise via _as_list so double-encoded values (a list whose element is
+        # itself a JSON-stringified list, e.g. ['["Sub-Saharan Africa"]']) render clean
+        return ", ".join(_cderive._as_list(v)) or "—"
     return str(v)
 
 
