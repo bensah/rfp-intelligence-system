@@ -835,8 +835,8 @@ def derive_cofinancing(org: dict, rfp: dict, donor: dict | None = None,
     return "Yes, fully met"
 
 
-def derive_funding_quality(rfp: dict, org: dict | None = None,
-                           policies: dict | None = None) -> str | None:
+def _award_quality_label(rfp: dict, org: dict | None = None,
+                         policies: dict | None = None) -> str | None:
     """ORG-RELATIVE attractiveness of the award SIZE. Bands the RFP value against
     the org's preferred targets (low/mid/max) using GEOMETRIC midpoints
     (money is multiplicative): cut1=sqrt(low*mid), cut2=sqrt(mid*max).
@@ -872,6 +872,36 @@ def derive_funding_quality(rfp: dict, org: dict | None = None,
     if val >= mid2:
         return "Moderate"
     return "Low"
+
+
+def _duration_score(rfp: dict) -> float | None:
+    """PREFER-6 duration tier (project_duration, in MONTHS): <=6 -> 0 (low) ·
+    >6 and <12 -> 0.5 (moderate) · >=12 -> 1 (high). None when no duration is
+    captured -> contributes nothing (the criterion stays 'Not sure' on its own)."""
+    d = _num(rfp.get("project_duration"))
+    if d is None:
+        return None
+    if d <= 6:
+        return 0.0
+    if d < 12:
+        return 0.5
+    return 1.0
+
+
+def derive_funding_quality(rfp: dict, org: dict | None = None,
+                           policies: dict | None = None) -> str | None:
+    """PREFER-6 = award-SIZE attractiveness JOINED with project DURATION (owner
+    2026-06-30): longer projects are more fundable/strategic. Average whichever of
+    the two signals are present and band the result (>=0.75 High · >=0.4 Moderate ·
+    else Low); 'Not sure' only when NEITHER award value nor duration is known."""
+    award = _award_quality_label(rfp, org, policies)
+    a = {"High": 1.0, "Moderate": 0.5, "Low": 0.0}.get(award)   # None if "Not sure"/None
+    d = _duration_score(rfp)
+    parts = [s for s in (a, d) if s is not None]
+    if not parts:
+        return "Not sure"
+    avg = sum(parts) / len(parts)
+    return "High" if avg >= 0.75 else ("Moderate" if avg >= 0.4 else "Low")
 
 
 def _registered_on_portal(org: dict, rfp: dict, donor: dict | None) -> bool:
@@ -1404,11 +1434,13 @@ def _strategic_factors(org: dict, rfp: dict, donor: dict | None = None) -> list[
 
 
 def _funding_quality_factors(rfp: dict, org: dict | None = None) -> list[dict]:
-    """PREFER-6 sub-factors: award size vs the org's preferred band."""
+    """PREFER-6 sub-factors: award size vs the org's preferred band, JOINED with the
+    project duration tier (<=6mo low · 6-12 moderate · >=12 high)."""
     org = org or {}
     val = _usd(rfp)
     lo = _num(org.get("org_min_target"))
     mx = _num(org.get("org_max_target"))
+    _dur = _duration_score(rfp)
     return [
         _factor("fq_floor", "At/above your minimum target size", "RG",
                 (val >= lo) if (val and lo) else None, active=bool(lo)),
@@ -1416,6 +1448,9 @@ def _funding_quality_factors(rfp: dict, org: dict | None = None) -> list[dict]:
                 (val <= mx) if (val and mx) else None, active=bool(mx)),
         _factor("fq_value", "Award value stated by the call", "R",
                 bool(val), active=True),
+        # Duration tier as a 0/0.5/1 score-factor (absent → inactive → Not sure).
+        _qfactor("fq_duration", "Project duration (longer preferred)",
+                 active=_dur is not None, score=_dur, hard=False, source="R"),
     ]
 
 
