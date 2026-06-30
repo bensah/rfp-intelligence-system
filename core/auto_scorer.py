@@ -913,6 +913,11 @@ def closed_call_hard_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
     Conservative on phrasing — only matches unambiguous closure language,
     not generic occurrences of "closed" (e.g. "closed-loop systems").
     """
+    # Explicit portal status (e.g. EU SEDIA status=Closed) OVERRIDES everything — a
+    # two-stage topic stays Closed even with a future second deadline.
+    if candidate.get("_closed") is True \
+            or str(candidate.get("call_status") or "").strip().lower() == "closed":
+        return True, "portal status: closed"
     text = _full_text(candidate)
     m = _CLOSURE_PHRASE_RE.search(text)
     if m:
