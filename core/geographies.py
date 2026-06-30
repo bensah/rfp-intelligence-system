@@ -369,3 +369,56 @@ def text_matches_term(text_lower: str, term: str) -> bool:
         return False
     return any(re.search(r"\b" + re.escape(v) + r"\b", text_lower)
                for v in variants(term))
+
+
+# Every broad term we can normalise to: UN regions + income tiers + the extra
+# SYNONYMS-only labels (European Union, Mediterranean, North America, …).
+_ALL_BROAD_TERMS = list(dict.fromkeys(list(BROAD_GEOGRAPHIES) + list(SYNONYMS.keys())))
+
+
+def broad_geos_in_text(text_lower: str) -> set[str]:
+    """Like regions_in_text, but over ALL broad geographies — UN regions AND the
+    income/development TIERS (LMICs, LDCs, Global South, …). regions_in_text covers
+    only REGION_TERMS, so tier SIGNALS were never captured; this closes that gap.
+    Longest-phrase-first with span consumption."""
+    pairs = sorted(
+        ((v, term) for term in _ALL_BROAD_TERMS for v in _region_name_variants(term)),
+        key=lambda p: len(p[0]), reverse=True)
+    found: set[str] = set()
+    work = text_lower
+    for v, term in pairs:
+        pat = r"\b" + re.escape(v) + r"\b"
+        if re.search(pat, work):
+            found.add(term)
+            work = re.sub(pat, " ", work)
+    return found
+
+
+# Variant(lowercased) → canonical broad term, and country(lowercased) → canonical
+# country, built once for fast single-term normalisation.
+_BROAD_CANON: dict[str, str] = {}
+for _bt in _ALL_BROAD_TERMS:
+    _BROAD_CANON.setdefault(_bt.lower(), _bt)
+    for _bv in SYNONYMS.get(_bt, []):
+        _BROAD_CANON.setdefault(_bv.lower(), _bt)
+_COUNTRY_CANON: dict[str, str] = {c.lower(): c for c in COUNTRIES}
+
+
+def canonical_geo(term: str | None) -> str:
+    """Normalise ONE extracted geographic term to the broad-geography vocabulary so
+    scope is COMPARABLE across sources: 'SSA'/'sub-saharan' → 'Sub-Saharan Africa',
+    'lmic'/'developing countries' → 'Low- and middle-income countries (LMICs)',
+    'global south' → 'Global South', plus canonical country names. A term not in the
+    library is returned UNCHANGED (free-text scope is allowed)."""
+    t = str(term or "").strip()
+    if not t:
+        return ""
+    tl = re.sub(r"\s+", " ", t.lower()).strip()
+    if tl in _BROAD_CANON:
+        return _BROAD_CANON[tl]
+    if tl in _COUNTRY_CANON:
+        return _COUNTRY_CANON[tl]
+    hits = broad_geos_in_text(tl)            # e.g. "ssa region", "lmic settings"
+    if hits:
+        return max(hits, key=len)
+    return t                                  # free term not in the library — keep as-is
