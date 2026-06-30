@@ -1608,10 +1608,17 @@ def _scan_grants_gov(name: str, url: str) -> list[dict[str, Any]]:
         # USAID) survive — they keep whatever geography the synopsis names, and the
         # geo gate then decides on the real scope. Don't override a richer scope the
         # synopsis already produced (e.g. a named region).
-        _foreign_ok = any(k in (elig_text or "").lower() for k in (
+        _foreign_kw = any(k in (elig_text or "").lower() for k in (
             "foreign", "international", "non-u.s", "non-us",
             "outside the united states", "low- and middle-income", "lmic",
             "developing countr", "any country", "worldwide", "globally"))
+        # NEGATION-aware: "Foreign entities are not eligible" contains "foreign" but is
+        # the OPPOSITE of foreign-welcome — don't let it suppress the US-geography default.
+        try:
+            from core.auto_scorer import foreign_applicants_excluded as _excl
+        except Exception:
+            _excl = lambda _t: False
+        _foreign_ok = _foreign_kw and not _excl(elig_text)
         if not _foreign_ok and not cand.get("call_geographic_scope"):
             cand["call_geographic_scope"] = ["United States"]
         if cand.get("_applicant_types"):
