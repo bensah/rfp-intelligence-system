@@ -66,7 +66,7 @@ _COMPONENT_KEYS: tuple[str, ...] = (
     # PREFER-6 funding_quality
     "fq_floor", "fq_ceiling", "fq_value", "fq_duration",
     # PREFER-7 funder_relationship
-    "rel_grantee", "rel_contact",
+    "rel_grantee", "rel_engaged", "rel_contact",
     # PREFER-8 competitiveness (funding-platform registration = comp_portal; funding
     # route = comp_route — both moved here from MUST-5, Bid Strength only)
     "comp_track", "comp_age", "comp_portal", "comp_route",
