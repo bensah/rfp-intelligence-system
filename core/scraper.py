@@ -333,6 +333,51 @@ def _extract_eligibility_from_text(text: str) -> str | None:
     return _clean(m.group(1))[:500]
 
 
+# Project-duration mining. Calls advertise duration inline ("12-18 month research
+# program", "up to 24 months", "36-month project", "1-2 years"), often with a
+# NON-BREAKING hyphen (U+2011) or en/em dash that a naïve "12-18" regex misses —
+# the reason the AI/GHW call's "12‑18 month" slipped through. Every dash variant is
+# in the class below; year units convert to months; weeks/days are ignored (duration
+# is counted in months).
+_DUR_DASH = "‐‑‒–—―-"          # incl. non-breaking hyphen (U+2011); plain "-" LAST
+_DUR_UNIT = r"(?:months?|mos?|years?|yrs?)"
+_DUR_RANGE_RE = re.compile(
+    rf"(\d{{1,3}})\s*(?:[{_DUR_DASH}]|to)\s*(\d{{1,3}})\s*({_DUR_UNIT})\b", re.I)
+_DUR_SINGLE_RE = re.compile(
+    rf"(?:up\s+to\s+)?(\d{{1,3}})[\s{_DUR_DASH}]*({_DUR_UNIT})\b", re.I)
+
+
+def _dur_to_months(n: int, unit: str) -> int:
+    return n * (12 if unit.lower().startswith(("year", "yr")) else 1)
+
+
+def duration_months_from_text(text: str | None, *, mode: str = "max") -> int | None:
+    """Longest project duration in MONTHS advertised anywhere in a call's text.
+
+    Handles ranges ("12-18 months"), "up to N months", single values, and year units
+    — across every hyphen/dash variant incl. the non-breaking hyphen. For a range,
+    ``mode='max'`` (default) takes the ceiling (what the call permits — aligned with
+    PREFER-6 "longer preferred"); ``mode='avg'`` takes the midpoint. When a call lists
+    several tracks of different lengths, the LONGEST advertised engagement wins.
+    Weeks/days are ignored. Returns an int or None."""
+    if not text:
+        return None
+    t = str(text)
+    found: list[int] = []
+    range_spans: list[tuple[int, int]] = []
+    for m in _DUR_RANGE_RE.finditer(t):
+        a, b = int(m.group(1)), int(m.group(2))
+        lo, hi = min(a, b), max(a, b)
+        pick = hi if mode == "max" else round((lo + hi) / 2)
+        found.append(_dur_to_months(pick, m.group(3)))
+        range_spans.append(m.span())
+    for m in _DUR_SINGLE_RE.finditer(t):     # single values not already inside a range
+        if any(s <= m.start() < e for s, e in range_spans):
+            continue
+        found.append(_dur_to_months(int(m.group(1)), m.group(2)))
+    return max(found) if found else None
+
+
 # FIRST-POSTED date meta keys (exclude modified/updated so a CMS re-touch can't
 # make an old call look recent — recency is judged by when it was POSTED).
 _PUB_META_KEYS = {

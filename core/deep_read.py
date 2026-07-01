@@ -215,12 +215,18 @@ def _harvest(candidate: dict, text: str, soup) -> None:
     the caller decides when to follow."""
     from core.scraper import (  # noqa: WPS433 (lazy — avoids import cycle)
         _extract_deadline_from_text, _extract_description_from_soup,
-        _extract_eligibility_from_text,
+        _extract_eligibility_from_text, duration_months_from_text,
     )
     if not candidate.get("call_submission_deadline"):
         d = _extract_deadline_from_text(text)
         if d:
             candidate["call_submission_deadline"] = d
+    # Project duration — most calls state it only inline ("12-18 month program"),
+    # which the LLM summary later drops; harvest it from the FULL rendered text now.
+    if not candidate.get("project_duration"):
+        dur = duration_months_from_text(text)
+        if dur:
+            candidate["project_duration"] = dur
     # Award amount — 'Grant Size $100,000', 'up to $100,000', etc. (capacity +
     # funding_quality both need it; was previously never harvested from HTML).
     if not candidate.get("call_award_value"):
