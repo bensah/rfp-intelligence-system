@@ -115,6 +115,21 @@ def _is_blank(v: Any) -> bool:
     return v is None or v == "" or v == []
 
 
+def _derive_duration(candidate: dict[str, Any]) -> None:
+    """Fill candidate['project_duration'] (months) from the call's title + description
+    when the source didn't provide it — most calls state duration only inline
+    ('12-18 month research program'), so nothing set it before. Mutates in place;
+    no-op when a duration is already present. See scraper.duration_months_from_text
+    for the range/max policy (ceiling of the longest advertised engagement)."""
+    if not _is_blank(candidate.get("project_duration")):
+        return
+    text = " ".join(str(candidate.get(k) or "") for k in
+                    ("opportunity_title", "brief_description", "notes"))
+    dur = scraper.duration_months_from_text(text)
+    if dur:
+        candidate["project_duration"] = dur
+
+
 # Auto-scoring outputs. Refreshed only when the existing row is still
 # "unreviewed" (alignment_score IS NULL). Once a human touches the Review
 # tab, we treat the score & criteria as theirs.
@@ -148,6 +163,7 @@ def _build_row(
     policies: dict[str, Any],
 ) -> dict[str, Any]:
     """Build a fresh rfp_submissions row for INSERT."""
+    _derive_duration(candidate)          # mine inline "12-18 month" durations
     uid = _generate_auto_uid(serial, ts)
     iso_now = ts.replace(tzinfo=timezone.utc).isoformat()
     deadline = candidate.get("call_submission_deadline")
@@ -217,6 +233,7 @@ def _build_merge_payload(
         NULL (= row has never been reviewed). Otherwise human work wins.
       * Title is never overwritten — humans may have cleaned it up.
     """
+    _derive_duration(candidate)          # mine inline "12-18 month" durations
     payload: dict[str, Any] = {}
     deadline = candidate.get("call_submission_deadline")
     posted = candidate.get("date_posted")
