@@ -1605,8 +1605,14 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
     if _flag(donor, _MULTI_FLAGS):
         out.append(_factor("comp_multi", "Multi-country presence", "DG",
                            _truthy(osx.get("org_is_multi_country"))))
+    # HQ-country match is a POSITIVE-ONLY edge (a local-HQ advantage), never a penalty:
+    # most international funders sit in a different country than the org, so a mismatch
+    # is the norm, not a failing. Active (a ✓) ONLY when it actually matches; otherwise
+    # excluded — so an international funder no longer shows a red ✗ here. (derive_
+    # competitiveness already scores it positive-only.)
     out.append(_factor("comp_hq", "HQ-country match with funder", "DG",
-                       (dhq == ohq) if (dhq and ohq) else None, active=bool(dhq and ohq)))
+                       True if (dhq and ohq and dhq == ohq) else None,
+                       active=bool(dhq and ohq and dhq == ohq)))
     return out
 
 
