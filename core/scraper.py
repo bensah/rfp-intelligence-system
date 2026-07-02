@@ -2829,9 +2829,46 @@ def expand_listing(url: str, source_name: str = "listing") -> list[dict[str, Any
     return cands
 
 
+def _playwright_available() -> bool:
+    """True when Playwright is importable (so we can render JS without recursing
+    back into _scan_html when it isn't)."""
+    try:
+        import playwright.sync_api  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+# SPA framework roots that, on an UNrendered fetch, wrap an otherwise-empty body —
+# a plain requests GET sees the shell, not the JS-injected listing.
+_SPA_SHELL_MARKERS = (
+    'id="root"', "id='root'", 'id="__next"', "__next_data__", "data-reactroot",
+    'ng-app', 'id="app"', "window.__nuxt__", "window.__initial_state__",
+)
+
+
+def _looks_like_spa_shell(html_text: str) -> bool:
+    """True when the fetched HTML is an unrendered single-page-app shell: very little
+    visible text AND a known SPA root marker. Used to decide whether a plain-HTML scan
+    that found nothing should be retried through the JS renderer."""
+    if not html_text:
+        return False
+    try:
+        text = BeautifulSoup(html_text, "html.parser").get_text(" ", strip=True)
+    except Exception:
+        text = html_text
+    if len(text) >= 800:                       # enough real text → not an empty shell
+        return False
+    low = html_text.lower()
+    return any(m in low for m in _SPA_SHELL_MARKERS)
+
+
 def _scan_html(name: str, url: str) -> list[dict[str, Any]]:
     """Generic HTML listing-page scraper using `requests` (no JS).
-    Suitable for static / server-rendered donor pages."""
+    Suitable for static / server-rendered donor pages. When the fetch is an
+    unrendered SPA shell that yields NO candidates, transparently retry through the
+    Playwright renderer (if available) so a JS-only listing isn't silently missed or,
+    worse, mis-extracted into junk candidates."""
     try:
         r = _http.get(
             url,
@@ -2842,7 +2879,12 @@ def _scan_html(name: str, url: str) -> list[dict[str, Any]]:
     except Exception as exc:
         log.warning("HTML fetch failed for %s: %s", url, exc)
         return []
-    return _extract_candidates_from_html(name, url, r.text)
+    cands = _extract_candidates_from_html(name, url, r.text)
+    if not cands and _looks_like_spa_shell(r.text) and _playwright_available():
+        log.info("SPA shell detected for %s (no candidates from static HTML) — "
+                 "retrying via Playwright renderer", name)
+        return _scan_html_js(name, url)
+    return cands
 
 
 def _scan_html_js(name: str, url: str) -> list[dict[str, Any]]:
