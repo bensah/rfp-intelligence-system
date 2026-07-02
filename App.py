@@ -38,6 +38,21 @@ from auth.authenticator import ensure_logged_in  # noqa: E402
 from core import permissions as _perms  # noqa: E402
 from core.app_header import render_app_header  # noqa: E402
 
+# Silence Streamlit's benign "Couldn't find fragment with id …" WARNING. It fires
+# when an @st.dialog (a fragment) receives a rerun after a full app rerun (our
+# `st.rerun()` inside dialogs) already tore it down — harmless log noise, no data
+# lost. Targeted filter so every OTHER script-runner warning/error still shows.
+import logging  # noqa: E402
+
+
+class _DropFragmentNotFound(logging.Filter):
+    def filter(self, record):
+        return "Couldn't find fragment with id" not in record.getMessage()
+
+
+logging.getLogger("streamlit.runtime.scriptrunner.script_runner").addFilter(
+    _DropFragmentNotFound())
+
 
 def _pages(include_admin: bool) -> list:
     """Explicit url_path on each page gives every page a stable URL slug, so a
