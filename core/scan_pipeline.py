@@ -15,6 +15,7 @@ Returns (inserted, updated, duplicate) for the scan_logs row.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -115,6 +116,44 @@ def _is_blank(v: Any) -> bool:
     return v is None or v == "" or v == []
 
 
+_URLISH_RE = re.compile(
+    r"^(?:www\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}(?:[:/]\S*)?$", re.I)
+
+
+def _normalize_link(link: Any) -> str | None:
+    """Clean a candidate's opportunity_link into a real http(s) URL.
+
+    JS-rendered SPA pages sometimes hand the anchor extractor a stray text / CSS node
+    instead of an href (e.g. Coefficient Giving's "no pop-up should run above the
+    sticky header…"). Returns:
+      * the URL (https:// prepended to a scheme-less but valid host), or
+      * "" when the link is empty (legit — it may be resolved later), or
+      * None when it's present but NOT a URL → the caller drops the candidate."""
+    s = str(link or "").strip()
+    if not s:
+        return ""
+    if any(c in s for c in (" ", "\n", "\t")):
+        return None
+    if s.lower().startswith(("http://", "https://")):
+        return s
+    return ("https://" + s) if _URLISH_RE.match(s) else None
+
+
+def _derive_duration(candidate: dict[str, Any]) -> None:
+    """Fill candidate['project_duration'] (months) from the call's title + description
+    when the source didn't provide it — most calls state duration only inline
+    ('12-18 month research program'), so nothing set it before. Mutates in place;
+    no-op when a duration is already present. See scraper.duration_months_from_text
+    for the range/max policy (ceiling of the longest advertised engagement)."""
+    if not _is_blank(candidate.get("project_duration")):
+        return
+    text = " ".join(str(candidate.get(k) or "") for k in
+                    ("opportunity_title", "brief_description", "notes"))
+    dur = scraper.duration_months_from_text(text)
+    if dur:
+        candidate["project_duration"] = dur
+
+
 # Auto-scoring outputs. Refreshed only when the existing row is still
 # "unreviewed" (alignment_score IS NULL). Once a human touches the Review
 # tab, we treat the score & criteria as theirs.
@@ -148,6 +187,7 @@ def _build_row(
     policies: dict[str, Any],
 ) -> dict[str, Any]:
     """Build a fresh rfp_submissions row for INSERT."""
+    _derive_duration(candidate)          # mine inline "12-18 month" durations
     uid = _generate_auto_uid(serial, ts)
     iso_now = ts.replace(tzinfo=timezone.utc).isoformat()
     deadline = candidate.get("call_submission_deadline")
@@ -217,6 +257,7 @@ def _build_merge_payload(
         NULL (= row has never been reviewed). Otherwise human work wins.
       * Title is never overwritten — humans may have cleaned it up.
     """
+    _derive_duration(candidate)          # mine inline "12-18 month" durations
     payload: dict[str, Any] = {}
     deadline = candidate.get("call_submission_deadline")
     posted = candidate.get("date_posted")
@@ -417,6 +458,20 @@ def ingest_candidates(
                     cand["call_submission_deadline"] = _dl["deadline"]
             except Exception as _exc:
                 log.debug("deadline backstop skipped: %s", _exc)
+        # Link sanity: after any resolve rewrite, the opportunity_link must be a real
+        # URL. Drop candidates whose link is a JS-SPA scrape artifact (stray text/CSS,
+        # not an href) so the UI never shows an unclickable "Apply" link; normalise a
+        # scheme-less-but-valid host in place.
+        _norm_link = _normalize_link(cand.get("opportunity_link"))
+        if _norm_link is None:
+            rejected += 1
+            log.info("reject (non-URL link): %r — %s",
+                     str(cand.get("opportunity_link"))[:60],
+                     (cand.get("opportunity_title") or "")[:50])
+            _reject_records.append({**cand, "_reject_reason": "opportunity_link is not a URL"})
+            continue
+        cand["opportunity_link"] = _norm_link
+
         # First-pass eligibility gate (cheap: URL/title/keyword/deadline/scope).
         ok, reason = is_eligible(cand, policies, geo_org_gates=not extract_only,
                                  llm_adjudicate=llm_adjudicate)
