@@ -23,7 +23,10 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 _BRIEF_MAX = 1000          # hard cap on the synthesised brief (chars)
-_MAX_INPUT_CHARS = 9000    # RFP body sent to the model
+_MAX_INPUT_CHARS = 16000   # RFP body sent to the model (raised 9k→16k 2026-07-02 so a
+                           # deep-read full RFP — page + folded PDF — is structured on
+                           # more than its opening pages; regex field extraction still
+                           # runs on the UNtruncated _page_text)
 _MAX_OUTPUT_TOKENS = 2200  # reasoning model needs head-room for reasoning + JSON
 _CACHE: dict[str, dict] = {}
 

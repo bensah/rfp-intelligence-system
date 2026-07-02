@@ -441,14 +441,18 @@ def _extract_description_from_soup(soup: BeautifulSoup) -> str | None:
     return None
 
 
-# Max PDF size we'll download for enrichment (bytes). Donor RFP PDFs are
-# usually 0.5-5 MB; above 10 MB it's typically a glossy report we don't
-# need and the bandwidth/CPU isn't worth it.
-ENRICH_PDF_MAX_BYTES = 10 * 1024 * 1024
-# Pages to parse. Bumped 3 → 8 on 2026-06-04 after Pierre Fabre guide
-# PDFs put the Timeline / Closing Date on page 4-5. Each extra page
-# costs ~50ms of pypdf parsing which is dwarfed by the 1-3s download.
-ENRICH_PDF_MAX_PAGES = 8
+# Max PDF size we'll download for enrichment (bytes). Full RFP packages are
+# frequently 15-25 MB (e.g. the 21 MB Grand Challenges "Nexa" RFP), and we now
+# deep-read the WHOLE RFP to exhaust the extraction data, so the cap is 30 MB.
+ENRICH_PDF_MAX_BYTES = 30 * 1024 * 1024
+# Pages to parse. 3 → 8 (2026-06-04, Pierre Fabre deadlines on p4-5) → 30
+# (2026-07-02): the FULL RFP is the extraction target — eligibility, funding and
+# duration detail routinely sit deep in a 40-page package. ~50ms/page of pypdf
+# parsing is cheap vs the download.
+ENRICH_PDF_MAX_PAGES = 30
+# PDF downloads are much larger than an HTML detail page, so they get their own
+# (longer) timeout instead of the tight per-page ENRICH_TIMEOUT.
+ENRICH_PDF_TIMEOUT = 20
 
 
 def _extract_pdf_text(pdf_bytes: bytes) -> str:
@@ -523,7 +527,7 @@ def _try_pdf_guide_deadline(pdf_url: str) -> tuple[date | None, str | None]:
         r = _http.get(
             pdf_url,
             headers={"User-Agent": USER_AGENT, "Accept": "application/pdf, */*"},
-            timeout=ENRICH_TIMEOUT,
+            timeout=ENRICH_PDF_TIMEOUT,
             allow_redirects=True,
             stream=True,
         )
@@ -539,6 +543,26 @@ def _try_pdf_guide_deadline(pdf_url: str) -> tuple[date | None, str | None]:
     if not text:
         return None, None
     return _extract_deadline_from_text(text), text[:600] if text else None
+
+
+def fetch_pdf_text(pdf_url: str) -> str:
+    """Download a PDF and return its FULL extracted text (up to the page cap), for
+    deep-reading a call whose real detail lives in an attached RFP package. Bounded by
+    the same size/timeout/page caps; returns '' on any failure. Never raises."""
+    try:
+        r = _http.get(
+            pdf_url,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/pdf, */*"},
+            timeout=ENRICH_PDF_TIMEOUT, allow_redirects=True, stream=True,
+        )
+        r.raise_for_status()
+        cl = int(r.headers.get("Content-Length") or 0)
+        if cl and cl > ENRICH_PDF_MAX_BYTES:
+            return ""
+        return _extract_pdf_text(r.content[:ENRICH_PDF_MAX_BYTES])
+    except Exception as exc:
+        log.debug("fetch_pdf_text failed for %s: %s", pdf_url, exc)
+        return ""
 
 
 # Companion call / calendar pages. Some donors announce a call on one page (no
