@@ -111,11 +111,12 @@ def _usd(rfp: dict) -> float | None:
 
 
 def _rfp_program_keys(rfp: dict) -> set[str]:
-    """Canonical program-area keys for an RFP — empty if generic ('Health')."""
-    pa = _as_list(rfp.get("call_domain_areas"))
-    if not pa or not any(p in _PA_KEYS for p in pa):
-        return set()                       # generic / unclassified → can't judge
-    return _pa.expand(pa)
+    """Canonical program-area keys for an RFP — empty if generic ('Health') or
+    unclassified. call_domain_areas may store canonical keys, category names, OR bare
+    sub-area LABELS (the extractor saves labels like 'SRH', not keys like 'WCH - SRH'),
+    so resolve them ALL via program_area_classifier.expand — which returns empty for a
+    generic umbrella term ('Health') we can't judge a specific track record against."""
+    return _pa.expand(_as_list(rfp.get("call_domain_areas")))
 
 
 # --- per-criterion derivations (return a CRITERION_RESPONSES label or None) ---
@@ -696,12 +697,34 @@ def _org_route_set(org: dict) -> set[str]:
     return out
 
 
-def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
-    """True when THIS call's donor is in the org's list of donors it has already
-    obtained an authorized-signatory sign-off from (org.authorized_signatory_donors)."""
-    have = _name_set(org.get("org_authorized_signatory_donors"))
-    if not have:
+def _canonical_donor_match(names: Any, donor: dict | None, rfp: dict) -> bool:
+    """True when any donor in `names` (an org's stored donor list) refers to THIS call's
+    donor. ROBUST matching (owner 2026-06-30): both sides are first resolved to a
+    donor_intel canonical_key via match_donor, so an acronym ("BMGF"), a short name
+    ("Gates Foundation") and the full legal name ("Bill & Melinda Gates Foundation") all
+    resolve to the same donor however the user typed it. Falls back to normalised exact /
+    ≥4-char substring matching for free-typed donors not yet in the catalog."""
+    names = [n.get("name") if isinstance(n, dict) else n for n in (names or [])]
+    names = [str(n).strip() for n in names if str(n or "").strip()]
+    if not names:
         return False
+    donor = donor or {}
+    # 1) canonical-key match — robust to acronym / full-name / alias / minor variants.
+    try:
+        from core.donor_intel import match_donor
+        call_keys = {k for k in (
+            (donor.get("canonical_key") or "").strip(),
+            ((match_donor(rfp.get("funding_agency")) or {}).get("canonical_key") or "").strip(),
+        ) if k}
+        if call_keys:
+            for n in names:
+                m = match_donor(n)
+                if m and (m.get("canonical_key") or "").strip() in call_keys:
+                    return True
+    except Exception:
+        pass
+    # 2) fallback — normalised exact / ≥4-char substring match (free-typed donors).
+    have = _name_set(names)
     targets = _name_set([donor.get("donor"), donor.get("donor_short"),
                          rfp.get("funding_agency")] + _as_list(donor.get("donor_aliases")))
     for a in have:
@@ -709,6 +732,12 @@ def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
             if a and b and (a == b or (len(a) >= 4 and len(b) >= 4 and (a in b or b in a))):
                 return True
     return False
+
+
+def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
+    """True when THIS call's donor is in the org's list of donors it has already
+    obtained an authorized-signatory sign-off from (org.authorized_signatory_donors)."""
+    return _canonical_donor_match(org.get("org_authorized_signatory_donors"), donor, rfp)
 
 
 def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
@@ -755,8 +784,6 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
          bool(org.get("org_has_audited_financials"))),
         ("audit_report", "Audit report", _need("donor_audit_report_required"),
          bool(org.get("org_has_audit_report"))),
-        ("sam_uei", "SAM.gov / UEI registration",
-         _need("donor_sam_uei_registration_required") or _is_us_federal(rfp), _sam_ok),
         ("tax_exempt", "Tax-exempt status", _need("donor_tax_exempt_status_required"),
          bool(org.get("org_tax_exempt"))),
         ("safeguarding", "Safeguarding policy", _need("donor_safeguarding_policy_required"),
@@ -774,6 +801,16 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
         items.append(_qfactor(key, name, active=active,
                               score=(1.0 if ok else 0.0), hard=True))
 
+    # SAM.gov / UEI registration applies ONLY to US-federal (grants.gov) calls (or a donor
+    # that explicitly demands it). For every other donor it's irrelevant → a permissive
+    # pass (score 1, "no restriction"), NOT a 'Not sure' that drags the criterion down.
+    if _need("donor_sam_uei_registration_required") or _is_us_federal(rfp):
+        items.append(_qfactor("sam_uei", "SAM.gov / UEI registration",
+                              active=True, score=(1.0 if _sam_ok else 0.0), hard=True))
+    else:
+        items.append(_qfactor("sam_uei", "SAM.gov / UEI registration",
+                              active=True, score=1.0, hard=False, default=True))
+
     # Authorized-signatory — matched to the org's list of donors it has ALREADY
     # obtained an authorized signatory from (not a generic checkbox).
     a_sig = _need("donor_authorized_signatory_signoff_required", "donor_welcome_registration_required")
@@ -788,27 +825,14 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     a_part = _need("donor_partnership_mandatory")
     items.append(_qfactor("partnership", "Mandatory partnership", active=a_part,
                           score=(1.0 if _has_qualifying_partner(org) else 0.0), hard=True))
-    # Funding-platform registration — donor's submission portal in the org's active
-    # registrations (donor.submission_portal_url ∩ org.donor_registrations).
-    a_plat = _truthy(donor.get("donor_funding_platform_registration_required"))
-    items.append(_qfactor("platform_reg", "Funding-platform registration", active=a_plat,
-                          score=(1.0 if _registered_on_portal(org, rfp, donor) else 0.0),
-                          hard=True))
 
-    # Funding-route match — ACTIVE when the call/donor offers route(s); the org must be
-    # able to RECEIVE through ≥1 of them. Org hasn't declared its routes → no penalty.
-    offered = _offered_routes(donor)
-    org_routes = _org_route_set(org)
-    a_route = bool(offered)
-    ok = bool(org_routes & offered) if org_routes else True
-    items.append(_qfactor("route", "Funding route accessible", active=a_route,
-                          score=(1.0 if ok else 0.0), hard=True))
-    # Only the funding-route gate is a structural (non-acquirable) auto-Decline; the
-    # other hard gates are acquirable before the deadline (see fatal_decline). Reflect
-    # that so the Review card shows 🔒 on `route` alone, not on every row.
+    # NOTE: Funding-platform registration and Funding-route accessibility are NOT MUST
+    # gates (owner 2026-06-30) — neither is a hard eligibility floor. They live under
+    # PREFER-8 Competitiveness (comp_portal / comp_route), where they only inform Bid
+    # Strength. So MUST-5 has NO structural auto-Decline: every remaining hard credential
+    # gate is acquirable before the deadline → none is fatal.
     for it in items:
-        if it["key"] != "route":
-            it["fatal"] = False
+        it["fatal"] = False
     return items
 
 
@@ -1005,16 +1029,20 @@ def _norm_rel(s: Any) -> str:
 
 def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) -> str | None:
     """FUNDER OR PARTNER relationship (PREFER 7). Past grantee of this donor
-    (org.funder_history ∋ donor) → "Current/past grantee" (strongest). Else a
-    SHARED COLLABORATOR — an org we partner with is also among the donor's
-    partners/collaborators — OR we're registered on their portal → "Some contact"
-    (a warm route in). Else "None"; None only when we hold no relationship data."""
+    (org.funder_history ∋ donor) → "Current/past grantee" (strongest). Else a warm
+    route in → "Some contact": we've ENGAGED this donor before (org.engaged_donors),
+    OR a SHARED COLLABORATOR — an org we partner with is also among the donor's
+    partners/collaborators — OR we're registered on their portal. Else "None"; None
+    only when we hold no relationship data."""
     hist = [h for h in (org.get("org_funder_history") or []) if h]
     if _funder_in_history(rfp.get("funding_agency"), hist):
         return "Current/past grantee"
-    if _shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor):
+    if (_canonical_donor_match(org.get("org_engaged_donors"), donor, rfp)
+            or _shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor)):
         return "Some contact"
-    if not hist and not (org.get("org_donor_registrations") or []) and not (org.get("trusted_partners") or []):
+    if (not hist and not (org.get("org_donor_registrations") or [])
+            and not (org.get("trusted_partners") or [])
+            and not (org.get("org_engaged_donors") or [])):
         return None                    # no relationship data on file → Not sure
     return "None"
 
@@ -1066,14 +1094,11 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
     # Track record on the RFP's EXACT program area — the strongest competitiveness
     # signal. Build the org's 0–5 domain (experience) vector and read the best
     # rating across the call's program keys: strong record = an edge; none = wide open.
-    rfp_keys = _rfp_program_keys(rfp)
-    if rfp_keys and (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
-        from core.matching import _priority_vector       # local import (no cycle)
-        dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
-        if dvec:
-            signals += 1
-            strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0)  # 0–5
-            score += 1.5 if strength >= 4 else (0.5 if strength >= 2 else -1.0)
+    _tr = _track_record_band(org, rfp, donor)
+    if _tr is not None:
+        signals += 1
+        _sc = _tr[0]                                       # 0 / 0.5 / 1 (org ÷ donor band)
+        score += 1.5 if _sc >= 1.0 else (0.5 if _sc >= 0.5 else -1.0)
 
     fy = _num(org.get("org_founding_year"))
     if fy:
@@ -1102,7 +1127,7 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
         if _flag(donor, _MULTI_FLAGS):
             signals += 1
             score += 1.0 if _truthy(org_settings.get("org_is_multi_country")) else -0.5
-        dhq = (donor.get("donor_hq_country") or "").strip().lower()
+        dhq = _funder_country(rfp, donor).strip().lower()
         ohq = str(org_settings.get("org_hq_country")
                   or org_settings.get("org_country") or "").strip().lower()
         if dhq and ohq:
@@ -1404,10 +1429,14 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
     grantee = _funder_in_history(rfp.get("funding_agency"),
                                  [h for h in (org.get("org_funder_history") or []) if h])
     contact = bool(_shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor))
+    # Donor engaged — we've had prior contact (meetings / concept notes / EOIs) with this
+    # call's donor though no funding yet. Matched robustly to org.engaged_donors.
+    engaged = _canonical_donor_match(org.get("org_engaged_donors"), donor, rfp)
     # OR-tiers: any one satisfies PREFER 7 (grantee is the strongest). Tagged
     # so the Review panel shows them as alternative routes, not all-required.
     return [
         _factor("rel_grantee", "Past / current grantee of this donor", "DO", grantee),
+        _factor("rel_engaged", "Donor engaged (prior contact, no funding yet)", "DO", engaged),
         _factor("rel_contact", "Shared collaborator or registered", "DO", contact),
     ]
 
@@ -1418,9 +1447,9 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     """THE auto-Decline gate (replaces the blanket 'any MUST<2 → Decline').
     Returns (decline?, trigger_name). True ONLY when a 🔒 non-dynamic factor is
     EXPLICITLY failed (met is False) — a structural ineligibility the org can't
-    fix before the deadline: a MUST-1 identity gate, no geographic reach, or a
-    MUST-5 fatal floor (stage/budget/track/route). Unknowns (None) never trigger
-    a decline — they only soften the score (→ usually Park for review)."""
+    fix before the deadline: a MUST-1 identity gate or no geographic reach. (MUST-5
+    has no fatal floor — its credential gates are acquirable.) Unknowns (None) never
+    trigger a decline — they only soften the score (→ usually Park for review)."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     for f in qualification_factors(org, rfp, eff, org_settings):
@@ -1428,12 +1457,9 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
             return True, f["name"]
     if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
         return True, "Geographic reach (no presence or partner)"
-    # MUST-5: only the funding-route gate is a structural (non-acquirable) blocker.
-    # The other hard compliance gates lower the label/score but are acquirable before
-    # the deadline → they do NOT auto-decline. (track_floor moved to MUST-1.)
-    for f in compliance_factors(org, rfp, eff, org_settings):
-        if f["active"] and f["key"] == "route" and f["met"] is False:
-            return True, f["name"]
+    # MUST-5 has NO structural auto-Decline gate (owner 2026-06-30): the hard credential
+    # gates are all acquirable before the deadline, and funding-route / funding-platform
+    # moved to PREFER-8 (Bid Strength only). So MUST-5 never forces a decline here.
     return False, None
 
 
@@ -1482,6 +1508,58 @@ def _funding_quality_factors(rfp: dict, org: dict | None = None) -> list[dict]:
     ]
 
 
+# Currency → funder HQ country (LAST-RESORT inference; owner 2026-06-30). USD is too
+# universal to localise (everyone advertises in $), but a call denominated in a national
+# currency strongly implies the funder's country (CAD → Canada, GBP → UK, …).
+_CURRENCY_COUNTRY = {
+    "CAD": "Canada", "GBP": "United Kingdom", "AUD": "Australia", "JPY": "Japan",
+    "CHF": "Switzerland", "SEK": "Sweden", "NOK": "Norway", "DKK": "Denmark",
+    "INR": "India", "ZAR": "South Africa", "NZD": "New Zealand",
+}
+
+
+def _funder_country(rfp: dict, donor: dict | None) -> str:
+    """Best-effort funder HQ country, in priority order: donor_intel HQ → a country named
+    on the call (funder location / agency country) → a national award currency
+    (CAD→Canada, GBP→UK, …; USD is too universal to localise). '' when undeterminable."""
+    donor = donor or {}
+    for v in (donor.get("donor_hq_country"), rfp.get("funder_country"),
+              rfp.get("funding_agency_country"), rfp.get("funder_location")):
+        s = str(v or "").strip()
+        if s:
+            return s
+    return _CURRENCY_COUNTRY.get(str(rfp.get("currency") or "").strip().upper(), "")
+
+
+def _track_record_band(org: dict, rfp: dict, donor: dict | None):
+    """PREFER-8 track record — the org's TRACK-RECORD rating (0–5) in the call's program
+    area, judged against the DONOR's PRIORITY for that area (default 5 when the donor
+    isn't graded for it). Returns (score 0/0.5/1, org_rating, donor_priority, area_label)
+    or None when the call has no classifiable program area / the org has no expertise.
+    Scored on the WEAKER of the two — band(min(org, donor)): a strong track record in an
+    area the donor barely prioritises is no edge, and vice-versa. 4–5 → High (1.0) · 2–3
+    → Moderate (0.5) · else Low (0.0). The call area with the best band wins (tie → the
+    org's strongest). So org 3 vs donor 5 → Moderate (3/5); org 5 vs donor 5 → High."""
+    rfp_keys = _rfp_program_keys(rfp)
+    if not rfp_keys or not (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
+        return None
+    from core.matching import _priority_vector
+    dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
+    donor = donor or {}
+    dprio = _theme_scores_flat(donor.get("donor_priority_areas"),
+                               _ratings(donor.get("donor_priority_ratings")), 5.0)
+    best = None                                  # (score, org_rating, donor_priority, key)
+    for k in sorted(rfp_keys):
+        org_r = max(0.0, float(dvec.get(k, 0.0) or 0.0))
+        donor_p = float(dprio.get(k, 5.0) or 5.0)
+        cand = (_band(min(org_r, donor_p)), org_r, donor_p, k)
+        if best is None or cand > best:          # max band, then org rating, then donor
+            best = cand
+    score, org_r, donor_p, k = best
+    label = _pa.subarea_label(k) if (k and " - " in k) else k
+    return score, org_r, donor_p, label
+
+
 def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
                              org_settings: dict | None = None) -> list[dict]:
     """PREFER-8 sub-factors mirroring derive_competitiveness signals."""
@@ -1489,32 +1567,52 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
     org = org or {}
     donor = donor or {}
     osx = org_settings or {}
-    rfp_keys = _rfp_program_keys(rfp)
-    dvec = {}
-    if rfp_keys and (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
-        from core.matching import _priority_vector
-        dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
-    strength = max((dvec.get(k, 0.0) for k in rfp_keys), default=0.0) if rfp_keys else 0.0
     fy = _num(org.get("org_founding_year"))
-    dhq = (donor.get("donor_hq_country") or "").strip().lower()
+    dhq = _funder_country(rfp, donor).strip().lower()
     ohq = str(osx.get("org_hq_country") or osx.get("org_country") or "").strip().lower()
+    # Track record — a GRADED component (org rating ÷ donor priority), shown with its
+    # band + ratio so the user can see why (e.g. "Moderate (3/5)").
+    _tr = _track_record_band(org, rfp, donor)
+    comp_track = _qfactor("comp_track", "Track record in this program area",
+                          active=_tr is not None, score=(_tr[0] if _tr else None),
+                          hard=False, source="RG")
+    if _tr is not None:
+        _sc, _orgr, _dprio, _area = _tr
+        _bandlbl = "High" if _sc >= 1.0 else ("Moderate" if _sc >= 0.5 else "Low")
+        comp_track["_detail"] = (f"{_bandlbl} (your {_orgr:g} vs donor {_dprio:g}"
+                                 + (f" · {_area}" if _area else "") + ")")
     out = [
-        _factor("comp_track", "Track record in this program area", "RG",
-                (strength >= 2) if rfp_keys else None, active=bool(rfp_keys)),
+        comp_track,
         _factor("comp_age", "Established (10+ years)", "G",
                 (fy is not None and (date.today().year - int(fy)) >= 10) if fy else None,
                 active=bool(fy)),
         _factor("comp_portal", "Familiar with the donor's portal", "DG",
                 _registered_on_portal(org, rfp, donor), active=True),
     ]
+    # Funding route accessible — moved here from MUST-5 (no longer a hard gate, owner
+    # 2026-06-30): a soft competitiveness signal that only informs Bid Strength. Active
+    # when the donor/call offers route(s); met when the org can RECEIVE through ≥1 of
+    # them. Org hasn't declared its routes → 'Not sure' (None), excluded — no penalty.
+    offered = _offered_routes(donor)
+    if offered:
+        org_routes = _org_route_set(org)
+        out.append(_factor("comp_route", "Funding route accessible", "DG",
+                           (bool(org_routes & offered) if org_routes else None),
+                           active=True))
     if _flag(donor, _GRASSROOT_FLAGS):
         out.append(_factor("comp_grassroots", "Grassroots / local-org status", "DG",
                            _truthy(osx.get("org_is_grassroot"))))
     if _flag(donor, _MULTI_FLAGS):
         out.append(_factor("comp_multi", "Multi-country presence", "DG",
                            _truthy(osx.get("org_is_multi_country"))))
+    # HQ-country match is a POSITIVE-ONLY edge (a local-HQ advantage), never a penalty:
+    # most international funders sit in a different country than the org, so a mismatch
+    # is the norm, not a failing. Active (a ✓) ONLY when it actually matches; otherwise
+    # excluded — so an international funder no longer shows a red ✗ here. (derive_
+    # competitiveness already scores it positive-only.)
     out.append(_factor("comp_hq", "HQ-country match with funder", "DG",
-                       (dhq == ohq) if (dhq and ohq) else None, active=bool(dhq and ohq)))
+                       True if (dhq and ohq and dhq == ohq) else None,
+                       active=bool(dhq and ohq and dhq == ohq)))
     return out
 
 
@@ -1542,9 +1640,9 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     """THE auto-Decline gate (replaces the blanket 'any MUST<2 → Decline').
     Returns (decline?, trigger_name). True ONLY when a 🔒 non-dynamic factor is
     EXPLICITLY failed (met is False) — a structural ineligibility the org can't
-    fix before the deadline: a MUST-1 identity gate, no geographic reach, or a
-    MUST-5 fatal floor (stage/budget/track/route). Unknowns (None) never trigger
-    a decline — they only soften the score (→ usually Park for review)."""
+    fix before the deadline: a MUST-1 identity gate or no geographic reach. (MUST-5
+    has no fatal floor — its credential gates are acquirable.) Unknowns (None) never
+    trigger a decline — they only soften the score (→ usually Park for review)."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     for f in qualification_factors(org, rfp, eff, org_settings):
@@ -1552,12 +1650,9 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
             return True, f["name"]
     if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
         return True, "Geographic reach (no presence or partner)"
-    # MUST-5: only the funding-route gate is a structural (non-acquirable) blocker.
-    # The other hard compliance gates lower the label/score but are acquirable before
-    # the deadline → they do NOT auto-decline. (track_floor moved to MUST-1.)
-    for f in compliance_factors(org, rfp, eff, org_settings):
-        if f["active"] and f["key"] == "route" and f["met"] is False:
-            return True, f["name"]
+    # MUST-5 has NO structural auto-Decline gate (owner 2026-06-30): the hard credential
+    # gates are all acquirable before the deadline, and funding-route / funding-platform
+    # moved to PREFER-8 (Bid Strength only). So MUST-5 never forces a decline here.
     return False, None
 
 

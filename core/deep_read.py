@@ -215,12 +215,18 @@ def _harvest(candidate: dict, text: str, soup) -> None:
     the caller decides when to follow."""
     from core.scraper import (  # noqa: WPS433 (lazy — avoids import cycle)
         _extract_deadline_from_text, _extract_description_from_soup,
-        _extract_eligibility_from_text,
+        _extract_eligibility_from_text, duration_months_from_text,
     )
     if not candidate.get("call_submission_deadline"):
         d = _extract_deadline_from_text(text)
         if d:
             candidate["call_submission_deadline"] = d
+    # Project duration — most calls state it only inline ("12-18 month program"),
+    # which the LLM summary later drops; harvest it from the FULL rendered text now.
+    if not candidate.get("project_duration"):
+        dur = duration_months_from_text(text)
+        if dur:
+            candidate["project_duration"] = dur
     # Award amount — 'Grant Size $100,000', 'up to $100,000', etc. (capacity +
     # funding_quality both need it; was previously never harvested from HTML).
     if not candidate.get("call_award_value"):
@@ -251,6 +257,32 @@ def _harvest(candidate: dict, text: str, soup) -> None:
 def _thin(candidate: dict) -> bool:
     return (not candidate.get("call_submission_deadline")
             or len(candidate.get("brief_description") or "") < _THIN_DESC)
+
+
+_PDF_FOLD_MAX = 60_000     # chars of PDF text to fold into _page_text (bounds cost)
+
+
+def _fold_rfp_pdf(candidate: dict, soup, base_url: str) -> None:
+    """Find the call's attached RFP/application PDF, pull its FULL text and append it
+    to candidate['_page_text'] + re-harvest fields from it. Best-effort, bounded to one
+    PDF; never raises. This is what lets us exhaust a 40-page RFP the landing page only
+    links to (the Grand Challenges 'Nexa' case)."""
+    from core.scraper import _find_application_pdf, fetch_pdf_text
+    try:
+        pdf_url = _find_application_pdf(soup, base_url)
+        if not pdf_url:
+            return
+        pdf_text = fetch_pdf_text(pdf_url)
+        if not pdf_text or len(pdf_text) < 200:
+            return
+        candidate["_rfp_pdf_url"] = pdf_url
+        base = candidate.get("_page_text") or ""
+        candidate["_page_text"] = (base + "\n\n" + pdf_text)[: _PDF_FOLD_MAX + len(base)]
+        # Re-harvest structured fields (deadline / amount / duration / eligibility)
+        # from the PDF text — the landing page often omits them.
+        _harvest(candidate, pdf_text, None)
+    except Exception:
+        pass
 
 
 def _follow_for_deadline(candidate: dict, soup, base_url: str) -> None:
@@ -330,8 +362,17 @@ def enrich(candidate: dict) -> bool:
         candidate["_dead_reason"] = dead
         return True
 
-    # 2) Harvest the rendered page.
+    # 2) Harvest the rendered page. Keep the FULL rendered text on the candidate as
+    #    `_page_text` — the synthesis + field extractors prefer it over the short
+    #    brief, so the whole call (not a summary) drives structuring & the gates.
     _harvest(candidate, text, soup)
+    candidate["_page_text"] = text
+
+    # 2b) Deep-read the FULL RFP: many calls (e.g. Grand Challenges) put the real
+    #     detail in an attached multi-page RFP PDF. Fetch its full text and fold it
+    #     into `_page_text` so extraction is exhaustive, not limited to the landing
+    #     page. Bounded (one PDF, size/page caps) and best-effort.
+    _fold_rfp_pdf(candidate, soup, link)
 
     # 3) Deadline still missing → PDF guide, then companion calendar page.
     if not candidate.get("call_submission_deadline"):

@@ -333,6 +333,51 @@ def _extract_eligibility_from_text(text: str) -> str | None:
     return _clean(m.group(1))[:500]
 
 
+# Project-duration mining. Calls advertise duration inline ("12-18 month research
+# program", "up to 24 months", "36-month project", "1-2 years"), often with a
+# NON-BREAKING hyphen (U+2011) or en/em dash that a naïve "12-18" regex misses —
+# the reason the AI/GHW call's "12‑18 month" slipped through. Every dash variant is
+# in the class below; year units convert to months; weeks/days are ignored (duration
+# is counted in months).
+_DUR_DASH = "‐‑‒–—―-"          # incl. non-breaking hyphen (U+2011); plain "-" LAST
+_DUR_UNIT = r"(?:months?|mos?|years?|yrs?)"
+_DUR_RANGE_RE = re.compile(
+    rf"(\d{{1,3}})\s*(?:[{_DUR_DASH}]|to)\s*(\d{{1,3}})\s*({_DUR_UNIT})\b", re.I)
+_DUR_SINGLE_RE = re.compile(
+    rf"(?:up\s+to\s+)?(\d{{1,3}})[\s{_DUR_DASH}]*({_DUR_UNIT})\b", re.I)
+
+
+def _dur_to_months(n: int, unit: str) -> int:
+    return n * (12 if unit.lower().startswith(("year", "yr")) else 1)
+
+
+def duration_months_from_text(text: str | None, *, mode: str = "max") -> int | None:
+    """Longest project duration in MONTHS advertised anywhere in a call's text.
+
+    Handles ranges ("12-18 months"), "up to N months", single values, and year units
+    — across every hyphen/dash variant incl. the non-breaking hyphen. For a range,
+    ``mode='max'`` (default) takes the ceiling (what the call permits — aligned with
+    PREFER-6 "longer preferred"); ``mode='avg'`` takes the midpoint. When a call lists
+    several tracks of different lengths, the LONGEST advertised engagement wins.
+    Weeks/days are ignored. Returns an int or None."""
+    if not text:
+        return None
+    t = str(text)
+    found: list[int] = []
+    range_spans: list[tuple[int, int]] = []
+    for m in _DUR_RANGE_RE.finditer(t):
+        a, b = int(m.group(1)), int(m.group(2))
+        lo, hi = min(a, b), max(a, b)
+        pick = hi if mode == "max" else round((lo + hi) / 2)
+        found.append(_dur_to_months(pick, m.group(3)))
+        range_spans.append(m.span())
+    for m in _DUR_SINGLE_RE.finditer(t):     # single values not already inside a range
+        if any(s <= m.start() < e for s, e in range_spans):
+            continue
+        found.append(_dur_to_months(int(m.group(1)), m.group(2)))
+    return max(found) if found else None
+
+
 # FIRST-POSTED date meta keys (exclude modified/updated so a CMS re-touch can't
 # make an old call look recent — recency is judged by when it was POSTED).
 _PUB_META_KEYS = {
@@ -396,14 +441,18 @@ def _extract_description_from_soup(soup: BeautifulSoup) -> str | None:
     return None
 
 
-# Max PDF size we'll download for enrichment (bytes). Donor RFP PDFs are
-# usually 0.5-5 MB; above 10 MB it's typically a glossy report we don't
-# need and the bandwidth/CPU isn't worth it.
-ENRICH_PDF_MAX_BYTES = 10 * 1024 * 1024
-# Pages to parse. Bumped 3 → 8 on 2026-06-04 after Pierre Fabre guide
-# PDFs put the Timeline / Closing Date on page 4-5. Each extra page
-# costs ~50ms of pypdf parsing which is dwarfed by the 1-3s download.
-ENRICH_PDF_MAX_PAGES = 8
+# Max PDF size we'll download for enrichment (bytes). Full RFP packages are
+# frequently 15-25 MB (e.g. the 21 MB Grand Challenges "Nexa" RFP), and we now
+# deep-read the WHOLE RFP to exhaust the extraction data, so the cap is 30 MB.
+ENRICH_PDF_MAX_BYTES = 30 * 1024 * 1024
+# Pages to parse. 3 → 8 (2026-06-04, Pierre Fabre deadlines on p4-5) → 30
+# (2026-07-02): the FULL RFP is the extraction target — eligibility, funding and
+# duration detail routinely sit deep in a 40-page package. ~50ms/page of pypdf
+# parsing is cheap vs the download.
+ENRICH_PDF_MAX_PAGES = 30
+# PDF downloads are much larger than an HTML detail page, so they get their own
+# (longer) timeout instead of the tight per-page ENRICH_TIMEOUT.
+ENRICH_PDF_TIMEOUT = 20
 
 
 def _extract_pdf_text(pdf_bytes: bytes) -> str:
@@ -478,7 +527,7 @@ def _try_pdf_guide_deadline(pdf_url: str) -> tuple[date | None, str | None]:
         r = _http.get(
             pdf_url,
             headers={"User-Agent": USER_AGENT, "Accept": "application/pdf, */*"},
-            timeout=ENRICH_TIMEOUT,
+            timeout=ENRICH_PDF_TIMEOUT,
             allow_redirects=True,
             stream=True,
         )
@@ -494,6 +543,26 @@ def _try_pdf_guide_deadline(pdf_url: str) -> tuple[date | None, str | None]:
     if not text:
         return None, None
     return _extract_deadline_from_text(text), text[:600] if text else None
+
+
+def fetch_pdf_text(pdf_url: str) -> str:
+    """Download a PDF and return its FULL extracted text (up to the page cap), for
+    deep-reading a call whose real detail lives in an attached RFP package. Bounded by
+    the same size/timeout/page caps; returns '' on any failure. Never raises."""
+    try:
+        r = _http.get(
+            pdf_url,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/pdf, */*"},
+            timeout=ENRICH_PDF_TIMEOUT, allow_redirects=True, stream=True,
+        )
+        r.raise_for_status()
+        cl = int(r.headers.get("Content-Length") or 0)
+        if cl and cl > ENRICH_PDF_MAX_BYTES:
+            return ""
+        return _extract_pdf_text(r.content[:ENRICH_PDF_MAX_BYTES])
+    except Exception as exc:
+        log.debug("fetch_pdf_text failed for %s: %s", pdf_url, exc)
+        return ""
 
 
 # Companion call / calendar pages. Some donors announce a call on one page (no
@@ -2760,9 +2829,46 @@ def expand_listing(url: str, source_name: str = "listing") -> list[dict[str, Any
     return cands
 
 
+def _playwright_available() -> bool:
+    """True when Playwright is importable (so we can render JS without recursing
+    back into _scan_html when it isn't)."""
+    try:
+        import playwright.sync_api  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+# SPA framework roots that, on an UNrendered fetch, wrap an otherwise-empty body —
+# a plain requests GET sees the shell, not the JS-injected listing.
+_SPA_SHELL_MARKERS = (
+    'id="root"', "id='root'", 'id="__next"', "__next_data__", "data-reactroot",
+    'ng-app', 'id="app"', "window.__nuxt__", "window.__initial_state__",
+)
+
+
+def _looks_like_spa_shell(html_text: str) -> bool:
+    """True when the fetched HTML is an unrendered single-page-app shell: very little
+    visible text AND a known SPA root marker. Used to decide whether a plain-HTML scan
+    that found nothing should be retried through the JS renderer."""
+    if not html_text:
+        return False
+    try:
+        text = BeautifulSoup(html_text, "html.parser").get_text(" ", strip=True)
+    except Exception:
+        text = html_text
+    if len(text) >= 800:                       # enough real text → not an empty shell
+        return False
+    low = html_text.lower()
+    return any(m in low for m in _SPA_SHELL_MARKERS)
+
+
 def _scan_html(name: str, url: str) -> list[dict[str, Any]]:
     """Generic HTML listing-page scraper using `requests` (no JS).
-    Suitable for static / server-rendered donor pages."""
+    Suitable for static / server-rendered donor pages. When the fetch is an
+    unrendered SPA shell that yields NO candidates, transparently retry through the
+    Playwright renderer (if available) so a JS-only listing isn't silently missed or,
+    worse, mis-extracted into junk candidates."""
     try:
         r = _http.get(
             url,
@@ -2773,7 +2879,12 @@ def _scan_html(name: str, url: str) -> list[dict[str, Any]]:
     except Exception as exc:
         log.warning("HTML fetch failed for %s: %s", url, exc)
         return []
-    return _extract_candidates_from_html(name, url, r.text)
+    cands = _extract_candidates_from_html(name, url, r.text)
+    if not cands and _looks_like_spa_shell(r.text) and _playwright_available():
+        log.info("SPA shell detected for %s (no candidates from static HTML) — "
+                 "retrying via Playwright renderer", name)
+        return _scan_html_js(name, url)
+    return cands
 
 
 def _scan_html_js(name: str, url: str) -> list[dict[str, Any]]:
