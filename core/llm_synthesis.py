@@ -23,7 +23,10 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 _BRIEF_MAX = 1000          # hard cap on the synthesised brief (chars)
-_MAX_INPUT_CHARS = 9000    # RFP body sent to the model
+_MAX_INPUT_CHARS = 16000   # RFP body sent to the model (raised 9k→16k 2026-07-02 so a
+                           # deep-read full RFP — page + folded PDF — is structured on
+                           # more than its opening pages; regex field extraction still
+                           # runs on the UNtruncated _page_text)
 _MAX_OUTPUT_TOKENS = 2200  # reasoning model needs head-room for reasoning + JSON
 _CACHE: dict[str, dict] = {}
 
@@ -128,7 +131,11 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "the problem it addresses; the OBJECTIVES / what work it funds; the SCOPE "
         "(activities, themes, target populations or regions); WHO may apply "
         "(eligibility); the FUNDING amount allocated or range and any award "
-        "structure; the duration; and the deadline / how the call runs. Write flowing "
+        "structure; the project DURATION — state the exact length or RANGE wherever the "
+        "text gives one (e.g. '12-18 months', 'up to 24 months'; if several tracks list "
+        "different lengths, give the range), and if no duration is stated anywhere simply "
+        "OMIT it — NEVER assert there is 'no fixed duration'; and the deadline / how the "
+        "call runs. Write flowing "
         "prose, NOT a template or bullet list, and VARY the wording and the opening "
         "for each RFP so it never reads like a robotic fill-in-the-blank. Ground every "
         "statement in the text; if a detail (e.g. the amount) is not stated, OMIT it "
