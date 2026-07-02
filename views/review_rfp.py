@@ -476,6 +476,13 @@ def _factor_html(ckey: str) -> str:
         if not f.get("active", True):
             sym, col, suffix = "?", "#b8860b", (" <span style='color:#aaa'>"
                 "(Not sure — not stated by this call; excluded from the count)</span>")
+        elif f.get("_detail") is not None:
+            # Graded component (e.g. track record): band symbol + ratio detail, never
+            # the bare "?" — a real score, not an undetermined one.
+            _gsc = f.get("score") or 0.0
+            sym, col = (("✓", "#1a7f37") if _gsc >= 1.0 else
+                        ("◐", "#b8860b") if _gsc >= 0.5 else ("✗", "#c0392b"))
+            suffix = f" <span style='color:#888'>— {_esc(f['_detail'])}</span>"
         elif is_or and any_met and f["met"] is not True:
             sym, col, suffix = "○", "#999", (" <span style='color:#aaa'>"
                 "(alternative route — not needed)</span>")
@@ -714,6 +721,12 @@ with grid_col:
                     edited_values[key] = st.selectbox(
                         LABELS[key], opts, index=idx, key=f"elig_{row['uid']}_{key}")
             else:
+                # VIEW mode = the ONE live derivation (single source of truth): the label
+                # must not diverge from the live factor panel + count. A row reviewed
+                # before a scoring fix would otherwise freeze a stale label beside a live
+                # count (e.g. Funding quality "Moderate" next to 4/4 · 100%). EDIT mode
+                # still loads the saved value (above) so a reviewer resumes their work.
+                current = _coerce_elig(_derived.get(key) or _baseline_val(key), key)
                 edited_values[key] = current   # derived value feeds the live gauge
                 _act = [f for f in (_bd.get(key) or []) if f.get("active", True)]
                 if key in ("qualification", "capacity", "cofinancing"):

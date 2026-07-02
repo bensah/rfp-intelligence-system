@@ -153,6 +153,43 @@ def get_authenticator() -> stauth.Authenticate:
         return stauth.Authenticate(**kwargs)  # 0.3.x: no auto_hash kwarg
 
 
+_CONN_EXC_NAMES = {
+    "ConnectError", "ReadError", "ConnectTimeout", "ReadTimeout", "WriteError",
+    "WriteTimeout", "PoolTimeout", "RemoteProtocolError", "ProtocolError",
+}
+
+
+def _is_connectivity_error(exc: BaseException) -> bool:
+    """True when exc (or any error it was raised from) is a transient network /
+    httpx connection failure to Supabase — as opposed to a real config/logic bug."""
+    seen: set[int] = set()
+    e: BaseException | None = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if type(e).__name__ in _CONN_EXC_NAMES or "httpx" in type(e).__module__:
+            return True
+        e = e.__cause__ or e.__context__
+    return False
+
+
+def _render_db_unreachable(exc: Exception) -> None:
+    """Friendly login-screen fallback when the DB can't be reached, instead of the
+    raw redacted httpx crash. Offers a Retry (clears the creds cache first) and
+    stops the run so no downstream page code executes on a broken connection."""
+    st.markdown(
+        "<div style='text-align:center;margin:1.5rem 0 0.5rem;'>"
+        "<div style='font-size:2rem;font-weight:800;color:#1e3a8a;'>RFPIS</div></div>",
+        unsafe_allow_html=True)
+    st.error("⚠️ Can't reach the authentication service right now.")
+    st.caption(
+        "This is almost always a brief network hiccup connecting to the database. "
+        "Wait a moment and retry — your data is safe.")
+    if st.button("🔄 Retry", type="primary", key="auth_conn_retry"):
+        clear_credentials_cache()
+        st.rerun()
+    st.stop()
+
+
 def login_gate() -> Optional[dict[str, Any]]:
     """Render the login form. Returns the authenticated user dict, or None.
 
@@ -168,7 +205,14 @@ def login_gate() -> Optional[dict[str, Any]]:
     give the cookie manager time to settle before falling through to
     the login form.
     """
-    auth = get_authenticator()
+    # A transient DB connection failure while loading credentials must NOT crash
+    # the whole app with a raw httpx error — show a retry screen instead.
+    try:
+        auth = get_authenticator()
+    except Exception as exc:                       # noqa: BLE001
+        if _is_connectivity_error(exc):
+            _render_db_unreachable(exc)            # renders + st.stop()
+        raise                                      # genuine config/logic error → surface
 
     # Landing-page branding so a first-time visitor immediately knows what
     # this app is (the stock streamlit-authenticator form has no identity).
