@@ -36,11 +36,14 @@ _CRIT = ("qualification", "strategic_fit", "capacity", "geographic_fit", "cofina
          "funding_quality", "funder_relationship", "competitiveness", "bid_effort")
 
 
-def _one(row: dict, org: dict, sb=None, org_set: dict | None = None) -> tuple[str, dict | None]:
+def _one(row: dict, org: dict, sb=None,
+         org_set: dict | None = None) -> tuple[str, dict | None, dict | None]:
     crit = {k: row.get(k) for k in _CRIT}
     syn = llm_synthesis.synthesize(row, org, row.get("auto_recommendation"), crit)
     if not syn:
-        return row["uid"], None
+        return row["uid"], None, None
+    usage = {"prompt_tokens": syn.get("_prompt_tokens"),
+             "completion_tokens": syn.get("_completion_tokens")}
     upd: dict = {}
     if syn.get("brief_description"):
         upd["brief_description"] = syn["brief_description"]
@@ -106,7 +109,7 @@ def _one(row: dict, org: dict, sb=None, org_set: dict | None = None) -> tuple[st
                 upd["auto_recommendation"] = _rec(_cv, _m["composite"], fatal=_isf)
         except Exception:
             pass
-    return row["uid"], (upd or None)
+    return row["uid"], (upd or None), usage
 
 
 def main(argv: list[str]) -> int:
@@ -134,11 +137,17 @@ def main(argv: list[str]) -> int:
           + (" [DRY-RUN]" if args.dry_run else ""))
 
     done = wrote = 0
+    calls_with_usage = 0
+    total_prompt = total_completion = 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         futs = {ex.submit(_one, r, org, sb, org_set): r for r in rows}
         for f in as_completed(futs):
-            uid, upd = f.result()
+            uid, upd, usage = f.result()
             done += 1
+            if usage and usage.get("prompt_tokens") is not None:
+                calls_with_usage += 1
+                total_prompt += usage["prompt_tokens"]
+                total_completion += usage.get("completion_tokens") or 0
             if upd:
                 if not args.dry_run:
                     sb.table("rfp_submissions").update(upd).eq("uid", uid).execute()
@@ -147,6 +156,12 @@ def main(argv: list[str]) -> int:
             else:
                 print(f"  [{done}/{len(rows)}] {uid}: (no change)")
     print(f"\nDone. {wrote}/{len(rows)} rows {'would be ' if args.dry_run else ''}updated.")
+    if calls_with_usage:
+        print(
+            f"Token cost — {calls_with_usage} call(s) reported usage: "
+            f"prompt {total_prompt} total / {total_prompt / calls_with_usage:.0f} avg, "
+            f"completion {total_completion} total / {total_completion / calls_with_usage:.0f} avg."
+        )
     return 0
 
 
