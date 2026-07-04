@@ -751,6 +751,76 @@ def non_grant_reject(candidate: dict[str, Any],
     return False, ""
 
 
+# Broader capacity/training signal than _TRAINING_TITLE_RE — catches the phrasings
+# that describe a coordination / networking / capacity engagement rather than a
+# project grant: "capacity development/building/strengthening", "twinning /
+# training networks", and EU "Coordination and Support Action" (CSA) calls (the
+# EDCTP "Training and innovation networks for sustained capacity development" case).
+_CAPACITY_TITLE_RE = re.compile(
+    r"\b(?:"
+    r"capacity[- ](?:development|building|strengthening)"
+    r"|(?:twinning|training)\s+(?:and\s+\w+\s+)?networks?"
+    r"|(?:twinning|training)\s+(?:programmes?|programs?|schemes?)"
+    r"|coordination\s+and\s+support\s+action"
+    r")", re.I)
+# A genuine research / innovation / implementation / service-delivery ACTION —
+# TITLE-scoped on purpose: a capacity call can MENTION "clinical trials" in its body
+# as the regulated subject (EDCTP) without funding one, so only a signal in the
+# TITLE counts as countervailing evidence that this is a real intervention grant.
+_INTERVENTION_TITLE_RE = re.compile(
+    r"\b(?:"
+    r"clinical\s+trial|implementation\s+research|operational\s+research"
+    r"|service\s+delivery|product\s+development|drug|vaccine|diagnostic"
+    r"|treatment|therapeutic|scale[-\s]?up|deployment|roll[-\s]?out"
+    r"|research\s+and\s+innovation|innovation\s+action"
+    r")", re.I)
+
+
+def capacity_only_reject(candidate: dict[str, Any],
+                         policies: dict[str, Any]) -> tuple[bool, str]:
+    """GUARDED hard-reject for calls that are primarily training / capacity-building /
+    coordination (not a project grant) — the broadened counterpart to the narrow
+    _TRAINING_TITLE_RE in non_grant_reject. Gated on the SAME
+    exclusions['reject_training_only'] flag. Fires only when a STRONG capacity signal
+    is present AND there is NO countervailing intervention signal:
+
+      * Strong signal: EU action type is CSA (authoritative — a Coordination & Support
+        Action is by definition capacity/coordination, never an intervention), OR the
+        title matches _CAPACITY_TITLE_RE, OR structured tags name Trainings/Twinning.
+      * Countervailing: for a non-CSA structured action (RIA/IA), keep (it funds
+        research/innovation). Otherwise keep when the TITLE itself signals a real
+        intervention (_INTERVENTION_TITLE_RE).
+
+    Trade-off (intentional, per owner's 'guarded hard-reject' choice): a title-only
+    source titled '… Capacity Building …' with no intervention word in its title is
+    dropped; the countervailing title check is what protects legit workforce/HSS
+    grants that describe an intervention."""
+    excl = policies.get("exclusions") or {}
+    if not excl.get("reject_training_only", True):
+        return False, ""
+    title = candidate.get("opportunity_title") or ""
+    action = (candidate.get("_action_family") or "").upper()
+    tags = candidate.get("_tags")
+    tag_blob = (" ".join(str(t) for t in tags).lower()
+                if isinstance(tags, (list, tuple)) else str(tags or "").lower())
+
+    strong = (action == "CSA" or bool(_CAPACITY_TITLE_RE.search(title))
+              or "training" in tag_blob or "twinning" in tag_blob)
+    if not strong:
+        return False, ""
+    # A non-CSA structured EC action (research & innovation / innovation action) funds
+    # a real intervention — never a capacity-only reject.
+    if action and action != "CSA":
+        return False, ""
+    # For CSA the action type is authoritative → reject. Otherwise (no structured action
+    # at all — a non-CSA structured action already returned above) a real intervention
+    # signalled in the TITLE keeps the call (guard against over-rejecting).
+    if not action and _INTERVENTION_TITLE_RE.search(title):
+        return False, ""
+    return True, ("capacity-building / training-only opportunity (coordination & "
+                  "support / networks — not a project grant)")
+
+
 def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tuple[bool, str]:
     """Geo gate — PARK the ambiguous, REJECT the clearly-out-of-scope.
 
@@ -1558,6 +1628,12 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
         return False, f"not-an-rfp: {reason}"
     # Opt-out types (training/education programs, loans) — policy-configurable.
     rejected, reason = non_grant_reject(candidate, policies)
+    if rejected:
+        return False, f"type: {reason}"
+    # Guarded capacity-building / CSA opt-out — broader than the title-only training
+    # reject above (capacity development, twinning networks, EU Coordination & Support
+    # Actions), fired only when no countervailing intervention signal is present.
+    rejected, reason = capacity_only_reject(candidate, policies)
     if rejected:
         return False, f"type: {reason}"
     # Language — if it's Arabic/CJK/etc. nothing downstream can process

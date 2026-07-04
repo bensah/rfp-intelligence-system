@@ -145,6 +145,30 @@ def render_text(url: str):
             page.wait_for_timeout(800)
         except Exception:
             pass
+        # Expand disclosure widgets ("Show more" / collapsed accordions) so text
+        # hidden behind them is captured. Many donor portals (incl. accordion-based
+        # detail pages) keep eligibility / scope / description collapsed by default;
+        # a plain scroll doesn't reveal click-to-expand content. Best-effort.
+        try:
+            page.evaluate(
+                """() => {
+                    const sels = ['[aria-expanded=\"false\"]', '.show-more',
+                        '.showMore', '.expand-more', '[data-action=\"expand\"]',
+                        'button.read-more', 'a.read-more'];
+                    document.querySelectorAll(sels.join(',')).forEach(el => {
+                        try { el.click(); } catch (e) {}
+                    });
+                    Array.from(document.querySelectorAll('button, a')).forEach(el => {
+                        const t = (el.textContent || '').trim().toLowerCase();
+                        if (t === 'show more' || t === 'read more' || t === 'see more') {
+                            try { el.click(); } catch (e) {}
+                        }
+                    });
+                }"""
+            )
+            page.wait_for_timeout(1000)
+        except Exception:
+            pass
         html = page.content()
     except Exception as exc:
         log.debug("deep_read: render failed for %s: %s", url, exc)

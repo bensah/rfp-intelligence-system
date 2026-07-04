@@ -123,14 +123,11 @@ def mark_human_verified(field_provenance: Any, fields) -> dict:
     return fp
 
 
-def enrich_donor_requirements_from_call(candidate: dict) -> int:
-    """Fill a donor's BLANK requirement fields from a call's extracted compliance signals
-    (call_compliance_flags). A flag the call EXPLICITLY imposes → the donor's matching
-    '*_required' field is set 'yes' (Required) — but ONLY if it's currently blank and not
-    human-verified (fill_blank_from_call), tagged 'from_call' so the form can show it as a
-    suggestion. Auto-creates the donor (conservatively) if needed. Returns #fields filled.
-    Best-effort; never raises. (Silence in a call never writes 'Not Required' — absence of a
-    signal is not evidence; the field stays blank.)"""
+def _requirement_updates(candidate: dict) -> dict:
+    """BLANK-fill updates for a donor's '*_required' compliance columns, derived from a
+    call's call_compliance_flags. Pure (no DB). A flag the call EXPLICITLY imposes → the
+    matching donor requirement column set 'yes'. Silence never writes 'Not Required'
+    (absence of a signal is not evidence). {} when there's nothing to suggest."""
     flags = candidate.get("call_compliance_flags")
     if isinstance(flags, str):
         try:
@@ -138,16 +135,11 @@ def enrich_donor_requirements_from_call(candidate: dict) -> int:
         except Exception:
             flags = None
     if not isinstance(flags, dict) or not flags:
-        return 0
-    key = ensure_donor(candidate.get("funding_agency"))
-    if not key:
-        return 0
+        return {}
     try:
         from core.criteria_derive import _eff_column
     except Exception:
-        return 0
-    # Map the call's bare flag keys → donor requirement columns; only '*_required' gates
-    # (a call imposing a requirement is donor-level enough to SUGGEST; silence is ignored).
+        return {}
     updates: dict[str, str] = {}
     for k, v in flags.items():
         if not v:
@@ -155,8 +147,94 @@ def enrich_donor_requirements_from_call(candidate: dict) -> int:
         col = _eff_column(k)
         if col.endswith("_required"):
             updates[col] = "yes"
+    return updates
+
+
+def _profile_updates(candidate: dict) -> dict:
+    """BLANK-fill updates for a donor's PROFILE columns (geographic scope, LMIC/Africa
+    focus, global/multi-country scope, priority program areas, source URL), derived from
+    a call. Pure (no DB). Award range is intentionally NOT written — one call's budget is
+    a poor proxy for a donor's typical award tier and would mislead PREFER-6."""
+    updates: dict[str, str] = {}
+    scope = candidate.get("call_geographic_scope")
+    scope_list = [str(s).strip() for s in
+                  (scope if isinstance(scope, (list, tuple)) else [scope] if scope else [])
+                  if str(s).strip()]
+    if scope_list:
+        updates["donor_geographic_scope"] = "; ".join(dict.fromkeys(scope_list))
+        blob = " ".join(scope_list).lower()
+        if re.search(r"africa|sub-?saharan|\bssa\b|lmic|low-\s*and\s*middle|"
+                     r"least\s+developed|\bldc\b|global\s+south", blob):
+            updates["donor_lmic_africa_focus"] = "yes"
+        if len(scope_list) > 1 or re.search(
+                r"global|worldwide|multi-?country|lmic|global\s+south", blob):
+            updates["donor_global_multi_country_scope"] = "yes"
+    text = " ".join(str(candidate.get(k) or "") for k in
+                    ("opportunity_title", "brief_description", "raw_text", "_page_text"))
+    try:
+        from core.program_area_classifier import classify_program_areas, UNSPECIFIED
+        areas = [a for a in classify_program_areas(text) if a != UNSPECIFIED]
+    except Exception:
+        areas = []
+    if areas:
+        updates["donor_priority_areas"] = "; ".join(dict.fromkeys(areas))
+    link = candidate.get("opportunity_link")
+    if link:
+        updates["donor_source_urls"] = str(link)
+    return updates
+
+
+def enrich_donor_from_call(candidate: dict) -> int:
+    """Fill a donor's BLANK requirement + profile fields from a call in ONE ensure_donor
+    lookup + ONE persist (round-trip-efficient — preferred over calling the two enrichers
+    back-to-back). from_call provenance, blank-only, never overwrites human/non-blank.
+    Auto-creates the donor conservatively if needed. Returns #fields filled. Best-effort."""
+    key = ensure_donor(candidate.get("funding_agency"))
+    if not key:
+        return 0
+    updates = {**_requirement_updates(candidate), **_profile_updates(candidate)}
     if not updates:
         return 0
+    n = _persist_call_fill(key, updates)
+    if n:
+        log.info("E3 enriched donor %s with %d call-derived field(s)", key, n)
+    return n
+
+
+def enrich_donor_requirements_from_call(candidate: dict) -> int:
+    """Compliance-requirement-only enricher (see _requirement_updates). Kept for callers
+    that only have compliance flags; enrich_donor_from_call is preferred otherwise."""
+    updates = _requirement_updates(candidate)
+    if not updates:
+        return 0
+    key = ensure_donor(candidate.get("funding_agency"))
+    if not key:
+        return 0
+    n = _persist_call_fill(key, updates)
+    if n:
+        log.info("E3 enriched donor %s with %d call-derived requirement(s)", key, n)
+    return n
+
+
+def enrich_donor_profile_from_call(candidate: dict) -> int:
+    """Profile-only enricher (see _profile_updates). enrich_donor_from_call is preferred
+    when both requirement + profile signals may be present (single round-trip)."""
+    updates = _profile_updates(candidate)
+    if not updates:
+        return 0
+    key = ensure_donor(candidate.get("funding_agency"))
+    if not key:
+        return 0
+    n = _persist_call_fill(key, updates)
+    if n:
+        log.info("E3 enriched donor %s profile with %d call-derived field(s)", key, n)
+    return n
+
+
+def _persist_call_fill(key: str, updates: dict) -> int:
+    """Fill-BLANK-only upsert of call-derived `updates` onto donor `key`, tagging each
+    filled field PROV_CALL in field_provenance. Returns #fields filled. Shared by the
+    requirement + profile enrichers. Best-effort; never raises."""
     try:
         from db.supabase_client import get_client, safe_execute
         sb = get_client()
@@ -177,10 +255,9 @@ def enrich_donor_requirements_from_call(candidate: dict) -> int:
             clear_cache()
         except Exception:
             pass
-        log.info("E3 enriched donor %s with %d call-derived requirement(s)", key, len(prov))
         return len(prov)
     except Exception as exc:
-        log.debug("enrich_donor_requirements_from_call failed: %s", exc)
+        log.debug("_persist_call_fill failed for %s: %s", key, exc)
         return 0
 
 
