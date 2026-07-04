@@ -26,7 +26,7 @@ from core.program_area_classifier import category_full as _pa_cat, subarea_label
 from core.program_area_select import program_area_matrix_editor, rating_bars_html
 from core.partners import ALL_PARTNERS
 from core.records import clean_df
-from db.supabase_client import get_client
+from db.supabase_client import get_client, safe_execute
 
 # Deploying org's country — substituted wherever a record uses the literal
 # {country} placeholder (focus-country-agnostic data, resolved at display time).
@@ -63,7 +63,11 @@ _CONTACT_COLS = ["contact_name", "role_title", "email", "phone",
 
 @st.cache_data(ttl=60)
 def _load() -> pd.DataFrame:
-    res = get_client().table("donor_intel").select("*").order("donor").execute()
+    try:
+        res = safe_execute(get_client().table("donor_intel").select("*").order("donor"))
+    except Exception as exc:
+        st.warning(f"Couldn't load donor records right now (network issue): {exc}")
+        return pd.DataFrame()
     return clean_df(pd.DataFrame(res.data or []))
 
 
@@ -71,9 +75,12 @@ def _load() -> pd.DataFrame:
 def _load_contacts(canonical_key: str) -> pd.DataFrame:
     """Focal-person / additional contacts for one donor (official channels
     first, then by name)."""
-    res = (get_client().table("donor_contacts").select("*")
-           .eq("canonical_key", canonical_key)
-           .order("is_official", desc=True).order("contact_name").execute())
+    try:
+        res = safe_execute(get_client().table("donor_contacts").select("*")
+                           .eq("canonical_key", canonical_key)
+                           .order("is_official", desc=True).order("contact_name"))
+    except Exception:
+        return pd.DataFrame()
     return clean_df(pd.DataFrame(res.data or []))
 
 

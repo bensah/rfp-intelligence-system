@@ -606,9 +606,9 @@ def ingest_candidates(
                 continue
             if not dry_run:
                 try:
-                    sb.table("rfp_submissions").update(payload).eq(
-                        "uid", match_uid
-                    ).execute()
+                    from db.supabase_client import safe_execute
+                    safe_execute(sb.table("rfp_submissions").update(payload).eq(
+                        "uid", match_uid))
                     # Reflect the merge into our in-memory cache so subsequent
                     # candidates dedup against fresh data.
                     full_existing.update(payload)
@@ -733,7 +733,8 @@ def ingest_candidates(
                 log.debug("llm_synthesis skipped: %s", _exc)
         if not dry_run:
             try:
-                sb.table("rfp_submissions").insert(row).execute()
+                from db.supabase_client import safe_execute
+                safe_execute(sb.table("rfp_submissions").insert(row))
                 # Tombstone immediately so it's remembered even if later deleted.
                 seen_ledger.record_one(row, reason="ingested")
                 # Enrich the donor CRM with any contacts the call carried (e.g. UNGM
