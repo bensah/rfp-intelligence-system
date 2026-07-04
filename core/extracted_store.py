@@ -84,7 +84,8 @@ def upsert_extracted(rec: dict[str, Any]) -> str | None:
         if not payload.get("opportunity_name") or not payload.get("opportunity_url"):
             log.warning("extracted_store: skipping row missing name/url (uid=%s)", uid)
             return None
-        get_client().table(_TABLE).upsert(payload, on_conflict="uid").execute()
+        from db.supabase_client import safe_execute
+        safe_execute(get_client().table(_TABLE).upsert(payload, on_conflict="uid"))
         return uid
     except Exception as exc:                       # never break a scan
         log.warning("extracted_store.upsert failed (%s): %s",
