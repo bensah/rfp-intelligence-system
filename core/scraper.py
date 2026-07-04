@@ -1920,7 +1920,7 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
             tags = md.get("tags") if isinstance(md.get("tags"), list) else []
             kws = md.get("keywords") if isinstance(md.get("keywords"), list) else []
             extra = " ".join(str(t) for t in (list(tags) + list(kws)))
-            raw_text = "\n\n".join(p for p in (desc, cond, extra) if p)[:60_000]
+            full_text = "\n\n".join(p for p in (desc, cond, extra) if p)[:60_000]
             # EU action family: a Coordination & Support Action (CSA) is capacity /
             # coordination by definition (never an intervention); RIA/IA fund research /
             # innovation. Feeds capacity_only_reject + donor-intel enrichment.
@@ -1957,7 +1957,12 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
                 "funding_opportunity_number": ident,
                 "funding_agency": _eu_funder(ident),
                 "brief_description": _clean(it.get("summary") or "")[:1800] or None,
-                "raw_text": raw_text or None,
+                # Set _page_text (NOT just raw_text): the regex extractors
+                # (extract._blob / build_record), the LLM judge, AND synthesis all read
+                # _page_text — raw_text alone would only reach synthesis, leaving
+                # duration/geography extraction + the judge still starved on the summary.
+                "_page_text": full_text or None,
+                "raw_text": full_text or None,
                 "call_geographic_scope": geo_seed or None,
                 "date_posted": _parse_iso_date(_first(md, "startDate")[:10]),
                 "call_submission_deadline": _parse_iso_date(_first(md, "deadlineDate")[:10]),
