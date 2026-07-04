@@ -942,7 +942,7 @@ with calc_col:
           "<b>Decision</b>: a 🔒 fatal gate failed (legal identity · no geographic "
           "reach · inaccessible funding route) → Decline; else Proceed ≥90 · Park "
           "70–89 · Decline &lt;70. \"Not sure\" criteria score the Park midpoint.<br>"
-          "<b>Fitness label</b> (Strong/Moderate/Low): 80+ · 51–79 · ≤50 — overall "
+          "<b>Fitness label</b> (Strong/Moderate/Low): ≥80 · &gt;50–79 · ≤50 — overall "
           "match strength only; it does <i>not</i> set the decision.</div>"
         + "</div>",
         unsafe_allow_html=True,
