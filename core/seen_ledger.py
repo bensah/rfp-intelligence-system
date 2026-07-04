@@ -51,7 +51,8 @@ def signature(row: Mapping[str, Any]) -> dict[str, Any]:
 def fetch_all() -> list[dict[str, Any]]:
     """All tombstones as find_duplicates-compatible rows. [] on any error."""
     try:
-        res = get_client().table("rfp_seen").select(",".join(PROJECTION)).execute()
+        from db.supabase_client import safe_execute
+        res = safe_execute(get_client().table("rfp_seen").select(",".join(PROJECTION)))
         return res.data or []
     except Exception as exc:
         log.debug("seen_ledger.fetch_all unavailable: %s", exc)
@@ -71,7 +72,8 @@ def record(rows: Iterable[Mapping[str, Any]], *, reason: str = "ingested") -> in
     if not payload:
         return 0
     try:
-        get_client().table("rfp_seen").upsert(payload, on_conflict="uid").execute()
+        from db.supabase_client import safe_execute
+        safe_execute(get_client().table("rfp_seen").upsert(payload, on_conflict="uid"))
         return len(payload)
     except Exception as exc:
         log.debug("seen_ledger.record skipped (%d rows): %s", len(payload), exc)

@@ -921,8 +921,12 @@ with tab_sources:
 
     @st.cache_data(ttl=15)
     def _donors() -> pd.DataFrame:
-        res = (get_client().table("donor_sources").select("*")
-               .order("donor_name").execute())
+        try:
+            res = safe_execute(get_client().table("donor_sources").select("*")
+                               .order("donor_name"))
+        except Exception as exc:
+            st.warning(f"Couldn't load donor sources right now (network issue): {exc}")
+            return pd.DataFrame()
         return clean_df(pd.DataFrame(res.data or []))
 
     def _import_from_config() -> None:
