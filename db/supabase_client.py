@@ -8,7 +8,7 @@ dashboards but Phase 1 uses the service-role key throughout.
 from __future__ import annotations
 
 import os
-from functools import lru_cache
+import threading
 
 from dotenv import load_dotenv
 from supabase import Client, create_client
@@ -32,9 +32,25 @@ def _force_http1_transport() -> None:
     except Exception:
         return
 
+    # Default network hardening applied to EVERY Supabase session (postgrest,
+    # storage, auth) so a dropped connection / slow network doesn't crash the app:
+    #   * bounded timeouts — never hang forever under high traffic;
+    #   * a transport that AUTO-RETRIES connection failures (ConnectError /
+    #     ConnectTimeout — the "internet disruption" crash) at the socket layer, for
+    #     every `.execute()`, with no call-site change. (Read errors mid-response are
+    #     not retried here — safe_execute() + the App-level boundary cover those.)
+    _DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
+
     class _Http1Client(httpx.Client):
         def __init__(self, *args, **kwargs):
             kwargs["http2"] = False          # force HTTP/1.1
+            kwargs.setdefault("timeout", _DEFAULT_TIMEOUT)
+            # setdefault so an explicitly-passed transport is never overridden.
+            if "transport" not in kwargs:
+                try:
+                    kwargs["transport"] = httpx.HTTPTransport(retries=3, http2=False)
+                except Exception:
+                    pass                     # fall back to the default transport
             super().__init__(*args, **kwargs)
 
     for modname in (
@@ -70,15 +86,39 @@ def _read_secret(name: str) -> str | None:
     return None
 
 
-@lru_cache(maxsize=1)
+# True single-client singleton with a double-checked lock. (Was @lru_cache, which
+# lets a cold-cache traffic spike build many clients simultaneously — the lock
+# serializes that so exactly ONE client is created and shared.) `cache_clear` is
+# preserved so existing callers (App.py boundary, auth retry) keep working.
+_CLIENT: Client | None = None
+_CLIENT_LOCK = threading.Lock()
+
+
 def get_client() -> Client:
-    url = _read_secret("SUPABASE_URL")
-    key = _read_secret("SUPABASE_KEY")
-    if not url or not key:
-        raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_KEY must be set (env or Streamlit secrets)."
-        )
-    return create_client(url, key)
+    global _CLIENT
+    if _CLIENT is not None:
+        return _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:                      # double-check inside the lock
+            url = _read_secret("SUPABASE_URL")
+            key = _read_secret("SUPABASE_KEY")
+            if not url or not key:
+                raise RuntimeError(
+                    "SUPABASE_URL and SUPABASE_KEY must be set (env or Streamlit secrets)."
+                )
+            _CLIENT = create_client(url, key)
+    return _CLIENT
+
+
+def _clear_client_cache() -> None:
+    """Drop the cached client so the next get_client() rebuilds it (used by the UI
+    Retry path after a connectivity failure to discard a possibly half-open pool)."""
+    global _CLIENT
+    with _CLIENT_LOCK:
+        _CLIENT = None
+
+
+get_client.cache_clear = _clear_client_cache      # keep the lru_cache-era API
 
 
 # Transient httpx/network errors that should be retried rather than crash the
@@ -87,6 +127,21 @@ _TRANSIENT_EXC = (
     "ReadError", "ConnectError", "ConnectTimeout", "ReadTimeout",
     "WriteError", "WriteTimeout", "PoolTimeout", "RemoteProtocolError",
 )
+
+
+def is_connectivity_error(exc: BaseException) -> bool:
+    """True when `exc` (or any error it was raised from) is a transient network /
+    httpx failure reaching Supabase — as opposed to a real config/logic bug. Walks the
+    __cause__/__context__ chain so a wrapped postgrest/httpx error is still recognised.
+    Single source of truth reused by auth + the App-level error boundary."""
+    seen: set[int] = set()
+    e: BaseException | None = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if type(e).__name__ in _TRANSIENT_EXC or "httpx" in type(e).__module__:
+            return True
+        e = e.__cause__ or e.__context__
+    return False
 
 
 def safe_execute(query, *, retries: int = 3):
