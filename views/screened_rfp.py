@@ -294,10 +294,26 @@ else:
         "Auto-rec": show["auto_recommendation"].fillna("—"),
         "Key risks": show["key_risks"].fillna(""),
     })
+    # Confidence (E3c): how much DATA backs each row's prediction — donor mapping
+    # completeness + call extraction completeness → High/Medium/Low. match_donor is
+    # index-cached, so the per-row lookup is cheap.
+    from core import data_quality as _dq
+    from core.donor_intel import match_donor as _md
+    _CONF_ICON = {"High": "🟢 High", "Medium": "🟡 Medium", "Low": "🔴 Low"}
+
+    def _row_conf(r) -> str:
+        dp, _, _ = _dq.donor_completeness(_md(r.get("funding_agency")))
+        cp, _, _ = _dq.call_completeness(r.to_dict())
+        return _CONF_ICON[_dq.confidence_band(dp, cp)[0]]
+
+    show_df["Confidence"] = [_row_conf(r) for _, r in show.iterrows()]
     st.dataframe(
         show_df, width='stretch', hide_index=True,
         column_config={
             "Score": st.column_config.NumberColumn("Score", format="%.0f"),
+            "Confidence": st.column_config.TextColumn(
+                "Confidence", help="Data behind the prediction (donor mapping + call "
+                "extraction completeness). Low = verify before acting."),
             "Key risks": st.column_config.TextColumn("Key risks", width="large"),
         },
     )
