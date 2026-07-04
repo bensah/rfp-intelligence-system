@@ -491,6 +491,17 @@ def ingest_candidates(
                     extraction.extract_and_store(cand, policies)
             except Exception as _exc:
                 log.debug("shadow extract (reject path) skipped: %s", _exc)
+            # Learn donor intel even from calls THIS org won't pursue (e.g. the
+            # capacity/CSA type-rejects) — the funder + its call docs are still real
+            # donor intelligence. ensure_donor is conservative (on-theme, namable only),
+            # so generic/off-theme rejects no-op. Best-effort; never affects the scan.
+            if not dry_run:
+                try:
+                    from core import donor_enrich as _de
+                    _de.enrich_donor_profile_from_call(cand)
+                    _de.enrich_donor_requirements_from_call(cand)
+                except Exception as _dexc:
+                    log.debug("donor enrichment (reject path) skipped: %s", _dexc)
             rejected += 1
             log.info("reject: %s — %s", cand.get("opportunity_title", "")[:60], reason)
             _reject_records.append({**cand, "_reject_reason": reason})
@@ -749,8 +760,9 @@ def ingest_candidates(
                 try:
                     from core import donor_enrich as _de
                     _de.enrich_donor_requirements_from_call(cand)
+                    _de.enrich_donor_profile_from_call(cand)
                 except Exception as _eexc:
-                    log.debug("donor requirement enrichment skipped: %s", _eexc)
+                    log.debug("donor enrichment skipped: %s", _eexc)
                 existing.append({
                     "id": None,
                     "uid": row["uid"],

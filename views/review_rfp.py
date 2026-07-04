@@ -795,7 +795,7 @@ with gauge_col:
     _dec = _review_decision(edited_values, _comp, fatal=_is_fatal)   # SAME rule as the stored Auto-decision
     _pill = {"Proceed": ("#dcf5e3", "#00703C"), "Park": ("#fff4cc", "#8a6d00"),
              "Decline": ("#fde2e2", "#b3261e")}.get(_dec, ("#eee", "#333"))
-    _fit = ("Strong fit" if _comp >= 70 else "Moderate fit" if _comp >= 45 else "Weak fit")
+    _fit = ("Strong fit" if _comp >= 80 else "Moderate fit" if _comp > 50 else "Low fit")
 
     # CONFIDENCE — how much DATA backs this prediction (donor mapping + call extraction).
     # A "Proceed" on a 30%-mapped donor is shakier than one on 90% — surface it so the
@@ -843,9 +843,9 @@ with gauge_col:
                 "bgcolor": "white",
                 "borderwidth": 0,
                 "steps": [
-                    {"range": [0, 45],  "color": "#fde2e2"},
-                    {"range": [45, 70], "color": "#fff4cc"},
-                    {"range": [70, 100], "color": "#dcf5e3"},
+                    {"range": [0, 50],  "color": "#fde2e2"},
+                    {"range": [50, 80], "color": "#fff4cc"},
+                    {"range": [80, 100], "color": "#dcf5e3"},
                 ],
             },
         )
@@ -942,7 +942,7 @@ with calc_col:
           "<b>Decision</b>: a 🔒 fatal gate failed (legal identity · no geographic "
           "reach · inaccessible funding route) → Decline; else Proceed ≥90 · Park "
           "70–89 · Decline &lt;70. \"Not sure\" criteria score the Park midpoint.<br>"
-          "<b>Fitness label</b> (Strong/Moderate/Weak): 70+ · 45–69 · &lt;45 — overall "
+          "<b>Fitness label</b> (Strong/Moderate/Low): 80+ · 51–79 · ≤50 — overall "
           "match strength only; it does <i>not</i> set the decision.</div>"
         + "</div>",
         unsafe_allow_html=True,
