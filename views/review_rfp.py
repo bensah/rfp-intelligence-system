@@ -22,7 +22,7 @@ from core.scorer import (
     CRITERIA, CRITERION_RESPONSES, criterion_score, default_response, score_submission,
 )
 from core.records import clean_df, drop_concluded
-from db.supabase_client import get_client
+from db.supabase_client import get_client, safe_execute
 
 # auth handled by wrapper page
 user = st.session_state["app_user"]
@@ -49,15 +49,18 @@ if default_week not in all_weeks:
 # Week selector + RFP selector on the same row, with year inline.
 @st.cache_data(ttl=30)
 def _fetch(week: str) -> pd.DataFrame:
-    res = (
-        get_client()
-        .table("rfp_submissions")
-        .select("*")
-        .eq("review_week", week)
-        .eq("is_duplicate", False)
-        .order("alignment_score", desc=True)
-        .execute()
-    )
+    try:
+        res = safe_execute(
+            get_client()
+            .table("rfp_submissions")
+            .select("*")
+            .eq("review_week", week)
+            .eq("is_duplicate", False)
+            .order("alignment_score", desc=True)
+        )
+    except Exception as exc:
+        st.warning(f"Couldn't load this week's RFPs right now (network issue): {exc}")
+        return pd.DataFrame()
     return clean_df(pd.DataFrame(res.data or []))
 
 
