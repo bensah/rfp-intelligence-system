@@ -812,9 +812,10 @@ def capacity_only_reject(candidate: dict[str, Any],
     # a real intervention — never a capacity-only reject.
     if action and action != "CSA":
         return False, ""
-    # For CSA the action type is authoritative → reject. Otherwise a real intervention
+    # For CSA the action type is authoritative → reject. Otherwise (no structured action
+    # at all — a non-CSA structured action already returned above) a real intervention
     # signalled in the TITLE keeps the call (guard against over-rejecting).
-    if action != "CSA" and _INTERVENTION_TITLE_RE.search(title):
+    if not action and _INTERVENTION_TITLE_RE.search(title):
         return False, ""
     return True, ("capacity-building / training-only opportunity (coordination & "
                   "support / networks — not a project grant)")
