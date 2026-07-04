@@ -157,6 +157,65 @@ def enrich_donor_requirements_from_call(candidate: dict) -> int:
             updates[col] = "yes"
     if not updates:
         return 0
+    n = _persist_call_fill(key, updates)
+    if n:
+        log.info("E3 enriched donor %s with %d call-derived requirement(s)", key, n)
+    return n
+
+
+def enrich_donor_profile_from_call(candidate: dict) -> int:
+    """Fill a donor's BLANK PROFILE fields (geographic scope, LMIC/Africa focus,
+    global/multi-country scope, priority program areas, source URL) from a call's
+    extracted signals — from_call provenance, blank-only, never overwrites human /
+    non-blank. Complements enrich_donor_requirements_from_call (which handles the
+    '*_required' compliance columns). Auto-creates the donor conservatively if needed.
+    Returns #fields filled. Best-effort; never raises. (Award range is intentionally
+    NOT written from a single call — one call's budget is a poor proxy for a donor's
+    typical award tier and would mislead PREFER-6.)"""
+    key = ensure_donor(candidate.get("funding_agency"))
+    if not key:
+        return 0
+    updates: dict[str, str] = {}
+    # Geography — the call's eligible/target scope (a list on the candidate).
+    scope = candidate.get("call_geographic_scope")
+    scope_list = [str(s).strip() for s in
+                  (scope if isinstance(scope, (list, tuple)) else [scope] if scope else [])
+                  if str(s).strip()]
+    if scope_list:
+        updates["donor_geographic_scope"] = "; ".join(dict.fromkeys(scope_list))
+        blob = " ".join(scope_list).lower()
+        if re.search(r"africa|sub-?saharan|\bssa\b|lmic|low-\s*and\s*middle|"
+                     r"least\s+developed|\bldc\b|global\s+south", blob):
+            updates["donor_lmic_africa_focus"] = "yes"
+        if len(scope_list) > 1 or re.search(
+                r"global|worldwide|multi-?country|lmic|global\s+south", blob):
+            updates["donor_global_multi_country_scope"] = "yes"
+    # Priority program areas — classify the full call text (title + brief + folded body).
+    text = " ".join(str(candidate.get(k) or "") for k in
+                    ("opportunity_title", "brief_description", "raw_text", "_page_text"))
+    try:
+        from core.program_area_classifier import classify_program_areas, UNSPECIFIED
+        areas = [a for a in classify_program_areas(text) if a != UNSPECIFIED]
+    except Exception:
+        areas = []
+    if areas:
+        updates["donor_priority_areas"] = "; ".join(dict.fromkeys(areas))
+    # Provenance of where we learned this.
+    link = candidate.get("opportunity_link")
+    if link:
+        updates["donor_source_urls"] = str(link)
+    if not updates:
+        return 0
+    n = _persist_call_fill(key, updates)
+    if n:
+        log.info("E3 enriched donor %s profile with %d call-derived field(s)", key, n)
+    return n
+
+
+def _persist_call_fill(key: str, updates: dict) -> int:
+    """Fill-BLANK-only upsert of call-derived `updates` onto donor `key`, tagging each
+    filled field PROV_CALL in field_provenance. Returns #fields filled. Shared by the
+    requirement + profile enrichers. Best-effort; never raises."""
     try:
         from db.supabase_client import get_client, safe_execute
         sb = get_client()
@@ -177,10 +236,9 @@ def enrich_donor_requirements_from_call(candidate: dict) -> int:
             clear_cache()
         except Exception:
             pass
-        log.info("E3 enriched donor %s with %d call-derived requirement(s)", key, len(prov))
         return len(prov)
     except Exception as exc:
-        log.debug("enrich_donor_requirements_from_call failed: %s", exc)
+        log.debug("_persist_call_fill failed for %s: %s", key, exc)
         return 0
 
 
