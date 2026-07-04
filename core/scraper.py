@@ -1830,6 +1830,18 @@ def _eu_funder(identifier: str) -> str:
     return "European Commission (EU Funding & Tenders)"
 
 
+def _html_text(s: Any, limit: int = 60_000) -> str:
+    """Strip HTML to plain text, bounded. SEDIA `descriptionByte` / `topicConditions`
+    arrive as HTML blobs; this yields the readable text for extraction. Best-effort."""
+    if not s:
+        return ""
+    try:
+        txt = BeautifulSoup(str(s), "html.parser").get_text(" ", strip=True)
+    except Exception:
+        txt = re.sub(r"<[^>]+>", " ", str(s))
+    return _clean(txt)[:limit]
+
+
 def _scan_eu_funding_tenders(name: str, url: str, *,
                              text: str = "***") -> list[dict[str, Any]]:
     """EU Funding & Tenders Portal (SEDIA search API). Free, key-less (apiKey
@@ -1897,6 +1909,47 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
             # (a two-stage topic stays Closed even with a future stage-2 date) — the gate
             # hard-rejects on this.
             _is_closed = status == "31094503"
+            # RICH metadata the SEDIA API already returns but we previously ignored: the
+            # full topic description + conditions live behind a "Show more" accordion on
+            # the JS portal, but the API hands them over as HTML. Folding them into
+            # raw_text gives synthesis, the LLM judge, and the regex extractors (duration,
+            # geography, program-area) the REAL call text instead of the one-line summary
+            # — which is why Focus Areas / Geographic Scope / Duration came up blank.
+            desc = _html_text(_first(md, "descriptionByte"))
+            cond = _html_text(_first(md, "topicConditions"))
+            tags = md.get("tags") if isinstance(md.get("tags"), list) else []
+            kws = md.get("keywords") if isinstance(md.get("keywords"), list) else []
+            extra = " ".join(str(t) for t in (list(tags) + list(kws)))
+            full_text = "\n\n".join(p for p in (desc, cond, extra) if p)[:60_000]
+            # EU action family: a Coordination & Support Action (CSA) is capacity /
+            # coordination by definition (never an intervention); RIA/IA fund research /
+            # innovation. Feeds capacity_only_reject + donor-intel enrichment.
+            if "coordination and support" in action:
+                action_family = "CSA"
+            elif "research and innovation action" in action:
+                action_family = "RIA"
+            elif "innovation action" in action:
+                action_family = "IA"
+            else:
+                action_family = None
+            # Deterministic geography seed from the CONTROLLED tags only (SEDIA tags
+            # literally include "Sub-Saharan Africa"/"Africa" for EDCTP). We deliberately
+            # do NOT scan the free-text description here: it name-drops regions
+            # incidentally ("AU-EU partnership", "global standards", "non-EU countries")
+            # that are context, not scope — exactly the trap the context-aware geography
+            # rules guard against. The LLM judge (context-aware prompt) refines from there.
+            try:
+                from core import geographies as _geo
+                geo_seed = sorted(_geo.broad_geos_in_text(
+                    " ".join(str(t) for t in tags).lower()))
+                # "Global Health" (a THEME tag) trips the "global" synonym for the
+                # worldwide tier. When a specific region is also present, that generic
+                # tier is noise from the theme, not scope — drop it.
+                if len(geo_seed) > 1:
+                    geo_seed = [g for g in geo_seed
+                                if g != "Global / worldwide"] or geo_seed
+            except Exception:
+                geo_seed = []
             out.append({
                 "opportunity_title": title,
                 "opportunity_link": it.get("url"),
@@ -1904,6 +1957,13 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
                 "funding_opportunity_number": ident,
                 "funding_agency": _eu_funder(ident),
                 "brief_description": _clean(it.get("summary") or "")[:1800] or None,
+                # Set _page_text (NOT just raw_text): the regex extractors
+                # (extract._blob / build_record), the LLM judge, AND synthesis all read
+                # _page_text — raw_text alone would only reach synthesis, leaving
+                # duration/geography extraction + the judge still starved on the summary.
+                "_page_text": full_text or None,
+                "raw_text": full_text or None,
+                "call_geographic_scope": geo_seed or None,
                 "date_posted": _parse_iso_date(_first(md, "startDate")[:10]),
                 "call_submission_deadline": _parse_iso_date(_first(md, "deadlineDate")[:10]),
                 "call_award_value": amt,
@@ -1912,6 +1972,8 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
                 "instrument_type": "Award" if is_prize else (
                     "Grant" if _first(md, "type") == "2" else "Contract"),
                 "opportunity_type": opp_type,
+                "_action_family": action_family,
+                "_tags": tags,
                 "_closed": _is_closed,
                 "_source_origin": f"{name} (status={status})",
             })
