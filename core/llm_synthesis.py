@@ -23,10 +23,14 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 _BRIEF_MAX = 1000          # hard cap on the synthesised brief (chars)
-_MAX_INPUT_CHARS = 16000   # RFP body sent to the model (raised 9k→16k 2026-07-02 so a
-                           # deep-read full RFP — page + folded PDF — is structured on
-                           # more than its opening pages; regex field extraction still
-                           # runs on the UNtruncated _page_text)
+# RFP body sent to the model. A flat prefix slice still misses eligibility/funding/
+# duration sections that live past this many chars on long RFPs (40+ page PDFs folded
+# into _page_text by deep_read.py) — see _build_excerpt(), which anchors on those
+# sections instead of just taking the opening. Env-configurable so a higher-spend
+# deployment (e.g. Taadom's premium tier) can raise quality without a code fork.
+_MAX_INPUT_CHARS = int(os.environ.get("LLM_SYNTH_MAX_INPUT_CHARS", "20000"))
+_OPENING_CHARS = int(os.environ.get("LLM_SYNTH_OPENING_CHARS", "6000"))     # always-included lead
+_ANCHOR_WINDOW = int(os.environ.get("LLM_SYNTH_ANCHOR_WINDOW", "1200"))    # chars kept per anchor
 _MAX_OUTPUT_TOKENS = 2200  # reasoning model needs head-room for reasoning + JSON
 _CACHE: dict[str, dict] = {}
 
@@ -56,6 +60,140 @@ def _money(v: Any) -> str:
         return f"${float(v):,.0f}" if v not in (None, "", 0, "0") else "—"
     except (TypeError, ValueError):
         return "—"
+
+
+# Keyword anchors for sections the label regexes below don't cover but that
+# still matter for a good brief/checklist on a long RFP.
+_EXTRA_ANCHOR_RE = re.compile(
+    r"how\s+to\s+apply|application\s+process|selection\s+criteria|"
+    r"evaluation\s+criteria|review\s+process|scoring\s+criteria|"
+    r"budget\s+(?:narrative|template|guidelines)|funding\s+available|"
+    r"award\s+(?:size|amount|ceiling)|total\s+(?:funding|budget)",
+    re.IGNORECASE,
+)
+
+
+def _build_excerpt(body: str, candidate: dict[str, Any]) -> str:
+    """Text sent to the model: the opening _OPENING_CHARS (purpose/scope usually
+    lead the document) PLUS windows anchored on sections that matter most and are
+    otherwise likely to fall past a flat truncation on long RFPs — eligibility,
+    duration, deadline, funding amount, how-to-apply / selection-criteria. Falls
+    back to a plain slice when body already fits, or when no anchors are found
+    past the opening (e.g. the backfill script often only has the short
+    brief_description, not the full page text, on older rows)."""
+    n = len(body)
+    if n <= _MAX_INPUT_CHARS:
+        return body
+    try:
+        from core.scraper import (
+            _DEADLINE_LABEL_RE, _ELIGIBILITY_LABEL_RE, _DUR_RANGE_RE, _DUR_SINGLE_RE,
+        )
+        from core.deep_read import _AMOUNT_RE
+    except Exception:
+        return body[:_MAX_INPUT_CHARS]
+
+    opening_end = min(_OPENING_CHARS, n, _MAX_INPUT_CHARS)
+    half = _ANCHOR_WINDOW // 2
+    spans: list[tuple[int, int]] = []
+    for rx in (_DEADLINE_LABEL_RE, _ELIGIBILITY_LABEL_RE, _DUR_RANGE_RE,
+               _DUR_SINGLE_RE, _AMOUNT_RE, _EXTRA_ANCHOR_RE):
+        for m in rx.finditer(body):
+            center = (m.start() + m.end()) // 2
+            if center < opening_end:
+                continue   # already covered by the opening slice
+            spans.append((max(opening_end, center - half), min(n, center + half)))
+
+    if not spans:
+        return body[:_MAX_INPUT_CHARS]
+
+    spans.sort()
+    merged: list[list[int]] = []
+    for s, e in spans:
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+
+    budget = max(0, _MAX_INPUT_CHARS - opening_end)
+    kept: list[tuple[int, int]] = []
+    for s, e in merged:
+        if budget <= 0:
+            break
+        take = min(e - s, budget)
+        kept.append((s, s + take))
+        budget -= take
+
+    parts = [body[:opening_end]] + [body[s:e] for s, e in kept]
+    return "\n[...]\n".join(parts)
+
+
+# Negation phrases the model sometimes writes when a fact isn't in its (truncated)
+# excerpt, even though regex extraction found it in the FULL source text — the bug
+# class this guards against ("No fixed project duration" for a call that stated
+# "12-18 months"). Only stripped when the candidate actually carries a grounded
+# value for that field, so a genuinely undated/unstated call is left alone.
+_NEG_PATTERNS: dict[str, re.Pattern] = {
+    "project_duration": re.compile(
+        r"no\s+(?:fixed|set|specified|defined)\s+(?:project\s+)?duration"
+        r"|(?:project\s+)?duration\s+(?:is\s+)?(?:not\s+(?:specified|stated|fixed|defined|disclosed)|unspecified)",
+        re.IGNORECASE),
+    "call_award_value": re.compile(
+        r"no\s+(?:fixed|specific)\s+(?:funding|award|grant)\s+amount"
+        r"|(?:funding|award|grant)\s+amount\s+(?:is\s+)?(?:not\s+(?:specified|stated|disclosed)|unspecified)",
+        re.IGNORECASE),
+    "call_submission_deadline": re.compile(
+        r"no\s+(?:fixed|specific)\s+deadline"
+        r"|deadline\s+(?:is\s+)?(?:not\s+(?:specified|stated)|unspecified)",
+        re.IGNORECASE),
+}
+
+
+def _strip_negated_claims(brief: str | None, candidate: dict[str, Any]) -> str | None:
+    """Drop any sentence that negates/omits a field we already have a grounded
+    (regex, full-text) value for. Second line of defense behind the GROUNDED
+    FACTS prompt block — logs so we can see how often the model still tries it."""
+    if not brief:
+        return brief
+    sentences = re.split(r"(?<=[.!?])\s+", brief)
+    kept, dropped = [], False
+    for sent in sentences:
+        hit = any(
+            candidate.get(field) not in (None, "", 0, "0") and pat.search(sent)
+            for field, pat in _NEG_PATTERNS.items()
+        )
+        if hit:
+            dropped = True
+            continue
+        kept.append(sent)
+    if dropped:
+        log.warning("llm_synthesis: stripped negated-but-grounded claim for %s",
+                    candidate.get("opportunity_link"))
+    return " ".join(kept).strip() or brief
+
+
+def _grounded_facts_block(candidate: dict[str, Any]) -> str:
+    """Facts already regex-extracted from the FULL (untruncated) source text —
+    authoritative, and may cover ground the excerpt below does not (its section
+    can fall past _MAX_INPUT_CHARS on a long RFP)."""
+    facts = []
+    dur = candidate.get("project_duration")
+    if dur not in (None, "", 0, "0"):
+        facts.append(f"- Project duration: {dur} months")
+    amt = candidate.get("call_award_value")
+    if amt not in (None, "", 0, "0"):
+        facts.append(f"- Award value: {_money(amt)} {candidate.get('currency') or ''}".strip())
+    dl = candidate.get("call_submission_deadline")
+    if dl:
+        facts.append(f"- Submission deadline: {dl}")
+    if not facts:
+        return ""
+    return (
+        "GROUNDED FACTS (regex-extracted from the FULL source document, which may "
+        "be longer than the excerpt below) — trust these over your own reading of "
+        "the excerpt. If a fact is listed here you MUST reflect it in the brief and "
+        "must NEVER state it is absent, unspecified, or not fixed:\n"
+        + "\n".join(facts) + "\n\n"
+    )
 
 
 def _org_block(org: dict) -> str:
@@ -88,7 +226,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
     title = (candidate.get("opportunity_title") or "").strip()
     body = (candidate.get("_page_text") or candidate.get("raw_text")
             or candidate.get("brief_description") or "")
-    body = str(body).strip()[:_MAX_INPUT_CHARS]
+    body = _build_excerpt(str(body).strip(), candidate)
     if not (title or body):
         return None
 
@@ -96,7 +234,7 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
               or "gpt-oss:120b")
     ckey = hashlib.sha1(
         ("synth|" + chosen + "|" + (auto_recommendation or "") + "|" + title
-         + "|" + body[:_MAX_INPUT_CHARS]).encode("utf-8")).hexdigest()
+         + "|" + body).encode("utf-8")).hexdigest()
     if ckey in _CACHE:
         return _CACHE[ckey]
 
@@ -119,8 +257,11 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         f"- Geography: {candidate.get('call_geographic_scope') or '—'}; "
         f"Deadline: {candidate.get('call_submission_deadline') or '—'}; "
         f"Value: {_money(candidate.get('call_award_value'))} "
-        f"{candidate.get('currency') or ''}\n"
-        f"- FULL TEXT:\n<<<\n{body}\n>>>\n\n"
+        f"{candidate.get('currency') or ''}\n\n"
+        + _grounded_facts_block(candidate)
+        + "- FULL TEXT (excerpt — opening + sections anchored on eligibility/"
+        "duration/funding/deadline/how-to-apply; may omit parts of a long RFP):\n"
+        f"<<<\n{body}\n>>>\n\n"
         "SYSTEM ASSESSMENT (already computed — EXPLAIN it, do not recompute):\n"
         f"- Auto-decision: {auto_recommendation or '—'}\n"
         f"- Criteria: {crit_line}\n\n"
@@ -231,6 +372,13 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
             # factual fields (compliance_flags etc.) accurate.
             temperature=0.4, max_tokens=_MAX_OUTPUT_TOKENS)
         raw = (resp.choices[0].message.content or "") if resp.choices else ""
+        usage = getattr(resp, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+        completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
+        if usage:
+            log.info("llm_synthesis usage for %s: prompt=%s completion=%s total=%s",
+                      candidate.get("opportunity_link"), prompt_tokens, completion_tokens,
+                      getattr(usage, "total_tokens", None))
     except Exception as exc:
         log.warning("llm_synthesis failed for %s: %s: %s",
                     candidate.get("opportunity_link"), type(exc).__name__, exc)
@@ -245,7 +393,8 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
     valid = set(options)
     pas = [p for p in (parsed.get("call_domain_areas") or []) if p in valid][:3]
     out = {
-        "brief_description": _clip(parsed.get("brief_description"), _BRIEF_MAX),
+        "brief_description": _clip(
+            _strip_negated_claims(parsed.get("brief_description"), candidate), _BRIEF_MAX),
         "call_domain_areas": pas or None,
         "key_risks": _clip(parsed.get("key_risks"), 300),
         "decision_rationale": _clip(parsed.get("decision_rationale"), 400),
@@ -257,6 +406,8 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "call_compliance_flags": (parsed.get("call_compliance_flags")
                              if isinstance(parsed.get("call_compliance_flags"), dict) else {}),
         "_llm_model": chosen,
+        "_prompt_tokens": prompt_tokens,
+        "_completion_tokens": completion_tokens,
     }
     # Fold the grounded MUST-1 requirement signals INTO compliance_flags so they ride
     # the existing rfp_compliance plumbing (core.criteria_derive._merge_rfp_compliance
