@@ -73,7 +73,7 @@
 <body>
 <div class="wrap">
   <h1>RFPIS — Requirements (RFP ⊕ Donor) → Org match → Decision</h1>
-  <p class="sub">Source of truth: criteria_derive.py · scoring_weights.yaml · matching.py · auto_scorer · scorer.py · decision_model.py. Updated 2026-06-29.</p>
+  <p class="sub">Source of truth: criteria_derive.py · scoring_weights.yaml · matching.py · auto_scorer · scorer.py · decision_model.py · data_quality.py. Updated 2026-07-04.</p>
 
   <div class="legend">
     <span class="lg"><i class="d r"></i>RFP (the call)</span>
@@ -82,7 +82,7 @@
     <span class="lg">component: <b>1 / 0.5 / 0</b></span>
     <span class="lg">criterion: <b>2 / 1 / 0</b> · <b>Not sure → 1 (Park)</b></span>
   </div>
-  <div class="note"><b>ACTIVE-ONLY scoring (2026-06-29).</b> A component is scored ONLY when the call/donor imposes it, or a proxy applies (e.g. registration via the call's geo-scope). An undetected component is <b>"Not sure"</b> — excluded from that criterion's denominator, never a permissive pass. A criterion with NO active component resolves to <b>"Not sure" → value 1 (Park)</b>: an unknown routes to manual review, it never auto-passes and never auto-Declines. A clearly DETECTED failure still scores 0 and gates.</div>
+  <div class="note"><b>ACTIVE-ONLY scoring (2026-06-29).</b> A component is scored ONLY when the call/donor imposes it, or a proxy applies (e.g. registration via the call's geo-scope). An undetected component is <b>"Not sure"</b> — excluded from that criterion's denominator, never a permissive pass. A criterion with NO active component resolves to <b>"Not sure" → value 1 (Park)</b>: an unknown routes to manual review, it never auto-passes and never auto-Declines. A clearly DETECTED failure still scores 0 and gates. <i>Exception:</i> SAM.gov/UEI only applies to US-federal (grants.gov) calls, so for every other donor it is a <b>permissive pass (value 1, "no restriction")</b> rather than "Not sure".</div>
   <div class="note"><b>Bid Strength = the 9 weighted criteria (100%).</b> The funder's requirements and the call's requirements are matched against the org INSIDE the 9 criteria (each criterion blends RFP + Donor sources — see the source tags below). There is no separate "funder-fit" add-on: the old 20% extras duplicated MUST-2 / MUST-4 / MUST-5-route / PREFER-7, so they were dropped (2026-06-29) to avoid double-counting.</div>
 
   <!-- INPUT CARDS: denominator vs numerator -->
@@ -106,7 +106,7 @@
         <li>countries of operation · partners</li>
         <li>largest grant · budget · targets · stage</li>
         <li>priority areas + domain ratings</li>
-        <li>funder history · portal registrations</li>
+        <li>funder history · engaged donors · portal registrations</li>
         <li>cofinancing capacity · SAM · tax-exempt · BD team</li>
       </ul>
     </div>
@@ -124,13 +124,13 @@
 
     <div class="mrow must"><div class="req">geographic_scope · US-only / grants.gov inference<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M4</span>Geographic fit</div><div class="w">w .10 · 🔒 fatal at 0</div></div><div class="arrow">←</div><div class="org"><b>countries_registered · countries_of_operation · partners · is_us_entity</b></div></div>
 
-    <div class="mrow must"><div class="req">cost-share/pre-finance · audited financials · audit · SAM/UEI · tax · safeguarding · authorized-signatory · partner/govt MOU · govt endorsement · local board · partnership · portal reg · funding route<span class="src d">D</span> · compliance_flags<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M5</span>Cofinancing &amp; compliance</div><div class="w">w .10 · ⚙ · 🔒 route only</div></div><div class="arrow">←</div><div class="org"><b>cofinancing_capacity · has_* credentials · authorized_signatory_donors · partners · org_funding_routes · donor_registrations</b></div></div>
+    <div class="mrow must"><div class="req">cost-share/pre-finance · audited financials · audit · SAM/UEI (US-federal only → else pass) · tax · safeguarding · authorized-signatory · partner/govt MOU · govt endorsement · local board · partnership<span class="src d">D</span> · compliance_flags<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge must">M5</span>Cofinancing &amp; compliance</div><div class="w">w .10 · ⚙ · no fatal (all acquirable)</div></div><div class="arrow">←</div><div class="org"><b>cofinancing_capacity · has_* credentials · authorized_signatory_donors · partners</b></div></div>
 
-    <div class="mrow pref"><div class="req">award value<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P6</span>Funding quality</div><div class="w">w .08 · 📏</div></div><div class="arrow">←</div><div class="org"><b>funding_target band</b></div></div>
+    <div class="mrow pref"><div class="req">award value · project duration (prose ranges → max)<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P6</span>Funding quality</div><div class="w">w .08 · 📏 · mean of met components (missing duration excluded → 3/3 = High)</div></div><div class="arrow">←</div><div class="org"><b>funding_target band · longer duration preferred</b></div></div>
 
-    <div class="mrow pref"><div class="req">funders_collaborators<span class="src d">D</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P7</span>Donor relationship</div><div class="w">w .08</div></div><div class="arrow">←</div><div class="org"><b>funder_history · partners</b></div></div>
+    <div class="mrow pref"><div class="req">funders_collaborators · this call's donor<span class="src d">D</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P7</span>Donor relationship</div><div class="w">w .08 · 3 OR-tiers: past grantee / engaged / contact</div></div><div class="arrow">←</div><div class="org"><b>funder_history · engaged_donors · partners (canonical-key matched)</b></div></div>
 
-    <div class="mrow pref"><div class="req">grassroots · multi_country_encouraged · HQ-match<span class="src d">D</span> · program_area<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P8</span>Competitiveness</div><div class="w">w .10 · 📏</div></div><div class="arrow">←</div><div class="org"><b>domain ratings · age · entity_type (MCO) · HQ</b></div></div>
+    <div class="mrow pref"><div class="req">grassroots · multi_country · funding route · portal reg · HQ-country (call/donor/currency)<span class="src d">D</span> · program_area<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P8</span>Competitiveness</div><div class="w">w .10 · 📏 · track = min(org, donor priority); HQ-match positive-only</div></div><div class="arrow">←</div><div class="org"><b>domain ratings · age · entity_type (MCO) · portal registrations · funding routes · HQ</b></div></div>
 
     <div class="mrow pref"><div class="req">time to submission deadline<span class="src r">R</span></div><div class="arrow">→</div><div class="crit"><div class="nm"><span class="badge pref">P9</span>Bid effort</div><div class="w">w .09 · feasibility = time × capacity</div></div><div class="arrow">←</div><div class="org"><b>org_has_bd_team</b></div></div>
 
@@ -148,9 +148,10 @@
   <div class="arrowdown">▼</div>
 
   <div class="decision">
-    <div class="dgate">🚦 <b>Fatal-factor gate:</b> if the org <u>explicitly fails</u> an ACTIVE 🔒 non-dynamic factor — a <b>M1 identity gate</b> · <b>no geographic reach</b> (M4 = 0) · an <b>inaccessible M5 funding route</b> → <span class="pill decline">Decline</span> <span class="small">(structural — can't be fixed before the deadline)</span></div>
+    <div class="dgate">🚦 <b>Fatal-factor gate:</b> if the org <u>explicitly fails</u> an ACTIVE 🔒 non-dynamic factor — a <b>M1 identity gate</b> · <b>no geographic reach</b> (M4 = 0) → <span class="pill decline">Decline</span> <span class="small">(structural — can't be fixed before the deadline; M5 no longer contributes a fatal gate — funding route moved to P8)</span></div>
     <div class="dbands"><span class="small">else band the composite (⚙ dynamic gaps — SAM, MOUs, ceilings — and "Not sure" criteria Park, not Decline):</span>
       <span class="pill proceed">≥ 90 Proceed</span><span class="pill park">70–89 Park</span><span class="pill decline">&lt; 70 Decline</span></div>
+    <div class="small" style="margin-top:8px">🔬 <b>Confidence overlay (E3c/E3d):</b> data completeness (donor mapping + call extraction) → <b>High / Medium / Low</b>, shown on Review &amp; the Screen table. A <b>Low-confidence "Proceed" is auto-parked</b> ("thin data — verify the donor mapping / call") — a shaky prediction on sparse data never commits.</div>
   </div>
 
   <div class="arrowdown">▼</div>
