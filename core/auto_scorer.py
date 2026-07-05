@@ -1529,6 +1529,7 @@ _CG_FUND_PARENT_RE = re.compile(
 
 def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
                 *, geo_org_gates: bool = True,
+                theme_gate: bool = True,
                 llm_adjudicate: bool = False,
                 llm_theme: bool = False) -> tuple[bool, str]:
     """Combined gate: search-URL, language, feasibility, deadline, country,
@@ -1537,9 +1538,13 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
     `geo_org_gates=False` skips the GEOGRAPHY + ORG-relative gates (US-domestic,
     geographic-exclusion, applicant-type, country, feasibility) so the same gate
     can serve the EXTRACTION stage (DATA_SCHEMA_ETL.md §3): geography moves to the
-    per-tenant scorer (tier 2), and the global store keeps every geography. The
-    keep-set (not-an-rfp, opportunity-type, language, off-theme, deadline-past)
-    is unchanged. Default True preserves the existing Screened-pipeline behaviour."""
+    per-tenant scorer (tier 2), and the global store keeps every geography.
+
+    `theme_gate=False` ALSO skips the THEME + off-domain (construction) filters, so pure
+    EXTRACTION keeps EVERY real RFP regardless of sector — the theme match belongs to the
+    per-tenant eligibility screener (a construction RFP is fundable for a construction
+    org). The keep-set is then just: is-this-a-real-RFP (not-an-rfp / opportunity-type /
+    language / deadline-past). Both default True → existing Screened-pipeline behaviour."""
     # Search/filter result URLs are not grant detail pages — they re-list
     # grants on click. Reject before any other check.
     link = candidate.get("opportunity_link") or ""
@@ -1677,12 +1682,15 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
     if geo_org_gates and not ok:
         return False, f"country: {reason}"
     # Construction / civil-works procurement — off-domain even with health words present.
-    rejected, reason = construction_works_reject(candidate)
-    if rejected:
-        return False, f"theme: {reason}"
-    ok, reason = theme_eligible(candidate, policies, llm_theme=llm_theme)
-    if not ok:
-        return False, f"theme: {reason}"
+    # THEME gates (construction + off-theme) apply only for tenant screening; pure
+    # extraction (theme_gate=False) keeps every sector for the eligibility screener.
+    if theme_gate:
+        rejected, reason = construction_works_reject(candidate)
+        if rejected:
+            return False, f"theme: {reason}"
+        ok, reason = theme_eligible(candidate, policies, llm_theme=llm_theme)
+        if not ok:
+            return False, f"theme: {reason}"
     # Deadline LAST: only attribute a "deadline" reject when the call is
     # otherwise eligible (right geography / applicant type / country / theme) but
     # expired. This stops a spurious "deadline" reason from masking the REAL
