@@ -36,6 +36,7 @@ source).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -69,6 +70,16 @@ except Exception:
 from core.scraper import scan_source  # noqa: E402
 from core.scan_pipeline import ingest_candidates  # noqa: E402
 from core import aggregators  # noqa: E402  — primary/aggregator class for ingest ordering
+
+
+def _emit_progress(event: str, **kw) -> None:
+    """Emit one machine-readable progress line the UI streams + parses live (prefix
+    `@@PROGRESS@@`). Flushed so it arrives immediately (the subprocess is launched with
+    `python -u`, but flush=True is belt-and-suspenders). Never crashes the scan."""
+    try:
+        print("@@PROGRESS@@ " + json.dumps({"event": event, **kw}), flush=True)
+    except Exception:
+        pass
 from core.page_monitor import check_manual_sources, summarize_change_events  # noqa: E402
 from db.supabase_client import get_client  # noqa: E402
 
@@ -388,6 +399,8 @@ def run(
     # -------------------------------------------------------------------
     # Phase 1: parallel scrape
     # -------------------------------------------------------------------
+    _n_sources = len(all_sources)
+    _emit_progress("start", total=_n_sources, phase="scrape")
     scraped: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=effective_workers) as ex:
         futures = {ex.submit(_scrape_one, s): s for s in all_sources}
@@ -405,6 +418,14 @@ def run(
                     "err": f"thread crash: {type(exc).__name__}: {exc}",
                     "duration": 0.0,
                 })
+            # Live progress for the SLOW phase — one line per source as its crawl
+            # finishes, so the UI shows movement (source name + links found) instead
+            # of a frozen spinner during the 20-40-min enrichment crawl.
+            _b = scraped[-1]
+            _emit_progress("scraped", i=len(scraped), total=_n_sources,
+                           source=_b.get("name") or "(unnamed)",
+                           found=len(_b.get("results") or []),
+                           err=bool(_b.get("err")))
     scrape_seconds = time.time() - wall_start
 
     # Phase-2 ingest is SEQUENTIAL and dedup state accumulates, so the FIRST batch
@@ -436,6 +457,7 @@ def run(
     # -------------------------------------------------------------------
     totals = {"sources": 0, "found": 0, "new": 0, "duplicate": 0,
               "rejected": 0, "errors": 0}
+    _emit_progress("ingest_start", total=len(scraped), phase="ingest")
     for batch in scraped:
         name = batch["name"]
         err = batch["err"]
@@ -475,6 +497,10 @@ def run(
             f"declined={rejected}  ({duration:.2f}s)"
             + (f"  {err}" if err else "")
         )
+        # Live per-source ingest result (extracted vs rejected) for the UI counter.
+        _emit_progress("ingested", i=totals["sources"], total=len(scraped),
+                       source=name, found=found, new=new, dup=dup,
+                       rejected=rejected, err=bool(err))
 
         if not dry_run:
             try:
