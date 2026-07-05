@@ -79,6 +79,41 @@ df = df.sort_values("_search_dt", ascending=False, na_position="last").reset_ind
 
 
 # -----------------------------------------------------------------------------
+# LIVE scoring — single source of truth (shared with Review / Screen / View modal).
+# The stored alignment_score / auto_recommendation are a scan-time SNAPSHOT that goes
+# stale when the org profile, donor intel, or scoring logic change. Recompute fresh via
+# core.assessment.assess_row (the SAME path as the Review gauge) so this table, its
+# Probability filter, and the View modal never disagree with Review. Cached + busted by
+# a profile/settings signature so a profile edit refreshes every row.
+# -----------------------------------------------------------------------------
+import json as _json_live
+import hashlib as _hashlib_live
+from core import org_profile as _op_live, settings as _stg_live
+from core.assessment import assess_row as _assess_row
+
+_prof_sig = _hashlib_live.sha1(
+    (_json_live.dumps(_op_live.get_profile(), sort_keys=True, default=str)
+     + _json_live.dumps(_stg_live.get_org(), sort_keys=True, default=str)).encode()
+).hexdigest()[:12]
+
+
+@st.cache_data(ttl=600, show_spinner="Scoring rows…")
+def _live_scores(prof_sig: str, rows_json: str) -> dict:
+    rows = _json_live.loads(rows_json)
+    return {r.get("uid"): _assess_row(r) for r in rows if r.get("uid")}
+
+
+try:
+    _sc = _live_scores(_prof_sig, _json_live.dumps(df.to_dict("records"), default=str))
+    df["alignment_score"] = df["uid"].map(
+        lambda u: (_sc.get(u) or {}).get("alignment_score"))
+    df["auto_recommendation"] = df["uid"].map(
+        lambda u: (_sc.get(u) or {}).get("auto_recommendation"))
+except Exception:
+    pass  # fall back to stored columns if live scoring is unavailable
+
+
+# -----------------------------------------------------------------------------
 # Filters — one widget per filterable column. Open by default.
 # -----------------------------------------------------------------------------
 # Compute Prob tier per row (same logic as Highlights Section B)
@@ -457,6 +492,16 @@ def view_dialog(row: dict) -> None:
     """Polished read-only view of one RFP — gradient header, key-metric tiles, the
     high-level MUST/PREFER eligibility outcome, narrative, then the full operational /
     team / award fields (grouped, every field filled or '—'). No edits here."""
+    # LIVE assessment (single source of truth) — overlay fresh Bid Strength / Auto-
+    # decision / the 9 criteria so this modal matches the Review gauge, never the stale
+    # scan-time snapshot stored on the row.
+    try:
+        from core.assessment import assess_row as _ar_live, CRITERIA as _arc_live
+        _live = _ar_live(row)
+        row = {**row, **{k: _live[k] for k in (*_arc_live, "alignment_score",
+                                               "auto_recommendation") if k in _live}}
+    except Exception:
+        pass
     _title = row.get("opportunity_title") if isinstance(row.get("opportunity_title"), str) else ""
     _dec_raw = row.get("decision")
     _dec = _dec_raw if (isinstance(_dec_raw, str) and _dec_raw.strip()) else "Pending"
