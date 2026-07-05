@@ -60,29 +60,28 @@ def run_scan_now(triggered_by: str = "manual", timeout_sec: int = 900, *,
             timeout_sec = int(os.environ.get("RFPIS_EXTRACT_TIMEOUT_SEC", "2700") or 2700)
         except ValueError:
             timeout_sec = 2700
-    cmd = [sys.executable, str(Path("scripts/run_scan.py")),
+    # `-u` → unbuffered child stdout, so per-source progress lines arrive LIVE (not
+    # block-buffered until the process ends). We stream them into a progress UI below.
+    cmd = [sys.executable, "-u", str(Path("scripts/run_scan.py")),
            "--triggered-by", triggered_by]
     if extract_only:
         cmd.append("--extract-only")
-    with st.spinner(f"Running {label.lower()}…"):
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec)
-        except subprocess.TimeoutExpired:
-            # Not a data loss: each source commits its records as it goes, so rows
-            # extracted before the cutoff are already saved. Re-run to continue.
-            msg = (f"{label} hit the {timeout_sec // 60}-min time limit — records "
-                   "extracted before the cutoff were saved. Re-run to continue, or "
-                   "raise RFPIS_EXTRACT_TIMEOUT_SEC (or lower LLM_EXTRACT_MAX_CALLS "
-                   "for a faster, lighter-LLM run).")
-            st.session_state["admin_scan_banner"] = {"ok": False, "msg": msg}
-            st.warning(msg)
-            st.cache_data.clear()
-            return False
 
-    ok = proc.returncode == 0
+    stdout_full, ok, timed_out = _stream_scan(cmd, label, timeout_sec)
+
+    if timed_out:
+        msg = (f"{label} hit the {timeout_sec // 60}-min time limit — records "
+               "extracted before the cutoff were saved. Re-run to continue, or "
+               "raise RFPIS_EXTRACT_TIMEOUT_SEC (or lower LLM_EXTRACT_MAX_CALLS "
+               "for a faster, lighter-LLM run).")
+        st.session_state["admin_scan_banner"] = {"ok": False, "msg": msg}
+        st.warning(msg)
+        st.cache_data.clear()
+        return False
+
     m = re.search(
         r"Scan done\D*(\d+) source\(s\)\D+(\d+) found\D+(\d+) new\D+(\d+) dup"
-        r"\D+(\d+) declined", proc.stdout or "")
+        r"\D+(\d+) declined", stdout_full or "")
     if ok and m:
         s, f, nw, dp, dc = m.groups()
         if extract_only:
@@ -95,18 +94,142 @@ def run_scan_now(triggered_by: str = "manual", timeout_sec: int = 900, *,
     elif ok:
         msg = f"✓ {label} complete."
     else:
-        msg = f"{label} exited with errors (code {proc.returncode})."
+        msg = f"{label} exited with errors."
     st.session_state["admin_scan_banner"] = {"ok": ok, "msg": msg}
     (st.success if ok else st.error)(msg)
 
-    with st.expander(f"{label} output", expanded=not ok):
-        st.code(proc.stdout or "(no stdout)", language="text")
-        if proc.stderr:
-            st.markdown("**stderr:**")
-            st.code(proc.stderr, language="text")
+    with st.expander(f"{label} full log", expanded=not ok):
+        st.code(stdout_full or "(no output)", language="text")
 
     st.cache_data.clear()
     return ok
+
+
+def _stream_scan(cmd: list[str], label: str, timeout_sec: int) -> tuple[str, bool, bool]:
+    """Run the scan subprocess and render a LIVE progress view (current phase, source
+    name, per-source found/extracted/rejected, cumulative counts, elapsed timer) by
+    streaming its stdout. A background reader thread + a 2s queue poll enforces the wall
+    timeout even if the child goes briefly silent, and keeps ticking the elapsed clock so
+    the user can see it's alive. Returns (full_stdout, ok, timed_out)."""
+    import json as _json
+    import queue as _queue
+    import threading as _threading
+    import time as _time
+    from collections import deque
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1, encoding="utf-8", errors="replace",
+    )
+    q: "_queue.Queue[str | None]" = _queue.Queue()
+
+    def _reader():
+        try:
+            for line in proc.stdout:          # type: ignore[union-attr]
+                q.put(line)
+        finally:
+            q.put(None)                        # EOF sentinel
+
+    _threading.Thread(target=_reader, daemon=True).start()
+
+    box = st.status(f"Starting {label.lower()}…", expanded=True)
+    bar = box.progress(0.0)
+    metric = box.empty()
+    current = box.empty()
+    logbox = box.empty()
+
+    total, done, phase = 0, 0, "scrape"
+    agg = {"found": 0, "extracted": 0, "rejected": 0, "evaluated": 0}
+    tail: "deque[str]" = deque(maxlen=14)
+    full: list[str] = []
+    start = _time.time()
+    timed_out = False
+
+    def _render():
+        elapsed = int(_time.time() - start)
+        clock = f"{elapsed // 60}m{elapsed % 60:02d}s"
+        frac = 0.0
+        if total:
+            half = (done / total) * 0.5
+            frac = half if phase == "scrape" else min(1.0, 0.5 + half)
+        bar.progress(min(1.0, frac))
+        if phase == "scrape":
+            metric.markdown(
+                f"🔎 **Crawling sources** · **{done}/{total or '…'}** done · "
+                f"**{agg['found']}** links found · ⏱ {clock}")
+        else:
+            metric.markdown(
+                f"⛏ **Extracting** · **{done}/{total or '…'}** sources · "
+                f"**{agg['extracted']}** extracted · **{agg['rejected']}** rejected "
+                f"· ⏱ {clock}")
+
+    _render()
+    while True:
+        try:
+            line = q.get(timeout=2.0)
+        except _queue.Empty:
+            if _time.time() - start > timeout_sec:
+                proc.kill()
+                timed_out = True
+                break
+            _render()                          # tick the clock while the child is quiet
+            continue
+        if line is None:                       # EOF
+            break
+        full.append(line)
+        s = line.rstrip("\n")
+        if s.startswith("@@PROGRESS@@ "):
+            try:
+                evt = _json.loads(s[len("@@PROGRESS@@ "):])
+            except Exception:
+                evt = None
+            if evt:
+                e = evt.get("event")
+                if e == "start":
+                    total, phase = evt.get("total", 0), "scrape"
+                    box.update(label=f"Crawling {total} sources for opportunities…")
+                elif e == "scraped":
+                    done, total = evt.get("i", done), evt.get("total", total)
+                    agg["found"] += int(evt.get("found", 0) or 0)
+                    _mark = "⚠" if evt.get("err") else "✓"
+                    current.markdown(
+                        f"{_mark} {evt.get('source', '')} — "
+                        f"{evt.get('found', 0)} links")
+                elif e == "ingest_start":
+                    phase, done, total = "ingest", 0, evt.get("total", total)
+                    box.update(label=f"Extracting opportunities from {total} sources…")
+                elif e == "ingested":
+                    done, total = evt.get("i", done), evt.get("total", total)
+                    agg["extracted"] += int(evt.get("new", 0) or 0)
+                    agg["rejected"] += int(evt.get("rejected", 0) or 0)
+                    agg["evaluated"] += int(evt.get("found", 0) or 0)
+                    current.markdown(
+                        f"⛏ {evt.get('source', '')} — "
+                        f"**{evt.get('new', 0)}** extracted · "
+                        f"{evt.get('rejected', 0)} rejected · "
+                        f"{evt.get('found', 0)} evaluated")
+                _render()
+        elif s.strip():
+            tail.append(s)
+            logbox.code("\n".join(tail), language="text")
+        if _time.time() - start > timeout_sec:
+            proc.kill()
+            timed_out = True
+            break
+
+    try:
+        proc.wait(timeout=10)
+    except Exception:
+        pass
+    ok = (proc.returncode == 0) and not timed_out
+    _render()
+    box.update(
+        label=(f"{label} timed out" if timed_out else
+               f"{label} complete" if ok else f"{label} finished with errors"),
+        state=("error" if (timed_out or not ok) else "complete"),
+        expanded=False,
+    )
+    return "".join(full), ok, timed_out
 
 
 def run_screening_now(triggered_by: str = "manual") -> bool:
