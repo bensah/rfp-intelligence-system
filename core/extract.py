@@ -140,11 +140,11 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     if cand.get("call_award_value") in (None, "", 0, "0") and amt is not None:
         cand["call_award_value"] = amt
 
-    # llm_theme=True: let the LLM adjudicate AMBIGUOUS theme calls (excluded/
-    # required conflict or a thin incidental keyword match) at the extraction
-    # gate. Dev-side path (latency OK); the verdict is cached for the enrichment
-    # call below, so it's effectively one LLM call.
-    ok, reason = is_eligible(cand, policies, geo_org_gates=False, llm_theme=True)
+    # The global store is theme-AGNOSTIC (owner 2026-07-06): keep every real RFP; the
+    # sector/theme match happens later, per-tenant, in the eligibility screener (a
+    # construction RFP is fundable for a construction org). So the gate here enforces
+    # only "is this a genuine RFP" — theme_gate=False.
+    ok, reason = is_eligible(cand, policies, geo_org_gates=False, theme_gate=False)
     if not ok:
         return None, reason
 
