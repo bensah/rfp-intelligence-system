@@ -479,6 +479,7 @@ def ingest_candidates(
 
         # First-pass eligibility gate (cheap: URL/title/keyword/deadline/scope).
         ok, reason = is_eligible(cand, policies, geo_org_gates=not extract_only,
+                                 theme_gate=not extract_only,
                                  llm_adjudicate=llm_adjudicate)
         _source_encounters.append({
             "url": _orig_link, "title": cand.get("opportunity_title"),
@@ -532,6 +533,7 @@ def ingest_candidates(
                 log.debug("live-check skipped: %s", exc)
             if fetched:
                 ok, reason = is_eligible(cand, policies, geo_org_gates=not extract_only,
+                                 theme_gate=not extract_only,
                                  llm_adjudicate=llm_adjudicate)
                 if not ok:
                     rejected += 1
@@ -551,6 +553,7 @@ def ingest_candidates(
                 and not cand.get("extraction_uid") and deep_read.available()):
             if deep_read.enrich(cand):
                 ok, reason = is_eligible(cand, policies, geo_org_gates=not extract_only,
+                                 theme_gate=not extract_only,
                                  llm_adjudicate=llm_adjudicate)
                 if not ok:
                     rejected += 1
