@@ -161,15 +161,21 @@ _CONN_EXC_NAMES = {
 
 def _is_connectivity_error(exc: BaseException) -> bool:
     """True when exc (or any error it was raised from) is a transient network /
-    httpx connection failure to Supabase — as opposed to a real config/logic bug."""
-    seen: set[int] = set()
-    e: BaseException | None = exc
-    while e is not None and id(e) not in seen:
-        seen.add(id(e))
-        if type(e).__name__ in _CONN_EXC_NAMES or "httpx" in type(e).__module__:
-            return True
-        e = e.__cause__ or e.__context__
-    return False
+    httpx connection failure to Supabase — as opposed to a real config/logic bug.
+    Delegates to the shared classifier in db.supabase_client (single source of truth)."""
+    try:
+        from db.supabase_client import is_connectivity_error
+        return is_connectivity_error(exc)
+    except Exception:
+        # Fallback to the local walk if the import fails for any reason.
+        seen: set[int] = set()
+        e: BaseException | None = exc
+        while e is not None and id(e) not in seen:
+            seen.add(id(e))
+            if type(e).__name__ in _CONN_EXC_NAMES or "httpx" in type(e).__module__:
+                return True
+            e = e.__cause__ or e.__context__
+        return False
 
 
 def _render_db_unreachable(exc: Exception) -> None:

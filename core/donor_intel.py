@@ -79,7 +79,8 @@ def _load_index() -> dict[str, dict]:
         return _CACHE["index"]
     idx: dict[str, dict] = {}
     try:
-        rows = get_client().table("donor_intel").select("*").execute().data or []
+        from db.supabase_client import safe_execute
+        rows = safe_execute(get_client().table("donor_intel").select("*")).data or []
     except Exception:
         rows = []
     for r in rows:
