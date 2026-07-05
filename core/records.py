@@ -13,8 +13,29 @@ frame are unaffected.
 """
 from __future__ import annotations
 
+import html as _html
 import math
+import re
 from typing import Any
+
+# Block-level tags become a space (so "…ET</p><p>The post…" reads as two sentences,
+# not one run-on); every other tag is dropped.
+_HTML_BLOCK_RE = re.compile(r"(?i)<\s*/?\s*(?:br|p|div|li|tr|ul|ol|h[1-6]|blockquote)\b[^>]*>")
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
+
+def strip_html(text: Any) -> Any:
+    """Convert scraped HTML (WordPress RSS `content:encoded`, etc.) to clean plain text
+    for display: block tags → spaces, all other tags dropped, HTML entities decoded,
+    whitespace collapsed. Non-string / tag-free input is returned unchanged. Used so a
+    brief_description carrying raw `<p>…</p><a href=…>` never shows literal markup."""
+    if not isinstance(text, str) or "<" not in text:
+        return text
+    s = _HTML_BLOCK_RE.sub(" ", text)
+    s = _HTML_TAG_RE.sub("", s)
+    s = _html.unescape(s)
+    return _WS_RE.sub(" ", s).strip()
 
 
 def md_safe(text: Any, dash: str = "—") -> str:
