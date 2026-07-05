@@ -608,7 +608,8 @@ def view_dialog(row: dict) -> None:
             st.markdown(b.replace("$", "\\$"))
 
     st.divider()
-    _section("📋 Brief description", row.get("brief_description"))
+    from core.records import strip_html as _strip_html
+    _section("📋 Brief description", _strip_html(row.get("brief_description")))
     _section("🧭 Why this decision", row.get("decision_note"))
     _section("⚠️ Key risks", row.get("key_risks"))
     _section("✅ Compliance requirements", row.get("compliance_requirements"))
