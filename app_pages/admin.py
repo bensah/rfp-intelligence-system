@@ -1302,23 +1302,30 @@ with tab_scan:
         return raw
 
     def _run_summary(rows: list[dict]) -> dict | None:
-        """Aggregate the most-recent run within `rows` (newest-first). Walks back
-        from the latest row, grouping CONTIGUOUS rows (gap < 15 min) so a long run
-        (a 52-source extraction takes 8+ min) is summed in full — the old fixed
-        5-min window undercounted it. Stops at the first big gap (= a prior run)."""
+        """Aggregate the EXACT most-recent run within `rows` (newest-first). Every
+        scan_logs row of one run shares a `run_id` (migration 065), so we group by the
+        latest row's run_id — no cumulative bleed from an earlier run. Legacy rows with
+        no run_id fall back to the old timestamp-gap heuristic (contiguous rows < 15 min
+        apart = one run), stopping before any newer run_id'd run."""
         if not rows:
             return None
         latest = rows[0]
         trig = latest.get("triggered_by")
-        grp = [latest]
-        prev_ts = pd.to_datetime(latest["scan_date"])
-        for r in rows[1:]:
-            ts = pd.to_datetime(r["scan_date"])
-            if (prev_ts - ts).total_seconds() > 900:   # >15-min gap → different run
-                break
-            if r.get("triggered_by") == trig:
-                grp.append(r)
-            prev_ts = ts
+        rid = latest.get("run_id")
+        if rid:
+            grp = [r for r in rows if r.get("run_id") == rid]
+        else:
+            grp = [latest]
+            prev_ts = pd.to_datetime(latest["scan_date"])
+            for r in rows[1:]:
+                if r.get("run_id"):           # don't merge legacy into a newer real run
+                    break
+                ts = pd.to_datetime(r["scan_date"])
+                if (prev_ts - ts).total_seconds() > 900:   # >15-min gap → different run
+                    break
+                if r.get("triggered_by") == trig:
+                    grp.append(r)
+                prev_ts = ts
         return {
             "ts": latest["scan_date"][:16].replace("T", " "),
             "trigger": _pretty_trigger(trig),

@@ -41,6 +41,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -280,20 +281,28 @@ def count_scannable_sources() -> int:
 
 def _log_scan(sb, *, source: str, triggered_by: str,
               found: int, new: int, dup: int, rejected: int,
-              duration: float, errors: str | None = None) -> None:
+              duration: float, errors: str | None = None,
+              run_id: str | None = None) -> None:
     from db.supabase_client import safe_execute
-    safe_execute(sb.table("scan_logs").insert(
-        {
-            "source": source,
-            "triggered_by": triggered_by,
-            "rfps_found": found,
-            "rfps_new": new,
-            "rfps_duplicate": dup,
-            "rfps_rejected": rejected,
-            "duration_sec": round(duration, 3),
-            "errors": errors,
-        }
-    ))
+    row = {
+        "source": source,
+        "triggered_by": triggered_by,
+        "rfps_found": found,
+        "rfps_new": new,
+        "rfps_duplicate": dup,
+        "rfps_rejected": rejected,
+        "duration_sec": round(duration, 3),
+        "errors": errors,
+    }
+    if run_id:                       # migration 065 — groups all rows of ONE run
+        row["run_id"] = run_id
+    try:
+        safe_execute(sb.table("scan_logs").insert(row))
+    except Exception:
+        # Column may not exist yet (migration 065 not applied) → retry without it,
+        # so telemetry still records and the scan never crashes on a logging write.
+        row.pop("run_id", None)
+        safe_execute(sb.table("scan_logs").insert(row))
 
 
 def _scrape_one(source: dict[str, Any]) -> dict[str, Any]:
@@ -342,6 +351,10 @@ def run(
     # legacy sources.yaml keyword list + donor_matrix seeds are no longer folded
     # in). A read-only client is fine on dry-run — writes stay gated on dry_run.
     sb = get_client()
+    # ONE identifier for this whole invocation — every scan_logs row it writes carries
+    # it, so the Manual Scan cards can group the EXACT last run (migration 065) instead
+    # of guessing the boundary from timestamps (which merged runs started close together).
+    run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{os.getpid()}"
     all_sources = build_scan_sources(sb)
 
     if source_filter:
@@ -375,6 +388,7 @@ def run(
                         sb,
                         source=f"PAGE CHANGED: {ev['name']}",
                         triggered_by=triggered_by,
+                        run_id=run_id,
                         found=0, new=0, dup=0, rejected=0,
                         duration=ev.get("duration", 0.0),
                         errors=(
@@ -504,7 +518,7 @@ def run(
 
         if not dry_run:
             try:
-                _log_scan(sb, source=name, triggered_by=triggered_by,
+                _log_scan(sb, source=name, triggered_by=triggered_by, run_id=run_id,
                           found=found, new=new, dup=dup, rejected=rejected,
                           duration=duration, errors=err)
             except Exception as _le:           # telemetry must never crash the scan
