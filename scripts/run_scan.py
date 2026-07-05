@@ -270,7 +270,8 @@ def count_scannable_sources() -> int:
 def _log_scan(sb, *, source: str, triggered_by: str,
               found: int, new: int, dup: int, rejected: int,
               duration: float, errors: str | None = None) -> None:
-    sb.table("scan_logs").insert(
+    from db.supabase_client import safe_execute
+    safe_execute(sb.table("scan_logs").insert(
         {
             "source": source,
             "triggered_by": triggered_by,
@@ -281,7 +282,7 @@ def _log_scan(sb, *, source: str, triggered_by: str,
             "duration_sec": round(duration, 3),
             "errors": errors,
         }
-    ).execute()
+    ))
 
 
 def _scrape_one(source: dict[str, Any]) -> dict[str, Any]:

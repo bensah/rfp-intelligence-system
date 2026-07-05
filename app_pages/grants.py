@@ -22,7 +22,7 @@ import streamlit as st
 
 from core.pipeline import usd_value
 from core.records import clean_record, clean_df
-from db.supabase_client import get_client
+from db.supabase_client import get_client, safe_execute
 
 sb = get_client()
 st.title("Active Grants")
@@ -34,10 +34,16 @@ st.title("Active Grants")
 @st.cache_data(ttl=60)
 def _fetch() -> tuple[pd.DataFrame, pd.DataFrame]:
     sbc = get_client()
-    rfps = pd.DataFrame(
-        sbc.table("rfp_submissions").select("*").eq("is_duplicate", False).execute().data or []
-    )
-    grants = clean_df(pd.DataFrame(sbc.table("active_grants").select("*").execute().data or []))
+    try:
+        rfps = pd.DataFrame(
+            safe_execute(sbc.table("rfp_submissions").select("*")
+                         .eq("is_duplicate", False)).data or []
+        )
+        grants = clean_df(pd.DataFrame(
+            safe_execute(sbc.table("active_grants").select("*")).data or []))
+    except Exception as exc:
+        st.warning(f"Couldn't load grants data right now (network issue): {exc}")
+        return pd.DataFrame(), pd.DataFrame()
     rfps = clean_df(rfps)
     if not rfps.empty:
         dd = rfps["donor_decision"].fillna("").astype(str).str.strip().str.lower()
