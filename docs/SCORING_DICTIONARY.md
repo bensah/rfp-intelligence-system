@@ -1,9 +1,32 @@
 # RFPIS Scoring & Eligibility — Concept Dictionary
 
 > Single reference for how RFPIS evaluates an opportunity: every criterion, its
-> response values + scores, the logic/factors/assumptions behind each, the
-> composite Bid Strength, the decision rule, and the AI-written review fields.
-> Source of truth for the user guide + FAQ. (Last updated 2026-06-29.)
+> response values + scores, **the definition of every scoring component** (§7), the
+> composite Bid Strength, the decision rule, the data-confidence overlay, and the
+> AI-written review fields. Source of truth for the user guide + FAQ.
+> Source files: `criteria_derive.py` · `assessment.py` (single live-scoring source) ·
+> `matching.py` · `auto_scorer.py` · `scorer.py` · `data_quality.py` · `features.py`.
+> (Last updated 2026-07-05.)
+
+> **2026-07-05 changes (this reference now reflects them):**
+> • **MUST 5 has NO fatal gate** — funding-route and funding-platform registration moved
+>   to **PREFER 8**; every remaining MUST-5 gate is acquirable, so the only auto-Decline
+>   gates are **MUST 1** (identity) and **MUST 4** (no geographic reach).
+> • **SAM.gov/UEI** is a US-federal-only gate; for any other donor it's a **permissive
+>   pass (value 1, "no restriction")**, not "Not sure".
+> • **PREFER 6** label = the **mean of its met/active components** (an unstated duration
+>   is excluded → all stated components met = **High**); duration is auto-extracted from
+>   prose ranges (range → max/ceiling).
+> • **PREFER 7** gains a 3rd tier — **Donor engaged** (`rel_engaged`, `engaged_donors`);
+>   donor matching is canonical-key based (acronym ⇄ full name).
+> • **PREFER 8**: track record = `band(min(org rating, donor priority))`; **funding route
+>   + portal registration** now score here; **HQ-country match is positive-only** and the
+>   funder country is inferred (donor HQ → call → currency).
+> • **Data-confidence overlay (E3c/E3d)** — completeness → High/Medium/Low; a
+>   **Low-confidence "Proceed" auto-parks** (§4).
+> • **Single source of truth** — every surface (Review, Screen, Records table, View modal)
+>   scores LIVE via `assessment.assess_row`; the stored `alignment_score` columns are a
+>   scan-time snapshot only.
 
 > **2026-06-29 model change — ACTIVE-ONLY scoring.** Every criterion decomposes into
 > **components** scored **1 / 0.5 / 0**. A component is scored ONLY when the call/donor
@@ -37,10 +60,10 @@ routes to review, not a zero. Internal keys in parentheses.
 | MUST 2 | **Strategic fit** (`strategic_fit`) | Strongly aligns (2) · Limited priority (1) · Off-strategy (0) · Not sure (→1) | ONE component — best-matched theme's priority band (min of org-band, call-band) across the org's graded `program_area_ratings` ∩ the donor/RFP priorities. No call/org theme data → Not sure. |
 | MUST 3 | **Implementation capacity** (`capacity`) | Yes, comfortably (2) · Yes, but a stretch (1) · No, beyond us (0) · Not sure (→1) | Up to 5 components: **org stage · annual-budget ceiling · prior-grant ceiling** (these 3 moved here from MUST 1) · **experience** (call-stated) · **award-absorption** = realistic ask `min(award, funding_target_max)` vs `largest_grant_usd` **stretched** by experience/stage/#grants. Each active only when stated/determinable. |
 | MUST 4 | **Geographic fit** (`geographic_fit`) | Yes, our own presence (2) · Yes, via a partner (1) · No presence there (0) · Not sure (→1) | ONE tiered component. Scope = call ∪ donor (with **US-only / grants.gov** inference → United States). `countries_registered` ∩ scope → own presence; operating country / qualifying partner → via partner; inclusive tiers (LMIC/global) credited. 🔒 **No reach → fatal (auto-Decline)**. No scope at all → Not sure. |
-| MUST 5 | **Cofinancing & compliance** (`cofinancing`) | Yes, none required (2) · Partial, with effort (1) · No, required (0) · Not sure (→1) | **Compliance hub** (see §2). ONE soft component — co-financing/pre-finance capacity (0/0.5/1); the rest are 🔒 hard 0/1 gates active only when the donor/call imposes them. **Only the funding route auto-Declines**; other unmet gates (acquirable before the deadline) lower the score / Park. Nothing imposed → Not sure. |
-| PREFER 6 | **Funding quality** (`funding_quality`) | High (2) · Moderate (1) · Low (0) · Not sure (→1) | RFP award size vs the org's preferred band (`funding_target_low/mid/max`): in/above the sweet spot → High; toward the floor → Moderate; below the floor → Low. No award value → Not sure. |
-| PREFER 7 | **Donor relationship** (`funder_relationship`) | Current/past grantee (2) · Some contact (1) · None (0) · Not sure (→1) | Past grantee of this donor (`funder_history`) → grantee. **Or a shared collaborator** — an org we partner with is also among the donor's partners/collaborators — **or** we're registered on their portal → "Some contact" (a warm route in). |
-| PREFER 8 | **Competitiveness** (`competitiveness`) | Strong (2) · Moderate (1) · Weak (0) · Not sure (→1) | Org edge: domain rating, co-financing strength, **multi-country** (`multi_country_encouraged` ↔ org Entity type = Multi-country Organization), HQ-country match, incumbency. |
+| MUST 5 | **Cofinancing & compliance** (`cofinancing`) | Yes, none required (2) · Partial, with effort (1) · No, required (0) · Not sure (→1) | **Compliance hub** (see §2). ONE soft component — co-financing/pre-finance capacity (0/0.5/1); the rest are hard 0/1 gates active only when the donor/call imposes them. **No fatal gate** — every gate is acquirable before the deadline, so an unmet one lowers the score / Parks (never auto-Declines). Nothing imposed → Not sure. |
+| PREFER 6 | **Funding quality** (`funding_quality`) | High (2) · Moderate (1) · Low (0) · Not sure (→1) | **Mean of the MET active components** — floor/ceiling/value-stated + duration (see §7). An **unstated duration is excluded** (its absence neither helps nor hurts), so all *stated* components met → **High**. Falls back to the award-size band vs `funding_target_low/mid/max` when the org set no targets. No award value → Not sure. |
+| PREFER 7 | **Donor relationship** (`funder_relationship`) | Current/past grantee (2) · Some contact (1) · None (0) · Not sure (→1) | 3 OR-tiers (best wins): past grantee of this donor (`funder_history`) → grantee; **donor engaged** (`engaged_donors` — prior contact, no funding yet) **or** shared collaborator **or** registered on their portal → "Some contact". Donor matching is canonical-key (acronym ⇄ full name). |
+| PREFER 8 | **Competitiveness** (`competitiveness`) | Strong (2) · Moderate (1) · Weak (0) · Not sure (→1) | Org edge: **track record** = `band(min(org domain rating, donor priority))` in the call's area · age/incumbency · portal familiarity · **funding-route access** · **multi-country** (`multi_country_encouraged` ↔ org MCO) · **HQ-country match** (positive-only; funder country inferred from donor HQ → call → award currency). |
 | PREFER 9 | **Bid effort** (`bid_effort`) | Ample time, sufficient resources (2) … No realistic shot (0) | Days to deadline × whether the org has a BD team (`org_has_bd_team`). Auto-derived; no "Not sure". |
 
 **Assumption:** BLANK org/donor data ≠ "No". A criterion is judged on its **active**
@@ -55,23 +78,22 @@ criterion scores **value 1 (Park)** so an unknown is reviewed, not penalised.
 `derive_cofinancing` emits a component per requirement, **active only when the donor/call
 imposes it**. Gate over active components: any 0 → **No, required**; any 0.5 → **Partial,
 with effort**; all 1 → **Yes, none required**. **No active component → "Not sure" (Park).**
-SAM.gov no longer shows for a private funder — it's active only on a US-federal/grants.gov
-call (or `sam_uei_registration_required`).
+**MUST 5 has NO fatal gate (2026-07-05)** — every gate below is acquirable before the
+deadline, so an unmet one lowers the score / Parks; it never auto-Declines. (Funding route
+and funding-platform registration were moved to **PREFER 8**.)
 
 | Component (active when…) | Satisfied by (org) | Type |
 |---|---|---|
 | Co-financing / pre-finance — `cost_sharing_match_required`, `min_cofinancing_secured_pct`, `prefinance_required=reimbursement_only`, or RFP cost-share | `cofinancing_capacity` (strong/moderate→1 · limited→0.5 · none→0) | soft |
 | Audited financials / Audit report — `audited_financials_required` / `audit_report_required` | `has_audited_financials` / `has_audit_report` | hard |
-| SAM.gov/UEI — `sam_uei_registration_required` **or US-federal call** | `org_has_sam_uei` (or a SAM registration) | hard |
+| SAM.gov/UEI — **US-federal (grants.gov) call only**, or `sam_uei_registration_required` | `org_has_sam_uei` (or a SAM registration). **For every other donor it's a permissive pass (value 1, "no restriction")** | hard |
 | Tax-exempt — `tax_exempt_status_required` | `org_tax_exempt` | hard |
 | Safeguarding policy — `safeguarding_policy_required` | `has_safeguarding_policy` | hard |
-| Authorized signatory — `authorized_signatory_signoff_required` / `welcome_registration_required` | this call's donor ∈ `authorized_signatory_donors` | hard |
+| Authorized signatory — `authorized_signatory_signoff_required` / `welcome_registration_required` | this call's donor ∈ `authorized_signatory_donors` (canonical-key matched) | hard |
 | Partner MOU / Govt MOU / Govt endorsement / Local board | `has_partner_mou` / `has_govt_mou` / `has_govt_endorsement` / settings `org_has_local_board` | hard |
 | Mandatory partnership — `partnership_mandatory` | an Implementing/Collaborator partner | hard |
-| Funding-platform registration — `funding_platform_registration_required` | `submission_portal_url` ∩ `donor_registrations` | hard |
-| **Funding route** — donor offers grant/procurement/loan/subrecipient/govt-CCM/direct | `org_funding_routes` overlaps ≥1 offered route | 🔒 fatal |
 
-*(Local-partner is NOT repeated here — it's covered by MUST-1 Entity type = grassroot/local. Stage/budget/track ceilings moved to MUST 3 / MUST 1.)*
+*(Local-partner is NOT repeated here — it's covered by MUST-1 Entity type = grassroot/local. Stage/budget/track ceilings moved to MUST 3 / MUST 1. Funding route + funding-platform registration moved to PREFER 8 — see §7.)*
 
 ---
 
@@ -101,13 +123,13 @@ Displayed to 1 decimal; the headline Bid Strength integer uses half-up rounding 
 
 ### Two DISTINCT scales (do not conflate)
 - **Decision** (the suggestion): a **🔒 fatal-factor gate first** — if the org explicitly
-  fails an **active** non-dynamic factor (a MUST-1 identity gate, MUST-4 no geographic
-  reach, or an inaccessible **MUST-5 funding route**) → **Decline**, regardless of score.
-  Otherwise band the composite: **Proceed ≥ 90 · Park 70–89 · Decline < 70**. Other unmet
-  hard gates (SAM, MOUs, ceilings — acquirable before the deadline) and **"Not sure"**
-  criteria are *not* fatal — they lower the score and typically **Park**; the high MUST
-  weight (.65) still sinks genuinely weak bids below 70. *(Supersedes both "any MUST < 2 →
-  Decline" and the old stage/budget/track fatal floors.)*
+  fails an **active** non-dynamic factor (a **MUST-1 identity gate** or **MUST-4 no
+  geographic reach**) → **Decline**, regardless of score. **MUST 5 no longer contributes a
+  fatal gate (2026-07-05).** Otherwise band the composite: **Proceed ≥ 90 · Park 70–89 ·
+  Decline < 70**. Unmet hard gates (SAM, MOUs, ceilings, funding route — all acquirable)
+  and **"Not sure"** criteria are *not* fatal — they lower the score and typically
+  **Park**; the high MUST weight (.65) still sinks genuinely weak bids below 70. Finally
+  the **confidence overlay** (§4) can downgrade a thin-data Proceed to Park.
 - **Fitness label** (Strong / Moderate / Weak): **70+ / 45–69 / < 45** — describes overall
   match strength only; it does **not** set the decision.
 
@@ -120,6 +142,22 @@ Displayed to 1 decimal; the headline Bid Strength integer uses half-up rounding 
   sets it. Never auto-filled from the model (that would pollute the learning signal).
   The human decision is the supreme label the scorer learns from (👍/😐/👎 feedback +
   recorded decisions).
+
+### Data-confidence overlay (E3c/E3d — `data_quality.py`)
+Every prediction carries a **confidence** = how much DATA backs it, blended from **donor
+mapping completeness** (`donor_completeness`) + **call-extraction completeness**
+(`call_completeness`) → **High / Medium / Low** (`confidence_band`, call weighted higher).
+Shown on Review and as a column on the Screen table. **E3d guard (`confidence_adjusted`):**
+a **Low-confidence "Proceed" is downgraded to "Park"** ("thin data — verify the donor
+mapping / call before Proceeding"); Medium/High and non-Proceed decisions pass through
+unchanged. A shaky prediction on sparse data never auto-commits.
+
+> **Single source of truth (2026-07-05).** The Bid Strength, Auto-decision, probability
+> tier and the 9 criteria shown on the **Review screen, Screen table, Records table and
+> View-RFP modal** are ALL computed LIVE from `assessment.assess_row` (which wraps the
+> same `derive_criteria → composite_match → fatal_decline → band` path as scan-time
+> scoring). The stored `alignment_score` / `auto_recommendation` columns are a scan-time
+> **snapshot** — they can lag until a rescan, so displays never rely on them.
 
 ---
 
@@ -145,3 +183,87 @@ Written by `core.llm_synthesis` during screening for rows that pass the gate
 - Off-theme is a hard extraction gate; geography is **not** (it's a tenant screening
   tier), so region/LMIC-framed calls are kept and judged at MUST 4.
 - "$" in any displayed LLM/user text is escaped so it never renders as LaTeX.
+- `brief_description` is **HTML-stripped to clean text** on ingest + display (`records.strip_html`), so scraped WordPress/RSS markup never shows literal `<p>`/`<a>` tags.
+
+---
+
+## 7. Component dictionary (every scoring component)
+
+Each criterion decomposes into the **components** below (internal keys as used in
+`criteria_derive.py` and the ML feature vector `features._COMPONENT_KEYS`, prefixed
+`cmp_`). A component is **active** only when the call/donor imposes it or a proxy applies;
+inactive → "Not sure", excluded from that criterion's denominator. Scores are **1 / 0.5 / 0**
+unless noted; 🔒 marks a fatal gate (failing it auto-Declines).
+
+### MUST 1 · Legal status & qualification (`qualification`) — 🔒 identity gates
+| Key | Component | Active / scored |
+|---|---|---|
+| `applicant_type` | Legal type admitted | Donor states eligible applicant types; org `legal_type` ∈ them |
+| `entity_type` | Entity type (NGO / for-profit / academic / grassroot / MCO …) | Donor imposes an entity-type rule; org `entity_type` matches |
+| `donor_hq_country` | HQ-country requirement | Donor requires a specific HQ country; org HQ matches |
+| `local_registration` | 🔒 Registration region | Explicit rule, else the call's **geo-scope as proxy**; org `registered_countries` covers it (broad tiers expanded) |
+| `individual_pi` | Individual / PI eligibility | Call requires an in-scope-country PI; org has an established PI or qualifying partner |
+| `prior_beneficiary` | Prior-beneficiary rule | Donor states one; org ∈ `funder_history` / `active_donors` |
+
+### MUST 2 · Strategic fit (`strategic_fit`)
+| Key | Component | Active / scored |
+|---|---|---|
+| `strat_fitness` | Best-matched theme priority | `min(band(org priority), band(call/donor priority))` over shared program areas; no theme data → Not sure |
+
+### MUST 3 · Implementation capacity (`capacity`)
+| Key | Component | Active / scored |
+|---|---|---|
+| `org_stage` | Org stage fit | Donor states an early-stage/established preference |
+| `budget_ceiling` | Annual-budget ceiling | Donor caps by org budget; org `annual_budget` within it |
+| `grant_ceiling` | Prior-grant ceiling | Donor caps by largest prior grant; org `largest_grant` within it |
+| `experience` | Track-record / experience required | Call states an experience bar |
+| `award_absorption` | Award absorption | Realistic ask `min(award, target_max)` vs `largest_grant`, **stretched** by experience/stage/#grants |
+
+### MUST 4 · Geographic fit (`geographic_fit`) — 🔒 fatal at 0
+| Key | Component | Active / scored |
+|---|---|---|
+| `geo_presence` | 🔒 Presence in scope | Own presence (registered ∩ scope) = 1 · via qualifying partner = 0.5 · none = 0; inclusive tiers (LMIC/global) credited. No scope → Not sure |
+
+### MUST 5 · Cofinancing & compliance (`cofinancing`) — no fatal gate
+| Key | Component | Active / scored |
+|---|---|---|
+| `cofinance` | Co-financing / pre-finance (soft) | Cost-share/match/prefinance imposed; `cofinancing_capacity` strong/mod→1 · limited→0.5 · none→0 |
+| `audited_financials` / `audit_report` | Audited financials / Audit report | Donor requires; org holds it |
+| `sam_uei` | SAM.gov / UEI | **US-federal call only** (else permissive pass = 1); org holds SAM |
+| `tax_exempt` | Tax-exempt status | Donor requires; `org_tax_exempt` |
+| `safeguarding` | Safeguarding / PSEA policy | Donor requires; org holds it |
+| `partner_mou` / `govt_mou` / `govt_endorsement` / `local_board` | MOUs / endorsement / local board | Donor requires each; org holds it |
+| `authorized_signatory` | Authorized-signatory sign-off | Donor requires; this call's donor ∈ `authorized_signatory_donors` |
+| `partnership` | Mandatory partnership | Donor requires; org has an Implementing/Collaborator partner |
+
+### PREFER 6 · Funding quality (`funding_quality`) — label = mean of met components
+| Key | Component | Active / scored |
+|---|---|---|
+| `fq_floor` | At/above your minimum target size | Org set `min_target`; award ≥ it |
+| `fq_ceiling` | Within your absorptive ceiling | Org set `max_target`; award ≤ it |
+| `fq_value` | Award value stated | Call states an award value |
+| `fq_duration` | Project duration (longer preferred) | Duration stated (prose ranges → **max**); ≥12mo→1 · 6–12→0.5 · ≤6→0. **Absent → excluded** (not counted) |
+
+### PREFER 7 · Donor relationship (`funder_relationship`) — 3 OR-tiers
+| Key | Component | Active / scored |
+|---|---|---|
+| `rel_grantee` | Past / current grantee | Call's donor ∈ `funder_history` (canonical-key matched) |
+| `rel_engaged` | Donor engaged (prior contact, no funding yet) | Call's donor ∈ `engaged_donors` |
+| `rel_contact` | Shared collaborator or portal-registered | Shared partner with the donor, or registered on their portal |
+
+### PREFER 8 · Competitiveness (`competitiveness`)
+| Key | Component | Active / scored |
+|---|---|---|
+| `comp_track` | Track record in this program area | `band(min(org domain rating, donor priority))` — donor priority defaults 5; 4–5→High · 2–3→Moderate |
+| `comp_age` | Established (10+ years) | Org founding year known |
+| `comp_portal` | Familiar with the donor's portal | Registered on the donor/call portal (was MUST-5 funding-platform) |
+| `comp_route` | Funding route accessible | Donor offers route(s); `org_funding_routes` overlaps ≥1 (was MUST-5, no longer fatal) |
+| `comp_grassroots` | Grassroots / local-org status | Donor flags grassroots/local; org is |
+| `comp_multi` | Multi-country presence | `multi_country_encouraged`; org is MCO |
+| `comp_hq` | HQ-country match with funder | **Positive-only** ✓ when org HQ = funder country (inferred donor HQ → call → award currency); no match → excluded, never a ✗ |
+
+### PREFER 9 · Bid effort (`bid_effort`)
+| Key | Component | Active / scored |
+|---|---|---|
+| `bid_time` | Time to deadline | Days until `call_submission_deadline` |
+| `bid_team` | Business-development team | `org_has_bd_team` |
