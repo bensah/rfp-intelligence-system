@@ -87,6 +87,33 @@ df = _fetch(selected_week)
 # Drop concluded grants (won/submitted) — they belong in Grants + the Home Summary,
 # not the active screening list (e.g. HAPPI: Completed + Approved).
 df = drop_concluded(df)
+
+# LIVE scoring — single source of truth (shared with Review / Records / View modal).
+# Stored alignment_score / auto_recommendation are a scan-time snapshot that goes stale
+# when org profile / donor intel / scoring logic change; recompute fresh so the Screen
+# buckets + Score column match the Review gauge. Cached, busted by a profile signature.
+if not df.empty:
+    import json as _json_live
+    import hashlib as _hashlib_live
+    from core import org_profile as _op_live, settings as _stg_live
+    from core.assessment import assess_row as _assess_row
+
+    _prof_sig = _hashlib_live.sha1(
+        (_json_live.dumps(_op_live.get_profile(), sort_keys=True, default=str)
+         + _json_live.dumps(_stg_live.get_org(), sort_keys=True, default=str)).encode()
+    ).hexdigest()[:12]
+
+    @st.cache_data(ttl=600, show_spinner="Scoring rows…")
+    def _live_scores(prof_sig: str, rows_json: str) -> dict:
+        rows = _json_live.loads(rows_json)
+        return {r.get("uid"): _assess_row(r) for r in rows if r.get("uid")}
+
+    try:
+        _sc = _live_scores(_prof_sig, _json_live.dumps(df.to_dict("records"), default=str))
+        df["alignment_score"] = df["uid"].map(lambda u: (_sc.get(u) or {}).get("alignment_score"))
+        df["auto_recommendation"] = df["uid"].map(lambda u: (_sc.get(u) or {}).get("auto_recommendation"))
+    except Exception:
+        pass
 # Canonical (non-duplicate) rows — what we actually "screened" this week.
 # A row flagged as duplicate-of an RFP in another week shouldn't keep the
 # page open by itself, so we treat unique-empty as "nothing screened".

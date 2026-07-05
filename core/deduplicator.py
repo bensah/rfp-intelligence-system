@@ -216,7 +216,12 @@ def find_duplicates(
         ):
             shared = (_distinctive_tokens(cand_title)
                       & _distinctive_tokens(_norm_title(row.get("opportunity_title"))))
-            if sim >= 0.55 or len(shared) >= 2:
+            # STRICT threshold: sim >= 0.75 OR >= 3 shared DISTINCTIVE tokens. Funders
+            # like Grand Challenges run MANY distinct calls closing the same day, so a
+            # weak overlap (2 generic tokens like "cost"/"innovations" at 35% sim) is a
+            # false positive — the IDRC true-dup has 6 shared tokens, the diarrheal one
+            # 82% sim, so the real duplicates still clear this bar.
+            if sim >= 0.75 or len(shared) >= 3:
                 matches.append({**row, "_reason":
                                 f"funder + deadline + title overlap "
                                 f"(sim={sim:.0%}, shared={sorted(shared)[:4]})"})
@@ -234,6 +239,84 @@ def find_duplicates(
             matches.append({**row, "_reason": "funder + deadline + value match"})
 
     return matches
+
+
+def _dup_blank(v: Any) -> bool:
+    return v is None or v == "" or v == [] or str(v).strip().lower() == "nan"
+
+
+_RECONCILE_KEYS = (
+    "call_submission_deadline", "call_award_value", "call_domain_areas",
+    "call_geographic_scope", "brief_description",
+)
+# Fields worth gap-filling onto the surviving canonical from a flagged duplicate,
+# so consolidating two rows never loses data (e.g. a migration row's project_duration).
+_RECONCILE_FILL = (
+    "call_submission_deadline", "call_award_value", "currency", "project_duration",
+    "call_domain_areas", "call_geographic_scope", "brief_description",
+    "opportunity_id", "funding_opportunity_number",
+)
+
+
+def _completeness(r: Mapping[str, Any]) -> int:
+    return sum(1 for k in _RECONCILE_KEYS if not _dup_blank(r.get(k)))
+
+
+def reconcile_duplicates(dry_run: bool = True) -> dict[str, Any]:
+    """Reconcile duplicates that are ALREADY stored (both rows inserted) — the case the
+    ingest-time dedup can't fix, because it only compares a NEW candidate to existing
+    rows. Clusters every non-duplicate row with find_duplicates; in each cluster the
+    RICHEST row (human-reviewed > most complete > longest brief > oldest) stays canonical,
+    the rest are flagged is_duplicate=True → duplicate_of_uid, and any field still blank
+    on the canonical is gap-filled from the duplicate so no data is lost. Returns a report;
+    writes only when dry_run is False."""
+    sb = get_client()
+    rows = (
+        sb.table("rfp_submissions")
+        .select(
+            "uid,opportunity_id,opportunity_title,opportunity_link,funding_agency,"
+            "call_submission_deadline,call_award_value,currency,project_duration,"
+            "call_domain_areas,call_geographic_scope,brief_description,submitted_at,"
+            "funding_opportunity_number,source,decision,decision_date"
+        )
+        .eq("is_duplicate", False)
+        .execute()
+        .data
+        or []
+    )
+    # Richest first → becomes the cluster's canonical (stable, keeps the best data).
+    rows_sorted = sorted(rows, key=lambda r: (
+        -(1 if str(r.get("decision_date") or "").strip() else 0),
+        -_completeness(r),
+        -len(str(r.get("brief_description") or "")),
+        str(r.get("submitted_at") or ""),          # ties → older canonical
+    ))
+    canon: list[dict[str, Any]] = []
+    flagged: list[tuple[dict, dict]] = []
+    for r in rows_sorted:
+        m = find_duplicates(r, existing=canon)
+        if m:
+            flagged.append((r, m[0]))
+        else:
+            canon.append(r)
+
+    report = {"total": len(rows), "canonical": len(canon), "flagged": len(flagged),
+              "pairs": [], "filled": 0}
+    for dup, can in flagged:
+        patch = {f: dup.get(f) for f in _RECONCILE_FILL
+                 if _dup_blank(can.get(f)) and not _dup_blank(dup.get(f))}
+        report["pairs"].append({
+            "duplicate": dup["uid"], "canonical": can["uid"],
+            "reason": can.get("_reason"), "gap_filled": sorted(patch.keys())})
+        if not dry_run:
+            if patch:
+                sb.table("rfp_submissions").update(patch).eq("uid", can["uid"]).execute()
+                can.update(patch)          # keep in-memory canon current for later clusters
+                report["filled"] += 1
+            sb.table("rfp_submissions").update(
+                {"is_duplicate": True, "duplicate_of_uid": can["uid"]}
+            ).eq("uid", dup["uid"]).execute()
+    return report
 
 
 def _norm_oppid(s: str | None) -> str:
