@@ -496,6 +496,21 @@ def run(
         except Exception as _re:
             print(f"  (registry reconcile skipped: {_re})", file=sys.stderr)
 
+    # Duplicate reconciliation — the ingest gate only dedups a NEW candidate against
+    # existing rows; it can't merge two rows that are BOTH already stored (e.g. a
+    # migration stub + a later auto-scan of the same call). Sweep all rows post-scan so
+    # such pairs collapse to one canonical. Screening runs only (extract_only writes the
+    # separate global store, not rfp_submissions).
+    if not dry_run and not extract_only:
+        try:
+            from core.deduplicator import reconcile_duplicates
+            _dr = reconcile_duplicates(dry_run=False)
+            if _dr.get("flagged"):
+                print(f"Duplicate reconcile · flagged {_dr['flagged']} · "
+                      f"gap-filled {_dr['filled']} canonical(s)")
+        except Exception as _de:
+            print(f"  (duplicate reconcile skipped: {_de})", file=sys.stderr)
+
     wall = time.time() - wall_start
     serial_estimate = sum(b["duration"] for b in scraped)
     speedup = serial_estimate / wall if wall > 0 else 1.0
