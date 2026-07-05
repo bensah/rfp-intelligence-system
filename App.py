@@ -111,4 +111,28 @@ if not st.session_state.get("_post_login_nav_synced"):
     st.rerun()
 
 render_app_header()
-_nav.run()
+
+# Global DB-connectivity boundary: a dropped Supabase connection (internet
+# disruption / high traffic) otherwise bubbles out of any page's `.execute()` as a
+# raw redacted httpx traceback and kills the whole app. Catch ONLY transient
+# connectivity errors here and show a friendly Retry screen; re-raise everything
+# else so real bugs stay visible. The client layer already retries connections and
+# hot loaders degrade to empty — this is the last-resort net for a full outage.
+try:
+    _nav.run()
+except Exception as _exc:  # noqa: BLE001 — re-raised below unless it's connectivity
+    from db.supabase_client import get_client as _gc, is_connectivity_error
+    if not is_connectivity_error(_exc):
+        raise
+    st.error("⚠️ Can't reach the database right now.")
+    st.caption(
+        "This is almost always a brief network hiccup connecting to the database. "
+        "Wait a moment and retry — your data is safe.")
+    if st.button("🔄 Retry", type="primary", key="db_conn_retry"):
+        st.cache_data.clear()
+        try:
+            _gc.cache_clear()          # drop the cached (possibly half-open) client
+        except Exception:
+            pass
+        st.rerun()
+    st.stop()
