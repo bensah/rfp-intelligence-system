@@ -433,12 +433,31 @@ def ingest_candidates(
         # primary rather than reject the aggregator. Primary sources skip this.
         _is_agg = (cand.get("_source_class") == "aggregator"
                    or aggregators.is_aggregator(_orig_link))
-        if not dry_run and source_resolver.available() and _is_agg:
-            try:
-                if theme_eligible(cand, policies)[0]:
+        # Aggregators are SEARCH BOOSTERS, not extraction targets (owner 2026-07-06):
+        # we never store an aggregator URL. Use the listing's title + funder to find the
+        # call's OWN primary page and extract THAT — but only for calls the PRIMARY
+        # sources didn't already surface. Primaries ingest first (class-ordered), so
+        # `existing` (DB + this run's inserts) already holds them; a match means "search
+        # only what primaries missed", saving the paid lookup and keeping the primary as
+        # canonical. Theme-agnostic in pure extraction (the store keeps every sector);
+        # tenant screening keeps the theme pre-filter so we don't spend searches off-theme.
+        if not dry_run and _is_agg and source_resolver.available():
+            _agg_probe = {
+                "opportunity_title": cand.get("opportunity_title"),
+                "funding_agency": cand.get("funding_agency"),
+                "opportunity_link": _orig_link,
+                "call_submission_deadline": _iso_date(cand.get("call_submission_deadline")),
+            }
+            if find_duplicates(_agg_probe, existing=existing):
+                duplicate_unchanged += 1
+                log.info("aggregator: already found via a primary — skip search: %s",
+                         (cand.get("opportunity_title") or "")[:60])
+                continue
+            if extract_only or theme_eligible(cand, policies)[0]:
+                try:
                     source_resolver.resolve_and_enrich(cand)
-            except Exception as exc:
-                log.debug("source resolve skipped: %s", exc)
+                except Exception as exc:
+                    log.debug("source resolve skipped: %s", exc)
         # Classify on both axes — solicitation (how to apply: NOFO/RFP/CFA/EOI/…)
         # and instrument (the contract: Grant/Cooperative Agreement/Loan/…). Carried
         # onto the inserted row + the reject record, and aggregated onto the source.
