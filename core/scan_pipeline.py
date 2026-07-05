@@ -412,6 +412,11 @@ def ingest_candidates(
     for i, cand in enumerate(candidates):
         if not (cand.get("opportunity_title") or "").strip():
             continue
+        # Scraped briefs (esp. WordPress RSS content:encoded) can be raw HTML — strip it
+        # to clean text so no display ever shows literal <p>/<a> markup.
+        if isinstance(cand.get("brief_description"), str) and "<" in cand["brief_description"]:
+            from core.records import strip_html
+            cand["brief_description"] = strip_html(cand["brief_description"])
         # Aggregator hits (DevelopmentAid) hide the real call behind a paywalled
         # listing. For theme-relevant ones, resolve to the donor's OWN source
         # page (Google/Serper) and fetch THAT, so the gate below sees the real
