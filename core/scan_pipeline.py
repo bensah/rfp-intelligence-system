@@ -337,7 +337,7 @@ def ingest_candidates(
         feasibility eligibility gate; never touched the DB
     """
     if not candidates:
-        return (0, 0, 0)
+        return (0, 0, 0, 0)
 
     sb = None if dry_run else get_client()
 
@@ -373,6 +373,8 @@ def ingest_candidates(
     suppressed_seen = 0
     rejected = 0
     extracted = 0           # extract_only mode: rows written to the global store
+    store_errors = 0        # extract_only: passed the gate but the DB WRITE failed
+                            # (RLS/connectivity) — an infra error, NOT a gate decline
     _reject_records: list[dict] = []   # ML Phase 1 — labeled rejects for learning
     _source_encounters: list[dict] = []  # host registry — aggregator vs primary log
     _live_checks = 0                   # bounded HTTP liveness fetches this run
@@ -606,6 +608,13 @@ def ingest_candidates(
             # as extracted.
             if _stored_uid or cand.get("extraction_uid"):
                 extracted += 1
+            elif str(_store_reason).startswith(("store-error:", "error:")):
+                # Passed the gate but the DB write failed (e.g. RLS 42501) — an infra
+                # error, NOT a "not a fundable opportunity". Count + log it separately so
+                # a store outage is unmistakable and never hides as a policy decline.
+                store_errors += 1
+                log.error("extract STORE ERROR (passed gate, write failed): %s — %s",
+                          cand.get("opportunity_title", "")[:60], _store_reason)
             else:
                 rejected += 1
                 log.info("extract reject: %s — %s",
@@ -832,18 +841,19 @@ def ingest_candidates(
         except Exception as exc:
             log.debug("source_registry unavailable: %s", exc)
 
-    # Return the rejected count up the stack so it lands in scan_logs.
+    # Return the rejected count up the stack so it lands in scan_logs. The 4th value,
+    # store_errors, is DB-write failures (extract_only) — surfaced apart from declines.
     log.info(
         "scan ingest: inserted=%d updated=%d unchanged_dups=%d "
-        "suppressed_seen=%d rejected=%d",
-        inserted, updated, duplicate_unchanged, suppressed_seen, rejected,
+        "suppressed_seen=%d rejected=%d store_errors=%d",
+        inserted, updated, duplicate_unchanged, suppressed_seen, rejected, store_errors,
     )
     if extract_only:
         # "new" column carries the extracted count; nothing inserted into Screened.
-        return (extracted, 0, rejected)
+        return (extracted, 0, rejected, store_errors)
     # Previously-seen suppressions are de-dup outcomes, not new rows — fold them
     # into the duplicate count so KPIs/logs don't read them as fresh finds.
-    return (inserted + updated, duplicate_unchanged + suppressed_seen, rejected)
+    return (inserted + updated, duplicate_unchanged + suppressed_seen, rejected, store_errors)
 
 
 # ---------------------------------------------------------------------------
@@ -921,8 +931,8 @@ def run_screening(*, dry_run: bool = False, status: str = "Open",
         before = 0 if dry_run else _count()
         # llm_adjudicate=True: regex-first, then LLM ONLY for silent-geography
         # survivors (bounded by the per-process LLM call cap).
-        eligible, dup, rejected = ingest_candidates(
-            cands, dry_run=dry_run, llm_adjudicate=True)
+        eligible, dup, rejected, _store_err = ingest_candidates(
+            cands, dry_run=dry_run, llm_adjudicate=True)   # screening: no store writes
         added = max(0, (_count() - before)) if not dry_run else 0
         res = {"considered": len(cands), "eligible": eligible, "added": added,
                "already_tracked": max(0, eligible - added), "rejected": rejected}
