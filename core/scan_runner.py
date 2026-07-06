@@ -82,21 +82,31 @@ def run_scan_now(triggered_by: str = "manual", timeout_sec: int = 900, *,
     m = re.search(
         r"Scan done\D*(\d+) source\(s\)\D+(\d+) found\D+(\d+) new\D+(\d+) dup"
         r"\D+(\d+) declined", stdout_full or "")
+    # Store-write errors (RLS/DB) are reported separately from declines — surface them
+    # loudly so an infra problem is never mistaken for "nothing was fundable".
+    _se_m = re.search(r"(\d+) store-error", stdout_full or "")
+    _store_errors = int(_se_m.group(1)) if _se_m else 0
+    _se_note = ("" if not _store_errors else
+                f" ⚠ **{_store_errors} store-write error(s)** — these PASSED the gate but "
+                "couldn't be saved (DB/RLS); they are NOT declines. Check the log.")
     if ok and m:
         s, f, nw, dp, dc = m.groups()
         if extract_only:
             msg = (f"✓ Extraction complete — **{s}** sources · {f} found · "
                    f"**{nw} extracted** into the global store · {dc} not a fundable "
-                   "opportunity. Run **My eligible funding** to screen them for your org.")
+                   "opportunity. Run **My eligible funding** to screen them for your org."
+                   + _se_note)
         else:
             msg = (f"✓ Scan complete — **{s}** sources · {f} found · **{nw} new** · "
-                   f"{dp} duplicate · {dc} declined by the eligibility policy.")
+                   f"{dp} duplicate · {dc} declined by the eligibility policy." + _se_note)
     elif ok:
-        msg = f"✓ {label} complete."
+        msg = f"✓ {label} complete." + _se_note
     else:
         msg = f"{label} exited with errors."
-    st.session_state["admin_scan_banner"] = {"ok": ok, "msg": msg}
-    (st.success if ok else st.error)(msg)
+    # A store-write error means the run didn't fully succeed even if it exited 0.
+    _clean_ok = ok and _store_errors == 0
+    st.session_state["admin_scan_banner"] = {"ok": _clean_ok, "msg": msg}
+    (st.success if _clean_ok else st.warning if ok else st.error)(msg)
 
     with st.expander(f"{label} full log", expanded=not ok):
         st.code(stdout_full or "(no output)", language="text")
@@ -139,7 +149,7 @@ def _stream_scan(cmd: list[str], label: str, timeout_sec: int) -> tuple[str, boo
     logbox = box.empty()
 
     total, done, phase = 0, 0, "scrape"
-    agg = {"found": 0, "extracted": 0, "rejected": 0, "evaluated": 0}
+    agg = {"found": 0, "extracted": 0, "rejected": 0, "evaluated": 0, "store_errors": 0}
     tail: "deque[str]" = deque(maxlen=14)
     full: list[str] = []
     start = _time.time()
@@ -158,10 +168,12 @@ def _stream_scan(cmd: list[str], label: str, timeout_sec: int) -> tuple[str, boo
                 f"🔎 **Crawling sources** · **{done}/{total or '…'}** done · "
                 f"**{agg['found']}** links found · ⏱ {clock}")
         else:
+            _serr = (f" · ⚠ **{agg['store_errors']}** store-write error(s)"
+                     if agg["store_errors"] else "")
             metric.markdown(
                 f"⛏ **Extracting** · **{done}/{total or '…'}** sources · "
-                f"**{agg['extracted']}** extracted · **{agg['rejected']}** rejected "
-                f"· ⏱ {clock}")
+                f"**{agg['extracted']}** extracted · **{agg['rejected']}** rejected"
+                f"{_serr} · ⏱ {clock}")
 
     _render()
     while True:
@@ -203,11 +215,14 @@ def _stream_scan(cmd: list[str], label: str, timeout_sec: int) -> tuple[str, boo
                     agg["extracted"] += int(evt.get("new", 0) or 0)
                     agg["rejected"] += int(evt.get("rejected", 0) or 0)
                     agg["evaluated"] += int(evt.get("found", 0) or 0)
+                    _se = int(evt.get("store_err", 0) or 0)
+                    agg["store_errors"] += _se
                     current.markdown(
                         f"⛏ {evt.get('source', '')} — "
                         f"**{evt.get('new', 0)}** extracted · "
                         f"{evt.get('rejected', 0)} rejected · "
-                        f"{evt.get('found', 0)} evaluated")
+                        f"{evt.get('found', 0)} evaluated"
+                        + (f" · ⚠ {_se} store-write error(s)" if _se else ""))
                 _render()
         elif s.strip():
             tail.append(s)
