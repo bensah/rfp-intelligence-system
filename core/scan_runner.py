@@ -93,9 +93,11 @@ def run_scan_now(triggered_by: str = "manual", timeout_sec: int = 900, *,
         s, f, nw, dp, dc = m.groups()
         if extract_only:
             msg = (f"✓ Extraction complete — **{s}** sources · {f} found · "
-                   f"**{nw} extracted** into the global store · {dc} not a fundable "
-                   "opportunity. Run **My eligible funding** to screen them for your org."
-                   + _se_note)
+                   f"**{nw} extracted** into the shared curated store · {dc} not a "
+                   "fundable opportunity. This is a platform/admin job — the curated "
+                   "store now feeds every tenant's eligibility screening. (Only if you're "
+                   "acting for a specific tenant, run that tenant's **My Eligible "
+                   "Funding**.)" + _se_note)
         else:
             msg = (f"✓ Scan complete — **{s}** sources · {f} found · **{nw} new** · "
                    f"{dp} duplicate · {dc} declined by the eligibility policy." + _se_note)
