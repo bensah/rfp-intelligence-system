@@ -306,12 +306,20 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
 def extract_and_store(candidate: dict[str, Any], policies: dict[str, Any], *,
                       scan_year: int | None = None, use_llm: bool = True,
                       llm_arbiter=None) -> tuple[str | None, str]:
-    """Build + upsert into extracted_solicitations. Returns (uid|None, reason)."""
+    """Build + upsert into extracted_solicitations. Returns (uid|None, reason).
+
+    A None uid with a `store-error:` reason means the record PASSED the gate but the DB
+    WRITE failed (RLS/connectivity) — an infra error the caller must count apart from a
+    gate DECLINE (a genuine "not a fundable opportunity"). A gate reject returns the
+    gate's own verdict as the reason."""
     rec, reason = build_record(candidate, policies, scan_year=scan_year,
                                use_llm=use_llm, llm_arbiter=llm_arbiter)
     if rec is None:
-        return None, reason
-    return extracted_store.upsert_extracted(rec), reason
+        return None, reason                       # gate DECLINE — reason = gate verdict
+    uid = extracted_store.upsert_extracted(rec)
+    if uid is None:                               # gate PASSED but the write failed
+        return None, "store-error: write to extracted_solicitations failed (see log)"
+    return uid, reason
 
 
 if __name__ == "__main__":  # offline smoke test (gate + build, no store write)
