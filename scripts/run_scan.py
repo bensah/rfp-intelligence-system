@@ -470,7 +470,7 @@ def run(
     # Phase 2: sequential ingest (preserves dedup state)
     # -------------------------------------------------------------------
     totals = {"sources": 0, "found": 0, "new": 0, "duplicate": 0,
-              "rejected": 0, "errors": 0}
+              "rejected": 0, "store_errors": 0, "errors": 0}
     _emit_progress("ingest_start", total=len(scraped), phase="ingest")
     for batch in scraped:
         name = batch["name"]
@@ -482,9 +482,10 @@ def run(
         new = 0
         dup = 0
         rejected = 0
+        store_err = 0
         if batch["results"]:
             try:
-                new, dup, rejected = ingest_candidates(
+                new, dup, rejected, store_err = ingest_candidates(
                     batch["results"], dry_run=dry_run, extract_only=extract_only,
                 )
             except Exception as exc:
@@ -503,18 +504,26 @@ def run(
         totals["new"] += new
         totals["duplicate"] += dup
         totals["rejected"] += rejected
+        totals["store_errors"] += store_err
         totals["sources"] += 1
+        # A store-write failure (RLS/DB) is NOT a decline — fold it into this source's
+        # errors so it shows in the Extraction-history "Errors" column, unmistakably.
+        if store_err:
+            _se = f"{store_err} store-write error(s) — passed gate but DB write failed"
+            err = (err + " | " if err else "") + _se
 
         status = "ERR" if err else "ok "
         print(
             f"  [{status}] {name:40} found={found}  new={new}  dup={dup}  "
-            f"declined={rejected}  ({duration:.2f}s)"
+            f"declined={rejected}"
+            + (f"  store_err={store_err}" if store_err else "")
+            + f"  ({duration:.2f}s)"
             + (f"  {err}" if err else "")
         )
-        # Live per-source ingest result (extracted vs rejected) for the UI counter.
+        # Live per-source ingest result (extracted vs rejected + store errors) for the UI.
         _emit_progress("ingested", i=totals["sources"], total=len(scraped),
                        source=name, found=found, new=new, dup=dup,
-                       rejected=rejected, err=bool(err))
+                       rejected=rejected, store_err=store_err, err=bool(err))
 
         if not dry_run:
             try:
@@ -559,6 +568,7 @@ def run(
         f"Scan done · {totals['sources']} source(s) · "
         f"{totals['found']} found · {totals['new']} new · "
         f"{totals['duplicate']} dup · {totals['rejected']} declined · "
+        f"{totals['store_errors']} store-error(s) · "
         f"{totals['errors']} error(s) · "
         f"wall={wall:.1f}s (serial would be ~{serial_estimate:.0f}s, "
         f"speedup ×{speedup:.1f})"
