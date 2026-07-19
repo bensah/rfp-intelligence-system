@@ -149,6 +149,11 @@ _GLOBAL_CSS = f"""
     visibility: visible !important;
     width: 4.2rem !important;
     min-width: 4.2rem !important;
+    /* Stack the collapsed rail ABOVE the main content panel (but below the top
+       bar at 1000000) so the hover-peek flyout — which overflows past the rail
+       into the main area — paints ON TOP instead of behind the white page. */
+    position: relative !important;
+    z-index: 999999 !important;
   }}
   /* Rail: clip nav labels; hide the user block (signed-in / logout /
      footer) and the wide logo — all return in the expanded state. */
@@ -252,7 +257,9 @@ _GLOBAL_CSS = f"""
      or the flyout is clipped at the icon's edge (shows only "H." instead of
      "Home"). */
   section[data-testid="stSidebar"][aria-expanded="false"],
+  section[data-testid="stSidebar"][aria-expanded="false"] > div:first-child,
   section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"],
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarUserContent"],
   section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNav"],
   section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavItems"],
   section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLinkContainer"],
