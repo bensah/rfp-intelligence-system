@@ -234,6 +234,47 @@ _GLOBAL_CSS = f"""
     margin-left: auto !important;
     margin-right: auto !important;
   }}
+  /* …but the icon still points « (collapse). Because we reuse the collapse toggle
+     rather than Streamlit's native expand button, its glyph never flips. In the
+     collapsed rail the button EXPANDS, so mirror the chevron to point » (outward). */
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"],
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] svg {{
+    transform: scaleX(-1) !important;
+  }}
+
+  /* ── Hover-to-peek labels on the collapsed rail ───────────────────
+     Mousing over a rail icon reveals its page name as a flyout to the right
+     (no reflow — the layout doesn't move). The label markdown is hidden by
+     default (rule above); on hover we float it out of the rail. Let the flyout
+     escape the rail's clipping (the rail has few items, so dropping the scroll
+     overflow is harmless). */
+  section[data-testid="stSidebar"][aria-expanded="false"],
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"],
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNav"],
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavItems"] {{
+    overflow: visible !important;
+  }}
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"] {{
+    position: relative !important;
+  }}
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"]:hover [data-testid="stMarkdownContainer"] {{
+    display: block !important;
+    position: absolute !important;
+    left: calc(100% + 0.35rem) !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    white-space: nowrap !important;
+    background: {THEME_HEADER_BG} !important;
+    color: {THEME_HEADER_TEXT} !important;
+    padding: 0.3rem 0.65rem !important;
+    border-radius: 6px !important;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28) !important;
+    z-index: 1000002 !important;         /* above the rail AND the top bar */
+    pointer-events: none !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+  }}
 
   /* Headings — match existing Home-page style and propagate to every page */
   h1, h2, h3, h4 {{
