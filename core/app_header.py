@@ -248,10 +248,15 @@ _GLOBAL_CSS = f"""
      default (rule above); on hover we float it out of the rail. Let the flyout
      escape the rail's clipping (the rail has few items, so dropping the scroll
      overflow is harmless). */
+     ALL the way down to the nav link + its container must be overflow:visible,
+     or the flyout is clipped at the icon's edge (shows only "H." instead of
+     "Home"). */
   section[data-testid="stSidebar"][aria-expanded="false"],
   section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"],
   section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNav"],
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavItems"] {{
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavItems"],
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLinkContainer"],
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"] {{
     overflow: visible !important;
   }}
   section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"] {{
@@ -263,6 +268,10 @@ _GLOBAL_CSS = f"""
     left: calc(100% + 0.35rem) !important;
     top: 50% !important;
     transform: translateY(-50%) !important;
+    width: max-content !important;       /* size to the text, don't inherit the icon's width */
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
     white-space: nowrap !important;
     background: {THEME_HEADER_BG} !important;
     color: {THEME_HEADER_TEXT} !important;
@@ -274,6 +283,14 @@ _GLOBAL_CSS = f"""
     font-size: 0.85rem !important;
     font-weight: 600 !important;
     line-height: 1.2 !important;
+  }}
+  /* Belt-and-braces: the label's inner <p>/text must not wrap or ellipsize. */
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"]:hover [data-testid="stMarkdownContainer"] * {{
+    white-space: nowrap !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    max-width: none !important;
+    display: inline !important;
   }}
 
   /* Headings — match existing Home-page style and propagate to every page */
