@@ -127,9 +127,13 @@ _GLOBAL_CSS = f"""
   [data-testid="stSidebarHeader"] {{
     padding-top: 0.2rem !important;
   }}
+  /* Floating » control (mobile hamburger; also any version that renders it on
+     desktop): keep it above the fixed top bar and clickable. */
   [data-testid="stExpandSidebarButton"] {{
     top: calc({THEME_HEADER_H} + 0.4rem) !important;   /* below the fixed app bar */
     left: 0.6rem !important;
+    z-index: 1000001 !important;                        /* above the fixed top bar */
+    pointer-events: auto !important;
   }}
 
   /* ── Click-sticky icon rail ───────────────────────────────────────
@@ -213,9 +217,38 @@ _GLOBAL_CSS = f"""
      NOTHING. We only hide the redundant in-sidebar collapse « while in the
      rail; the floating » expand control is the one that belongs there, so
      the narrow view shows a single, correctly-pointing (») arrow. */
+  /* Collapsed rail: KEEP the sidebar's own collapse/expand toggle visible. It lives
+     in the sidebar header, just below the top bar — the SAME control used to collapse.
+     It was previously hidden here in favour of Streamlit's floating » button, but that
+     button only renders when the sidebar is slid fully OFF-screen; our rail keeps the
+     sidebar ON-screen, so no floating button ever appeared and a collapsed sidebar
+     could not be re-opened. Keeping this toggle visible restores the expand affordance
+     right where the user collapsed it. Lift it above the fixed top bar so it stays
+     clickable, and centre it in the narrow rail. */
   section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] {{
-    display: none !important;
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    z-index: 1000001 !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
   }}
+  /* …but the icon still points « (collapse). Because we reuse the collapse toggle
+     rather than Streamlit's native expand button, its glyph never flips. In the
+     collapsed rail the button EXPANDS, so mirror the chevron to point » (outward). */
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"],
+  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] svg {{
+    transform: scaleX(-1) !important;
+  }}
+
+  /* -- Hover names on the collapsed rail -----------------------------
+     The rail shows icons only; page names appear as NATIVE browser tooltips
+     on hover (title attributes stamped by a tiny JS component in
+     render_app_header). A pure-CSS flyout was abandoned: across Streamlit's
+     nested overflow + stacking contexts it was clipped, or painted behind
+     the main content panel. Native tooltips render above ALL page content
+     regardless of z-index/overflow, so they Just Work. */
 
   /* Headings — match existing Home-page style and propagate to every page */
   h1, h2, h3, h4 {{
@@ -868,6 +901,36 @@ def render_app_header() -> None:
     """
     # ────────────────── Global theme CSS ──────────────────────────────
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
+
+    # ── Native hover tooltips on the collapsed icon rail ───────────────
+    # The collapsed rail shows page icons only. A CSS flyout label proved
+    # fragile — across Streamlit's nested overflow + stacking contexts it was
+    # clipped, or painted behind the main content panel. Native browser
+    # `title` tooltips render above ALL page content regardless of
+    # z-index/overflow, so stamp each sidebar nav link with its page name from
+    # this 0-height helper. The component iframe is same-origin, so it can
+    # reach the app DOM via window.parent.document; a MutationObserver
+    # re-applies the titles after Streamlit re-renders the nav.
+    from streamlit.components.v1 import html as _components_html
+    _components_html(
+        """
+        <script>
+        const doc = window.parent.document;
+        function stampTitles() {
+          doc.querySelectorAll('[data-testid="stSidebarNavLink"]').forEach(function (a) {
+            const lbl = a.querySelector('[data-testid="stMarkdownContainer"]');
+            const txt = lbl ? (lbl.textContent || '').trim() : '';
+            if (txt && a.getAttribute('title') !== txt) a.setAttribute('title', txt);
+          });
+        }
+        stampTitles();
+        try {
+          new MutationObserver(stampTitles).observe(doc.body, {childList: true, subtree: true});
+        } catch (e) {}
+        </script>
+        """,
+        height=0,
+    )
 
     # ────────────────── Hide user-menu pages from the sidebar ─────────
     # Profile / Help / Settings are registered with st.navigation (so they

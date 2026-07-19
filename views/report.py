@@ -629,7 +629,7 @@ def _load_rfps() -> pd.DataFrame:
         "decision,auto_recommendation,donor_decision,progress_status,stage,"
         "alignment_score,call_award_value,currency,"
         "amount_requested,amount_secured,currency_secured,"
-        "call_geographic_scope,program_area,decision_overridden_by,"
+        "call_geographic_scope,call_domain_areas,decision_overridden_by,"
         "proposal_lead,contributors,reviewers,"
         "lead_applicant,sub_applicant,"
         "is_duplicate,review_week,applicant_role"
@@ -964,7 +964,7 @@ def _safe_for_excel(df: pd.DataFrame) -> pd.DataFrame:
         which is most of the failures we see.
       * inf / -inf                — openpyxl raises ValueError.
       * lists / dicts             — comes from Postgres array columns
-        (call_geographic_scope, program_area). JSON-stringify them.
+        (call_geographic_scope, call_domain_areas). JSON-stringify them.
       * other non-primitive types — fall back to str().
     """
     if df is None or df.empty:
