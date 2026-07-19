@@ -149,11 +149,6 @@ _GLOBAL_CSS = f"""
     visibility: visible !important;
     width: 4.2rem !important;
     min-width: 4.2rem !important;
-    /* Stack the collapsed rail ABOVE the main content panel (but below the top
-       bar at 1000000) so the hover-peek flyout — which overflows past the rail
-       into the main area — paints ON TOP instead of behind the white page. */
-    position: relative !important;
-    z-index: 999999 !important;
   }}
   /* Rail: clip nav labels; hide the user block (signed-in / logout /
      footer) and the wide logo — all return in the expanded state. */
@@ -247,58 +242,13 @@ _GLOBAL_CSS = f"""
     transform: scaleX(-1) !important;
   }}
 
-  /* ── Hover-to-peek labels on the collapsed rail ───────────────────
-     Mousing over a rail icon reveals its page name as a flyout to the right
-     (no reflow — the layout doesn't move). The label markdown is hidden by
-     default (rule above); on hover we float it out of the rail. Let the flyout
-     escape the rail's clipping (the rail has few items, so dropping the scroll
-     overflow is harmless). */
-     ALL the way down to the nav link + its container must be overflow:visible,
-     or the flyout is clipped at the icon's edge (shows only "H." instead of
-     "Home"). */
-  section[data-testid="stSidebar"][aria-expanded="false"],
-  section[data-testid="stSidebar"][aria-expanded="false"] > div:first-child,
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarContent"],
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarUserContent"],
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNav"],
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavItems"],
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLinkContainer"],
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"] {{
-    overflow: visible !important;
-  }}
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"] {{
-    position: relative !important;
-  }}
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"]:hover [data-testid="stMarkdownContainer"] {{
-    display: block !important;
-    position: absolute !important;
-    left: calc(100% + 0.35rem) !important;
-    top: 50% !important;
-    transform: translateY(-50%) !important;
-    width: max-content !important;       /* size to the text, don't inherit the icon's width */
-    max-width: none !important;
-    overflow: visible !important;
-    text-overflow: clip !important;
-    white-space: nowrap !important;
-    background: {THEME_HEADER_BG} !important;
-    color: {THEME_HEADER_TEXT} !important;
-    padding: 0.3rem 0.65rem !important;
-    border-radius: 6px !important;
-    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28) !important;
-    z-index: 1000002 !important;         /* above the rail AND the top bar */
-    pointer-events: none !important;
-    font-size: 0.85rem !important;
-    font-weight: 600 !important;
-    line-height: 1.2 !important;
-  }}
-  /* Belt-and-braces: the label's inner <p>/text must not wrap or ellipsize. */
-  section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarNavLink"]:hover [data-testid="stMarkdownContainer"] * {{
-    white-space: nowrap !important;
-    overflow: visible !important;
-    text-overflow: clip !important;
-    max-width: none !important;
-    display: inline !important;
-  }}
+  /* -- Hover names on the collapsed rail -----------------------------
+     The rail shows icons only; page names appear as NATIVE browser tooltips
+     on hover (title attributes stamped by a tiny JS component in
+     render_app_header). A pure-CSS flyout was abandoned: across Streamlit's
+     nested overflow + stacking contexts it was clipped, or painted behind
+     the main content panel. Native tooltips render above ALL page content
+     regardless of z-index/overflow, so they Just Work. */
 
   /* Headings — match existing Home-page style and propagate to every page */
   h1, h2, h3, h4 {{
@@ -951,6 +901,36 @@ def render_app_header() -> None:
     """
     # ────────────────── Global theme CSS ──────────────────────────────
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
+
+    # ── Native hover tooltips on the collapsed icon rail ───────────────
+    # The collapsed rail shows page icons only. A CSS flyout label proved
+    # fragile — across Streamlit's nested overflow + stacking contexts it was
+    # clipped, or painted behind the main content panel. Native browser
+    # `title` tooltips render above ALL page content regardless of
+    # z-index/overflow, so stamp each sidebar nav link with its page name from
+    # this 0-height helper. The component iframe is same-origin, so it can
+    # reach the app DOM via window.parent.document; a MutationObserver
+    # re-applies the titles after Streamlit re-renders the nav.
+    from streamlit.components.v1 import html as _components_html
+    _components_html(
+        """
+        <script>
+        const doc = window.parent.document;
+        function stampTitles() {
+          doc.querySelectorAll('[data-testid="stSidebarNavLink"]').forEach(function (a) {
+            const lbl = a.querySelector('[data-testid="stMarkdownContainer"]');
+            const txt = lbl ? (lbl.textContent || '').trim() : '';
+            if (txt && a.getAttribute('title') !== txt) a.setAttribute('title', txt);
+          });
+        }
+        stampTitles();
+        try {
+          new MutationObserver(stampTitles).observe(doc.body, {childList: true, subtree: true});
+        } catch (e) {}
+        </script>
+        """,
+        height=0,
+    )
 
     # ────────────────── Hide user-menu pages from the sidebar ─────────
     # Profile / Help / Settings are registered with st.navigation (so they
