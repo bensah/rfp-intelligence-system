@@ -127,9 +127,13 @@ _GLOBAL_CSS = f"""
   [data-testid="stSidebarHeader"] {{
     padding-top: 0.2rem !important;
   }}
+  /* Floating » control (mobile hamburger; also any version that renders it on
+     desktop): keep it above the fixed top bar and clickable. */
   [data-testid="stExpandSidebarButton"] {{
     top: calc({THEME_HEADER_H} + 0.4rem) !important;   /* below the fixed app bar */
     left: 0.6rem !important;
+    z-index: 1000001 !important;                        /* above the fixed top bar */
+    pointer-events: auto !important;
   }}
 
   /* ── Click-sticky icon rail ───────────────────────────────────────
@@ -213,8 +217,22 @@ _GLOBAL_CSS = f"""
      NOTHING. We only hide the redundant in-sidebar collapse « while in the
      rail; the floating » expand control is the one that belongs there, so
      the narrow view shows a single, correctly-pointing (») arrow. */
+  /* Collapsed rail: KEEP the sidebar's own collapse/expand toggle visible. It lives
+     in the sidebar header, just below the top bar — the SAME control used to collapse.
+     It was previously hidden here in favour of Streamlit's floating » button, but that
+     button only renders when the sidebar is slid fully OFF-screen; our rail keeps the
+     sidebar ON-screen, so no floating button ever appeared and a collapsed sidebar
+     could not be re-opened. Keeping this toggle visible restores the expand affordance
+     right where the user collapsed it. Lift it above the fixed top bar so it stays
+     clickable, and centre it in the narrow rail. */
   section[data-testid="stSidebar"][aria-expanded="false"] [data-testid="stSidebarCollapseButton"] {{
-    display: none !important;
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    z-index: 1000001 !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
   }}
 
   /* Headings — match existing Home-page style and propagate to every page */
