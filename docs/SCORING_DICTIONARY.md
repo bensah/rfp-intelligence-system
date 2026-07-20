@@ -256,7 +256,7 @@ unless noted; 🔒 marks a fatal gate (failing it auto-Declines).
 |---|---|---|
 | `comp_track` | Track record in this program area | `band(min(org domain rating, donor priority))` — donor priority defaults 5; 4–5→High · 2–3→Moderate |
 | `comp_age` | Established (10+ years) | Org founding year known |
-| `comp_portal` | Familiar with the donor's portal | Registered on the donor/call portal (was MUST-5 funding-platform) |
+| `comp_portal` | Familiar with the donor's portal | True when (a) an ACTIVE portal registration host matches the donor/call portal host — **sub-domain-aware** (`gavi.org` credits `portal.gavi.org`) — OR (b) the org has a **working relationship** with the funder (past/current grantee, active, or engaged donor), since having worked with a funder implies portal familiarity. (b) overlaps PREFER-7 by design. |
 | `comp_route` | Funding route accessible | Donor offers route(s); `org_funding_routes` overlaps ≥1 (was MUST-5, no longer fatal) |
 | `comp_grassroots` | Grassroots / local-org status | Donor flags grassroots/local; org is |
 | `comp_multi` | Multi-country presence | `multi_country_encouraged`; org is MCO |
