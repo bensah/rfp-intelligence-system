@@ -39,7 +39,7 @@
 > fires only when the org *explicitly fails an active 🔒 non-dynamic factor* — a MUST-1
 > identity gate, no MUST-4 geographic reach, or an inaccessible MUST-5 funding route. Other
 > hard gaps (SAM, MOUs, ceilings) lower the score and **Park** for review. MUST 1 = legal
-> identity; the stage/budget/prior-grant ceilings live in **MUST 3**; MUST 5 is the
+> identity; the budget/prior-grant ceilings live in **MUST 3**; MUST 5 is the
 > compliance hub. PREFER 7 = **Donor relationship**.
 
 Each opportunity is judged on **org × donor × RFP** — the deploying org's profile
@@ -58,7 +58,7 @@ routes to review, not a zero. Internal keys in parentheses.
 |---|---|---|---|
 | MUST 1 | **Legal status & qualification** (`qualification`) | Yes, fully (2) · Mostly, one item unclear (1) · No, not eligible (0) · Not sure (→1) | **Legal IDENTITY, up to 6 items (🔒 fatal):** legal type admitted · entity type · HQ country · **registration** (explicit rule, or the call's geo-scope as a proxy) · individual-PI · **prior-beneficiary** (active only when the donor states a rule → org must be in `funder_history`/`active_donors`). Active items only; any active item explicitly failed → **auto-Decline**. No active item → Not sure. |
 | MUST 2 | **Strategic fit** (`strategic_fit`) | Strongly aligns (2) · Limited priority (1) · Off-strategy (0) · Not sure (→1) | ONE component — best-matched theme's priority band (min of org-band, call-band) across the org's graded `program_area_ratings` ∩ the donor/RFP priorities. No call/org theme data → Not sure. |
-| MUST 3 | **Implementation capacity** (`capacity`) | Yes, comfortably (2) · Yes, but a stretch (1) · No, beyond us (0) · Not sure (→1) | Up to 5 components: **org stage · annual-budget ceiling · prior-grant ceiling** (these 3 moved here from MUST 1) · **experience** (call-stated) · **award-absorption** = realistic ask `min(award, funding_target_max)` vs `largest_grant_usd` **stretched** by experience/stage/#grants. Each active only when stated/determinable. |
+| MUST 3 | **Implementation capacity** (`capacity`) | Yes, comfortably (2) · Yes, but a stretch (1) · No, beyond us (0) · Not sure (→1) | Up to 4 components: **annual-budget ceiling · prior-grant ceiling** (moved here from MUST 1) · **experience** (call-stated years) · **award-absorption** = realistic ask `min(award, funding_target_max)` vs `largest_grant_usd` **stretched** by experience/stage/#grants. Each active only when stated/determinable. *("Org stage" retired 2026-07-20 — redundant with Experience; org stage still feeds the award-absorption stretch and the PREFER-8 age edge.)* |
 | MUST 4 | **Geographic fit** (`geographic_fit`) | Yes, our own presence (2) · Yes, via a partner (1) · No presence there (0) · Not sure (→1) | ONE tiered component. Scope = call ∪ donor (with **US-only / grants.gov** inference → United States). `countries_registered` ∩ scope → own presence; operating country / qualifying partner → via partner; inclusive tiers (LMIC/global) credited. 🔒 **No reach → fatal (auto-Decline)**. No scope at all → Not sure. |
 | MUST 5 | **Cofinancing & compliance** (`cofinancing`) | Yes, none required (2) · Partial, with effort (1) · No, required (0) · Not sure (→1) | **Compliance hub** (see §2). ONE soft component — co-financing/pre-finance capacity (0/0.5/1); the rest are hard 0/1 gates active only when the donor/call imposes them. **No fatal gate** — every gate is acquirable before the deadline, so an unmet one lowers the score / Parks (never auto-Declines). Nothing imposed → Not sure. |
 | PREFER 6 | **Funding quality** (`funding_quality`) | High (2) · Moderate (1) · Low (0) · Not sure (→1) | **Mean of the MET active components** — floor/ceiling/value-stated + duration (see §7). An **unstated duration is excluded** (its absence neither helps nor hurts), so all *stated* components met → **High**. Falls back to the award-size band vs `funding_target_low/mid/max` when the org set no targets. No award value → Not sure. |
@@ -213,7 +213,7 @@ unless noted; 🔒 marks a fatal gate (failing it auto-Declines).
 ### MUST 3 · Implementation capacity (`capacity`)
 | Key | Component | Active / scored |
 |---|---|---|
-| `org_stage` | Org stage fit | Donor states an early-stage/established preference |
+| ~~`org_stage`~~ | ~~Org stage fit~~ | **Retired 2026-07-20** — redundant with `experience` (both matched org maturity vs the call's bar). Org stage still feeds the award-absorption *stretch* and the PREFER-8 `comp_age` edge. |
 | `budget_ceiling` | Annual-budget ceiling | Donor caps by org budget; org `annual_budget` within it |
 | `grant_ceiling` | Prior-grant ceiling | Donor caps by largest prior grant; org `largest_grant` within it |
 | `experience` | Track-record / experience required | Call states an experience bar |
