@@ -62,19 +62,20 @@ _SCORE_MAP = {
     "current/past grantee": 2, "some contact": 1, "none": 0,
     # competitiveness
     "strong (limited field / incumbent / clear edge)": 2, "weak (wide-open)": 0,
-    # bid_effort — 5-point (time × BD-team), collapsed to 2/1/0 for the rule
-    # engine (the finer ordinal lives in the label + days_to_deadline feature):
-    #   4 Ample+team / 3 Ample-no-team / 3 Tight+team        -> 2
-    #   2 Tight-no-team                                       -> 1
-    #   1 NotEnough+team / 0 NotEnough-no-team                -> 0  (time dominates)
-    "ample time, sufficient resources": 2,
-    "ample time, but no dedicated team": 2,
-    "tight but doable, with a team": 2,
-    "tight, and no dedicated team": 1,
-    "tight but doable, insufficient resources": 1,   # legacy 3-point label
-    "not enough time, even with a team": 0,
-    "not enough time, no team": 0,
-    "not enough": 0,                                  # legacy 3-point label
+    # bid_effort (PREFER 9) — the score is the BANDED AVERAGE of its two components:
+    # time-to-deadline (>14d=1 · 7-14d=0.5 · <7d=0) and has-BD-team (1/0). Each label
+    # encodes one (time, team) combo; its 2/1/0 here = mean banded > 0.75 → full(2) ·
+    # 0.5-0.75 → partial(1) · < 0.5 → none(0). So FULL needs BOTH ample time AND a team;
+    # any single strong side is partial. (Owner 2026-07-20: replaced the old
+    # time-dominant matrix so a BD team can offset a tight/short deadline.)
+    "ample time, sufficient resources": 2,           # time 1  + team 1 -> 1.00
+    "ample time, but no dedicated team": 1,          # time 1  + team 0 -> 0.50
+    "tight but doable, with a team": 1,              # time .5 + team 1 -> 0.75
+    "tight, and no dedicated team": 0,               # time .5 + team 0 -> 0.25
+    "tight but doable, insufficient resources": 0,   # legacy 3-point label
+    "not enough time, even with a team": 1,          # time 0  + team 1 -> 0.50
+    "not enough time, no team": 0,                   # time 0  + team 0 -> 0.00
+    "not enough": 0,                                 # legacy 3-point label
 }
 # Conservative fallback for minor MS-Form wording drift. First match wins; an
 # unrecognised response stays None (treated as missing — never a guess).
