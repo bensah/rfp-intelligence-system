@@ -277,9 +277,10 @@ def strategic_bid_strength(org: dict, rfp: dict,
 
 
 # --- MUST-3 IMPLEMENTATION CAPACITY (rework 2026-06-28; owner spec) -----------
-# Composite of up to 5 components: Org stage · Annual-budget ceiling · Prior-grant
-# ceiling (these three MOVED here from MUST-1) · Experience requirement (NEW,
-# call-LLM-detected) · Award-absorption (can the org deliver THIS award size).
+# Composite of up to 4 components: Annual-budget ceiling · Prior-grant ceiling
+# (these two MOVED here from MUST-1) · Experience requirement (call-LLM-detected) ·
+# Award-absorption (can the org deliver THIS award size). ("Org stage" was retired
+# 2026-07-20 as redundant with Experience — see capacity_factors.)
 def _org_years(org: dict) -> int | None:
     """Years the org has existed (from founding_year), or None if unknown."""
     from datetime import date as _date
@@ -343,23 +344,21 @@ def _award_absorption_score(org: dict, rfp: dict) -> float | None:
 def capacity_factors(org: dict, rfp: dict, donor: dict | None = None,
                      org_settings: dict | None = None) -> list[dict]:
     """MUST-3 components — ACTIVE-ONLY (owner 2026-06-29b). A component is active only
-    when the call/donor imposes it (org stage / budget ceiling / grant ceiling /
-    experience) OR it's determinable from org+call (award-absorption). Undetected →
-    'Not sure' (excluded). HARD: budget/grant ceilings (unknown org value → 0 → pass).
-    SOFT: org stage, experience, award-absorption. No active component → derive returns
-    'Not sure' (Park)."""
+    when the call/donor imposes it (budget ceiling / grant ceiling / experience) OR
+    it's determinable from org+call (award-absorption). Undetected → 'Not sure'
+    (excluded). HARD: budget/grant ceilings (unknown org value → 0 → pass). SOFT:
+    experience, award-absorption. No active component → derive returns 'Not sure'
+    (Park). ("Org stage" retired 2026-07-20 — redundant with Experience.)"""
     org = org or {}
     donor = donor or {}
     items: list[dict] = []
 
-    # 1. Org stage — active only when the donor requires a specific stage.
-    call_stage = _stage_family(donor.get("org_stage_required"))
-    detected = bool(call_stage and str(donor.get("org_stage_required") or "").strip().lower() != "any")
-    org_stage = _stage_family(org.get("org_stage")) or "established"
-    sc = (1.0 if call_stage == org_stage
-          else 0.5 if (call_stage == "early" and org_stage == "established")
-          else 0.0)
-    items.append(_qfactor("org_stage", "Org stage", active=detected, score=sc, hard=False))
+    # 1. (RETIRED 2026-07-20) "Org stage" was redundant with "Experience requirement" —
+    #    both matched org maturity against the call's bar (stage-category vs years). Per
+    #    owner, keep ONE maturity component (experience) and drop org-stage as a scored
+    #    component. The org's stage still informs MUST-3 via the award-absorption STRETCH
+    #    (_award_absorption_score), and org age still scores the PREFER-8 competitiveness
+    #    edge ("Established (10+ years)") — those are different roles, not a capacity gate.
 
     # 2. Annual-budget ceiling — active only when the donor states it (unknown org
     #    budget → 0 → pass below the ceiling).
