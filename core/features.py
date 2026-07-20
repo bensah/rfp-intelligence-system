@@ -55,7 +55,8 @@ _COMPONENT_KEYS: tuple[str, ...] = (
     "individual_pi", "prior_beneficiary",
     # MUST-2 strategic_fit
     "strat_fitness",
-    # MUST-3 capacity
+    # MUST-3 capacity ("org_stage" retired as a scored component 2026-07-20 — kept here
+    # for feature-order stability per the append-only contract; now always None.)
     "org_stage", "budget_ceiling", "grant_ceiling", "experience", "award_absorption",
     # MUST-4 geographic_fit
     "geo_presence",
