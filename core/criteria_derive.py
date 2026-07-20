@@ -30,7 +30,8 @@ from typing import Any
 from core import geographies as _geo
 from core import program_area_classifier as _pa
 from core.partners import clean_portal_url
-from core.scorer import bid_effort_label, days_until
+from core.scorer import (
+    BID_EFFORT_AMPLE_DAYS, BID_EFFORT_TIGHT_DAYS, bid_effort_label, days_until)
 
 _PA_KEYS = set(_pa.PROGRAM_AREA_KEYWORDS)
 
@@ -603,9 +604,15 @@ def _merge_rfp_compliance(donor: dict | None, rfp_compliance: dict | None) -> di
 #   active — the requirement is actually imposed by this RFP/donor (inactive
 #            factors are neither scored nor shown).
 def _factor(key: str, name: str, source: str, met: bool | None,
-            *, fatal: bool = False, active: bool = True) -> dict:
-    return {"key": key, "name": name, "source": source,
-            "met": met, "fatal": fatal, "active": active}
+            *, fatal: bool = False, active: bool = True,
+            score: float | None = None) -> dict:
+    d = {"key": key, "name": name, "source": source,
+         "met": met, "fatal": fatal, "active": active}
+    # Optional explicit 0/0.5/1 component score (e.g. a 3-tier deadline factor). When
+    # absent, downstream maps met→score (True→1 · False→0 · None→0.5).
+    if score is not None:
+        d["score"] = score
+    return d
 
 
 # A MUST-1 ITEM (2026-06-28 rework). Like `_factor` but score-based: an ACTIVE
@@ -1617,19 +1624,33 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
 
 
 def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dict]:
-    """PREFER-9 sub-factors: time-to-deadline × a business-development team."""
+    """PREFER-9 sub-factors: time-to-deadline × a business-development team.
+
+    Time is a 3-TIER score, not a yes/no: >14d = 1.0 (ample) · 7-14d = 0.5 (tight) ·
+    <7d = 0.0 (not enough). PREFER-9's classification is the BANDED AVERAGE of the two
+    components (see core.scorer._SCORE_MAP / review_rfp._bid_rule), so a business-dev
+    team can lift a tight (0.5) deadline to a partial PREFER-9."""
     osx = org_settings or {}
     bd = str(osx.get("org_has_bd_team", "false")).lower() == "true"
     if _is_completed(rfp):
-        # Already submitted → the time gate was met; show it as such, not "not enough".
-        time_name, time_met, time_active = "Submitted on time (already completed)", True, True
+        # Already submitted → the time gate was met; show it as full, not "not enough".
+        time_name, time_score, time_active = "Submitted on time (already completed)", 1.0, True
     else:
         days = days_until(rfp.get("call_submission_deadline"))
-        time_name = "Enough time before the deadline (>14d)"
-        time_met = (days is not None and days > 14) if days is not None else None
-        time_active = days is not None
+        time_name = "Time before the deadline (>14d full · 7-14d partial)"
+        if days is None:
+            time_score, time_active = None, False
+        elif days > BID_EFFORT_AMPLE_DAYS:            # > 14 days
+            time_score, time_active = 1.0, True
+        elif days >= BID_EFFORT_TIGHT_DAYS:           # 7-14 days
+            time_score, time_active = 0.5, True
+        else:                                          # < 7 days
+            time_score, time_active = 0.0, True
+    # met is the legacy tri-state for read-mode cards: 1.0→✓ · 0.0→✗ · 0.5/None→?
+    time_met = (None if time_score is None
+                else True if time_score >= 1.0 else False if time_score <= 0.0 else None)
     return [
-        _factor("bid_time", time_name, "R", time_met, active=time_active),
+        _factor("bid_time", time_name, "R", time_met, active=time_active, score=time_score),
         _factor("bid_team", "Has a business-development team", "G", bool(bd), active=True),
     ]
 
