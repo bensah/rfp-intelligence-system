@@ -265,5 +265,15 @@ unless noted; 🔒 marks a fatal gate (failing it auto-Declines).
 ### PREFER 9 · Bid effort (`bid_effort`)
 | Key | Component | Active / scored |
 |---|---|---|
-| `bid_time` | Time to deadline | Days until `call_submission_deadline` |
-| `bid_team` | Business-development team | `org_has_bd_team` |
+| `bid_time` | Time to deadline | Days until `call_submission_deadline`, **3-tier**: `>14d = 1.0` (ample) · `7–14d = 0.5` (tight) · `<7d = 0.0` (not enough) |
+| `bid_team` | Business-development team | `org_has_bd_team` (1 / 0) |
+
+**Classification = the banded AVERAGE of the two component scores** (mean of `bid_time` and `bid_team`):
+
+| Mean | Band |
+|---|---|
+| `> 0.75` | **Full (2)** — needs *both* ample time and a team, e.g. (1 + 1)/2 = 1.0 |
+| `0.50 – 0.75` | **Partial (1)** — one strong side, e.g. (0.5 + 1)/2 = 0.75, or (0 + 1)/2 = 0.5 |
+| `< 0.50` | **None (0)** — e.g. (0.5 + 0)/2 = 0.25, or (0 + 0)/2 = 0.0 |
+
+A business-development team can lift a *tight* or *short* deadline to Partial; it cannot alone reach Full. (Prior model was time-dominant — a `<7d` deadline forced 0 regardless of the team; changed 2026-07-20 to the averaging model above.)
