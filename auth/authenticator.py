@@ -386,11 +386,23 @@ def ensure_logged_in() -> Optional[dict[str, Any]]:
         user = st.session_state["app_user"]
         _render_sidebar_user(user)
         _gate_must_change_password(user)
+        _ensure_tenant_context(user)
         return user
     user = login_gate()
     if user:
         _gate_must_change_password(user)
+        _ensure_tenant_context(user)
     return user
+
+
+def _ensure_tenant_context(user: dict[str, Any]) -> None:
+    """Multi-tenant Phase 2: establish this session's tenant JWT after auth. DORMANT
+    until SUPABASE_JWT_SECRET is set (no-op then). Best-effort — never blocks a page."""
+    try:
+        from auth.tenant_context import ensure_tenant_context
+        ensure_tenant_context(user)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

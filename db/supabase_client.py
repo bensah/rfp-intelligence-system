@@ -94,7 +94,44 @@ _CLIENT: Client | None = None
 _CLIENT_LOCK = threading.Lock()
 
 
+def _session_tenant_client() -> Client | None:
+    """Multi-tenant Phase 2: when running INSIDE a Streamlit session that has a tenant
+    JWT (set by auth.tenant_context after login), return a PER-SESSION client authed as
+    that user — apikey stays the anon key, the Authorization bearer becomes the tenant
+    JWT — so Phase-3 RLS enforces isolation via `request.jwt.claims ->> 'tenant_id'`.
+
+    Returns None outside Streamlit (scripts / cron) and when no tenant JWT is set (i.e.
+    until SUPABASE_JWT_SECRET is configured and a tenant is selected) → callers fall back
+    to the anon singleton, so today's behaviour is unchanged. PER-SESSION (cached in
+    session_state) so one user's token can never bleed onto the shared singleton."""
+    try:
+        import streamlit as st  # type: ignore
+        ss = st.session_state
+        jwt = ss.get("_tenant_jwt")
+    except Exception:
+        return None
+    if not jwt:
+        return None
+    if ss.get("_tenant_client") is not None and ss.get("_tenant_client_jwt") == jwt:
+        return ss["_tenant_client"]
+    url = _read_secret("SUPABASE_URL")
+    key = _read_secret("SUPABASE_KEY")
+    if not url or not key:
+        return None
+    try:
+        client = create_client(url, key)
+        client.postgrest.auth(jwt)        # bearer = tenant JWT (apikey stays the anon key)
+    except Exception:
+        return None
+    ss["_tenant_client"] = client
+    ss["_tenant_client_jwt"] = jwt
+    return client
+
+
 def get_client() -> Client:
+    sc = _session_tenant_client()         # per-session tenant client when one applies
+    if sc is not None:
+        return sc
     global _CLIENT
     if _CLIENT is not None:
         return _CLIENT
