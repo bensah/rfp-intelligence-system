@@ -25,19 +25,30 @@ _JWT_SKEW = 120          # re-mint when fewer than this many seconds remain
 
 
 def jwt_secret() -> Optional[str]:
-    """The Supabase project JWT secret (Dashboard → Settings → API → JWT Secret).
-    Its presence is the on/off switch for the whole multi-tenant path."""
+    """The Supabase project JWT secret (Dashboard → Settings → JWT Keys → the legacy
+    HS256 secret). Its presence is the on/off switch for the whole multi-tenant path."""
     return _read_secret("SUPABASE_JWT_SECRET")
+
+
+def multitenant_enabled() -> bool:
+    """Multi-tenant mode is ON only when the JWT secret is configured. Everything
+    tenant-related (JWT minting, session client, Phase-4 onboarding) is dormant
+    otherwise, so the single-tenant app behaves exactly as before."""
+    return bool(jwt_secret())
 
 
 def mint_tenant_jwt(user_id: str | None, tenant_id: str | None, *,
                     user_role: str = "collaborator", email: str | None = None,
                     ttl: int = _JWT_TTL) -> Optional[str]:
-    """HS256 JWT (signed with the project JWT secret) carrying the tenant_id claim +
-    role=authenticated so PostgREST accepts it as a normal authenticated user. Returns
-    None if the secret or ids are missing, or PyJWT is unavailable."""
+    """HS256 JWT (signed with the project JWT secret), role=authenticated so PostgREST
+    accepts it as a normal authenticated user. Includes the `tenant_id` claim only when
+    a tenant is given — a logged-in user with NO tenant yet still gets an authenticated
+    token (tenant_id absent) so they can create/join a tenant during Phase-4 onboarding
+    (writes to tenants/tenant_memberships are allowed to `authenticated`; scoped-table
+    RLS still denies them, since the tenant_id claim is null). Returns None if the secret
+    or user_id is missing, or PyJWT is unavailable."""
     secret = jwt_secret()
-    if not (secret and user_id and tenant_id):
+    if not (secret and user_id):
         return None
     try:
         import jwt as pyjwt
@@ -49,11 +60,12 @@ def mint_tenant_jwt(user_id: str | None, tenant_id: str | None, *,
         "role": "authenticated",         # the Postgres role PostgREST switches to
         "aud": "authenticated",
         "email": email or "",
-        "tenant_id": str(tenant_id),     # <- the isolation claim (Phase-3 RLS reads this)
         "user_role": user_role,          # app role WITHIN the tenant (super_user/admin/…)
         "iat": now,
         "exp": now + max(300, int(ttl)),
     }
+    if tenant_id:
+        payload["tenant_id"] = str(tenant_id)   # the isolation claim (Phase-3 RLS reads this)
     try:
         tok = pyjwt.encode(payload, secret, algorithm="HS256")
         return tok.decode() if isinstance(tok, bytes) else tok   # PyJWT 1.x returned bytes
@@ -95,11 +107,13 @@ def active_memberships(user_id: str | None) -> list[dict[str, Any]]:
     return out
 
 
-def set_active_tenant(user: dict, tenant_id: str, *, role: str | None = None,
+def set_active_tenant(user: dict, tenant_id: str | None, *, role: str | None = None,
                       name: str | None = None) -> bool:
-    """Select a tenant for THIS session: mint the JWT and stash tenant id/name in
-    session_state. Clears any cached per-session client so it rebuilds with the new
-    token. Returns True if a JWT was minted (secret configured), else False."""
+    """Set THIS session's identity: mint the JWT and stash tenant id/name in
+    session_state. `tenant_id=None` mints a tenant-LESS authenticated token (for a
+    logged-in user still in onboarding — lets them create/join a tenant under RLS).
+    Clears any cached per-session client so it rebuilds with the new token. Returns
+    True if a JWT was minted (secret configured), else False."""
     uid = _resolve_user_id(user)
     tok = mint_tenant_jwt(uid, tenant_id,
                           user_role=role or user.get("role") or "collaborator",
@@ -144,6 +158,10 @@ def ensure_tenant_context(user: dict) -> None:
         if len(mems) == 1:
             set_active_tenant(user, mems[0]["tenant_id"],
                               role=mems[0].get("role"), name=mems[0].get("name"))
-        # 0 or >1 active memberships → handled by Phase-4 onboarding / tenant picker.
+        else:
+            # 0 or >1 active memberships → mint a tenant-LESS authenticated token so the
+            # user has an identity for Phase-4 onboarding (create/join a tenant) under
+            # RLS. The Phase-4 gate then routes 0-tenant users; >1 gets a picker.
+            set_active_tenant(user, None)
     except Exception:
         return
