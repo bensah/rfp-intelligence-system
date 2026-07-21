@@ -660,20 +660,27 @@ def render_manage_users(user: dict, sb) -> None:
             f"Type the email exactly to confirm: `{_target_email}`",
             key="del_confirm_text")
         dc1, dc2 = st.columns([1, 1])
+        # The button is intentionally NOT gated with `disabled=`. A text_input only
+        # commits its value on blur/Enter, and a disabled button swallows the very
+        # click that would blur (commit) the field — so typing the email then clicking
+        # never enabled it. Keep the button live and validate the match ON CLICK: the
+        # click blurs the field, so `typed` holds the committed value at this point.
         confirm = dc1.button(
             "🗑 Permanently delete", type="primary", width='stretch',
-            disabled=(typed.strip().lower() != _target_email.lower()),
             key="del_confirm_btn")
         if dc2.button("Cancel", width='stretch', key="del_cancel_btn"):
             st.rerun()
         if confirm:
-            try:
-                sb.table("users").delete().eq("email", _target_email).execute()
-                clear_credentials_cache()
-                st.toast(f"🗑 Deleted {_target_email}", icon="🗑️")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Delete failed: {exc}")
+            if typed.strip().lower() != (_target_email or "").strip().lower():
+                st.warning("Type the email exactly as shown to confirm the deletion.")
+            else:
+                try:
+                    sb.table("users").delete().eq("email", _target_email).execute()
+                    clear_credentials_cache()
+                    st.toast(f"🗑 Deleted {_target_email}", icon="🗑️")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Delete failed: {exc}")
 
     # ─── Action buttons row ─────────────────────────────────────────────
     ab1, ab2, ab3, _spacer = st.columns([1, 1.4, 1, 4])
