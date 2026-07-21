@@ -963,18 +963,43 @@ def derive_funding_quality(rfp: dict, org: dict | None = None,
     return "High" if avg >= 0.75 else ("Moderate" if avg >= 0.4 else "Low")
 
 
+def _host_match(a: str, b: str) -> bool:
+    """Two portal hosts match if identical OR one is a sub-domain of the other
+    (dot-boundary suffix). So a registration on 'gavi.org' credits a call whose
+    submission portal is 'portal.gavi.org' (a third-party / sub-domain portal),
+    and vice-versa — without matching unrelated hosts like 'notgavi.org'."""
+    a, b = (a or "").strip("."), (b or "").strip(".")
+    if not a or not b:
+        return False
+    return a == b or a.endswith("." + b) or b.endswith("." + a)
+
+
 def _registered_on_portal(org: dict, rfp: dict, donor: dict | None) -> bool:
-    """True when the org has registered on the donor's / the call's portal —
-    org.donor_registrations (clean hosts) ∩ {donor.submission_portal_url,
-    donor.website, rfp link} host."""
+    """True when the org is FAMILIAR with the donor's application portal — either:
+      (a) it has an ACTIVE portal registration whose host matches the donor's / the
+          call's portal host (org.donor_registrations vs {donor.submission_portal_url,
+          donor.website, rfp link}), sub-domain-aware; OR
+      (b) it has a WORKING relationship with this funder — a past/current grantee
+          (funder_history), an active donor, or an engaged donor — since having worked
+          with a funder implies familiarity with how they take submissions.
+    (b) intentionally overlaps PREFER-7 (relationship); here it feeds the PREFER-8
+    'familiar with the portal' competitiveness edge (owner 2026-07-20)."""
+    d = donor or {}
+    # (b) known-funder familiarity — reuse the canonical donor matchers.
+    hist = [h for h in (org.get("org_funder_history") or []) if h]
+    if _funder_in_history(rfp.get("funding_agency"), hist):
+        return True
+    if (_canonical_donor_match(org.get("org_active_donors"), d, rfp)
+            or _canonical_donor_match(org.get("org_engaged_donors"), d, rfp)):
+        return True
+    # (a) explicit portal-registration host match (sub-domain-aware).
     regs = {clean_portal_url(r) for r in (org.get("org_donor_registrations") or []) if r}
     if not regs:
         return False
-    d = donor or {}
-    portals = {clean_portal_url(x) for x in
+    portals = {p for p in (clean_portal_url(x) for x in
                (d.get("donor_submission_portal_url"), d.get("donor_website"),
-                rfp.get("opportunity_link")) if x}
-    return bool(regs & {p for p in portals if p})
+                rfp.get("opportunity_link"))) if p}
+    return any(_host_match(r, p) for r in regs for p in portals)
 
 
 def _name_set(items) -> set[str]:
