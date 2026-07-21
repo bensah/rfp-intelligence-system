@@ -16,6 +16,11 @@ pyyaml>=6.0.1
 plotly>=5.22.0
 openpyxl>=3.1.0
 bcrypt>=4.1.0
+# Multi-tenant Phase 2 — mint a per-user JWT carrying a tenant_id claim (signed with
+# the Supabase project JWT secret) so PostgREST/RLS can enforce tenant isolation.
+# Already present transitively via supabase; pinned so it's explicit. Dormant until
+# SUPABASE_JWT_SECRET is configured.
+pyjwt>=2.8.0
 pypdf>=4.0.0
 # PDF generation for the Donors page "Share" export (pure-pip, no system deps).
 reportlab>=4.0.0
