@@ -387,11 +387,13 @@ def ensure_logged_in() -> Optional[dict[str, Any]]:
         _render_sidebar_user(user)
         _gate_must_change_password(user)
         _ensure_tenant_context(user)
+        _maybe_onboard(user)
         return user
     user = login_gate()
     if user:
         _gate_must_change_password(user)
         _ensure_tenant_context(user)
+        _maybe_onboard(user)
     return user
 
 
@@ -403,6 +405,21 @@ def _ensure_tenant_context(user: dict[str, Any]) -> None:
         ensure_tenant_context(user)
     except Exception:
         pass
+
+
+def _maybe_onboard(user: dict[str, Any]) -> None:
+    """Multi-tenant Phase 4: if the user has no active tenant, render the onboarding
+    gate (create/join a tenant), which st.stop()s the run. DORMANT unless multi-tenant
+    is enabled + the tenant tables exist. The check is best-effort; render_onboarding is
+    called OUTSIDE the try so its st.stop() propagates normally (not swallowed)."""
+    try:
+        from auth.tenant_onboarding import needs_onboarding
+        need = needs_onboarding(user)
+    except Exception:
+        return
+    if need:
+        from auth.tenant_onboarding import render_onboarding
+        render_onboarding(user)
 
 
 # ---------------------------------------------------------------------------
