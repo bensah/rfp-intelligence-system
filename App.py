@@ -59,12 +59,15 @@ def _pages(include_admin: bool) -> list:
     browser refresh on (say) /pipelines reloads that page. Home is the default
     page and lives at the app root.
 
-    Two groups:
-      * SIDEBAR pages — the six everyday work surfaces, shown in the nav rail.
-      * MENU pages (Profile, Help, Settings) — registered with st.navigation so
-        they have stable URLs and are reachable via st.switch_page / st.page_link,
-        but their sidebar nav links are HIDDEN by CSS (core/app_header.py) so
-        they live only in the top-right user menu instead of cluttering the rail.
+    Registered pages fall into two groups:
+      * RAIL pages — shown in the sidebar nav: the six everyday work surfaces
+        (Home, Pipelines, Grants, Actions, Report, Donors) plus Settings
+        (admins only) as a first-class rail item.
+      * MENU-only pages (Profile, Help, Search) — registered with st.navigation
+        for stable URLs / st.page_link, but their sidebar nav links are HIDDEN by
+        CSS (core/app_header.py) so they live only in the top-right user menu.
+      (Organization + Submit RFP are also registered for stable URLs and are
+      reached via the user menu / in-app links.)
     """
     pages = [
         st.Page("app_pages/home.py", title="Home", icon="🏠", default=True),
@@ -74,7 +77,7 @@ def _pages(include_admin: bool) -> list:
         st.Page("app_pages/report.py", title="Report", icon="📊", url_path="report"),
         st.Page("app_pages/donors.py", title="Donors", icon="🗺️", url_path="donors"),
         # ── Top-right user-menu pages (sidebar links hidden via CSS) ──
-        st.Page("app_pages/organization.py", title="Organization", icon="🏢",
+        st.Page("app_pages/organization.py", title="Entity", icon="🏢",
                 url_path="organization"),
         st.Page("app_pages/submit_rfp.py", title="Submit RFP", icon="📝",
                 url_path="submit-new-rfp"),
