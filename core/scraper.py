@@ -2628,6 +2628,10 @@ def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
         log.warning("Grand Challenges %s failed: %s", url, exc)
         return []
     base = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
+    # The site JSON sometimes carries ABSOLUTE www./bare marketing-host links for
+    # /challenge/ paths (which serve only generic boilerplate) — force the working
+    # gcgh. host so the stored link works AND the crawl reads the REAL challenge body.
+    from core.source_resolver import canonical_grandchallenges
     out: list[dict[str, Any]] = []
     for it in data:
         if it.get("hidden"):
@@ -2639,7 +2643,8 @@ def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
         desc = re.sub(r"<[^>]+>", " ", html.unescape(it.get("opportunity_description") or ""))
         out.append({
             "opportunity_title": title[:300],
-            "opportunity_link": urljoin(base + "/", rel.lstrip("/")),
+            "opportunity_link": canonical_grandchallenges(
+                urljoin(base + "/", rel.lstrip("/"))),
             "funding_agency": _clean(it.get("initiative_title") or "")
                               or _funder_from_source_name(name),
             "brief_description": _clean(desc)[:1800] or None,

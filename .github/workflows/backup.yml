@@ -1,0 +1,66 @@
+name: Database backup
+
+# The Supabase Free plan has no managed backups, so we roll our own: a WEEKLY (Sunday)
+# INCREMENTAL export — only rows changed since the last backup — pushed off-site to
+# OneDrive (Taadom account). If nothing changed since last week, the run skips (no
+# upload). The first run (no watermark) is a full backup. A copy is also kept as a
+# GitHub Actions artifact (works even before OneDrive is configured).
+#
+# ONE-TIME SETUP — add these repository secrets under
+#   Settings -> Secrets and variables -> Actions:
+#     SUPABASE_URL, SUPABASE_KEY            (same as the scan job)
+#     ONEDRIVE_TENANT_ID                    Azure AD tenant (taadom.com GUID or domain)
+#     ONEDRIVE_CLIENT_ID                    app registration Application (client) ID
+#     ONEDRIVE_CLIENT_SECRET                a client secret for that app registration
+#     ONEDRIVE_USER                         nsah@taadom.com
+#     ONEDRIVE_FOLDER  (optional)           default "RFPIS Backups"
+# The app registration needs Microsoft Graph APPLICATION permission
+# Files.ReadWrite.All with admin consent. Until the ONEDRIVE_* secrets exist the job
+# still runs and keeps the artifact copy; it just skips the upload.
+
+on:
+  schedule:
+    - cron: "0 1 * * 0"          # weekly — Sundays 01:00 UTC
+  workflow_dispatch: {}          # manual "Run workflow" button
+
+concurrency:
+  group: rfp-backup
+  cancel-in-progress: false      # never interrupt an in-flight export/upload
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Export database + upload to OneDrive
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ONEDRIVE_TENANT_ID: ${{ secrets.ONEDRIVE_TENANT_ID }}
+          ONEDRIVE_CLIENT_ID: ${{ secrets.ONEDRIVE_CLIENT_ID }}
+          ONEDRIVE_CLIENT_SECRET: ${{ secrets.ONEDRIVE_CLIENT_SECRET }}
+          ONEDRIVE_USER: ${{ secrets.ONEDRIVE_USER }}
+          ONEDRIVE_FOLDER: ${{ secrets.ONEDRIVE_FOLDER }}
+          BACKUP_OUT: backup/rfpis_backup.zip
+        run: python scripts/run_backup.py
+
+      - name: Keep a copy as a workflow artifact (fallback)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfpis-db-backup
+          path: backup/rfpis_backup.zip
+          retention-days: 30
+          if-no-files-found: warn

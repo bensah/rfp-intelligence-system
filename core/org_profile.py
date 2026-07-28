@@ -241,22 +241,71 @@ def _migrate_keys(overlay: dict) -> dict:
     return overlay
 
 
-def get_profile() -> dict[str, Any]:
-    """Active org profile (admin overrides merged onto defaults)."""
-    raw = get_setting(ORG_PROFILE_KEY)
-    if not raw:
-        return copy.deepcopy(DEFAULT_PROFILE)
+def _tenant_store(tenant_id: str | None = None) -> tuple[Any, str] | None:
+    """(service_client, tenant_id) when multi-tenant is ON and a tenant resolves — so the
+    org profile is read/written PER TENANT from `tenants.org_profile`. None otherwise
+    (single-tenant → legacy app_settings blob). `tenant_id` overrides the session tenant
+    (super_user viewing/editing another tenant). Best-effort; any failure falls back to
+    the legacy store. Delegates to auth.tenant_context.tenant_store (service client)."""
     try:
-        overlay = json.loads(raw)
-        if isinstance(overlay, dict):
-            return _deep_merge(DEFAULT_PROFILE, _migrate_keys(overlay))
-    except (ValueError, TypeError):
-        pass
-    return copy.deepcopy(DEFAULT_PROFILE)
+        from auth import tenant_context as tc
+        return tc.tenant_store(tenant_id)
+    except Exception:
+        return None
 
 
-def set_profile(profile: dict[str, Any], updated_by: str | None = None) -> None:
-    """Persist the FULL profile blob."""
+def _coerce_overlay(op: Any) -> dict | None:
+    if isinstance(op, dict):
+        return op
+    if isinstance(op, str) and op.strip():
+        try:
+            v = json.loads(op)
+            return v if isinstance(v, dict) else None
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def get_profile(tenant_id: str | None = None) -> dict[str, Any]:
+    """Active org profile (overrides merged onto defaults). PER-TENANT when multi-tenant
+    is on (reads the tenant's tenants.org_profile — a brand-new tenant like RFPIS Inc.
+    starts blank → just the DEFAULT_PROFILE); the global app_settings blob otherwise.
+    `tenant_id` overrides the session tenant (super_user viewing another tenant)."""
+    overlay: dict | None = None
+    store = _tenant_store(tenant_id)
+    if store is not None:
+        client, tid = store
+        try:
+            rows = (client.table("tenants").select("org_profile")
+                    .eq("id", tid).limit(1).execute().data or [])
+            if rows:
+                overlay = _coerce_overlay(rows[0].get("org_profile"))
+        except Exception:
+            overlay = None
+    if overlay is None and store is None:
+        overlay = _coerce_overlay(get_setting(ORG_PROFILE_KEY))
+    if not overlay:
+        return copy.deepcopy(DEFAULT_PROFILE)
+    return _deep_merge(DEFAULT_PROFILE, _migrate_keys(overlay))
+
+
+def set_profile(profile: dict[str, Any], updated_by: str | None = None,
+                tenant_id: str | None = None) -> None:
+    """Persist the FULL profile blob — to a tenant's tenants.org_profile (multi-tenant)
+    or the global app_settings blob (single-tenant). `tenant_id` overrides the session
+    tenant (super_user editing another tenant)."""
+    store = _tenant_store(tenant_id)
+    if store is not None:
+        client, tid = store
+        # The write MUST land on the tenant record — do NOT swallow a failure into the
+        # legacy global blob (that silently writes the wrong place and reads back as "not
+        # saved"). Surface the real error so the caller can show it.
+        res = client.table("tenants").update({"org_profile": profile}).eq("id", tid).execute()
+        if not (getattr(res, "data", None)):
+            raise RuntimeError(
+                f"tenants.org_profile update for {tid} affected 0 rows — the write did "
+                "not persist (check RLS / that SUPABASE_KEY is the service-role key).")
+        return
     set_setting(ORG_PROFILE_KEY, json.dumps(profile, indent=2), updated_by=updated_by)
 
 

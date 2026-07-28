@@ -46,7 +46,13 @@ jobs:
           # without it the resolver simply no-ops and DevelopmentAid hits stay as
           # listings. Add SERPER_API_KEY as a repo Actions secret to enable it.
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          # Multi-tenant: lets the per-tenant screening step treat the run as multi-tenant.
+          # Optional — the --screen-tenants override works without it — but keeps the
+          # app's tenant state consistent. Add SUPABASE_JWT_SECRET as a repo Actions secret.
+          SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
           RFPIS_DEEP_READ: "1"
           SCAN_INCLUDE_SEEDS: "1"
           SCAN_PARALLELISM: "6"
-        run: python scripts/run_scan.py --triggered-by cron
+        # Option-C multi-tenant discovery: crawl → SHARED extracted store (--extract-only),
+        # then auto-screen EACH active tenant into its own pipeline (--screen-tenants).
+        run: python scripts/run_scan.py --triggered-by cron --extract-only --screen-tenants

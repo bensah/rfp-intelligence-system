@@ -2,110 +2,213 @@
 
 A navigation-first orientation: where things live, what each page/tab does,
 and how the weekly opportunity workflow flows. Role-aware — admins also see a
-Settings section.
+Settings section. Content is kept in step with the live app (nav in App.py,
+tabs in the page files, Settings IA in app_pages/admin.py).
 """
 from __future__ import annotations
 
 import streamlit as st
 
 from core import permissions, settings
+from views.account_sections import ADMIN_CONTACT_EMAIL
 
 user = st.session_state.get("app_user") or {}
 is_admin = permissions.is_admin(user)
+_is_super = permissions.is_super_user(user)
+_name = user.get("name") or user.get("email") or "there"
+try:
+    _role = permissions.role_label(user)
+except Exception:
+    _role = (user.get("role") or "collaborator").title()
+try:
+    _org = settings.get_org_name() or "your organization"
+except Exception:
+    _org = "your organization"
 
-st.title("❓ Help & navigation guide")
-st.caption(
-    "How to find your way around the RFP Intelligence System (RFPIS). "
-    "Anything this doesn't answer? Ask an administrator.")
 
+# ── Styling ───────────────────────────────────────────────────────────────────
 st.markdown(
-    "**RFPIS** discovers funding opportunities (RFPs, RFIs, EOIs, calls for "
-    "proposals, grand challenges) from donor sites and the web, screens each "
-    "against your eligibility rules, and helps the team decide **Proceed / "
-    "Park / Decline** — all in one place.")
+    """
+    <style>
+      .rfpis-hero { border-left:4px solid #00703C; background:#f1f7f4;
+        padding:14px 18px; border-radius:0 12px 12px 0; margin:.1rem 0 .6rem;
+        color:#14532d; line-height:1.45; }
+      .rfpis-chips { display:flex; flex-wrap:wrap; gap:8px; margin:.2rem 0 1rem; }
+      .rfpis-chip { background:#e6f2eb; color:#00703C; border:1px solid #cfe6da;
+        padding:4px 12px; border-radius:999px; font-size:.82rem; font-weight:600; }
+      .rfpis-chip.alt { background:#eef2f6; color:#0f3d6e; border-color:#dbe4ee; }
+      div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:12px; }
+      div[data-testid="stVerticalBlockBorderWrapper"] h4 { margin:.1rem 0 .55rem 0;
+        color:#00703C; font-size:1.05rem; }
+      .rfpis-flow { display:flex; flex-wrap:wrap; align-items:stretch; gap:10px;
+        margin:.5rem 0 .2rem; }
+      .rfpis-flow .step { flex:1 1 150px; display:flex; gap:11px; background:#f8fafc;
+        border:1px solid #e6eaef; border-radius:10px; padding:11px 13px; }
+      .rfpis-flow .step-n { flex:0 0 26px; height:26px; width:26px; border-radius:50%;
+        background:#00703C; color:#fff; font-weight:700; display:flex;
+        align-items:center; justify-content:center; font-size:.85rem; }
+      .rfpis-flow .step-b { display:flex; flex-direction:column; gap:1px; }
+      .rfpis-flow .step-b b { color:#0f172a; font-size:.94rem; }
+      .rfpis-flow .step-b span { color:#64748b; font-size:.81rem; line-height:1.28; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-st.divider()
+# ── Hero ──────────────────────────────────────────────────────────────────────
+st.title("❓ Help & navigation guide")
+st.markdown(
+    "<div class='rfpis-hero'><b>RFPIS</b> discovers funding opportunities "
+    "(RFPs, RFIs, EOIs, calls for proposals, grand challenges) from donor sites "
+    "and the web, screens each against your eligibility rules, and helps the team "
+    "decide <b>Proceed / Park / Decline</b> — all in one place.</div>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f"<div class='rfpis-chips'>"
+    f"<span class='rfpis-chip'>👋 {_name}</span>"
+    f"<span class='rfpis-chip alt'>Role · {_role}</span>"
+    f"<span class='rfpis-chip alt'>Org · {_org}</span>"
+    f"</div>",
+    unsafe_allow_html=True,
+)
+st.caption(f"Anything this guide doesn't answer? **Ask an administrator** — "
+           f"{ADMIN_CONTACT_EMAIL}.")
 
 # ── Getting around ──────────────────────────────────────────────────────────
-st.subheader("🧭 Getting around")
-st.markdown(
-    "There are two navigation zones:\n"
-    "- **Left sidebar** — your six work pages. Use the **«/»** control to "
-    "expand it to labels or collapse it to an icon rail; your **role** shows "
-    "at the bottom.\n"
-    "- **Top-right icons** — 🔍 **Search**, 🔔 **Notifications**, and the "
-    "👤 **person menu**.\n\n"
-    "Most pages carry **tabs** along the top — that's where the detail lives.")
+with st.container(border=True):
+    st.markdown("#### 🧭 Getting around")
+    st.markdown(
+        "There are two navigation zones:\n"
+        "- **Left sidebar** — your six everyday work pages. Use the **«/»** "
+        "control to expand it to labels or collapse it to an icon rail; your "
+        "**role** shows at the bottom.\n"
+        "- **Top-right icons** — 🔍 **Search**, 🔔 **Notifications**, and the "
+        "👤 **person menu**.\n\n"
+        "Most pages carry **tabs** along the top — that's where the detail lives.")
 
-# ── Pages ───────────────────────────────────────────────────────────────────
-st.subheader("📋 The pages (left sidebar)")
-st.markdown(
-    "- **🏠 Home** — dashboard: pending actions, recent activity, and quick "
-    "links to submit or review an opportunity.\n"
-    "- **📚 Pipelines** — the core workflow in four tabs: **Screen** (triage "
-    "new finds) → **Review** (check against the MUST / PREFER criteria) → "
-    "**Tracking** (manage what you're pursuing) → **Summary** (totals).\n"
-    "- **💼 Grants** — opportunities won or under active management, with "
-    "reporting deadlines.\n"
-    "- **🗒️ Actions** — three tabs: **Team Calls** (meeting notes), "
-    "**Engagements** (donor touchpoints), **Pending** (open follow-ups).\n"
-    "- **📊 Report** — analytics across the whole pipeline (volume by donor, "
-    "decision mix, team activity); exportable to PDF.\n"
-    "- **🗺️ Donors** — the donor catalogue + intelligence: focus areas, award "
-    "ranges, and contacts.")
-
-# ── Top-right tools ─────────────────────────────────────────────────────────
-st.subheader("🔝 Top-right tools")
-_menu = ("**Profile** (your details + password), **Help** (this page)")
-if is_admin:
-    _menu += ", **Settings** (admin tools)"
-_menu += ", and **Sign Out**"
-st.markdown(
-    "- **🔍 Search** — type a keyword and hit **Search** to open a results "
-    "page listing matching **pages & tabs**, **opportunities**, and "
-    "**donors** — click any result to jump there. It can also search the "
-    "**web** for live, validated, recent funding calls.\n"
-    "- **🔔 Notifications** — an org-wide activity feed: when auto-scans run, "
-    "when the next scan is scheduled, and newly added opportunities. The badge "
-    "counts items since you last hit **Mark all as read**.\n"
-    f"- **👤 Person menu** — {_menu}.")
+# ── Pages + top-right tools (side by side on wide screens) ────────────────────
+_cL, _cR = st.columns(2)
+with _cL:
+    with st.container(border=True):
+        st.markdown("#### 📋 The pages (left sidebar)")
+        st.markdown(
+            "- **🏠 Home** — dashboard: pending actions, recent activity, and "
+            "quick links to submit or review an opportunity.\n"
+            "- **📚 Pipelines** — the core workflow in four tabs: **Screen** → "
+            "**Review** → **Tracking** → **Summary**.\n"
+            "- **💼 Grants** — opportunities won or under active management, "
+            "with reporting deadlines.\n"
+            "- **🗒️ Actions** — four tabs: **Meetings** (team-call notes), "
+            "**Engagements** (donor touchpoints), **Pending** (open follow-ups), "
+            "**Schedule** (the weekly team-call rota).\n"
+            "- **📊 Report** — analytics across the whole pipeline (volume by "
+            "donor, decision mix, team activity), downloadable.\n"
+            "- **🗺️ Donors** — the donor catalogue + intelligence: focus areas, "
+            "award ranges, and contacts.")
+with _cR:
+    with st.container(border=True):
+        st.markdown("#### 🔝 Top-right tools")
+        _menu = "**Organization**, **Profile**, **Help**"
+        if is_admin:
+            _menu += ", **Settings**"
+        _menu += ", and **Sign Out**"
+        st.markdown(
+            "- **🔍 Search** — type a keyword and **Search** to jump to matching "
+            "**pages & tabs**, **opportunities**, and **donors**. It can also "
+            "search the **web** for live, validated, recent funding calls.\n"
+            "- **🔔 Notifications** — your organization's activity feed: when "
+            "scans run, the next scheduled scan, and newly added opportunities. "
+            "The badge counts items since you last hit **Mark all as read**.\n"
+            f"- **👤 Person menu** — {_menu}.\n"
+            "- **🏢 Organization** — your org's profile: identity, eligibility, "
+            "program areas, and funders (admins can edit).")
 
 # ── Workflow ────────────────────────────────────────────────────────────────
-st.subheader("🔄 How an opportunity flows")
-st.markdown(
-    "1. **Discovered** — the Friday auto-scan (or a manual submission from "
-    "Home / Pipelines) lands it in **Screen**.\n"
-    "2. **Screened** — auto-scoring tags eligibility (MUST 1–5 / PREFER 6–9) "
-    "and proposes a decision.\n"
-    "3. **Reviewed** — on **Review**, the team confirms or overrides it "
-    "(Proceed / Park / Decline).\n"
-    "4. **Tracked** — anything you **Proceed** on moves to **Tracking** with "
-    "an owner, stage, and deadlines; wins graduate to **Grants**.")
+with st.container(border=True):
+    st.markdown("#### 🔄 How an opportunity flows")
+    st.markdown(
+        "<div class='rfpis-flow'>"
+        "<div class='step'><div class='step-n'>1</div><div class='step-b'>"
+        "<b>Discovered</b><span>The auto-scan or a manual submission lands it "
+        "in <b>Screen</b>.</span></div></div>"
+        "<div class='step'><div class='step-n'>2</div><div class='step-b'>"
+        "<b>Screened</b><span>Auto-scoring tags eligibility (MUST 1–5 / PREFER "
+        "6–9) and proposes a decision.</span></div></div>"
+        "<div class='step'><div class='step-n'>3</div><div class='step-b'>"
+        "<b>Reviewed</b><span>On <b>Review</b>, the team confirms or overrides "
+        "— Proceed / Park / Decline.</span></div></div>"
+        "<div class='step'><div class='step-n'>4</div><div class='step-b'>"
+        "<b>Tracked</b><span>A <b>Proceed</b> moves to <b>Tracking</b> with an "
+        "owner + deadlines; wins graduate to <b>Grants</b>.</span></div></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Funding calls are a **shared, platform-wide pool** — every organization's "
+        "eligibility scan screens the whole pool against its own preferences, so a "
+        "call surfaces wherever it fits. An opportunity **submitted by any user** joins "
+        "that pool too, becoming available to everyone on their next scan.")
 
-# ── Account ─────────────────────────────────────────────────────────────────
-st.subheader("👤 Your account & role")
-st.markdown(
-    "- **👤 → Profile** to edit your name and contact details or **change "
-    "your password**.\n"
-    "- Your **role** is shown at the bottom of the sidebar — most teammates "
-    "are **Contributors**.\n"
-    "- Need more access? Ask an administrator to adjust your role under "
-    "**Settings → Manage Users**.")
+# ── Account + contact (side by side) ──────────────────────────────────────────
+_aL, _aR = st.columns(2)
+with _aL:
+    with st.container(border=True):
+        st.markdown("#### 👤 Your account & role")
+        st.markdown(
+            "- **👤 → Profile** — edit your name and contact details or "
+            "**change your password**.\n"
+            "- Your **role** shows at the bottom of the sidebar — most "
+            "teammates are **Contributors**.\n"
+            "- Need more access? Ask an administrator to adjust your role under "
+            "**Settings → Accounts → Users**.\n"
+            "- **Delete your account** — **Profile → My Profile → ⚠️ Danger "
+            "zone**. This removes your login only; your contributed records "
+            "stay in the system for institutional memory.")
+with _aR:
+    with st.container(border=True):
+        st.markdown("#### ✉️ Contacting an administrator")
+        st.markdown(
+            "Wherever the app says **“ask an administrator”** — a role change, "
+            "a locked action, a suspended organization, or a data request — "
+            f"reach the app owner (Super User) at **{ADMIN_CONTACT_EMAIL}**.")
+        st.info(
+            "**Closing an organization.** An org admin can **suspend** their "
+            "organization under **Settings → Setup → Danger zone**: auto-scans "
+            "stop and the account is retired, **but all records are kept** for "
+            "later retrieval — nothing is deleted from the app. **Reactivating "
+            "a suspended org, or permanently deleting its data, is done by the "
+            f"Super User only** — email **{ADMIN_CONTACT_EMAIL}**.")
 
 # ── Admins only ─────────────────────────────────────────────────────────────
 if is_admin:
-    st.subheader("⚙️ Settings (administrators)")
-    st.markdown(
-        "Open from **👤 → Settings**:\n"
-        "- **Setup** — org profile, working year, currencies, Excel sync, and "
-        "scan eligibility (health themes, geographic scope, criteria).\n"
-        "- **Manage Users** — add/edit teammates, set roles, reset passwords.\n"
-        "- **User Access** — the role × surface permission matrix.\n"
-        "- **Records** — the full opportunity backend (view / edit / delete, "
-        "export, share).\n"
-        "- **Sources** — the donor-site catalogue the scanner crawls.\n"
-        "- **Manual Scan** — trigger a scan now and see scan history.\n"
-        "- **Blacklist** — domains to exclude from scans + web search.")
+    with st.container(border=True):
+        st.markdown("#### ⚙️ Settings (administrators)")
+        st.markdown(
+            "Open from **👤 → Settings**:\n"
+            "- **Setup** — org profile, working year, currencies, and scan "
+            "eligibility (health themes, geographic scope, criteria). Includes "
+            "the **Danger zone** to suspend this organization's account.\n"
+            "- **Accounts** — **Users** (add/edit teammates, set roles, reset "
+            "passwords; pick a user to see their **User Access Privileges** "
+            "inline)"
+            + (", **Tenants** (every organization on the platform, with "
+               "view-as), and **Blacklisted** (hard-blocked users / tenants, "
+               "with undo)" if _is_super else "") + ".\n"
+            "- **Records** — the full opportunity backend in **Data · Verify · "
+            "Reset** (view / edit / delete, export, share). The **Reset** tab holds "
+            "**backup + maintenance** tools and is **Super-User-only**.\n"
+            "- **Sources** — **Catalog** (the donor-site catalogue the scanner "
+            "crawls), **Blocked** (URL tokens excluded from scans + web "
+            "search), and **Excel Sync**.\n"
+            "- **Manual Scan** — run a full **Extraction** (crawl every source) "
+            "or **My Eligible Funding** (fast re-screen), and view scan "
+            "history.\n"
+            "- **Learning data** — captured scan / decision / feedback signals "
+            "that train the scoring model."
+            + ("\n- **Analytics** — cross-tenant platform stats and the "
+               "system-wide discovery counter (Super User)." if _is_super
+               else ""))
 
 st.divider()
-st.caption(f"{settings.get_org_name()} · powered by RFPIS")
+st.caption(f"{_org} · powered by RFPIS")
