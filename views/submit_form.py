@@ -397,6 +397,47 @@ def render_submit_form(
         st.error(f"Submit failed: {exc}")
         return
 
+    # Share to the GLOBAL opportunity pool so EVERY tenant's "My Eligible Funding" scan
+    # can match this call against its own preferences — a user's submission thus becomes
+    # available to all users, screened per-tenant. The submitter already has their own
+    # row above (and a per-tenant seen tombstone, so their own re-scan won't duplicate
+    # it); other tenants pick it up on their next eligibility scan, exactly like a
+    # discovered call. Best-effort — never blocks the submit; needs a real URL to key on.
+    try:
+        from auth.tenant_context import multitenant_enabled
+        if multitenant_enabled() and row.get("opportunity_link"):
+            from core import extracted_store
+            _geo = row.get("call_geographic_scope")
+            _dom = row.get("call_domain_areas")
+            _theme = row.get("focus_theme")
+            extracted_store.upsert_extracted({
+                "opportunity_name": row.get("opportunity_title"),
+                "opportunity_url": row.get("opportunity_link"),
+                "opportunity_id": row.get("opportunity_id"),
+                "funder_name": row.get("funding_agency"),
+                "brief_description": row.get("brief_description"),
+                "date_posted": row.get("date_posted"),
+                "deadline": row.get("call_submission_deadline"),
+                "deadline_confidence": ("stated"
+                                        if row.get("call_submission_deadline") else None),
+                "grant_amount": row.get("call_award_value"),
+                "currency": row.get("currency"),
+                "funding_window": row.get("funding_window"),
+                "expected_award_date": row.get("expected_award_date"),
+                "time_to_award": row.get("time_to_award"),
+                "project_duration": row.get("project_duration"),
+                "submission_format": row.get("submission_format"),
+                "call_geographic_scope": ([_geo] if isinstance(_geo, str) and _geo
+                                          else (_geo or None)),
+                "call_domain_areas": ([_dom] if isinstance(_dom, str) and _dom
+                                      else (_dom or None)),
+                "focus_themes": [_theme] if _theme else None,
+                "funding_status": "Open",
+                "source": "manual-submission",
+            })
+    except Exception:
+        pass  # sharing is best-effort; the submitter's own row is already saved
+
     if on_success is not None:
         on_success(row)
         return

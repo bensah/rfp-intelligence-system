@@ -90,14 +90,20 @@ def _load_index() -> dict[str, dict]:
     return idx
 
 
-def match_donor(funder: Any) -> Optional[dict]:
+def match_donor(funder: Any, *, fuzzy: bool = True) -> Optional[dict]:
     """Best-effort match of an RFP funder string to a donor_intel row.
 
     Excel-migrated funders are stored as "ACRONYM - Donor Name" (e.g. "BMGF - Gates
     Foundation"), while donor_intel holds just the name ("Gates Foundation" / "Bill &
     Melinda Gates Foundation"). The leading acronym blocks a plain match, so we also
     try the name AFTER the first " - " separator (and the acronym before it). This is
-    why HAPPI's MUST-5 / PREFER-7 came back unmatched."""
+    why HAPPI's MUST-5 / PREFER-7 came back unmatched.
+
+    `fuzzy` (default True) enables the last-resort ≥5-char SUBSTRING-containment fallback.
+    Callers on the HARD-GATE / auto-Decline scoring path MUST pass fuzzy=False: a wrong
+    substring match there injects the wrong donor's HQ / ceiling / priorities and can force
+    a FALSE auto-Decline. Exact-key matching (name / short / acronym / the "ACR - Name"
+    split) stays on for everyone — it's a strict superset of the old exact `.ilike`."""
     raw = str(funder or "")
     cands = [_norm(raw)]
     if " - " in raw:
@@ -110,6 +116,8 @@ def match_donor(funder: Any) -> Optional[dict]:
     for c in cands:                              # exact key hit on any candidate
         if c in idx:
             return idx[c]
+    if not fuzzy:
+        return None                              # gate path: never a fuzzy wrong match
     # Containment either direction over any candidate; prefer the longest matching key.
     best, best_len = None, 0
     for c in cands:

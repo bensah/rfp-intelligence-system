@@ -155,10 +155,10 @@ def _resolve_donor(funder: Any) -> dict | None:
     if not f:
         return None
     try:
-        from db.supabase_client import get_client
-        rows = (get_client().table("donor_intel").select("*")
-                .ilike("donor", f).limit(1).execute().data or [])
-        return rows[0] if rows else None
+        # Resolve donors the SAME way the live scorer does (exact-key, no fuzzy) so the
+        # shadow-ML feature vector matches the donor signal that drove the label.
+        from core.donor_intel import match_donor
+        return match_donor(f, fuzzy=False)
     except Exception:
         return None
 

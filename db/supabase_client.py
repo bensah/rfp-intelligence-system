@@ -128,10 +128,20 @@ def _session_tenant_client() -> Client | None:
     return client
 
 
-def get_client() -> Client:
-    sc = _session_tenant_client()         # per-session tenant client when one applies
-    if sc is not None:
-        return sc
+def service_client() -> Client:
+    """The RLS-BYPASSING service-role client (SUPABASE_KEY is the service-role key),
+    ALWAYS ignoring any per-session tenant JWT.
+
+    Use for IDENTITY / BOOTSTRAP / tenant-ADMINISTRATION operations that must succeed
+    regardless of the tenant tables' RLS state and regardless of whether the (deprecated,
+    legacy-HS256) tenant JWT is accepted by PostgREST: resolving a user's memberships,
+    listing the tenant directory for onboarding, creating/joining a tenant, and the
+    super_user Tenants CRUD. These are pre-tenant or privileged operations — gating them
+    on RLS is a bootstrap circularity (you can't ask RLS "which tenant am I in" before the
+    context exists). Per-tenant DATA access stays on get_client() (the tenant-scoped
+    client) so Phase-3 RLS isolation is preserved for the actual data tables.
+
+    When multi-tenant is OFF (no JWT minted) this is identical to get_client()."""
     global _CLIENT
     if _CLIENT is not None:
         return _CLIENT
@@ -145,6 +155,165 @@ def get_client() -> Client:
                 )
             _CLIENT = create_client(url, key)
     return _CLIENT
+
+
+# ---------------------------------------------------------------------------
+# App-layer tenant read/write isolation (no Postgres RLS required)
+# ---------------------------------------------------------------------------
+# The per-tenant DATA tables (migration 067). Reads through get_client() for a
+# non-super tenant user are auto-filtered to their tenant; inserts are auto-stamped
+# with it. SHARED tables (extracted_solicitations, donor_intel, donor_sources, users,
+# scan_logs, app_settings, tenants, tenant_memberships, …) are NOT scoped. Keep this in
+# sync with migration 067's _SCOPED_TABLES.
+_TENANT_SCOPED_TABLES = {
+    "rfp_submissions", "meeting_logs", "meeting_schedule", "engagement_logs",
+    "active_grants", "narrative_logs", "scan_decisions", "donor_contacts",
+    # The de-dup tombstone ledger is per-tenant too (migration 076) — otherwise the
+    # per-tenant screening loop would let the first tenant's tombstones suppress the
+    # same call for every later tenant.
+    "rfp_seen",
+}
+
+# Of the scoped tables, these user-facing ACTIVITY tables also surface rows owned by
+# PUBLIC ('individual', migration 078) tenants in everyone's read scope. Deliberately
+# EXCLUDES rfp_seen (a public tenant's tombstones must NOT suppress others' screening)
+# and scan_decisions (per-tenant ML training data). Writes are never broadened.
+_PUBLIC_VISIBLE_TABLES = {
+    "rfp_submissions", "meeting_logs", "meeting_schedule", "engagement_logs",
+    "active_grants", "narrative_logs", "donor_contacts",
+}
+
+
+def _stamp_tenant(rows, tid: str):
+    """Add tenant_id to insert/upsert payload rows that don't already set it."""
+    def _one(r):
+        if isinstance(r, dict) and not r.get("tenant_id"):
+            return {**r, "tenant_id": tid}
+        return r
+    return [_one(r) for r in rows] if isinstance(rows, list) else _one(rows)
+
+
+class _ScopedTable:
+    """Wraps a postgrest table builder so SELECT/UPDATE/DELETE auto-filter by tenant_id
+    and INSERT/UPSERT auto-stamp it. Fail-open: any wrapping error falls back to the
+    unscoped builder so a bug here can never break a query."""
+
+    def __init__(self, builder, tid: str, name: str = ""):
+        self._b = builder
+        self._tid = tid
+        self._name = name
+
+    def select(self, *a, **k):
+        try:
+            q = self._b.select(*a, **k)
+            # Activity tables also expose PUBLIC ('individual') tenants' rows to everyone
+            # (migration 078). Broaden the read to my tenant + the public ones; keep the
+            # cheap single-tenant `.eq` when there are none. Reads only — writes stay
+            # stamped to my own tenant below.
+            if self._name in _PUBLIC_VISIBLE_TABLES:
+                try:
+                    from auth.tenant_context import public_tenant_ids
+                    pub = [t for t in public_tenant_ids() if t and t != self._tid]
+                except Exception:
+                    pub = []
+                if pub:
+                    return q.in_("tenant_id", [self._tid, *pub])
+            return q.eq("tenant_id", self._tid)
+        except Exception:
+            return self._b.select(*a, **k)
+
+    def insert(self, rows, *a, **k):
+        try:
+            rows = _stamp_tenant(rows, self._tid)
+        except Exception:
+            pass
+        return self._b.insert(rows, *a, **k)
+
+    def upsert(self, rows, *a, **k):
+        try:
+            rows = _stamp_tenant(rows, self._tid)
+        except Exception:
+            pass
+        return self._b.upsert(rows, *a, **k)
+
+    def update(self, values, *a, **k):
+        try:
+            return self._b.update(values, *a, **k).eq("tenant_id", self._tid)
+        except Exception:
+            return self._b.update(values, *a, **k)
+
+    def delete(self, *a, **k):
+        try:
+            return self._b.delete(*a, **k).eq("tenant_id", self._tid)
+        except Exception:
+            return self._b.delete(*a, **k)
+
+    def __getattr__(self, name):
+        return getattr(self._b, name)
+
+
+class _TenantScopedClient:
+    """Thin proxy over a Supabase client that returns tenant-scoped table builders for
+    the per-tenant data tables and delegates everything else unchanged."""
+
+    def __init__(self, real, tid: str):
+        self._real = real
+        self._tid = tid
+
+    def table(self, name):
+        b = self._real.table(name)
+        return _ScopedTable(b, self._tid, name) if name in _TENANT_SCOPED_TABLES else b
+
+    def from_(self, name):                 # postgrest alias for .table()
+        return self.table(name)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def _tenant_scope_tid() -> str | None:
+    """The tenant_id to scope this session's data access to, or None for NO scoping —
+    when multi-tenant is off, the user is a super_user (sees all tenants), there's no
+    selected tenant, or we're outside a Streamlit session (cron / scripts). Best-effort;
+    any failure → None (unscoped), so isolation never breaks data access."""
+    # A headless tenant override (cron per-tenant screening) wins unconditionally: it is
+    # the explicit 'operate as this tenant' signal, so reads/inserts scope + stamp to it.
+    try:
+        from auth.tenant_context import override_tenant_id
+        ov = override_tenant_id()
+        if ov:
+            return ov
+    except Exception:
+        pass
+    try:
+        import streamlit as st  # type: ignore
+        from auth.tenant_context import multitenant_enabled
+        if not multitenant_enabled():
+            return None
+        user = st.session_state.get("app_user") or {}
+        if str(user.get("role") or "").lower() == "super_user":
+            # Super_user is scoped like everyone else — to the tenant they're VIEWING
+            # (su_view_tenant, set from a ?tenant= link) or their own home tenant — so
+            # their pipelines/report aren't a merged firehose of every tenant. Cross-tenant
+            # AGGREGATES (Analytics dashboard, system-discovery counter) go through
+            # service_client directly and bypass this scoping.
+            return (st.session_state.get("su_view_tenant")
+                    or st.session_state.get("tenant_id") or None)
+        return st.session_state.get("tenant_id") or None
+    except Exception:
+        return None
+
+
+def get_client() -> Client:
+    sc = _session_tenant_client()         # per-session tenant client when one applies
+    base = sc if sc is not None else service_client()   # else RLS-bypassing service-role
+    tid = _tenant_scope_tid()
+    if tid:
+        try:
+            return _TenantScopedClient(base, tid)       # type: ignore[return-value]
+        except Exception:
+            return base                                 # fail-open — never break access
+    return base
 
 
 def _clear_client_cache() -> None:

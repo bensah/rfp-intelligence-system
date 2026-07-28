@@ -24,7 +24,7 @@ from core import aggregators, source_registry, scraper, type_detect
 from core import extract as extraction        # extraction-first global store (shadow)
 from core import deadline_extract             # confidence-gated deadline backstop
 from core.auto_scorer import (auto_score, is_eligible, is_index_page,
-                              theme_eligible)
+                              theme_eligible, insufficient_data_reject)
 from core.deduplicator import find_duplicates
 from core.policies import get_policies
 from core.review_week import review_week_label
@@ -327,14 +327,16 @@ def ingest_candidates(
     dry_run: bool = False,
     extract_only: bool = False,
     llm_adjudicate: bool = False,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int]:
     """Process a list of candidate dicts.
 
-    Returns (new_or_updated, true_duplicate, rejected_by_policy).
+    Returns (new_or_updated, true_duplicate, rejected_by_policy, store_errors).
       * new_or_updated — inserted + merge-updates (counts as "rfps_new")
       * true_duplicate — matched existing canonical, no new info
       * rejected_by_policy — failed the country / theme / deadline /
         feasibility eligibility gate; never touched the DB
+      * store_errors — extract_only rows that passed the gate but whose DB write
+        failed (RLS/connectivity) — an infra error, surfaced apart from declines
     """
     if not candidates:
         return (0, 0, 0, 0)
@@ -460,6 +462,19 @@ def ingest_candidates(
                     source_resolver.resolve_and_enrich(cand)
                 except Exception as exc:
                     log.debug("source resolve skipped: %s", exc)
+        # AGGREGATOR = SEARCH BOOSTER, never a stored call. If this aggregator hit did
+        # NOT resolve to the donor's OWN primary page (no Serper key, no match, or the
+        # fetch failed), DROP it now — never insert an aggregator URL/funder (owner rule).
+        # Belt-and-suspenders with the is_eligible non-primary reject; also skips the
+        # wasted live-check / deep-read on a seed we're going to drop anyway.
+        if _is_agg and not cand.get("_resolved_from_aggregator"):
+            rejected += 1
+            log.info("reject (unresolved aggregator): %s — %s",
+                     (cand.get("funding_agency") or "")[:40],
+                     (cand.get("opportunity_title") or "")[:50])
+            _reject_records.append({**cand, "_reject_reason":
+                                    "aggregator: not resolved to a primary source (dropped)"})
+            continue
         # Classify on both axes — solicitation (how to apply: NOFO/RFP/CFA/EOI/…)
         # and instrument (the contract: Grant/Cooperative Agreement/Loan/…). Carried
         # onto the inserted row + the reject record, and aggregated onto the source.
@@ -588,6 +603,21 @@ def ingest_candidates(
         # values win. Flows into BOTH the global store and the Screened insert.
         _apply_llm_judgment(cand)
 
+        # DATA-SUFFICIENCY hard gate (tenant Screened pipeline only): now that ALL
+        # enrichment has run (aggregator resolve + live-check + deep-read + LLM
+        # judgment), a call we STILL can't verify as a real, currently-open opportunity
+        # — a blank stub, or no parseable/rolling/current deadline — is rejected rather
+        # than inserted as a Decline the team has to wade through. Pure extraction
+        # (extract_only) keeps everything for the shared store.
+        if not extract_only:
+            _bad, _why = insufficient_data_reject(cand)
+            if _bad:
+                rejected += 1
+                log.info("reject (insufficient data): %s — %s",
+                         (cand.get("opportunity_title") or "")[:60], _why)
+                _reject_records.append({**cand, "_reject_reason": f"insufficient: {_why}"})
+                continue
+
         # Capture the fully-enriched candidate to the GLOBAL extracted store —
         # UNLESS it already came FROM the store (screening / "My eligible funding"
         # carries extraction_uid). Skipping re-extraction here is what keeps
@@ -700,12 +730,28 @@ def ingest_candidates(
             try:
                 from core import llm_synthesis, org_profile as _orgp
                 if llm_synthesis.is_enabled():
+                    # Ensure synthesis reads the FULL RFP, not just the listing
+                    # preamble. Deep-read only ran above for thin/undated candidates, so
+                    # a rich call that arrived with a deadline + snippet never got its
+                    # full page → the model summarised the generic boilerplate (the two
+                    # near-identical Grand Challenges briefs). Fetch the page now
+                    # (cron/Chromium only) when we don't already have it.
+                    if not (cand.get("_page_text") or "").strip() and deep_read.available():
+                        try:
+                            deep_read.enrich(cand)
+                        except Exception as _dre:
+                            log.debug("deep-read for synthesis skipped: %s", _dre)
                     _crit = {k: row.get(k) for k in (
                         "qualification", "strategic_fit", "capacity", "geographic_fit",
                         "cofinancing", "funding_quality", "funder_relationship",
                         "competitiveness", "bid_effort")}
                     _syn = llm_synthesis.synthesize(
                         cand, _orgp.get_profile(), row.get("auto_recommendation"), _crit)
+                    if not _syn:
+                        log.warning(
+                            "llm_synthesis produced nothing (LLM error/timeout?) — "
+                            "storing RAW brief for %s",
+                            (row.get("opportunity_title") or "")[:60])
                     if _syn:
                         if _syn.get("brief_description"):
                             row["brief_description"] = _syn["brief_description"]
@@ -723,6 +769,18 @@ def ingest_candidates(
                             row["application_checklist"] = _syn["application_checklist"]
                         if _syn.get("eligibility_specifics"):
                             row["eligibility_specifics"] = _syn["eligibility_specifics"]
+                        # Structured award value / duration the LLM read from a (possibly
+                        # ranged) call — FILL ONLY when the scraper/regex extractor left
+                        # them blank, so the LLM is a fallback and never clobbers a
+                        # regex-parsed figure. Feeds PREFER-6 / MUST-3 sizing.
+                        if _syn.get("call_award_value") and not row.get("call_award_value"):
+                            row["call_award_value"] = _syn["call_award_value"]
+                            # The LLM figure is ALREADY in USD (prompt: call_award_value_usd),
+                            # so stamp currency=USD — otherwise _usd() would re-apply the
+                            # row's stale native FX rate and double-convert the amount.
+                            row["currency"] = "USD"
+                        if _syn.get("project_duration") and not row.get("project_duration"):
+                            row["project_duration"] = _syn["project_duration"]
                         # CLOSE THE LOOP: feed the LLM-extracted RFP compliance flags
                         # into MUST-5, then re-derive cofinancing + re-score so the
                         # stored decision reflects hard-gates the call itself states.
@@ -739,9 +797,13 @@ def ingest_candidates(
                             try:
                                 _fa = (row.get("funding_agency") or "").strip()
                                 if _fa:
-                                    _dq = (sb.table("donor_intel").select("*")
-                                           .ilike("donor", _fa).limit(1).execute().data or [])
-                                    _dn = _dq[0] if _dq else None
+                                    # Robust resolution (acronym / short / full name) so a
+                                    # call whose funder string differs from the stored donor
+                                    # name (e.g. "Grand Challenges" → "Bill & Melinda Gates
+                                    # Foundation") still joins its donor intel — an exact
+                                    # ilike missed these, starving the donor-fallback.
+                                    from core.donor_intel import match_donor as _match_donor
+                                    _dn = _match_donor(_fa, fuzzy=False)
                             except Exception:
                                 _dn = None
                             # Re-derive BOTH call-flag-sensitive labels: MUST-1
@@ -777,7 +839,15 @@ def ingest_candidates(
                                     _prof, row, _dn, _settings.get_org(),
                                     rfp_compliance=_flags)
                                 row["auto_recommendation"] = _rec(
-                                    _cv, _mres["composite"], fatal=_isf)
+                                    _cv, _mres["composite"], fatal=_isf,
+                                    below_award_floor=_cdv.below_award_floor(row, _prof))
+                else:
+                    # Visible, not debug: a mis-set cron env (LLM base URL/key) silently
+                    # disables synthesis, so every brief is the raw scraped preamble.
+                    log.warning(
+                        "llm_synthesis DISABLED (set LLM_JUDGE_BASE_URL + "
+                        "LLM_JUDGE_API_KEY, or LLM_SYNTH_*) — storing RAW brief for %s",
+                        (row.get("opportunity_title") or "")[:60])
             except Exception as _exc:
                 log.debug("llm_synthesis skipped: %s", _exc)
         if not dry_run:
@@ -871,6 +941,17 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
     geo = row.get("call_geographic_scope")
     if not isinstance(geo, (list, tuple)):
         geo = [geo] if geo else []
+    # Stamp _source_class from the ACTUAL host, not a blanket "primary". Stamping
+    # every store row "primary" used to bypass the is_eligible non-primary reject and
+    # let aggregator URLs (DevelopmentAid / fundsforNGOs) re-enter screening. A row
+    # whose URL is a known aggregator/blog host is tagged non-"primary" so the reject
+    # fires; genuine primary/unknown hosts keep flowing through.
+    _url = row.get("opportunity_url") or ""
+    try:
+        from core import aggregators as _aggr
+        _src_class = "aggregator" if _aggr.is_non_primary(_url)[0] else "primary"
+    except Exception:
+        _src_class = "primary"
     return {
         "opportunity_title": row.get("opportunity_name"),
         "opportunity_link": row.get("opportunity_url"),
@@ -894,7 +975,7 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
         "date_posted": row.get("date_posted"),
         "source": row.get("source"),
         "_source_origin": row.get("source"),
-        "_source_class": "primary",       # already extracted from a primary source
+        "_source_class": _src_class,       # host-derived (see above), NOT blanket primary
         "extraction_uid": row.get("uid"),
     }
 
@@ -905,12 +986,37 @@ MATCH_RUN_LABEL = "🎯 Find my matches"
 
 
 def run_screening(*, dry_run: bool = False, status: str = "Open",
-                  triggered_by: str = "manual") -> dict:
+                  triggered_by: str = "manual", tenant_id: str | None = None) -> dict:
     """Re-screen the internal extracted store against this tenant's policies.
     Returns {considered, eligible, added, already_tracked, rejected}. `eligible` =
     rows that passed the gate; `added` = TRULY new rfp_submissions inserts (vs
     `already_tracked` = eligible ones merge-updated because they were already in the
-    pipeline). No external network calls."""
+    pipeline). No external network calls.
+
+    `tenant_id` runs the screen HEADLESSLY as that tenant (no Streamlit session) — used
+    by the cron per-tenant loop. It forces the tenant context for the whole run so
+    get_policies(), org_profile, the get_client scoping wrapper (insert-stamp) and the
+    scan_logs entry all target that tenant. When omitted, it defaults to the SESSION
+    tenant (current_tenant_id) so an in-session run always stamps inserts to a tenant —
+    including a super_user's run, which would otherwise insert tenant_id=NULL orphans
+    (the get_client wrapper leaves super_user writes unscoped)."""
+    from auth import tenant_context as _tc
+    _tid = tenant_id
+    if not _tid:
+        try:
+            _tid = _tc.current_tenant_id()
+        except Exception:
+            _tid = None
+    _tok = _tc.set_tenant_override(_tid) if _tid else None
+    try:
+        return _run_screening_body(dry_run=dry_run, status=status,
+                                   triggered_by=triggered_by)
+    finally:
+        if _tok is not None:
+            _tc.reset_tenant_override(_tok)
+
+
+def _run_screening_body(*, dry_run: bool, status: str, triggered_by: str) -> dict:
     import time as _time
     from core import extracted_store
     t0 = _time.time()
@@ -937,13 +1043,79 @@ def run_screening(*, dry_run: bool = False, status: str = "Open",
         res = {"considered": len(cands), "eligible": eligible, "added": added,
                "already_tracked": max(0, eligible - added), "rejected": rejected}
     if not dry_run:                              # log for the Eligible-funding history
+        # A screening / "Find my matches" run is TENANT-SPECIFIC — stamp the current
+        # tenant so its notification is shown only to that tenant (migration 074). The
+        # system-wide discovery crawl (run_scan.py) leaves tenant_id NULL → shown to all.
+        _row = {
+            "source": MATCH_RUN_LABEL, "triggered_by": triggered_by,
+            "rfps_found": res["considered"], "rfps_new": res["eligible"],
+            "rfps_duplicate": res["already_tracked"], "rfps_rejected": res["rejected"],
+            "duration_sec": round(_time.time() - t0, 3), "errors": None,
+        }
         try:
-            get_client().table("scan_logs").insert({
-                "source": MATCH_RUN_LABEL, "triggered_by": triggered_by,
-                "rfps_found": res["considered"], "rfps_new": res["eligible"],
-                "rfps_duplicate": res["already_tracked"], "rfps_rejected": res["rejected"],
-                "duration_sec": round(_time.time() - t0, 3), "errors": None,
-            }).execute()
+            from auth.tenant_context import current_tenant_id as _ctid
+            _tid = _ctid()
+            if _tid:
+                _row["tenant_id"] = _tid
+        except Exception:
+            pass
+        try:
+            get_client().table("scan_logs").insert(_row).execute()
         except Exception as exc:
-            log.debug("run_screening log failed: %s", exc)
+            # Retry without tenant_id in case migration 074 isn't applied yet, so the
+            # run is still logged (just without tenant scoping).
+            if "tenant_id" in _row:
+                _row.pop("tenant_id", None)
+                try:
+                    get_client().table("scan_logs").insert(_row).execute()
+                except Exception as exc2:
+                    log.debug("run_screening log failed: %s", exc2)
+            else:
+                log.debug("run_screening log failed: %s", exc)
     return res
+
+
+def screen_all_tenants(*, dry_run: bool = False, triggered_by: str = "cron",
+                       status: str = "Open") -> dict[str, dict]:
+    """Headless per-tenant screening (the cron's Option-C step). For each ACTIVE tenant,
+    screen the SHARED extracted store against THAT tenant's own policies + profile and
+    insert tenant-tagged rfp_submissions — so the Friday discovery reaches every tenant
+    automatically (a fresh tenant with a minimal profile gets many rows, mostly Decline).
+    Run AFTER an --extract-only crawl. Returns {tenant_id: screening result}."""
+    # No-op in single-tenant mode (no JWT secret): the headless override would otherwise
+    # screen a seeded tenant with blank policies and stamp rows to it, polluting the
+    # single-tenant pipeline. run_scan handles single-tenant with a normal full ingest.
+    try:
+        from auth.tenant_context import multitenant_enabled
+        if not multitenant_enabled():
+            log.info("screen_all_tenants: multi-tenant off — skipping per-tenant screening")
+            return {}
+    except Exception:
+        return {}
+    from db.supabase_client import service_client
+    try:
+        tenants = (service_client().table("tenants")
+                   .select("id,name,status,is_platform")
+                   .eq("status", "active").order("name").execute().data or [])
+    except Exception as exc:
+        log.error("screen_all_tenants: couldn't list tenants: %s", exc)
+        return {}
+    out: dict[str, dict] = {}
+    for t in tenants:
+        tid = t.get("id")
+        if not tid:
+            continue
+        # Skip the platform/owner tenant (super_user's intentionally-blank home) — its
+        # empty policy would flood it with Decline rows every run.
+        if t.get("is_platform"):
+            log.info("screen_all_tenants: skipping platform tenant %s", t.get("name"))
+            continue
+        try:
+            out[str(tid)] = run_screening(dry_run=dry_run, status=status,
+                                          triggered_by=triggered_by, tenant_id=str(tid))
+            log.info("screen_all_tenants: %s (%s) → %s", t.get("name"), tid, out[str(tid)])
+        except Exception as exc:
+            log.error("screen_all_tenants: tenant %s (%s) failed: %s",
+                      t.get("name"), tid, exc)
+            out[str(tid)] = {"error": str(exc)}
+    return out
