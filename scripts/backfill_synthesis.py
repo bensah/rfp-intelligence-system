@@ -76,9 +76,10 @@ def _one(row: dict, org: dict, sb=None,
             _dn = None
             _fa = (row.get("funding_agency") or "").strip()
             if _fa:
-                _dq = (sb.table("donor_intel").select("*")
-                       .ilike("donor", _fa).limit(1).execute().data or [])
-                _dn = _dq[0] if _dq else None
+                # Resolve donors IDENTICALLY to the live scorer (exact-key, no fuzzy),
+                # so a re-score never diverges from / overwrites the live decision.
+                from core.donor_intel import match_donor as _match_donor
+                _dn = _match_donor(_fa, fuzzy=False)
             # Re-derive BOTH call-flag-sensitive labels: MUST-1 qualification +
             # MUST-5 cofinancing. Recompute the composite + gate if either changed.
             _cv = {k: row.get(k) for k in _CRIT}
@@ -106,7 +107,9 @@ def _one(row: dict, org: dict, sb=None,
                 _isf, _ = _cdv.fatal_decline(org, row, _dn, org_set or {},
                                              rfp_compliance=_flags)
                 upd["alignment_score"] = round(_m["composite"], 1)
-                upd["auto_recommendation"] = _rec(_cv, _m["composite"], fatal=_isf)
+                upd["auto_recommendation"] = _rec(
+                    _cv, _m["composite"], fatal=_isf,
+                    below_award_floor=_cdv.below_award_floor(row, org))
         except Exception:
             pass
     return row["uid"], (upd or None), usage

@@ -36,9 +36,13 @@ _CACHE: dict[str, dict] = {}
 
 
 def is_enabled() -> bool:
+    # Only the BASE URL is required. A local Ollama endpoint IGNORES the API key, so
+    # requiring a non-empty key silently disabled synthesis (and the judge) whenever the
+    # key env var was unset — the exact "the LLM didn't kick in" symptom. The key is
+    # defaulted to a placeholder in the client below; a provider that truly needs one
+    # (Ollama Cloud) will surface a visible auth error instead of going dark.
     base = os.environ.get("LLM_SYNTH_BASE_URL") or os.environ.get("LLM_JUDGE_BASE_URL")
-    key = os.environ.get("LLM_SYNTH_API_KEY") or os.environ.get("LLM_JUDGE_API_KEY")
-    if not (base and key):
+    if not base:
         return False
     try:
         import openai  # noqa: F401
@@ -285,6 +289,14 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "for each RFP so it never reads like a robotic fill-in-the-blank. Ground every "
         "statement in the text; if a detail (e.g. the amount) is not stated, OMIT it "
         "rather than inventing one. MAX 1000 characters.\n"
+        '  "call_award_value_usd": the FUNDING amount per award for THIS call, as a plain '
+        "NUMBER in US dollars (no symbols/commas). If the call states a RANGE or several "
+        "tracks with different amounts, return the HIGHEST amount; convert to USD if the "
+        "call uses another currency; null if the call states no amount. Ground it in the "
+        "text — never invent.\n"
+        '  "project_duration_months": the project / grant length for THIS call as an '
+        "INTEGER number of MONTHS. If a range or multiple tracks, return the HIGHEST; null "
+        "if the call states no duration. Never invent.\n"
         '  "call_domain_areas": array of 1-3 best-fit areas chosen ONLY from this '
         f"list (verbatim): {options}\n"
         '  "key_risks": ONE sentence naming the single most material risk of THIS '
@@ -362,8 +374,12 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
     try:
         from openai import OpenAI
         client = OpenAI(
-            base_url=os.environ.get("LLM_SYNTH_BASE_URL") or os.environ["LLM_JUDGE_BASE_URL"],
-            api_key=os.environ.get("LLM_SYNTH_API_KEY") or os.environ["LLM_JUDGE_API_KEY"],
+            base_url=(os.environ.get("LLM_SYNTH_BASE_URL")
+                      or os.environ.get("LLM_JUDGE_BASE_URL")),
+            # Placeholder key for endpoints that ignore it (local Ollama); a provider
+            # that requires a real key surfaces a visible auth error, never a silent skip.
+            api_key=(os.environ.get("LLM_SYNTH_API_KEY")
+                     or os.environ.get("LLM_JUDGE_API_KEY") or "ollama"),
             timeout=float(os.environ.get("LLM_JUDGE_TIMEOUT", "60") or 60),
             max_retries=0,
         )
@@ -413,6 +429,22 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "_prompt_tokens": prompt_tokens,
         "_completion_tokens": completion_tokens,
     }
+    # Structured award value + duration the LLM read from the (possibly RANGED) call. These
+    # FILL the row only when the regex/scraper extractor left them blank (see the merge in
+    # core.scan_pipeline), so PREFER-6 / MUST-3 can size a call that states its award or
+    # length only as a range — the LLM returns the HIGHEST of any range per the prompt.
+    def _num_or_none(v):
+        try:
+            n = float(str(v).replace(",", "").replace("$", "").strip())
+            return n if n > 0 else None
+        except (TypeError, ValueError):
+            return None
+    _av = _num_or_none(parsed.get("call_award_value_usd"))
+    if _av:
+        out["call_award_value"] = _av
+    _pd = _num_or_none(parsed.get("project_duration_months"))
+    if _pd:
+        out["project_duration"] = int(round(_pd))
     # Fold the grounded MUST-1 requirement signals INTO compliance_flags so they ride
     # the existing rfp_compliance plumbing (core.criteria_derive._merge_rfp_compliance
     # preserves valued keys; booleans stay boolean).

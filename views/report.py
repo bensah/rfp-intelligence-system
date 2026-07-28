@@ -296,6 +296,19 @@ def _series_to_usd(amount_col: pd.Series, currency_col: pd.Series | None) -> pd.
 sb = get_client()
 
 
+def _scope_key() -> str:
+    """Cache-key discriminator for the @st.cache_data loaders below. Their cache is
+    PROCESS-GLOBAL (shared across all sessions), but the rows they load are tenant-scoped
+    by the get_client() wrapper — so without the tenant in the key one tenant's report
+    would be served to another. Mirror the wrapper's own scope: a tenant id for a scoped
+    tenant user, or 'all' for super_user / single-tenant (who see everything)."""
+    try:
+        from db.supabase_client import _tenant_scope_tid
+        return f"t:{_tenant_scope_tid() or 'all'}"
+    except Exception:
+        return "t:all"
+
+
 # ===========================================================================
 # Print-mode CSS — hides Streamlit chrome when the user prints / saves PDF.
 # Loaded once at the top of the page so it's in scope for every section.
@@ -594,7 +607,7 @@ _DT_KW = dict(errors="coerce", format="ISO8601")
 
 
 @st.cache_data(ttl=120)
-def _load_scan_logs(start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
+def _load_scan_logs(_scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     q = sb.table("scan_logs").select("*")
     if start_iso:
         q = q.gte("scan_date", start_iso)
@@ -608,11 +621,26 @@ def _load_scan_logs(start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
         for c in ("rfps_found", "rfps_new", "rfps_duplicate", "rfps_rejected"):
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+        # Multi-tenant: a tenant's Activity Report reflects only ITS OWN runs (eligibility
+        # / "Find my matches" screening). The system-wide discovery crawl (cron, tenant_id
+        # NULL) is excluded here — it's shared, not this tenant's activity. Super_user and
+        # single-tenant see everything. No-op before migration 074 (no tenant_id column).
+        try:
+            import streamlit as _st
+            from auth.tenant_context import multitenant_enabled, current_tenant_id
+            from core import permissions as _perms
+            _u = _st.session_state.get("app_user") or {}
+            _tid = current_tenant_id()
+            if (multitenant_enabled() and _tid and not _perms.is_super_user(_u)
+                    and "tenant_id" in df.columns):
+                df = df[df["tenant_id"].astype(str) == str(_tid)]
+        except Exception:
+            pass
     return df
 
 
 @st.cache_data(ttl=120)
-def _load_rfps() -> pd.DataFrame:
+def _load_rfps(_scope: str) -> pd.DataFrame:
     # NOTE: every monetary field has its OWN currency column. Two
     # pairings matter on this page:
     #   estimated_value  ↔ currency           (the asked amount)
@@ -649,7 +677,7 @@ def _load_rfps() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=120)
-def _load_meetings(start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
+def _load_meetings(_scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     q = sb.table("meeting_logs").select("*")
     if start_iso:
         q = q.gte("meeting_date", start_iso)
@@ -664,7 +692,7 @@ def _load_meetings(start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=120)
-def _load_engagements(start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
+def _load_engagements(_scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     q = sb.table("engagement_logs").select("*")
     if start_iso:
         q = q.gte("engagement_date", start_iso)
@@ -678,7 +706,7 @@ def _load_engagements(start_iso: str | None, end_iso: str | None) -> pd.DataFram
 
 
 @st.cache_data(ttl=120)
-def _load_grants() -> pd.DataFrame:
+def _load_grants(_scope: str) -> pd.DataFrame:
     res = sb.table("active_grants").select("*").limit(10000).execute()
     df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty:
@@ -860,11 +888,12 @@ _s_iso = _start.isoformat() if _start else None
 _e_iso = _end.isoformat() if _end else None
 
 with st.spinner("Generating report — loading data…"):
-    scans = _load_scan_logs(_s_iso, _e_iso)
-    rfps_all = _load_rfps()
-    meetings = _load_meetings(_s_iso, _e_iso)
-    engagements = _load_engagements(_s_iso, _e_iso)
-    grants = _load_grants()
+    _sk = _scope_key()   # tenant discriminator so cached rows never cross tenants
+    scans = _load_scan_logs(_sk, _s_iso, _e_iso)
+    rfps_all = _load_rfps(_sk)
+    meetings = _load_meetings(_sk, _s_iso, _e_iso)
+    engagements = _load_engagements(_sk, _s_iso, _e_iso)
+    grants = _load_grants(_sk)
 
 
 # Restrict RFPs to the period — used by "discovered in period" type
@@ -1125,6 +1154,28 @@ if _show_sec("1"):
         "below tracks **RFPs discovered** using each row's `search_date`, "
         "so the curve covers the full period — not just days a scan ran."
     )
+
+    # System-wide DISCOVERY counter (shared across all tenants) — the Friday crawl fills a
+    # shared catalog every tenant screens; distinct from THIS tenant's own activity below.
+    # Multi-tenant only (in single-tenant the two would double-count). Visible to all.
+    try:
+        from auth.tenant_context import multitenant_enabled as _mte
+        if _mte():
+            from core import analytics as _an
+            _d = _an.system_discovery_stats()
+            with st.container(border=True):
+                st.markdown("🌐 **System-wide discovery** — the shared catalog every "
+                            "tenant screens (not your tenant's activity)")
+                _dc = st.columns(4)
+                _dc[0].metric("Shared catalog", f"{_d['catalog']:,}")
+                _dc[1].metric("Discovered", f"{_d['found']:,}")
+                _dc[2].metric("Rejected at gate", f"{_d['rejected']:,}")
+                _dc[3].metric("Discovery runs", _d["runs"])
+                if _d.get("last_run"):
+                    st.caption(f"Last discovery run: {str(_d['last_run'])[:16]}. "
+                               "Your tenant's own screening activity is below.")
+    except Exception:
+        pass
 
     if scans.empty:
         st.info("No scans recorded in this period yet. Trigger one from "

@@ -284,10 +284,35 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return out
 
 
+def _blank_policies() -> dict[str, Any]:
+    """Permissive policy for a NEW tenant that hasn't configured one: NO country or theme
+    restriction (so calls populate broadly and the scorer flags Decline when nothing
+    matches the tenant's minimal profile), while keeping the opportunity-NATURE hard gates
+    (training/loan/consultancy exclusions) and applicant defaults. The tenant sharpens
+    matching by filling its profile + Scan Preferences. This is the Option-C behaviour:
+    the less a tenant configures, the more it sees (mostly Decline)."""
+    p = copy.deepcopy(DEFAULT_POLICIES)
+    p["countries"] = {"eligible": [], "broad_terms": [], "permissive_when_silent": True}
+    _themes = p.get("themes") or {}
+    _themes["required_any"] = []            # no theme gate → every sector populates
+    p["themes"] = _themes
+    return p
+
+
 def get_policies() -> dict[str, Any]:
     """Return the active policies (admin overrides merged onto defaults)."""
     raw = get_setting(POLICIES_KEY)
     if not raw:
+        # No configured policy. A FRESH tenant (multi-tenant session OR a headless cron
+        # per-tenant override) starts PERMISSIVE (populate + Decline); single-tenant keeps
+        # the shipped the organisation defaults.
+        try:
+            from auth.tenant_context import (multitenant_enabled, current_tenant_id,
+                                             override_tenant_id)
+            if current_tenant_id() and (multitenant_enabled() or override_tenant_id()):
+                return _blank_policies()
+        except Exception:
+            pass
         return copy.deepcopy(DEFAULT_POLICIES)
     try:
         overlay = json.loads(raw)
