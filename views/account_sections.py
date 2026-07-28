@@ -24,6 +24,18 @@ import streamlit as st
 
 from auth.authenticator import hash_password, clear_credentials_cache
 from core import permissions
+from core.geographies import COUNTRIES
+from db.supabase_client import service_client
+
+# App-owner / Super User contact for account & data requests (permanent deletion,
+# reactivating a suspended org). Temporary personal address — single source of truth,
+# also surfaced on the Help page.
+ADMIN_CONTACT_EMAIL = "nsah.ben03@gmail.com"
+
+# Sentinel option in the "Assign to tenant" picker: creates a personal ('individual'
+# kind) tenant for the user instead of an organization. Individual tenants are PUBLIC —
+# their activity is visible to all users (migration 078 + db.supabase_client scoping).
+_INDIVIDUAL_TENANT_LABEL = "🧑 Individual — personal account (visible to all)"
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +106,22 @@ def render_my_profile(user: dict, sb) -> None:
             "Program areas", value=me.get("program") or "",
             help="Free-text, comma-separated. e.g. 'Vaccines, MCH, Malaria'. "
                  "Used by the Report to attribute scans by program focus.")
+        # Location (migration 069). Country is a canonical dropdown so values stay
+        # consistent for any downstream geo reporting.
+        f7, f8 = st.columns(2)
+        new_address = f7.text_input(
+            "Address", value=me.get("address") or "",
+            help="Street address / building.")
+        new_city = f8.text_input(
+            "City / Town", value=me.get("city") or "")
+        f9, f10 = st.columns(2)
+        new_state = f9.text_input(
+            "State / Province / Region", value=me.get("state_region") or "")
+        _country_opts = [""] + COUNTRIES
+        _cur_country = me.get("country") or ""
+        new_country = f10.selectbox(
+            "Country", _country_opts,
+            index=_country_opts.index(_cur_country) if _cur_country in _country_opts else 0)
         save = st.form_submit_button("💾 Save profile", type="primary")
 
     if save:
@@ -116,12 +144,16 @@ def render_my_profile(user: dict, sb) -> None:
         else:
             try:
                 sb.table("users").update({
-                    "name":       (new_name or "").strip() or None,
-                    "email":      new_email_clean,
-                    "phone":      (new_phone or "").strip() or None,
-                    "job_title":  (new_title or "").strip() or None,
-                    "department": (new_dept or "").strip() or None,
-                    "program":    (new_program or "").strip() or None,
+                    "name":         (new_name or "").strip() or None,
+                    "email":        new_email_clean,
+                    "phone":        (new_phone or "").strip() or None,
+                    "job_title":    (new_title or "").strip() or None,
+                    "department":   (new_dept or "").strip() or None,
+                    "program":      (new_program or "").strip() or None,
+                    "address":      (new_address or "").strip() or None,
+                    "city":         (new_city or "").strip() or None,
+                    "state_region": (new_state or "").strip() or None,
+                    "country":      (new_country or "").strip() or None,
                 }).eq("email", user["email"]).execute()
                 clear_credentials_cache()
                 user["name"] = (new_name or "").strip() or user.get("name")
@@ -148,6 +180,65 @@ def render_my_profile(user: dict, sb) -> None:
     fc3.metric("Password set",
                (me.get("password_changed_at") or "—").split("T")[0]
                if me.get("password_changed_at") else "—")
+
+    # ── Danger zone — self-service account deletion ─────────────────────
+    st.divider()
+    with st.expander("⚠️ Danger zone — delete my account", expanded=False):
+        st.caption(
+            "Permanently removes your login. Your contributed records (meeting notes, "
+            "engagements, submitted opportunities) **stay in the system** for institutional "
+            "memory — only your ability to sign in is removed. This cannot be undone. To "
+            "delete an entire **organization's** data, an admin must contact the Super "
+            f"User ({ADMIN_CONTACT_EMAIL}).")
+
+        _sole_super = False
+        if permissions.is_super_user(user):
+            try:
+                _cnt = int((sb.table("users").select("id", count="exact")
+                            .eq("role", "super_user").execute().count) or 0)
+            except Exception:
+                _cnt = 2  # fail-open — never block on a transient count error
+            if _cnt <= 1:
+                _sole_super = True
+                st.warning(
+                    "You're the **only Super User** — deleting your account would lock "
+                    "everyone out of platform administration. Promote another Super User "
+                    "first (Settings → Accounts → Users).")
+
+        @st.dialog("Delete my account", width="medium")
+        def _delete_me_dialog(_email=user.get("email"), _uid=me.get("id")):
+            st.error(
+                f"This permanently deletes **{_email}** and signs you out. Your records "
+                "remain for institutional memory. This cannot be undone.")
+            _typed = st.text_input(f"Type your email to confirm: {_email}",
+                                   key="pf_del_confirm")
+            dc1, dc2 = st.columns(2)
+            if dc1.button(
+                    "🗑 Permanently delete my account", type="primary", width='stretch',
+                    disabled=(_typed or "").strip().lower() != (_email or "").lower(),
+                    key="pf_del_go"):
+                try:
+                    if _uid:                       # drop memberships → no orphan rows
+                        try:
+                            service_client().table("tenant_memberships").delete().eq(
+                                "user_id", _uid).execute()
+                        except Exception:
+                            pass
+                    sb.table("users").delete().eq("email", _email).execute()
+                    clear_credentials_cache()
+                except Exception as exc:
+                    st.error(f"Delete failed: {exc}")
+                    return
+                st.session_state.clear()
+                st.success("Your account has been deleted. You have been signed out.")
+                st.stop()
+            if dc2.button("Cancel", width='stretch', key="pf_del_cancel"):
+                st.rerun()
+
+        if not _sole_super:
+            if st.button("🗑 Delete my account…", key="pf_delete_me"):
+                st.session_state.pop("pf_del_confirm", None)
+                _delete_me_dialog()
 
 
 # ===========================================================================
@@ -202,20 +293,33 @@ def render_change_password(user: dict, sb) -> None:
 # ===========================================================================
 # User Access (read-only matrix) — admin-facing after the redesign
 # ===========================================================================
-def render_user_access(user: dict) -> None:
-    st.subheader("User access")
+def render_user_access(user: dict, target: dict | None = None) -> None:
+    """Access reference for a user. When `target` is supplied (the row picked in the
+    Users table) it shows THAT user's effective access — role policy plus any
+    per-surface overrides — so 'Access' reads as the selected user's card; with no
+    target it falls back to the current user's own access."""
+    subject = target or user
+    is_other = bool(target) and target.get("email") != user.get("email")
+    who = subject.get("name") or subject.get("email") or "this user"
+    st.markdown(f"#### 🔑 User Access Privileges — {who}" if is_other
+                else "#### 🔑 User Access Privileges")
     st.caption(
-        "What each role can see and do across the app. Read-only "
-        "reference — change a specific user's access on the Manage Users "
-        "tab (Edit → per-surface overrides).")
+        f"What **{who}** can see and do across the app, by role"
+        + (" (with their per-user overrides applied)" if is_other else "")
+        + ". Read-only — change it via **✏️ Edit → per-surface overrides** on the "
+        "user selected above.")
 
-    rg = permissions.role_group(user)
+    rg = permissions.role_group(subject)
+    overrides = (subject.get("access_overrides")
+                 if isinstance(subject.get("access_overrides"), dict) else {})
     rows = []
     for surface, role_caps in permissions.ACCESS_MATRIX.items():
         cap = role_caps.get(rg, "hidden")
+        eff = overrides.get(surface)
         rows.append({
             "Surface": surface,
-            "Your access": permissions.capability_label(cap),
+            "Effective access": str(eff) if eff else permissions.capability_label(cap),
+            "Role default": permissions.capability_label(cap),
             "Admin access": permissions.capability_label(
                 role_caps.get("admin", "hidden")),
         })
@@ -225,6 +329,380 @@ def render_user_access(user: dict) -> None:
 # ===========================================================================
 # Manage Users (admin / super_user only)
 # ===========================================================================
+def _set_many_status(svc, tids: list[str], status: str) -> None:
+    """Bulk activate/suspend the given tenants (one round-trip via `in_`)."""
+    if not tids:
+        return
+    try:
+        svc.table("tenants").update({"status": status}).in_("id", tids).execute()
+    except Exception as exc:
+        st.error(f"Status change failed: {exc}")
+
+
+def _set_many_tenant_blacklist(svc, tids: list[str], on: bool, by: str | None) -> None:
+    """Blacklist (on → status='blacklisted') or restore (off → status='active') the
+    given tenants, stamping the migration-077 audit trail. Falls back to a status-only
+    update if the audit columns aren't present yet."""
+    if not tids:
+        return
+    if on:
+        payload = {"status": "blacklisted",
+                   "blacklisted_at": datetime.now(timezone.utc).isoformat(),
+                   "blacklisted_by": by}
+    else:
+        payload = {"status": "active", "blacklisted_at": None,
+                   "blacklisted_by": None, "blacklist_reason": None}
+    try:
+        svc.table("tenants").update(payload).in_("id", tids).execute()
+    except Exception:
+        try:
+            svc.table("tenants").update(
+                {"status": "blacklisted" if on else "active"}).in_("id", tids).execute()
+        except Exception as exc:
+            st.error(f"Blacklist change failed: {exc}")
+
+
+def render_manage_tenants(user: dict, sb) -> None:
+    """Settings → Tenants (SUPER USER only). Tenants = organizations registered to the
+    platform (a the organisation country / global team now; external orgs later). A management TABLE
+    with per-row "Open ↗" links to each tenant's Organization page + multi-row select for
+    bulk Suspend / Activate. Renaming is done in the Organization editor (the "Organization
+    name" field), not here. Deletion is intentionally omitted — suspend instead, so a
+    tenant's data is never orphaned.
+
+    Tenant + membership rows are read/written on the RLS-BYPASSING service client (these
+    are privileged platform-admin operations; the passed-in `sb` would be the caller's
+    tenant-scoped client and hit RLS on the tenant tables — the 42501 create failure)."""
+    if not permissions.is_super_user(user):
+        st.error("Tenants are managed by the Super User only.")
+        return
+    svc = service_client()
+
+    st.subheader("Tenants")
+    st.caption(
+        "Tenants registered to the platform — **🏢 organizations** (isolated data) or "
+        "**🧑 individuals** (personal accounts whose activity is visible to all users). "
+        "Users belong to a tenant via membership. Suspend — don't delete — to retire a "
+        "tenant without orphaning its records. **Click a tenant name to open its "
+        "Organization page** (view / edit that tenant's identity + profile). Funding "
+        "opportunities are shared platform-wide and screened against each tenant's own "
+        "preferences.")
+
+    # ── Add tenant ──────────────────────────────────────────────────────
+    with st.form("add_tenant_form", clear_on_submit=True):
+        c1, c2, c3 = st.columns([3, 1.2, 1])
+        t_name = c1.text_input(
+            "New tenant name",
+            placeholder="e.g. the organisation Zimbabwe, the organisation Programme Team, Example Tenant")
+        t_kind = c2.selectbox(
+            "Type", ["Organization", "Individual"], key="add_tenant_kind",
+            help="Organization = a normal org tenant. Individual = a personal account "
+                 "whose activity is visible to all users.")
+        add = c3.form_submit_button("➕ Add tenant", type="primary", width='stretch')
+    if add:
+        nm = (t_name or "").strip()
+        if not nm:
+            st.warning("Enter a tenant name.")
+        else:
+            _kind = "individual" if t_kind == "Individual" else "organization"
+            try:
+                dupe = (svc.table("tenants").select("id").ilike("name", nm)
+                        .limit(1).execute().data or [])
+                if dupe:
+                    st.warning("A tenant with that name already exists.")
+                else:
+                    try:
+                        svc.table("tenants").insert(
+                            {"name": nm, "kind": _kind, "status": "active",
+                             "created_by": user.get("id")}).execute()
+                    except Exception:
+                        # Pre-migration-078 fallback (no `kind` column) → org tenant.
+                        svc.table("tenants").insert(
+                            {"name": nm, "status": "active",
+                             "created_by": user.get("id")}).execute()
+                    st.success(f"Created {_kind} “{nm}”.")
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"Create failed: {exc}")
+
+    # ── Management table ─────────────────────────────────────────────────
+    # Try selecting `kind` (migration 078); fall back to the pre-078 column set so the
+    # table still loads before the migration is applied.
+    tenants, _last_exc = None, None
+    for _sel in ("id,name,slug,status,kind,created_at,org_profile",
+                 "id,name,slug,status,created_at,org_profile"):
+        try:
+            tenants = (svc.table("tenants").select(_sel)
+                       .order("name").execute().data or [])
+            break
+        except Exception as exc:
+            _last_exc = exc
+            tenants = None
+    if tenants is None:
+        st.error(f"Couldn't load tenants: {_last_exc}")
+        return
+    # Blacklisted tenants (migration 077) are managed under the Blacklisted tab — hide
+    # them here so this table only shows live (active / suspended) organizations.
+    tenants = [t for t in tenants if (t.get("status") or "active") != "blacklisted"]
+    if not tenants:
+        st.info("No tenants yet.")
+        return
+
+    try:
+        mems = (svc.table("tenant_memberships").select("tenant_id,status")
+                .execute().data or [])
+    except Exception:
+        mems = []
+    from collections import Counter
+    active_ct = Counter(m["tenant_id"] for m in mems if m.get("status") == "active")
+    pending_ct = Counter(m["tenant_id"] for m in mems if m.get("status") == "pending")
+
+    st.markdown("---")
+    # One row per tenant. The Organization NAME is itself the entry link (opens the
+    # tenant's Organization page in a NEW TAB). That page — and every page navigated
+    # from it — runs in a STICKY super_user 'view-as' of the tenant: scoped across all
+    # pages and reflected in the browser URL (?tenant=<slug>) until Return to my account.
+    # The `&label=<name>` suffix on the href lets the LinkColumn show the tenant NAME as
+    # the clickable text (regex-extracted); the app reads only ?tenant= and ignores label.
+    # Tick rows to Suspend / Activate in bulk.
+    _rows = []
+    for t in tenants:
+        tid = t["id"]
+        prof = t.get("org_profile") if isinstance(t.get("org_profile"), dict) else {}
+        _key = t.get("slug") or tid
+        _name = t.get("name") or "—"
+        _rows.append({
+            "id": tid,
+            "slug": _key,
+            "name": _name,
+            "Organization": f"/organization?tenant={_key}&label={_name}",
+            "Kind": "🧑 Individual" if t.get("kind") == "individual" else "🏢 Org",
+            "_status": (t.get("status") or "active"),
+            "Status": "🟢 Active" if (t.get("status") or "active") == "active"
+                      else "⏸ Suspended",
+            "Members": int(active_ct.get(tid, 0)),
+            "Pending": int(pending_ct.get(tid, 0)),
+            "Profile": "set" if prof else "empty",
+            "Created": (t.get("created_at") or "")[:10],
+        })
+    _df = pd.DataFrame(_rows)
+
+    _sel = st.dataframe(
+        _df[["Organization", "Kind", "Status", "Members", "Pending", "Profile",
+             "Created"]],
+        hide_index=True, width="stretch", key="tenants_table",
+        selection_mode="multi-row", on_select="rerun",
+        column_config={
+            "Organization": st.column_config.LinkColumn(
+                "Organization", display_text=r"label=(.+)$", width="large",
+                help="Click a tenant name to open its Organization page in a new tab. "
+                     "That tab runs as a sticky super_user 'view-as' of the tenant — "
+                     "scoped across every page and shown in the URL (?tenant=…) until "
+                     "you Return to your account (banner up top)."),
+            "Kind": st.column_config.TextColumn(
+                "Kind", width="small",
+                help="🏢 Org = a normal organization tenant. 🧑 Individual = a personal "
+                     "account whose activity is visible to all users."),
+            "Members": st.column_config.NumberColumn("Members", width="small"),
+            "Pending": st.column_config.NumberColumn("Pending", width="small"),
+        })
+
+    _picked = (getattr(_sel, "selection", None) or {}).get("rows") or []
+    _sel_rows = [_rows[i] for i in _picked if 0 <= i < len(_rows)]
+    _sel_ids = [r["id"] for r in _sel_rows]
+
+    if not _sel_ids:
+        st.caption("**Click a tenant name** to open its Organization page in a new tab "
+                   "(super_user view-as). Tick one or more rows to **Suspend** / "
+                   "**Activate** them.")
+        return
+
+    st.markdown(f"**{len(_sel_ids)} selected:** "
+                + ", ".join(f"`{r['name']}`" for r in _sel_rows))
+    # Enable each action only when it would actually change something for the selection:
+    # Suspend needs an active tenant; Activate needs a suspended one. (Blacklisted tenants
+    # aren't in this table — they're reactivated from the Blacklisted tab.)
+    _statuses = {r.get("_status", "active") for r in _sel_rows}
+    _can_suspend = any(s == "active" for s in _statuses)
+    _can_activate = any(s != "active" for s in _statuses)
+    b1, b2, b3, _sp = st.columns([1.3, 1.3, 1.5, 3.9])
+    if b1.button("⏸ Suspend", width="stretch", key="tn_bulk_suspend",
+                 disabled=not _can_suspend,
+                 help=None if _can_suspend
+                 else "All selected tenants are already suspended."):
+        _set_many_status(svc, _sel_ids, "suspended"); st.rerun()
+    if b2.button("🟢 Activate", type="primary", width="stretch",
+                 key="tn_bulk_activate", disabled=not _can_activate,
+                 help=None if _can_activate
+                 else "All selected tenants are already active."):
+        _set_many_status(svc, _sel_ids, "active"); st.rerun()
+    if b3.button("🚫 Blacklist", width="stretch", key="tn_bulk_blacklist",
+                 help="Hard-block: members of a blacklisted tenant lose all access. "
+                      "Manage / undo under the Blacklisted tab."):
+        _set_many_tenant_blacklist(svc, _sel_ids, True, user.get("email")); st.rerun()
+
+
+def render_org_suspend(user: dict, sb) -> None:
+    """Admin self-service (Settings → Setup): suspend — never delete — THIS org's tenant
+    account. Suspending pauses auto-scans and retires the account while KEEPING every
+    record for later retrieval. Reactivation and any permanent deletion are Super-User-only
+    (out-of-band, see the Help page). Shown to a tenant admin, not the super_user (who
+    manages every tenant from Accounts → Tenants)."""
+    try:
+        from auth import tenant_context as tc
+        if not tc.multitenant_enabled():
+            return
+    except Exception:
+        return
+    if not permissions.is_admin(user) or permissions.is_super_user(user):
+        return
+    try:
+        tid = tc.current_tenant_id()
+    except Exception:
+        tid = None
+    if not tid:
+        return
+
+    svc = service_client()
+    try:
+        _t = (svc.table("tenants").select("name,status").eq("id", tid).limit(1)
+              .execute().data or [{}])[0]
+    except Exception:
+        _t = {}
+    _name = _t.get("name") or "your organization"
+    _status = _t.get("status") or "active"
+
+    st.divider()
+    with st.expander("⚠️ Danger zone — suspend this organization's account",
+                     expanded=False):
+        if _status == "suspended":
+            st.warning(
+                f"**{_name}** is currently **suspended** — auto-scans are paused and the "
+                "account is retired. Reactivation is handled by the Super User (app "
+                f"developer) only — contact **{ADMIN_CONTACT_EMAIL}**.")
+            return
+        if _status == "blacklisted":
+            st.error(f"**{_name}** is blocked by the platform. Contact "
+                     f"**{ADMIN_CONTACT_EMAIL}**.")
+            return
+        st.caption(
+            "Suspends the whole organization account: **auto-scans stop** and the org is "
+            "retired. **Records are kept** for institutional memory — nothing is deleted "
+            "here. Reactivating a suspended org, or a **permanent deletion**, is done by "
+            f"the Super User (app developer) only — contact **{ADMIN_CONTACT_EMAIL}**.")
+
+        @st.dialog(f"Suspend {_name}", width="medium")
+        def _suspend_org_dialog(_svc=svc, _tid=tid, _nm=_name):
+            st.error(
+                f"Suspending **{_nm}** pauses auto-scans and retires the account. Records "
+                "are preserved and nothing is deleted. Reactivation is Super-User-only "
+                f"(contact {ADMIN_CONTACT_EMAIL}). Continue?")
+            _typed = st.text_input(
+                f"Type the organization name to confirm: {_nm}", key="org_susp_confirm")
+            c1, c2 = st.columns(2)
+            if c1.button("⏸ Suspend organization", type="primary", width='stretch',
+                         disabled=(_typed or "").strip().lower() != (_nm or "").strip().lower(),
+                         key="org_susp_go"):
+                try:
+                    _svc.table("tenants").update(
+                        {"status": "suspended"}).eq("id", _tid).execute()
+                except Exception as exc:
+                    st.error(f"Suspend failed: {exc}")
+                    return
+                st.success(f"“{_nm}” suspended. Auto-scans are paused; contact the Super "
+                           "User to reactivate.")
+                st.rerun()
+            if c2.button("Cancel", width='stretch', key="org_susp_cancel"):
+                st.rerun()
+
+        if st.button("⏸ Suspend organization…", key="org_suspend_open"):
+            st.session_state.pop("org_susp_confirm", None)
+            _suspend_org_dialog()
+
+
+def render_blacklisted(user: dict, sb) -> None:
+    """Settings → Accounts → Blacklisted (SUPER USER only). One place to see every
+    hard-blocked user and tenant (migration 077) and lift the block. Blacklisting itself
+    happens from the Users / Tenants tabs; this tab is the register + the undo."""
+    if not permissions.is_super_user(user):
+        st.error("The blacklist is managed by the Super User only.")
+        return
+    svc = service_client()
+
+    st.subheader("Blacklisted")
+    st.caption(
+        "Hard-blocked **users** (can't log in or sign up) and **tenants** (their members "
+        "lose all access) — stronger than deactivate / suspend. Select rows and "
+        "**Remove from blacklist** to restore. Add to the blacklist from the Users / "
+        "Tenants tabs.")
+
+    # ── Blacklisted users ────────────────────────────────────────────────
+    st.markdown("#### 👤 Users")
+    try:
+        _bu = (svc.table("users")
+               .select("email,name,role,blacklisted_at,blacklisted_by,blacklist_reason")
+               .eq("is_blacklisted", True)
+               .order("blacklisted_at", desc=True).execute().data or [])
+    except Exception:
+        _bu = []
+        st.caption("No blacklisted users (or migration 077 isn't applied yet).")
+    if _bu:
+        _udf = pd.DataFrame(_bu)
+        _ucols = [c for c in ["email", "name", "role", "blacklisted_at",
+                              "blacklisted_by", "blacklist_reason"] if c in _udf.columns]
+        _usel = st.dataframe(
+            _udf[_ucols], hide_index=True, width="stretch",
+            selection_mode="multi-row", on_select="rerun", key="bl_users_table",
+            column_config={"blacklisted_at": "Blacklisted", "blacklisted_by": "By",
+                           "blacklist_reason": "Reason"})
+        _upick = (getattr(_usel, "selection", None) or {}).get("rows") or []
+        _u_emails = [_bu[i]["email"] for i in _upick if 0 <= i < len(_bu)]
+        if _u_emails and st.button(
+                f"♻ Remove {len(_u_emails)} user(s) from blacklist",
+                type="primary", key="bl_users_restore"):
+            try:
+                svc.table("users").update(
+                    {"is_blacklisted": False, "blacklisted_at": None,
+                     "blacklisted_by": None, "blacklist_reason": None}
+                ).in_("email", _u_emails).execute()
+                clear_credentials_cache()
+                st.toast(f"♻ Restored {len(_u_emails)} user(s)", icon="♻")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Restore failed: {exc}")
+    elif not _bu:
+        st.caption("No blacklisted users.")
+
+    st.divider()
+
+    # ── Blacklisted tenants ──────────────────────────────────────────────
+    st.markdown("#### 🏢 Tenants")
+    try:
+        _bt = (svc.table("tenants")
+               .select("id,name,slug,blacklisted_at,blacklisted_by,blacklist_reason")
+               .eq("status", "blacklisted").order("name").execute().data or [])
+    except Exception:
+        _bt = []
+    if _bt:
+        _tdf = pd.DataFrame(_bt)
+        _tcols = [c for c in ["name", "slug", "blacklisted_at", "blacklisted_by",
+                              "blacklist_reason"] if c in _tdf.columns]
+        _tsel = st.dataframe(
+            _tdf[_tcols], hide_index=True, width="stretch",
+            selection_mode="multi-row", on_select="rerun", key="bl_tenants_table",
+            column_config={"blacklisted_at": "Blacklisted", "blacklisted_by": "By",
+                           "blacklist_reason": "Reason"})
+        _tpick = (getattr(_tsel, "selection", None) or {}).get("rows") or []
+        _t_ids = [_bt[i]["id"] for i in _tpick if 0 <= i < len(_bt)]
+        if _t_ids and st.button(
+                f"♻ Remove {len(_t_ids)} tenant(s) from blacklist",
+                type="primary", key="bl_tenants_restore"):
+            _set_many_tenant_blacklist(svc, _t_ids, False, user.get("email"))
+            st.rerun()
+    else:
+        st.caption("No blacklisted tenants.")
+
+
 def render_manage_users(user: dict, sb) -> None:
     # ─── Add User modal ────────────────────────────────────────────────
     @st.dialog("Add a new user", width="large")
@@ -233,6 +711,19 @@ def render_manage_users(user: dict, sb) -> None:
             "Creates the account immediately with a 12-char temp password "
             "shown on save. Share the temp password out-of-band (Signal / "
             "verbal — never email).")
+        from auth import tenant_context as tc
+        _mt = tc.multitenant_enabled()
+        _is_super = permissions.is_super_user(user)
+        d_tenant_name = None
+        _tenant_opts: dict[str, str] = {}
+        if _mt and _is_super:
+            try:
+                _tenant_opts = {t["name"]: t["id"] for t in
+                                (service_client().table("tenants").select("id,name")
+                                 .eq("status", "active").order("name")
+                                 .execute().data or [])}
+            except Exception:
+                _tenant_opts = {}
         with st.form("add_user_dialog_form", clear_on_submit=False):
             dc1, dc2 = st.columns(2)
             d_email = dc1.text_input(
@@ -246,6 +737,29 @@ def render_manage_users(user: dict, sb) -> None:
             d_program = st.text_input(
                 "Program areas", help="e.g. 'Vaccines, MCH, Malaria'",
                 key="adu_program")
+            if _mt and _is_super:
+                # "Individual" first, then existing orgs. Individual → a personal,
+                # PUBLIC tenant for this user (not an organization).
+                _tenant_choices = [_INDIVIDUAL_TENANT_LABEL] + list(_tenant_opts.keys())
+                try:
+                    d_tenant_name = st.selectbox(
+                        "Assign to tenant", _tenant_choices,
+                        index=None, accept_new_options=True, key="adu_tenant",
+                        placeholder="Individual · an organization · or type a new org name…",
+                        help="Where this user belongs. Pick **Individual** for a personal "
+                             "account (its activity is visible to all), pick an existing "
+                             "organization, or TYPE A NEW ORG NAME and press Enter to "
+                             "create it on save. (Admins add users to their OWN tenant "
+                             "automatically.)")
+                except TypeError:
+                    # Older Streamlit without accept_new_options → plain picker; a new
+                    # org tenant can still be created from Settings → Accounts → Tenants.
+                    d_tenant_name = st.selectbox(
+                        "Assign to tenant",
+                        _tenant_choices or ["(no tenants yet)"],
+                        key="adu_tenant",
+                        help="Where this user belongs (Individual = personal account, "
+                             "visible to all).")
             bc1, bc2 = st.columns([1, 1])
             save = bc1.form_submit_button(
                 "➕ Create user", type="primary", width='stretch')
@@ -271,7 +785,7 @@ def render_manage_users(user: dict, sb) -> None:
 
             try:
                 temp = _gen_temp_password(12)
-                sb.table("users").insert({
+                _ins = sb.table("users").insert({
                     "email": d_email.strip(),
                     "name": d_name.strip(),
                     "role": d_role,
@@ -282,7 +796,67 @@ def render_manage_users(user: dict, sb) -> None:
                     "password_changed_at": datetime.now(timezone.utc).isoformat(),
                     "is_active": True,
                 }).execute()
+                new_uid = (_ins.data or [{}])[0].get("id")
                 clear_credentials_cache()
+                # Multi-tenant: associate the new user with a tenant. An admin adds
+                # users to ITS OWN active tenant automatically; a super_user picks an
+                # existing tenant OR types a new one (created here). (No-op single-tenant.)
+                if _mt and new_uid:
+                    _tid = None
+                    if _is_super and d_tenant_name == _INDIVIDUAL_TENANT_LABEL:
+                        # Individual → a personal, PUBLIC ('individual' kind) tenant for
+                        # THIS user. Name it after them; append the email if that name is
+                        # already taken (tenants.name is unique).
+                        _ind_name = (d_name.strip() or d_email.strip())
+                        try:
+                            _svc = service_client()
+                            _dupe = (_svc.table("tenants").select("id")
+                                     .ilike("name", _ind_name).limit(1).execute().data or [])
+                            if _dupe:
+                                _ind_name = f"{_ind_name} — {d_email.strip()}"
+                            _created = (_svc.table("tenants").insert(
+                                {"name": _ind_name, "kind": "individual",
+                                 "status": "active",
+                                 "created_by": user.get("id")}).execute().data or [])
+                            _tid = _created[0]["id"] if _created else None
+                            if _tid:
+                                st.toast(f"Created individual account “{_ind_name}”.",
+                                         icon="🧑")
+                        except Exception as _cexc:
+                            st.warning(f"Couldn't create the individual account "
+                                       f"(did you run migration 078?): {_cexc}")
+                    elif _is_super and d_tenant_name:
+                        _nm = str(d_tenant_name).strip()
+                        _tid = _tenant_opts.get(d_tenant_name)
+                        if not _tid and _nm and _nm != "(no tenants yet)":
+                            # A newly-typed organization → create it (idempotent by name),
+                            # then assign the user to it.
+                            try:
+                                _svc = service_client()
+                                _dupe = (_svc.table("tenants").select("id")
+                                         .ilike("name", _nm).limit(1).execute().data or [])
+                                if _dupe:
+                                    _tid = _dupe[0]["id"]
+                                else:
+                                    _created = (_svc.table("tenants").insert(
+                                        {"name": _nm, "status": "active",
+                                         "created_by": user.get("id")}).execute().data or [])
+                                    _tid = _created[0]["id"] if _created else None
+                                    if _tid:
+                                        st.toast(f"Created tenant “{_nm}”.", icon="🏢")
+                            except Exception as _cexc:
+                                st.warning(f"Couldn't create tenant “{_nm}”: {_cexc}")
+                    else:
+                        _tid = tc.current_tenant_id()
+                    if _tid:
+                        try:
+                            service_client().table("tenant_memberships").insert({
+                                "tenant_id": _tid, "user_id": new_uid, "role": d_role,
+                                "status": "active",
+                                "decided_at": datetime.now(timezone.utc).isoformat(),
+                            }).execute()
+                        except Exception as _mexc:
+                            st.warning(f"User created, but tenant assignment failed: {_mexc}")
             except Exception as exc:
                 st.error(f"Create failed: {exc}")
                 return
@@ -379,21 +953,104 @@ def render_manage_users(user: dict, sb) -> None:
             "network / Supabase status, then refresh this page.")
         st.caption(f"Details: {type(exc).__name__}")
         return
-    df_u = pd.DataFrame(all_users)
 
-    if df_u.empty:
-        st.info("No users in the database yet.")
+    # Blacklisted users (migration 077) are hard-blocked and managed under the
+    # Blacklisted tab — hide them here so Manage Users only lists live accounts.
+    all_users = [u for u in all_users if not u.get("is_blacklisted")]
+
+    # Multi-tenant: a non-super admin manages only users in ITS OWN tenant; the
+    # super_user sees everyone. (No-op in single-tenant mode / for super_user.)
+    try:
+        from auth import tenant_context as tc
+        if tc.multitenant_enabled() and not permissions.is_super_user(user):
+            _tid = tc.current_tenant_id()
+            if _tid:
+                _member_ids = {m.get("user_id") for m in
+                               (service_client().table("tenant_memberships").select("user_id")
+                                .eq("tenant_id", _tid).execute().data or [])}
+                all_users = [u for u in all_users if u.get("id") in _member_ids]
+    except Exception:
+        pass
+
+    # ── Per-user tenant names (multi-tenant) — powers the Tenant column + filter ──
+    from auth import tenant_context as _tc
+    try:
+        _mt = _tc.multitenant_enabled()
+    except Exception:
+        _mt = False
+    _is_super = permissions.is_super_user(user)
+    _user_tenants: dict = {}
+    if _mt:
+        try:
+            from collections import defaultdict as _dd
+            _mrows = (service_client().table("tenant_memberships")
+                      .select("user_id, status, tenants(name)").execute().data or [])
+            _tmp = _dd(list)
+            for _m in _mrows:
+                if _m.get("status") in ("active", "pending"):
+                    _tn = (_m.get("tenants") or {}).get("name")
+                    if _tn:
+                        _tmp[_m.get("user_id")].append(
+                            _tn if _m.get("status") == "active" else f"{_tn} (pending)")
+            _user_tenants = {uid: ", ".join(sorted(set(v))) for uid, v in _tmp.items()}
+        except Exception:
+            _user_tenants = {}
+
+    # ── Filters — find a user fast (name/email/dept search + role/status/tenant) ──
+    _total = len(all_users)
+    _roles = sorted({(u.get("role") or "").strip() for u in all_users if u.get("role")})
+    _widths = [3, 1.2, 1.2] + ([1.6] if (_mt and _is_super) else [])
+    _fc = st.columns(_widths)
+    _q = _fc[0].text_input(
+        "Search users", key="mu_q", label_visibility="collapsed",
+        placeholder="🔍 Search name, email, department…")
+    _role_f = _fc[1].selectbox("Role filter", ["All roles"] + _roles, key="mu_role_f",
+                               label_visibility="collapsed")
+    _status_f = _fc[2].selectbox("Status filter", ["All statuses", "Active", "Inactive"],
+                                 key="mu_status_f", label_visibility="collapsed")
+    _tenant_f = "All tenants"
+    if _mt and _is_super:
+        _tvals = sorted({v for v in _user_tenants.values() if v})
+        _tenant_f = _fc[3].selectbox("Tenant filter", ["All tenants"] + _tvals,
+                                     key="mu_tenant_f", label_visibility="collapsed")
+
+    def _match(u: dict) -> bool:
+        if _q and _q.strip():
+            _blob = " ".join(str(u.get(k) or "") for k in
+                             ("email", "name", "department", "program", "job_title")).lower()
+            if _q.strip().lower() not in _blob:
+                return False
+        if _role_f != "All roles" and (u.get("role") or "") != _role_f:
+            return False
+        if _status_f == "Active" and not u.get("is_active"):
+            return False
+        if _status_f == "Inactive" and u.get("is_active"):
+            return False
+        if (_mt and _is_super and _tenant_f != "All tenants"
+                and _user_tenants.get(u.get("id"), "") != _tenant_f):
+            return False
+        return True
+
+    all_users = [u for u in all_users if _match(u)]
+
+    if not all_users:
+        st.info("No users match your search." if _total
+                else "No users in the database yet.")
         return
 
+    df_u = pd.DataFrame(all_users)
     disp = df_u.copy()
     for col in ("last_login_at", "password_changed_at", "created_at"):
         disp[col] = disp[col].fillna("").astype(str).str[:10]
     disp["Force PW reset"] = disp["must_change_password"] \
         .fillna(False).map(lambda v: "⚠ Yes" if bool(v) else "—")
-    disp["Active"] = disp["is_active"].map(
-        lambda v: "✓" if v else "⏸ pending/inactive")
-    disp_cols = ["email", "name", "role", "Active", "department", "program",
-                 "last_login_at", "password_changed_at", "Force PW reset"]
+    disp["Status"] = disp["is_active"].map(
+        lambda v: "🟢 Active" if v else "⏸ Inactive")
+    if _mt:
+        disp["Tenant"] = df_u["id"].map(lambda uid: _user_tenants.get(uid) or "—")
+    disp_cols = (["email", "name", "role"] + (["Tenant"] if _mt else [])
+                 + ["Status", "department", "program", "last_login_at",
+                    "password_changed_at", "Force PW reset"])
     sel = st.dataframe(
         disp[disp_cols], width='stretch', hide_index=True,
         selection_mode="single-row", on_select="rerun", key="mu_table_sel",
@@ -401,6 +1058,7 @@ def render_manage_users(user: dict, sb) -> None:
             "last_login_at": "Last login",
             "password_changed_at": "Password set",
         })
+    st.caption(f"Showing {len(all_users)} of {_total} user(s).")
 
     tgt: dict | None = None
     picked_rows = (getattr(sel, "selection", None) or {}).get("rows") or []
@@ -682,8 +1340,36 @@ def render_manage_users(user: dict, sb) -> None:
                 except Exception as exc:
                     st.error(f"Delete failed: {exc}")
 
+    # ─── Blacklist modal (migration 077 — hard block) ───────────────────
+    @st.dialog(f"Blacklist user — {target_email}", width="medium")
+    def _blacklist_dialog(_target_email=target_email):
+        st.error(
+            f"🚫 Blacklisting **{_target_email}** blocks them from logging in "
+            f"immediately — a hard block, stronger than deactivating. They also "
+            f"can't sign up again while blacklisted. Reversible any time from the "
+            f"**Blacklisted** tab.")
+        reason = st.text_input("Reason (optional)", key="bl_reason_user")
+        bc1, bc2 = st.columns([1, 1])
+        if bc1.button("🚫 Blacklist", type="primary", width='stretch',
+                      key="bl_confirm_user"):
+            try:
+                sb.table("users").update({
+                    "is_blacklisted": True,
+                    "blacklisted_at": datetime.now(timezone.utc).isoformat(),
+                    "blacklisted_by": user.get("email"),
+                    "blacklist_reason": (reason or "").strip() or None,
+                }).eq("email", _target_email).execute()
+            except Exception as exc:
+                st.error(f"Blacklist failed (did you run migration 077?): {exc}")
+                return
+            clear_credentials_cache()
+            st.toast(f"🚫 Blacklisted {_target_email}", icon="🚫")
+            st.rerun()
+        if bc2.button("Cancel", width='stretch', key="bl_cancel_user"):
+            st.rerun()
+
     # ─── Action buttons row ─────────────────────────────────────────────
-    ab1, ab2, ab3, _spacer = st.columns([1, 1.4, 1, 4])
+    ab1, ab2, ab3, ab4, _spacer = st.columns([1, 1.4, 1, 1.2, 3.4])
     if ab1.button("✏️ Edit", width='stretch', key="mu_btn_edit"):
         _edit_dialog()
     if ab2.button("🔄 Reset password", width='stretch',
@@ -699,3 +1385,12 @@ def render_manage_users(user: dict, sb) -> None:
         # field always starts empty (and the button starts disabled).
         st.session_state.pop("del_confirm_text", None)
         _delete_dialog()
+    if ab4.button("🚫 Blacklist", width='stretch', key="mu_btn_blacklist",
+                  disabled=is_self or not can_manage,
+                  help=("You can't blacklist yourself." if is_self else
+                        (None if can_manage else
+                         "Outside your management scope."))):
+        st.session_state.pop("bl_reason_user", None)
+        _blacklist_dialog()
+
+    return tgt

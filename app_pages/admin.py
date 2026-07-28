@@ -23,7 +23,9 @@ from core import excel_sync, settings
 from core import permissions
 from core.records import clean_df
 from db.supabase_client import get_client, safe_execute
-from views.account_sections import render_manage_users, render_user_access
+from views.account_sections import (
+    render_manage_users, render_user_access, render_manage_tenants,
+    render_blacklisted, render_org_suspend)
 from views.org_setup import render_org_setup
 
 user = st.session_state["app_user"]
@@ -53,20 +55,173 @@ def _purge_seen_ledger(sb, deleted_rows) -> int:
     except Exception:
         return 0
 
-(tab_settings, tab_users, tab_access, tab_data, tab_sources,
- tab_scan, tab_blacklist, tab_learning) = st.tabs(
-    ["Setup", "Manage Users", "User Access", "Records", "Sources",
-     "Manual Scan", "Blacklist", "Learning data"]
-)
 
-# User administration tabs — moved here from the old User page in the
-# 2026-06-07 nav redesign (admin / super_user only; the page is already
-# gated above). Logic lives in views/account_sections.py so the Profile
-# page and these tabs share one implementation.
-with tab_users:
-    render_manage_users(user, sb)
-with tab_access:
-    render_user_access(user)
+def _render_maintenance(sb, user) -> None:
+    """Super-User-only maintenance area (called from Records → Reset). Three zones:
+    Backup (non-destructive failsafe) → Maintenance (safe housekeeping) → Danger zone
+    (irreversible deletes, gated behind a downloaded-backup acknowledgement)."""
+    from core import backup as _backup, onedrive as _onedrive
+    # ── 🛟 Backup ───────────────────────────────────────────────────────
+    st.subheader("🛟 Backup")
+    st.caption(
+        "Export a full **data snapshot** (all tables → CSV, zipped). Download it to your "
+        "local disk, or push it straight to OneDrive. A **weekly incremental** off-site "
+        "backup also runs automatically on **Sundays** once the OneDrive secrets are set — "
+        "it captures only what changed since the previous backup, and skips entirely when "
+        "nothing is new. The Supabase Free plan has no managed backups, so this is the "
+        "failsafe — a data snapshot (no password hashes), not a full-fidelity restore. "
+        "(These buttons always make a **full** snapshot.)")
+    bkc1, bkc2 = st.columns(2)
+    if bkc1.button("🛟 Prepare full backup (ZIP)", type="primary",
+                   width='stretch', key="maint_backup_prep"):
+        with st.spinner("Exporting all tables…"):
+            try:
+                _blob, _man = _backup.build_backup_zip()
+                st.session_state["_backup_blob"] = _blob
+                st.session_state["_backup_manifest"] = _man
+                st.session_state["_backup_ready_at"] = _backup.backup_filename()
+            except Exception as exc:
+                st.error(f"Backup failed: {exc}")
+    # Push to OneDrive on demand (only when configured).
+    if _onedrive.is_configured():
+        if bkc2.button("☁ Back up to OneDrive now", width='stretch',
+                       key="maint_backup_od"):
+            with st.spinner("Exporting + uploading to OneDrive…"):
+                try:
+                    _blob, _man = _backup.build_backup_zip()
+                    _fn = _backup.backup_filename()
+                    _onedrive.upload_bytes(_blob, _fn)
+                    st.success(f"Uploaded **{_fn}** → OneDrive "
+                               f"({_onedrive.folder_label()}).")
+                except Exception as exc:
+                    st.error(f"OneDrive upload failed: {exc}")
+    else:
+        bkc2.caption("☁ OneDrive off-site backup: add the `ONEDRIVE_*` secrets to enable "
+                     "the daily job + a one-click upload here.")
+    if st.session_state.get("_backup_blob"):
+        _fn = st.session_state.get("_backup_ready_at", "rfpis_backup.zip")
+        st.download_button(
+            "⬇ Download backup ZIP", data=st.session_state["_backup_blob"],
+            file_name=_fn, mime="application/zip", key="maint_backup_dl")
+        _man = st.session_state.get("_backup_manifest") or {}
+        with st.expander("What's in this backup", expanded=False):
+            st.json(_man.get("tables", {}))
+
+    st.markdown("---")
+    # ── 🧹 Maintenance (safe / non-destructive) ─────────────────────────
+    st.subheader("🧹 Maintenance")
+    st.caption("Safe housekeeping — nothing is deleted.")
+    mc1, mc2 = st.columns(2)
+    if mc1.button("🔁 Re-flag duplicates (re-run dedup)", width='stretch',
+                  key="maint_dedup"):
+        from scripts.dedup_existing import run as run_dedup
+        try:
+            with st.spinner("Re-running dedup…"):
+                res = run_dedup(reset=True, preserve_completed=True)
+            st.success(
+                f"Considered {res['considered']} canonical row(s) of {res['total_rows']} "
+                f"total · flagged **{res['flagged']}** as duplicate · skipped "
+                f"**{res['skipped_completed']}** Completed pair(s). (Flags only — no rows "
+                "deleted.)")
+        except Exception as exc:
+            st.error(f"Re-dedup failed: {exc}")
+    if mc2.button("🧽 Clear app cache", width='stretch', key="maint_cache"):
+        st.cache_data.clear()
+        try:
+            from core import settings as _s
+            _s.clear_cache()
+        except Exception:
+            pass
+        st.success("Cache cleared — data re-fetches on next interaction.")
+        st.rerun()
+
+    st.markdown("---")
+    # ── ⚠️ Danger zone (irreversible; backup-gated) ─────────────────────
+    with st.expander("⚠️ Danger zone — irreversible deletes", expanded=False):
+        st.warning(
+            "These permanently delete rows from the live database and **cannot be undone**. "
+            "Now that the scan pipeline is reliable, they should be rare — reach for them "
+            "only for a deliberate clean-up, and **only after downloading a backup above.**")
+        _ok = st.checkbox(
+            "I have downloaded a current backup and understand this is irreversible.",
+            key="maint_danger_ack")
+
+        st.markdown("**Delete auto-scanned opportunities** — removes `rfp_submissions` "
+                    "rows with `source='auto'` (keeps manual + imported), and clears their "
+                    "seen-ledger tombstones so a fresh scan can re-find them.")
+        if st.button("🗑 Delete auto-scanned opportunities", disabled=not _ok,
+                     key="maint_del_auto"):
+            try:
+                res = sb.table("rfp_submissions").delete().eq("source", "auto").execute()
+                _rows = res.data or []
+                _purged = _purge_seen_ledger(sb, _rows)
+                st.success(f"Deleted **{len(_rows)}** auto-scanned row(s)"
+                           + (f" and {_purged} tombstone(s)" if _purged else "") + ".")
+            except Exception as exc:
+                st.error(f"Delete failed: {exc}")
+
+        st.markdown("**Clear scan history** — removes every `scan_logs` row (metrics + "
+                    "history read empty until the next scan). Does not touch opportunities.")
+        if st.button("🗑 Clear scan history", disabled=not _ok, key="maint_del_logs"):
+            try:
+                res = (sb.table("scan_logs").delete()
+                       .neq("id", "00000000-0000-0000-0000-000000000000").execute())
+                st.success(f"Deleted **{len(res.data or [])}** scan-log row(s).")
+            except Exception as exc:
+                st.error(f"Clear failed: {exc}")
+
+        st.markdown("**Wipe Excel-imported rows** — legacy cleanup for the (now-deactivated) "
+                    "Excel sync: deletes `meeting_logs` (all) and `active_grants` where "
+                    "`source='migration'`.")
+        wc1, wc2 = st.columns(2)
+        if wc1.button("🗑 Wipe meeting_logs", disabled=not _ok, key="maint_wipe_ml"):
+            try:
+                res = (sb.table("meeting_logs").delete()
+                       .neq("id", "00000000-0000-0000-0000-000000000000").execute())
+                st.success(f"Deleted **{len(res.data or [])}** meeting-log row(s).")
+            except Exception as exc:
+                st.error(f"Wipe failed: {exc}")
+        if wc2.button("🗑 Wipe migration grants", disabled=not _ok, key="maint_wipe_ag"):
+            try:
+                res = (sb.table("active_grants").delete()
+                       .eq("source", "migration").execute())
+                st.success(f"Deleted **{len(res.data or [])}** migration grant row(s).")
+            except Exception as exc:
+                st.error(f"Wipe failed: {exc}")
+
+# Tab set. "Accounts" (users + super-only tenants/blacklisted) sits right after Setup;
+# "Sources" nests Catalog | Blocked | Excel Sync; the super_user also gets a cross-tenant
+# "Analytics" tab.
+_tab_labels = ["Setup", "Accounts", "Records", "Sources", "Manual Scan",
+               "Learning data"]
+_is_super = permissions.is_super_user(user)
+if _is_super:
+    _tab_labels += ["Analytics"]
+_tabs = st.tabs(_tab_labels)
+(tab_settings, tab_accounts, tab_data, tab_sources, tab_scan,
+ tab_learning) = _tabs[:6]
+tab_analytics = _tabs[6] if _is_super else None
+
+# Accounts — Users (with an inline Access card that appears only once a user is picked
+# in the table) plus super-only Tenants / Blacklisted sub-tabs. User-admin logic lives
+# in views/account_sections.py so the Profile page and these tabs share one impl.
+with tab_accounts:
+    _acct_labels = ["Users"] + (["Tenants", "Blacklisted"] if _is_super else [])
+    _acct_tabs = st.tabs(_acct_labels)
+    with _acct_tabs[0]:
+        _picked_user = render_manage_users(user, sb)
+        if _picked_user:
+            st.divider()
+            render_user_access(user, target=_picked_user)
+    if _is_super:
+        with _acct_tabs[1]:
+            render_manage_tenants(user, sb)
+        with _acct_tabs[2]:
+            render_blacklisted(user, sb)
+if tab_analytics is not None:
+    with tab_analytics:
+        from views.super_analytics import render_super_analytics
+        render_super_analytics(user)
 
 
 # -----------------------------------------------------------------------------
@@ -113,6 +268,9 @@ with tab_settings:
 
     st.markdown("---")
     render_org_setup(user, sb)
+    # Admin self-service: suspend (retire, never delete) this org's tenant account.
+    # No-op for the super_user (who uses Accounts → Tenants) and in single-tenant mode.
+    render_org_suspend(user, sb)
 
 with tab_data:
     _dtab, _vtab, _rtab = st.tabs(["Data", "Verify", "Reset"])
@@ -720,186 +878,23 @@ with tab_data:
 
 
     with _rtab:
-        st.subheader("Duplicate flags")
-        st.caption(
-            "Re-runs the deduplicator with two safety rules: "
-            "**(1)** the most *complete* row in each cluster wins as canonical "
-            "(weighted by Progress = Completed, Donor Decision set, Decision = Proceed, "
-            "Amount Requested / Date Completed populated, Submissions > 1), and "
-            "**(2)** rows with Progress = Completed are never flagged as duplicates — "
-            "they represent real donor submission events."
-        )
-        dc1, dc2 = st.columns([3, 1])
-        if dc2.button("🔁 Reset & re-dedup", width='stretch'):
-            from scripts.dedup_existing import run as run_dedup
-            try:
-                with st.spinner("Re-running dedup..."):
-                    res = run_dedup(reset=True, preserve_completed=True)
-                dc1.success(
-                    f"Considered {res['considered']} canonical row(s) of {res['total_rows']} total · "
-                    f"flagged **{res['flagged']}** as duplicate · "
-                    f"skipped **{res['skipped_completed']}** Completed pair(s)."
-                )
-                with dc1.expander("Flagged rows", expanded=False):
-                    for uid, canon, reason in res["updates"]:
-                        st.markdown(f"- `{uid}` → dup of `{canon}` ({reason})")
-            except Exception as exc:
-                dc1.error(f"Re-dedup failed: {exc}")
-
-        st.markdown("---")
-        st.subheader("Reset Meeting Logs (one-time cleanup)")
-        st.caption(
-            "**Use only once**, to clean up duplicates from old syncs that ran "
-            "before migration 006 added the `external_id` column. After this "
-            "one-time wipe + sync, future syncs MERGE instead of replacing — "
-            "Status toggles and other app edits are preserved automatically. "
-            "Notes added via the app (source='app') are also deleted by this "
-            "wipe, so prefer the **Other Records** tab to delete specific rows."
-        )
-        rc1, rc2 = st.columns([3, 1])
-        if rc2.button("🧹 Wipe meeting_logs", width='stretch'):
-            try:
-                res = sb.table("meeting_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
-                deleted = len(res.data or [])
-                rc1.success(
-                    f"Deleted **{deleted}** rows from meeting_logs. "
-                    "Run **🔄 Sync now** above to repopulate from Excel."
-                )
-            except Exception as exc:
-                rc1.error(f"Wipe failed: {exc}")
-
-        st.markdown("---")
-        st.subheader("Wipe active_grants migration rows (one-time cleanup)")
-        st.caption(
-            "Deletes every row in `active_grants` where `source = 'migration'`. "
-            "After running this once and re-syncing, the table will exactly "
-            "mirror the Excel `Active_Grants_Log` sheet (no stragglers from "
-            "earlier syncs). App-only rows you added via Admin → Data → Active "
-            "Grants are NOT touched."
-        )
-        agc1, agc2 = st.columns([3, 1])
-        if agc2.button("🧹 Wipe migration grants", width='stretch', key="wipe_ag_migration"):
-            try:
-                res = (
-                    sb.table("active_grants")
-                    .delete()
-                    .eq("source", "migration")
-                    .execute()
-                )
-                deleted = len(res.data or [])
-                agc1.success(
-                    f"Deleted **{deleted}** migration row(s). Click **🔄 Sync now** "
-                    "above to repopulate from Excel."
-                )
-            except Exception as exc:
-                agc1.error(f"Wipe failed: {exc}")
-
-        st.markdown("---")
-        st.subheader("Delete auto-scanned RFPs (rescan from scratch)")
-        st.caption(
-            "Removes every row in `rfp_submissions` where `source = 'auto'` — "
-            "i.e. RFPs added by the scanner but **not** ones submitted manually "
-            "(`source = 'manual'`) or imported from Excel (`source = 'migration'`). "
-            "Use this after policy changes when you want a clean rescan instead "
-            "of incremental merges. Click **🔄 Scan now** afterwards to repopulate."
-        )
-        arc1, arc2 = st.columns([3, 1])
-        if arc2.button("🧹 Wipe auto-scan rows", width='stretch', key="wipe_auto_rfps"):
-            try:
-                res = sb.table("rfp_submissions").delete().eq("source", "auto").execute()
-                _rows = res.data or []
-                deleted = len(_rows)
-                # This is an explicit "rescan from scratch" reset, so also clear
-                # these uids from the permanent seen-ledger — otherwise the
-                # tombstones would suppress the very rows you want re-found.
-                # (Individual RFP deletes elsewhere intentionally KEEP their
-                # tombstone, so a rejected opportunity never re-enters.)
-                _purged = _purge_seen_ledger(sb, _rows)
-                arc1.success(
-                    f"Deleted **{deleted}** auto-scanned RFP(s)"
-                    + (f" (and cleared {_purged} seen-ledger tombstone(s))" if _purged else "")
-                    + ". Click 🔄 Scan now on the Screen tab (or in Manual Scan tab) to refresh."
-                )
-            except Exception as exc:
-                arc1.error(f"Wipe failed: {exc}")
-
-        st.markdown("---")
-        st.subheader("Clear scan history")
-        st.caption(
-            "Removes every row in `scan_logs`. The Manual Scan tab's metric "
-            "strip and scan history table will read empty afterwards. Does not "
-            "touch RFP records — pair with **🧹 Wipe auto-scan rows** above if "
-            "you want a totally clean slate for a fresh test scan."
-        )
-        sh1, sh2 = st.columns([3, 1])
-        if sh2.button("🧹 Clear scan history", width='stretch', key="wipe_scan_logs"):
-            try:
-                res = (
-                    sb.table("scan_logs")
-                    .delete()
-                    .neq("id", "00000000-0000-0000-0000-000000000000")
-                    .execute()
-                )
-                deleted = len(res.data or [])
-                sh1.success(
-                    f"Deleted **{deleted}** scan log row(s). The Manual Scan tab "
-                    "will show fresh data after your next scan."
-                )
-            except Exception as exc:
-                sh1.error(f"Wipe failed: {exc}")
-
-        st.markdown("---")
-        st.subheader("🔁 Fresh-test reset (one-click clean slate)")
-        st.caption(
-            "Convenience button — wipes BOTH `rfp_submissions` rows where "
-            "source='auto' AND all of `scan_logs` in one shot. Excel-imported "
-            "rows (`source='migration'`) and manually-submitted rows "
-            "(`source='manual'`) are preserved. Use this before testing a new "
-            "policy configuration so previous scan noise doesn't muddy the view."
-        )
-        ft1, ft2 = st.columns([3, 1])
-        if ft2.button("🔁 Reset for fresh test", type="secondary",
-                       width='stretch', key="fresh_test_reset"):
-            try:
-                r1 = sb.table("rfp_submissions").delete().eq("source", "auto").execute()
-                r2 = (
-                    sb.table("scan_logs")
-                    .delete()
-                    .neq("id", "00000000-0000-0000-0000-000000000000")
-                    .execute()
-                )
-                # Clear these uids from the permanent seen-ledger so the fresh
-                # rescan can repopulate them (see "Wipe auto-scan rows" above).
-                _purge_seen_ledger(sb, r1.data or [])
-                ft1.success(
-                    f"✓ Reset complete. Deleted **{len(r1.data or [])}** auto-scan "
-                    f"RFP(s) and **{len(r2.data or [])}** scan log row(s). Click "
-                    "**Manual Scan → ▶ Run scan now** for a clean test."
-                )
-            except Exception as exc:
-                ft1.error(f"Reset failed: {exc}")
-
-
-    # -----------------------------------------------------------------------------
-    # Tab — Data (row-select + Edit/Delete/Share modals)
-    #   First option = Screened Solicitations (jumps to the dedicated Records page where
-    #   the full 5-tab edit modal lives). Other options = auxiliary tables with
-    #   the same row-select UX pattern.
-    # -----------------------------------------------------------------------------
-        st.markdown("---")
-        st.subheader("🧽 Clear app cache")
-        st.caption("Force-refresh cached data (records, dropdowns, settings) without a full restart.")
-        if st.button("🧽 Clear cache", key="clear_app_cache_btn"):
-            st.cache_data.clear()
-            try:
-                from core import settings as _s
-                _s.clear_cache()
-            except Exception:
-                pass
-            st.success("Cache cleared — data re-fetches on next interaction.")
-            st.rerun()
+        # Maintenance / backup / destructive-reset tools are SUPER-USER-ONLY. They export
+        # and (in the danger zone) delete data, so a regular admin can't reach them — and
+        # we render an info notice instead of st.stop() (which would blank the sibling
+        # Settings tabs, since every tab renders in one script pass).
+        if not _is_super:
+            st.info(
+                "🔒 **Maintenance & backup tools are restricted to the Super User.** They "
+                "export and (in the danger zone) permanently delete data, so they're not "
+                "part of day-to-day admin. If something needs cleaning up or backing up, "
+                "contact the app owner.")
+        else:
+            _render_maintenance(sb, user)
 
 with tab_sources:
+    _cat_tab, _blk_tab, _xls_tab = st.tabs(["Catalog", "Blocked", "Excel Sync"])
+
+with _cat_tab:
     st.subheader("Funding sources catalog")
     st.caption(
         "Curated per-source funding URLs. The Friday scan + manual scan iterate "
@@ -1165,11 +1160,11 @@ with tab_sources:
                      disabled=not picked):
             _delete_sources_dialog(sel_ids, sel_names)
 
+with _xls_tab:
     # ----- Excel sync ------------------------------------------------------
     # The master workbook is a source in its own right (it seeds rfp_submissions
     # alongside the scanned donor sources above), so its sync controls live here
     # under Sources rather than on the Records tab.
-    st.markdown("---")
     st.subheader("Excel sync")
     st.caption(
         "Pulls the master workbook into Supabase. Path comes from "
@@ -1517,12 +1512,13 @@ with tab_scan:
 
 
 # -----------------------------------------------------------------------------
-# Tab 4 — Scan blacklist (hard-reject URL substrings)
+# Sources → Blocked (formerly the top-level "Blacklist" tab) — hard-reject URL
+# substrings ("blocked tokens"). Distinct from Accounts → Blacklisted (users/tenants).
 # -----------------------------------------------------------------------------
-with tab_blacklist:
+with _blk_tab:
     from core import blacklist as _blmod
 
-    st.subheader("Scan blacklist")
+    st.subheader("Blocked tokens")
     st.caption(
         "Each pattern is matched as a case-insensitive **substring of the "
         "candidate URL** during scanning. Any match → the link is rejected "
