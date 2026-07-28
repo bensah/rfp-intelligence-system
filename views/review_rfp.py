@@ -142,9 +142,11 @@ _donor = None
 try:
     _fa = (row.get("funding_agency") or "").strip()
     if _fa:
-        _dq = (sb.table("donor_intel").select("*")
-               .ilike("donor", _fa).limit(1).execute().data or [])
-        _donor = _dq[0] if _dq else None
+        # Robust acronym/short/full-name resolution so the funder joins its donor intel
+        # (an exact ilike missed e.g. "Grand Challenges" → "Bill & Melinda Gates
+        # Foundation"), making the donor-intel fallback (HQ, scope, priorities) available.
+        from core.donor_intel import match_donor as _match_donor
+        _donor = _match_donor(_fa, fuzzy=False)
 except Exception:
     _donor = None
 # Fold the stored LLM call-flags (compliance_flags) into an EFFECTIVE donor so the
@@ -748,12 +750,19 @@ with grid_col:
                     _total = 1 if _act else 0
                     _pct = round(_sc0 * 100)
                 else:
-                    # won/total: active factors only; '?' (uncertain) counts as won
-                    # (benefit of the doubt); not-applicable factors are excluded.
-                    _won = sum(1 for f in _act if f["met"] is not False)
-                    _total = len(_act)
-                    _won_disp = str(_won)
-                    _pct = round(_won / _total * 100) if _total else 0
+                    # won/total over MEASURABLE components only: an unmeasurable factor
+                    # (met=None with no score — can't tell from call OR donor intel) is
+                    # EXCLUDED from BOTH numerator and denominator, never a benefit-of-doubt
+                    # "win"; a graded component contributes its FRACTIONAL score, not a full
+                    # win. This mirrors the criterion label's own mean, so count and label
+                    # agree (e.g. PREFER-6 with only the award-value factor failing → 0/1).
+                    _meas = [f for f in _act
+                             if f.get("score") is not None or f.get("met") is not None]
+                    _num = sum((f["score"] if f.get("score") is not None
+                                else (1.0 if f["met"] else 0.0)) for f in _meas)
+                    _total = len(_meas)
+                    _won_disp = f"{_num:g}"
+                    _pct = round(_num / _total * 100) if _total else 0
                 # Each criterion is its OWN collapsible card — click to expand and
                 # see the component sub-factors (✓/✗/?) behind it. Title is BOLD (no
                 # colour); the value LABEL is colour-coded. "Not sure" (no active
@@ -761,9 +770,12 @@ with grid_col:
                 _is_not_sure = criterion_score(current) is None
                 _vc = ("orange" if _is_not_sure else
                        {2: "green", 1: "orange", 0: "red"}.get(criterion_score(current), "gray"))
-                # No active component → show "Not sure (Park)" instead of "0/0 · 0%".
-                _ratio = (f"{_won_disp}/{_total} · {_pct}%" if _total
-                          else "Not sure · Park")
+                # No measurable component → "Not sure · Park" instead of "0/0 · 0%". Also
+                # for funding_quality: when the award can't be sized (label "Not sure")
+                # don't show a contradictory "0/1 · 0%" beside it — read "Not sure · Park".
+                _ratio = ("Not sure · Park"
+                          if (not _total or (key == "funding_quality" and _is_not_sure))
+                          else f"{_won_disp}/{_total} · {_pct}%")
                 with st.expander(
                         f"{_crit_badge(current)}  **{LABELS[key]}** — "
                         f":{_vc}[{current or 'Not sure'}]  ·  {_ratio}"):
@@ -779,14 +791,19 @@ _match = _matching.composite_match({**row, **edited_values}, _org_prof, _donor_e
 _MUST_KEYS = CRITERIA[:5]
 
 
-def _review_decision(crit_vals: dict, composite: float, fatal: bool = False) -> str:
+def _review_decision(crit_vals: dict, composite: float, fatal: bool = False,
+                     below_award_floor: bool = False) -> str:
     """Mirror auto_scorer.recommend_from_composite EXACTLY so the gauge's
     suggestion always matches the stored Auto-decision: a 🔒 non-dynamic factor
-    explicitly failed → Decline; else ≥90 Proceed · 70–89 Park · <70 Decline.
-    (2026-06-26: replaced the old blanket 'any MUST<2 → Decline'.)"""
+    explicitly failed → Decline; else ≥90 Proceed · 70–89 Park · <70 Decline. A
+    below-award-floor call (funding below the org's minimum target) caps a would-be
+    Proceed at Park (2026-07-28). (2026-06-26: replaced the old blanket 'any MUST<2'.)"""
     if fatal:
         return "Decline"
-    return "Proceed" if composite >= 90 else "Park" if composite >= 70 else "Decline"
+    rec = "Proceed" if composite >= 90 else "Park" if composite >= 70 else "Decline"
+    if rec == "Proceed" and below_award_floor:
+        return "Park"
+    return rec
 
 
 with gauge_col:
@@ -796,7 +813,9 @@ with gauge_col:
     _crit_s = round(_match["criteria_score"], 1)
     _comp = round(_match["composite"], 1)               # = the 9 weighted criteria
     _comp_int = int(_comp + 0.5)                        # round half up
-    _dec = _review_decision(edited_values, _comp, fatal=_is_fatal)   # SAME rule as the stored Auto-decision
+    _dec = _review_decision(  # SAME rule as the stored Auto-decision
+        edited_values, _comp, fatal=_is_fatal,
+        below_award_floor=_cderive.below_award_floor(row, _org_prof))
     _pill = {"Proceed": ("#dcf5e3", "#00703C"), "Park": ("#fff4cc", "#8a6d00"),
              "Decline": ("#fde2e2", "#b3261e")}.get(_dec, ("#eee", "#333"))
     _fit = ("Strong fit" if _comp >= 80 else "Moderate fit" if _comp > 50 else "Low fit")

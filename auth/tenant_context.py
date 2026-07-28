@@ -13,12 +13,44 @@ every entry point is best-effort.
 """
 from __future__ import annotations
 
+import contextvars
 import time
 from typing import Any, Optional
 
 import streamlit as st
 
-from db.supabase_client import _read_secret, get_client
+from db.supabase_client import _read_secret, service_client
+
+# ---------------------------------------------------------------------------
+# Headless tenant override (no Streamlit session — e.g. the cron screening loop)
+# ---------------------------------------------------------------------------
+# When set, this FORCES the active tenant for every tenant-aware layer
+# (current_tenant_id, tenant_store, the get_client scoping wrapper, get_policies),
+# so a background job can screen one tenant at a time without a browser session.
+# A ContextVar (not a global) so it's isolated per async/thread context. Always
+# set/reset it in a try/finally (see run_screening / screen_all_tenants).
+_TENANT_OVERRIDE: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "rfpis_tenant_override", default=None)
+
+
+def set_tenant_override(tenant_id: Optional[str]):
+    """Force the active tenant for a headless run. Returns a reset token."""
+    return _TENANT_OVERRIDE.set(str(tenant_id) if tenant_id else None)
+
+
+def reset_tenant_override(token) -> None:
+    try:
+        _TENANT_OVERRIDE.reset(token)
+    except Exception:
+        pass
+
+
+def override_tenant_id() -> Optional[str]:
+    """The forced tenant id, or None when no headless override is active."""
+    try:
+        return _TENANT_OVERRIDE.get()
+    except Exception:
+        return None
 
 _JWT_TTL = 3600          # token lifetime (s); refreshed on demand near expiry
 _JWT_SKEW = 120          # re-mint when fewer than this many seconds remain
@@ -82,7 +114,7 @@ def _resolve_user_id(user: dict) -> Optional[str]:
     if not email:
         return None
     try:
-        rows = (get_client().table("users").select("id")
+        rows = (service_client().table("users").select("id")
                 .eq("email", email).limit(1).execute().data or [])
         return str(rows[0]["id"]) if rows else None
     except Exception:
@@ -90,21 +122,135 @@ def _resolve_user_id(user: dict) -> Optional[str]:
 
 
 def active_memberships(user_id: str | None) -> list[dict[str, Any]]:
-    """The user's ACTIVE tenant memberships → [{tenant_id, name, role}] (best-effort)."""
+    """The user's ACTIVE memberships → [{tenant_id, name, slug, role, is_platform}]
+    (best-effort).
+
+    Runs on the RLS-BYPASSING service client: membership resolution is an identity
+    operation that must see the true rows before any tenant context exists, and must not
+    be filtered by the tenant tables' RLS state (see db.supabase_client.service_client).
+    Falls back to a leaner select if the `is_platform` column isn't there yet (migration
+    072), so it never hard-fails on ordering."""
     if not user_id:
         return []
-    try:
-        rows = (get_client().table("tenant_memberships")
-                .select("tenant_id, role, tenants(name)")
-                .eq("user_id", user_id).eq("status", "active").execute().data or [])
-    except Exception:
+    rows = None
+    for sel in ("tenant_id, role, tenants(name, slug, is_platform, status)",
+                "tenant_id, role, tenants(name, slug, status)",
+                "tenant_id, role, tenants(name, slug, is_platform)",
+                "tenant_id, role, tenants(name, slug)"):
+        try:
+            rows = (service_client().table("tenant_memberships").select(sel)
+                    .eq("user_id", user_id).eq("status", "active").execute().data or [])
+            break
+        except Exception:
+            rows = None
+    if rows is None:
         return []
     out: list[dict[str, Any]] = []
     for r in rows:
         t = r.get("tenants") if isinstance(r.get("tenants"), dict) else {}
+        # A BLACKLISTED tenant (migration 077) is a hard block — drop the membership
+        # so its members lose all tenant context. (Suspend is intentionally NOT
+        # enforced here; only the dedicated blacklist state blocks access.)
+        if (t or {}).get("status") == "blacklisted":
+            continue
         out.append({"tenant_id": r.get("tenant_id"),
-                    "name": (t or {}).get("name"), "role": r.get("role")})
+                    "name": (t or {}).get("name"), "slug": (t or {}).get("slug"),
+                    "role": r.get("role"), "is_platform": bool((t or {}).get("is_platform"))})
     return out
+
+
+_PUBLIC_TIDS_CACHE: dict[str, Any] = {"at": 0.0, "ids": []}
+_PUBLIC_TIDS_TTL = 60.0
+
+
+def public_tenant_ids() -> list[str]:
+    """Tenant ids whose activity is PUBLIC — the 'individual' kind (migration 078). Their
+    rows on the user-facing activity tables are merged into EVERY user's read scope by the
+    scoping wrapper (db.supabase_client). Best-effort, 60s-cached on the RLS-bypassing
+    service client; returns [] in single-tenant mode or before migration 078 (missing
+    `kind` column → query errors → [])."""
+    try:
+        if not multitenant_enabled():
+            return []
+    except Exception:
+        return []
+    now = time.time()
+    if (now - _PUBLIC_TIDS_CACHE["at"]) < _PUBLIC_TIDS_TTL:
+        return _PUBLIC_TIDS_CACHE["ids"]
+    try:
+        rows = (service_client().table("tenants").select("id")
+                .eq("kind", "individual").execute().data or [])
+        ids = [str(r["id"]) for r in rows if r.get("id")]
+        _PUBLIC_TIDS_CACHE["ids"] = ids            # only overwrite on success
+    except Exception:
+        ids = _PUBLIC_TIDS_CACHE["ids"]            # keep last-good on a transient error
+    _PUBLIC_TIDS_CACHE["at"] = now
+    return ids
+
+
+def resolve_tenant_by_key(key: str | None) -> dict | None:
+    """Resolve a tenant by slug OR id → {id, name, slug}, or None. Used by the super_user
+    'view-as' entry (a ?tenant=<slug|id> link). RLS-bypassing service client (privileged
+    platform lookup)."""
+    if not key:
+        return None
+    for col in ("slug", "id"):
+        try:
+            rows = (service_client().table("tenants").select("id,name,slug")
+                    .eq(col, key).limit(1).execute().data or [])
+            if rows:
+                return rows[0]
+        except Exception:
+            continue
+    return None
+
+
+def tenant_store(tenant_id: str | None = None) -> tuple[Any, str] | None:
+    """`(service_client, tenant_id)` for reading/writing a tenant's own records
+    (org identity + org profile), or None when multi-tenant is off or no tenant resolves.
+
+    `tenant_id` overrides the session's current tenant — this is how the super_user views
+    or edits ANOTHER tenant's Organization page. Uses the RLS-bypassing service client:
+    the tenant id is always server-derived (the session's own tenant, or a super_user's
+    explicit pick), never user-supplied, so bypassing RLS here is safe and removes the
+    dependency on the tenant tables' RLS policies for the Organization page to work.
+
+    A headless override (cron per-tenant screening) resolves even when the JWT master
+    switch isn't configured in the cron env — the override is itself the explicit
+    'operate as this tenant' signal."""
+    try:
+        ov = override_tenant_id()
+        tid = tenant_id or ov or current_tenant_id()
+        if not tid:
+            return None
+        if ov is None and not multitenant_enabled():
+            return None             # session path still requires the master switch
+        return service_client(), str(tid)
+    except Exception:
+        return None
+
+
+def _default_membership(user: dict, mems: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Pick the membership to auto-select for THIS session, or None to leave the user
+    tenant-less (onboarding / future picker):
+      * exactly one active membership → that one;
+      * super_user with several → their platform HOME tenant (flagged `is_platform`, else
+        slug 'rfpis', else a name starting with "RFPIS"), else the first (name-ordered)
+        so they always land somewhere rather than tenant-less;
+      * anyone else with several → None (a multi-tenant switcher is future work)."""
+    if not mems:
+        return None
+    if len(mems) == 1:
+        return mems[0]
+    if (user.get("role") or "").lower() == "super_user":
+        for pred in (lambda m: m.get("is_platform"),
+                     lambda m: (m.get("slug") or "").strip().lower() == "rfpis",
+                     lambda m: (m.get("name") or "").strip().lower().startswith("rfpis")):
+            home = next((m for m in mems if pred(m)), None)
+            if home is not None:
+                return home
+        return sorted(mems, key=lambda m: (m.get("name") or "").lower())[0]
+    return None
 
 
 def set_active_tenant(user: dict, tenant_id: str | None, *, role: str | None = None,
@@ -128,7 +274,14 @@ def set_active_tenant(user: dict, tenant_id: str | None, *, role: str | None = N
 
 
 def current_tenant_id() -> Optional[str]:
-    return st.session_state.get("tenant_id")
+    # A headless override (cron per-tenant screening) wins; else the browser session.
+    ov = override_tenant_id()
+    if ov:
+        return ov
+    try:
+        return st.session_state.get("tenant_id")
+    except Exception:
+        return None                 # outside a Streamlit session (scripts / cron)
 
 
 def current_tenant_name() -> Optional[str]:
@@ -155,13 +308,15 @@ def ensure_tenant_context(user: dict) -> None:
             return
         uid = _resolve_user_id(user)
         mems = active_memberships(uid) if uid else []
-        if len(mems) == 1:
-            set_active_tenant(user, mems[0]["tenant_id"],
-                              role=mems[0].get("role"), name=mems[0].get("name"))
+        chosen = _default_membership(user, mems)
+        if chosen is not None:
+            set_active_tenant(user, chosen["tenant_id"],
+                              role=chosen.get("role"), name=chosen.get("name"))
         else:
-            # 0 or >1 active memberships → mint a tenant-LESS authenticated token so the
-            # user has an identity for Phase-4 onboarding (create/join a tenant) under
-            # RLS. The Phase-4 gate then routes 0-tenant users; >1 gets a picker.
+            # No resolvable default (0 memberships, or >1 for a non-super user) → mint a
+            # tenant-LESS authenticated token so the user still has an identity for
+            # Phase-4 onboarding (create/join a tenant). The Phase-4 gate routes 0-tenant
+            # users; a proper multi-tenant switcher for >1 is future work.
             set_active_tenant(user, None)
     except Exception:
         return

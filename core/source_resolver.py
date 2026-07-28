@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +72,28 @@ def _tokens(text: str) -> set[str]:
 
 
 def _domain(url: str) -> str:
-    return urlsplit(url or "").netloc.lower().lstrip("www.")
+    # Strip a leading "www." PREFIX (not the char-set {w,.} — .lstrip("www.") would
+    # corrupt any host starting with those characters).
+    net = urlsplit(url or "").netloc.lower()
+    return net[4:] if net.startswith("www.") else net
+
+
+def canonical_grandchallenges(url: str | None) -> str | None:
+    """Force the Grand Challenges (Gates GH) challenge/opportunity host to the WORKING
+    `gcgh.grandchallenges.org`. The marketing `www.grandchallenges.org` / bare host only
+    serves generic boilerplate for `/challenge/` paths — the source of the broken links
+    AND the near-identical boilerplate briefs. Non-grandchallenges URLs and other paths
+    are returned unchanged."""
+    if not url:
+        return url
+    try:
+        parts = urlsplit(url)
+    except Exception:
+        return url
+    if parts.netloc.lower() in ("grandchallenges.org", "www.grandchallenges.org") \
+            and parts.path.lower().startswith(("/challenge", "/grant-opportunit")):
+        return urlunsplit(parts._replace(netloc="gcgh.grandchallenges.org"))
+    return url
 
 
 # News / press-release / generic-listing hosts — never the primary source.
@@ -249,6 +270,7 @@ def resolve_and_enrich(cand: dict) -> bool:
     src = resolve(cand.get("opportunity_title"), cand.get("funding_agency"))
     if not src:
         return False
+    src = canonical_grandchallenges(src)          # www.grandchallenges → gcgh. (working host)
     try:
         import requests
         from bs4 import BeautifulSoup

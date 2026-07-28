@@ -20,11 +20,15 @@ import streamlit as st
 from core import excel_sync, settings  # noqa: F401
 from core import permissions  # noqa: F401
 from core.criteria_derive import ROUTE_OPTIONS as _ROUTE_OPTIONS
+from core.geographies import COUNTRIES
 from db.supabase_client import get_client, safe_execute  # noqa: F401
 
 
-def render_org_setup(user, sb):
-    """Render the full Organization Details & Preferences editor (4 tabs)."""
+def render_org_setup(user, sb, tenant_id=None):
+    """Render the full Organization Details & Preferences editor (4 tabs).
+
+    `tenant_id` targets a specific tenant's identity + fit profile (super_user editing
+    another tenant from the Organization page); None = the caller's own/session tenant."""
     st.subheader("Organization Details & Preferences")
     st.caption("Org profile, bid-fitness inputs and team — used across the app and the matching engine.")
     _ptab, _ftab, _ttab, _stab = st.tabs(["Profile", "Bid Fitness", "Team Members", "Scan Preferences"])
@@ -37,7 +41,7 @@ def render_org_setup(user, sb):
             "in the first time you set up the app for your organization."
         )
 
-        _org = settings.get_org()
+        _org = settings.get_org(tenant_id)
         oc1, oc2 = st.columns(2)
         org_name = oc1.text_input(
             "Organization name", value=_org.get("org_name", ""),
@@ -50,10 +54,13 @@ def render_org_setup(user, sb):
                  "and scan-log displays. e.g. 'Acme BD'.",
         )
         oc3, oc4 = st.columns(2)
-        org_country = oc3.text_input(
-            "Primary country", value=_org.get("org_country", ""),
-            help="Country the deploying org operates from. Used in the Report "
-                 "geographic context. e.g. your primary country of operation.",
+        _country_opts = [""] + list(COUNTRIES)
+        _cur_country = _org.get("org_country", "") or ""
+        org_country = oc3.selectbox(
+            "Primary country", _country_opts,
+            index=_country_opts.index(_cur_country) if _cur_country in _country_opts else 0,
+            help="Country the deploying org operates from (canonical list). Used in the "
+                 "Report geographic context.",
         )
         org_team = oc4.text_input(
             "Team / department", value=_org.get("org_team", ""),
@@ -109,7 +116,7 @@ def render_org_setup(user, sb):
         # install that pasted a hosted URL before this changed.
         st.markdown("**Logo** (optional) — uploaded to the app and persisted "
                     "in the settings table. Renders in the Report header.")
-        current_logo_bytes, _current_logo_mime = settings.get_org_logo()
+        current_logo_bytes, _current_logo_mime = settings.get_org_logo(tenant_id)
         lcol_preview, lcol_uploader, lcol_clear = st.columns([1, 3, 1])
         with lcol_preview:
             if current_logo_bytes:
@@ -132,13 +139,13 @@ def render_org_setup(user, sb):
                 "🗑 Remove", key="org_logo_remove",
                 help="Delete the stored logo. Falls back to no-logo until you upload another.",
             ):
-                settings.clear_org_logo(updated_by=user.get("email"))
+                settings.clear_org_logo(updated_by=user.get("email"), tenant_id=tenant_id)
                 st.success("Logo removed.")
                 st.rerun()
 
         if st.button("💾 Save organization profile", type="primary",
                      key="save_org_profile"):
-            settings.set_org({
+            _fields = {
                 "org_name":          org_name.strip(),
                 "org_short":         org_short.strip(),
                 "org_country":       org_country.strip(),
@@ -148,21 +155,40 @@ def render_org_setup(user, sb):
                 "org_is_us_entity":  "true" if us_entity else "false",
                 "org_has_local_board": _board_opts[local_board],
                 "org_has_bd_team":   "true" if bd_team else "false",
-            }, updated_by=user.get("email"))
-            # Save the uploaded logo (if any) alongside the text fields so a
-            # single button click captures everything.
-            if new_logo_file is not None:
-                file_bytes = new_logo_file.read()
-                if len(file_bytes) > 5 * 1024 * 1024:
-                    st.warning(
-                        f"⚠ Logo is {len(file_bytes) / 1024 / 1024:.1f} MB — "
-                        "consider downsizing. Stored anyway."
-                    )
-                settings.set_org_logo(
-                    file_bytes,
-                    new_logo_file.type or "image/png",
-                    updated_by=user.get("email"),
-                )
+            }
+            try:
+                settings.set_org(_fields, updated_by=user.get("email"), tenant_id=tenant_id)
+                # Save the uploaded logo (if any) alongside the text fields so a
+                # single button click captures everything.
+                if new_logo_file is not None:
+                    file_bytes = new_logo_file.read()
+                    if len(file_bytes) > 5 * 1024 * 1024:
+                        st.warning(
+                            f"⚠ Logo is {len(file_bytes) / 1024 / 1024:.1f} MB — "
+                            "consider downsizing. Stored anyway.")
+                    settings.set_org_logo(
+                        file_bytes, new_logo_file.type or "image/png",
+                        updated_by=user.get("email"), tenant_id=tenant_id)
+            except Exception as exc:
+                st.error(f"❌ Save failed — NOT persisted to the database: {exc}")
+                return
+            # VERIFY the write actually landed — a silent RLS / permission / key issue
+            # otherwise reads back as "it didn't save".
+            _chk = settings.get_org(tenant_id)
+            # Only flag NON-EMPTY submitted values that didn't come back. get_org()
+            # substitutes placeholder defaults for empty fields (e.g. org_team →
+            # "Business Development Team"), so a deliberately-CLEARED field would else
+            # read back as its default and trip a false "did not persist" error.
+            _bad = [k for k in ("org_name", "org_country", "org_team", "org_contact_email")
+                    if (_fields.get(k) or "").strip()
+                    and (_fields.get(k) or "").strip() != str(_chk.get(k) or "").strip()]
+            if _bad:
+                st.error(
+                    "Saved without an error, but these fields did NOT persist in the "
+                    "database: **" + ", ".join(_bad) + "**. The tenant write was likely "
+                    "blocked — confirm migration 072 is applied and that SUPABASE_KEY is "
+                    "the SERVICE-ROLE key (an anon key can't update the tenants table).")
+                return
             st.success("Organization profile saved.")
             st.rerun()
 
@@ -178,7 +204,7 @@ def render_org_setup(user, sb):
         from core import geographies as _geo
         from core.program_area_select import program_area_matrix_editor
         from core.partners import NONPROFIT_PARTNERS, DONOR_PORTALS, clean_portal_url
-        _prof = _orgp.get_profile()
+        _prof = _orgp.get_profile(tenant_id)
 
         # Controlled vocabularies — SAME lists the Donor Intelligence profiles use,
         # so org values match donor values directly (no fuzzy mapping):
@@ -539,6 +565,7 @@ def render_org_setup(user, sb):
                  "Pick or type to add (qualification).")
 
         if st.button("💾 Save fit profile", type="primary", key="save_org_fit_profile"):
+          try:
             _orgp.set_profile({
                 "org_legal_type": legal_type,
                 "org_entity_type": entity_type,
@@ -583,7 +610,7 @@ def render_org_setup(user, sb):
                 "org_active_donors": active_donors_sel,
                 "org_engaged_donors": engaged_donors_sel,
                 "proposal_languages": langs_sel,
-            }, updated_by=user.get("email"))
+            }, updated_by=user.get("email"), tenant_id=tenant_id)
             # Competitiveness inputs live in org settings (partial upsert — set_org
             # only touches these keys, leaving branding fields alone). Grassroots /
             # multi-country are DERIVED from entity_type (single source of truth) so
@@ -592,9 +619,19 @@ def render_org_setup(user, sb):
                 "org_is_grassroot": "true" if entity_type == "grassroot_local" else "false",
                 "org_is_multi_country": "true" if entity_type == "multi_country" else "false",
                 "org_hq_country": "" if hq_country == "(none)" else hq_country,
-            }, updated_by=user.get("email"))
-            st.success("Fit profile saved.")
-            st.rerun()
+            }, updated_by=user.get("email"), tenant_id=tenant_id)
+          except Exception as _sfx:
+            st.error(f"❌ Save failed — NOT persisted to the database: {_sfx}")
+            return
+          # Verify the profile write actually landed.
+          if _orgp.get_profile(tenant_id).get("org_legal_type") != legal_type:
+            st.error(
+                "Saved without an error, but the profile did NOT persist in the "
+                "database. The tenant write was likely blocked — confirm migration 072 "
+                "is applied and SUPABASE_KEY is the SERVICE-ROLE key.")
+            return
+          st.success("Fit profile saved.")
+          st.rerun()
 
     with _ttab:
         st.subheader("Team members")

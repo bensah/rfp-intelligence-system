@@ -98,6 +98,21 @@ KNOWN_COUNTRIES: tuple[str, ...] = (
     "Japan", "South Korea", "Singapore", "Hong Kong",
     "Israel", "United Arab Emirates", "Saudi Arabia",
     "Russia", "Russian Federation",
+    # UN / official LONG-FORM names donor & UN procurement sources use verbatim
+    # (UNGM, ILO, World Bank). Without these a call scoped to e.g. "Lao People's
+    # Democratic Republic" matched NO country → read as silent → slipped through the
+    # geo gate. Matched tokens are canonicalised to their short name (see
+    # geographies.canonical_geo) before the eligible/foreign test, so adding the long
+    # form of an ELIGIBLE country never causes a false reject.
+    "Lao People's Democratic Republic", "Lao PDR",
+    "United Republic of Tanzania", "Republic of Korea",
+    "Democratic People's Republic of Korea", "Viet Nam",
+    "Syrian Arab Republic", "Islamic Republic of Iran",
+    "Bolivia (Plurinational State of)", "Plurinational State of Bolivia",
+    "Venezuela (Bolivarian Republic of)", "Bolivarian Republic of Venezuela",
+    "Republic of Moldova", "Republic of the Congo",
+    "Democratic Republic of Congo", "Brunei Darussalam",
+    "Kyrgyz Republic", "State of Palestine", "Republic of Türkiye", "Turkey", "Türkiye",
 )
 
 # Pre-compile the country search regex once. Use word boundaries so e.g.
@@ -509,9 +524,12 @@ def geographic_exclusion_reject(candidate: dict[str, Any],
 
     # Detect named countries + specific regions. Country spans are blanked before
     # region detection so "South Africa"/"South Sudan" can't register a continent.
-    call_countries = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
+    # Canonicalise to short names (long/official forms → short) for the org test,
+    # but blank the RAW matched forms from the text so region detection is clean.
+    _raw_country_matches = _COUNTRY_PATTERN.findall(text)
+    call_countries = {geo.canonical_geo(m).lower() for m in _raw_country_matches}
     clean = text
-    for c in sorted(call_countries, key=len, reverse=True):
+    for c in sorted({m.lower() for m in _raw_country_matches}, key=len, reverse=True):
         clean = re.sub(r"\b" + re.escape(c) + r"\b", " ", clean)
     specific_regions = geo.regions_in_text(clean)   # UN regions + EU + Mediterranean
 
@@ -577,7 +595,11 @@ def _geo_strength(candidate: dict[str, Any], policies: dict[str, Any]) -> str:
     text = _geo_text(candidate)
     if _has_inclusive_eligibility(text):
         return "strong"
-    mentioned = {m.lower() for m in _COUNTRY_PATTERN.findall(text)}
+    # Canonicalise every matched country to its short name so long / official forms
+    # ("Lao People's Democratic Republic" → "Laos", "United Republic of Tanzania" →
+    # "Tanzania") are judged correctly — a non-eligible long form now reads as foreign
+    # instead of going undetected (silent → permissive → leak).
+    mentioned = {geo.canonical_geo(m).lower() for m in _COUNTRY_PATTERN.findall(text)}
     if mentioned & eligible_countries:        # names one of our exact countries
         return "strong"
     if any(geo.text_matches_term(text, b) for b in real_broad):
@@ -1079,6 +1101,15 @@ def us_domestic_only_reject(candidate: dict[str, Any], policies: dict[str, Any])
     text = _full_text(candidate) + " " + (candidate.get("notes") or "")
     if _has_inclusive_eligibility(text):
         return False, ""
+    # Grants.gov is a US-FEDERAL portal. Absent an EXPLICIT foreign/international
+    # eligibility statement (ruled out just above), default to US-domestic and drop for
+    # a non-US deployment — grants.gov calls rarely admit foreign entities, so "unclear"
+    # is safer treated as domestic (owner rule 2026-07-27) than leaked as Park/Decline.
+    _link = (candidate.get("opportunity_link") or "").lower()
+    _src = str(candidate.get("source") or candidate.get("_source_origin") or "").lower()
+    if "grants.gov" in _link or "grants.gov" in _src:
+        return True, ("grants.gov call with no explicit foreign / international "
+                      "eligibility statement — treated as US-domestic (out of scope)")
     # Structured signals from the grants.gov enricher (set on the candidate):
     #   * _drop_us_only — eligibility text or applicant types were US-domestic.
     #   * _applicant_types — re-check gov-only here so US-government-only opps that
@@ -1232,6 +1263,64 @@ def deadline_in_future(candidate: dict[str, Any]) -> tuple[bool, str]:
     if deadline < today:
         return False, f"deadline passed ({deadline.isoformat()})"
     return True, ""
+
+
+def insufficient_data_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
+    """TENANT-SCREENING data-completeness gate (run AFTER enrichment). Reject a call we
+    can't trust as a real, currently-OPEN opportunity:
+      (a) a near-empty STUB — no deadline, no award value, no scope, no domain area AND a
+          blank/near-blank body (the Fondation Pierre Fabre 'Occitania' case, where
+          nothing was extracted); or
+      (b) NO VERIFIABLE LIVE DEADLINE — no parseable deadline, not a rolling call, and no
+          current/future year anywhere on the page → we can't confirm the window is open,
+          so we block rather than surface a likely-expired call (owner rule 2026-07-27).
+    Pure extraction keeps everything (the global store is a superset); this fires only in
+    the per-tenant Screened pipeline."""
+    from datetime import date as _date, datetime as _dt
+    deadline = candidate.get("call_submission_deadline")
+    body = (candidate.get("brief_description") or "").strip()
+    page = (candidate.get("_page_text") or "").strip()
+    text_len = max(len(body), len(page))
+    has_value = candidate.get("call_award_value") not in (None, "", 0, "0")
+    _g = candidate.get("call_geographic_scope")
+    has_geo = (bool(_g) if isinstance(_g, (list, tuple)) else bool(str(_g or "").strip()))
+    _d = candidate.get("call_domain_areas")
+    has_dom = (bool(_d) if isinstance(_d, (list, tuple)) else bool(str(_d or "").strip()))
+
+    # (a) blank stub — essentially nothing was extracted.
+    if not deadline and text_len < 120 and not has_value and not has_geo and not has_dom:
+        return True, ("insufficient extraction — no deadline, value, scope, area or "
+                      "description (blank stub; cannot verify a real open call)")
+
+    # (b) no verifiable live deadline.
+    if not deadline and not _is_rolling_call(candidate):
+        # Posted-date grace: a call POSTED recently (within the stale-posting window) is
+        # plausibly still open even if its deadline didn't parse — mirror
+        # deadline_in_future's _STALE_POSTING_DAYS rule so a freshly-posted undated call
+        # isn't dropped just because its year didn't appear in the short screening text.
+        posted = candidate.get("date_posted")
+        _pd = None
+        if isinstance(posted, str):
+            try:
+                _pd = _dt.fromisoformat(posted.split("T")[0]).date()
+            except (ValueError, TypeError):
+                _pd = None
+        elif isinstance(posted, _dt):
+            _pd = posted.date()
+        elif isinstance(posted, _date):
+            _pd = posted
+        if _pd and 0 <= (_date.today() - _pd).days <= _STALE_POSTING_DAYS:
+            return False, ""            # recently posted → plausibly live, keep
+        blob = " ".join([
+            candidate.get("opportunity_link") or "",
+            candidate.get("opportunity_title") or "",
+            body, page, candidate.get("notes") or ""])
+        yr = _latest_year_in(blob)
+        if not (yr and yr >= _date.today().year):
+            return True, ("no verifiable live deadline — no parseable deadline, not a "
+                          "rolling call, no recent posting date, and no current/future "
+                          "date on the page")
+    return False, ""
 
 
 _SEARCH_URL_PATTERN_AS = re.compile(
@@ -1601,7 +1690,18 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
     # we crawl + extract it directly and never apply the non-primary reject. The
     # non-primary reject only fires for aggregator-class or web-discovered hits
     # that didn't resolve to a primary.
-    if candidate.get("_source_class") != "primary":
+    # A non-primary HOST (aggregator like DevelopmentAid / fundsforNGOs, or a blog
+    # platform) is a crawl SEED only — never stored as a call. Drop it UNLESS:
+    #   * it was resolved to the donor's OWN primary page this run
+    #     (_resolved_from_aggregator), OR
+    #   * it comes from a CURATED PRIMARY source (a small donor may publish on a shared
+    #     blog host like wordpress.com). `_source_class` is trustworthy again: the live
+    #     scan stamps the catalogue class ("Primary source"), and _candidate_from_extracted
+    #     stamps it host-derived ("aggregator" for aggregator URLs), so an aggregator URL
+    #     never carries "primary" and is still dropped. A HUMAN-confirmed primary host is
+    #     also kept because is_non_primary consults the source registry first.
+    _sc = str(candidate.get("_source_class") or "").strip().lower()
+    if not (candidate.get("_resolved_from_aggregator") or "primary" in _sc):
         try:
             from core import aggregators as _aggr
             _np, _why = _aggr.is_non_primary(link, candidate.get("opportunity_title"))
@@ -1773,7 +1873,8 @@ _PREFER_KEYS = ("funding_quality", "funder_relationship",
 
 
 def recommend_from_composite(crit_vals: dict[str, Any], composite: float,
-                             *, fatal: bool = False) -> str:
+                             *, fatal: bool = False,
+                             below_award_floor: bool = False) -> str:
     """THE canonical Auto-decision rule (single source — used by auto_score and by
     any path that re-derives a criterion, e.g. the MUST-5 LLM feedback loop).
 
@@ -1784,10 +1885,21 @@ def recommend_from_composite(crit_vals: dict[str, Any], composite: float,
     or an inaccessible funding route). Dynamic gaps (no SAM/MOU yet) no longer
     hard-decline — they lower the composite and usually Park for review; MUST
     weight (.65) still sinks genuinely weak bids below the band.
-      fatal → Decline · else ≥90 Proceed · 70–89 Park · <70 Decline."""
+
+    `below_award_floor` (2026-07-28) — the call's funding is BELOW the org's minimum
+    target (criteria_derive.below_award_floor). PREFER-6's 0.08 weight can shave at most
+    8 points, so a strong-MUST bid with a too-small award would otherwise still clear the
+    90 Proceed bar; this CAPS a would-be Proceed at Park so a poor funding fit sends it to
+    human review instead of auto-advancing. It never forces a Decline (a small award is a
+    preference miss, not a structural bar).
+      fatal → Decline · else ≥90 Proceed (capped to Park if below_award_floor) ·
+      70–89 Park · <70 Decline."""
     if fatal:
         return "Decline"
-    return "Proceed" if composite >= 90 else "Park" if composite >= 70 else "Decline"
+    rec = "Proceed" if composite >= 90 else "Park" if composite >= 70 else "Decline"
+    if rec == "Proceed" and below_award_floor:
+        return "Park"
+    return rec
 
 # Internal scoring vocab ("Yes"/"Partial"/"No") → DB / UI dropdown vocab
 # ("True"/"Partial"/"False"). Applied right before auto_score returns so
@@ -1900,27 +2012,71 @@ def _decision_from_criteria(values: dict[str, str]) -> str:
     return "Park"
 
 
+# Incidental (NON-geographic) US/UK/EU mentions — timezones ("7 a.m. US PDT"),
+# tax/currency clauses ("U.S. tax purposes", "US dollars") — that must NOT be read
+# as the call's eligibility geography. Scrubbed before country detection.
+_INCIDENTAL_GEO_RE = re.compile(
+    # Trailing \b on every timezone token so "US PDT" is scrubbed but "US Ethiopia" does
+    # NOT eat "Et" out of the country name.
+    r"\b(?:us|u\.s\.|u\.s\.a\.|uk|u\.k\.)\s*(?:pdt|pst|edt|est|cdt|cst|mdt|mst|"
+    r"et|pt|ct|mt|gmt|utc)\b"
+    r"|\b(?:us|u\.s\.|u\.s\.a\.|uk|u\.k\.)\s*(?:time|dollars?|tax|\$)\b"
+    r"|\b(?:a\.?m\.?|p\.?m\.?|\d{1,2}:\d{2})\s*(?:us|u\.s\.|uk|et|pt|ct|mt|pst|pdt|est|edt)\b"
+    r"|for\s+u\.?s\.?\s+tax\s+purposes",
+    re.I)
+# Bare short tokens too ambiguous to treat as geography on their own — only counted
+# when the text ALSO carries a genuine scoping/eligibility signal for that place.
+_AMBIGUOUS_GEO_TOKENS = {"us", "usa", "u.s.", "u.s.a.", "uk", "u.k.", "eu"}
+# US-eligibility SCOPE phrasing. Deliberately does NOT include a bare "domestic" — that
+# word is pervasive in LMIC health text ("domestic resource mobilization / financing")
+# and would mislabel global calls as United States. The dedicated US-domestic REJECT gate
+# (_US_DOMESTIC_ONLY_PATTERN) still matches "domestic" with proper surrounding context.
+_US_SCOPE_CONTEXT_RE = re.compile(
+    r"\bunited states\b|\bu\.?s\.?[-\s]?based\b|\bbased in the u\.?s\.?\b"
+    r"|\bwithin the united states\b", re.I)
+
+
 def _extract_call_geographic_scope(text: str, policies: dict[str, Any]) -> list[str]:
-    """Detect KNOWN_COUNTRIES mentions in the candidate's text. Returns the
-    list of country names verbatim (case-preserved via the matched form).
-    Restricted to eligible-list countries + broad regions when present, so
-    Decline / out-of-scope rows don't get spurious geography tags."""
+    """The call's ELIGIBILITY geography — canonical country names + any broad
+    development tier ("Global", LMIC, Sub-Saharan Africa) the text scopes to.
+
+    Guards against the #1 false positive: an incidental "US" (a timezone like
+    "a.m. US PDT" or "U.S. tax purposes") is scrubbed and bare US/UK/EU tokens are
+    only counted when a real US/UK/EU scoping phrase is present — so a globally-open
+    call is never mislabelled "US". Returns [] when nothing is scoped; the caller
+    supplies the "Global" fallback."""
     if not text:
         return []
-    # Prioritise exact eligible countries + the member countries of any selected
-    # broad geography (same shared vocabulary as the donor scope + the geo gate).
+    scrubbed = _INCIDENTAL_GEO_RE.sub(" ", text)
+    _has_us_scope = bool(_US_SCOPE_CONTEXT_RE.search(text))
     _c = policies.get("countries") or {}
     eligible = geo.expand((_c.get("eligible") or []) + (_c.get("broad_terms") or []))
     found: list[str] = []
     seen: set[str] = set()
-    for m in _COUNTRY_PATTERN.findall(text):
-        key = m.lower()
+    for m in _COUNTRY_PATTERN.findall(scrubbed):
+        raw = m.strip().lower()
+        if raw in _AMBIGUOUS_GEO_TOKENS and not _has_us_scope:
+            continue                              # incidental US/UK/EU → not geography
+        canon = geo.canonical_geo(m) or m
+        key = canon.lower()
         if key in seen:
             continue
         seen.add(key)
-        found.append(m)
-    # Prioritise eligible countries first in the list (so an eligible country shows
-    # before Nigeria if both are mentioned).
+        found.append(canon)
+    # A genuine US-scope phrase ("U.S.-based … only", "domestic") often carries no bare
+    # country token the regex can catch (the periods in "U.S." break \bus\b), so emit
+    # United States explicitly when the scope context is present.
+    if _has_us_scope and not (seen & {"united states", "us", "usa"}):
+        found.append("United States")
+        seen.add("united states")
+    # Also capture broad regions / development tiers ("open globally", LMIC,
+    # Sub-Saharan Africa) — the country regex only knows explicit countries.
+    for tier in geo.broad_geos_in_text((text or "").lower()):
+        canon = geo.canonical_geo(tier) or tier
+        if canon.lower() not in seen:
+            seen.add(canon.lower())
+            found.append(canon)
+    # Eligible countries first (so an eligible country shows before Nigeria).
     found.sort(key=lambda c: (0 if c.lower() in eligible else 1, c))
     return found[:8]  # cap to avoid overflowing the column
 
@@ -2174,12 +2330,13 @@ def auto_score(
         from core import settings as _settings
         _donor_row = None
         try:
-            from db.supabase_client import get_client
             _fa = (candidate.get("funding_agency") or "").strip()
             if _fa:
-                _dq = (get_client().table("donor_intel").select("*")
-                       .ilike("donor", _fa).limit(1).execute().data or [])
-                _donor_row = _dq[0] if _dq else None
+                # Robust acronym/short/full-name resolution (an exact ilike missed calls
+                # whose funder string differs from the stored donor name), so donor intel
+                # reaches the scorer as the fallback for HQ / scope / priorities.
+                from core.donor_intel import match_donor as _match_donor
+                _donor_row = _match_donor(_fa, fuzzy=False)
         except Exception:
             _donor_row = None
         _derived = criteria_derive.derive_criteria(
@@ -2236,7 +2393,12 @@ def auto_score(
             _op.get_profile(), candidate, _donor_row, _st.get_org())
     except Exception:
         _is_fatal = False
-    rec = recommend_from_composite(values, score, fatal=_is_fatal)
+    try:
+        _below_floor = _cd.below_award_floor(candidate, _op.get_profile())
+    except Exception:
+        _below_floor = False
+    rec = recommend_from_composite(values, score, fatal=_is_fatal,
+                                   below_award_floor=_below_floor)
 
     # SPARSE-TEXT GUARD: if the candidate text is too thin to make a fair
     # judgement (typical for listing-page anchors where we only got a
@@ -2306,9 +2468,11 @@ def auto_score(
     # Auto-populated companion fields — only set if the candidate hasn't
     # already provided them, so explicit scraper-extracted values win.
     if not candidate.get("call_geographic_scope"):
-        geo = _extract_call_geographic_scope(text, policies)
-        if geo:
-            out["call_geographic_scope"] = geo
+        _scope = _extract_call_geographic_scope(text, policies)
+        # Silent geography → fall back to GLOBAL (owner rule), never leave it to a
+        # stray incidental token. A global scope keeps the call eligible for any org
+        # (Cameroon/Mali included) instead of a spurious country stamp declining it.
+        out["call_geographic_scope"] = _scope or ["Global"]
     # program_area: classify from the description. REPLACE a generic crawled
     # value (e.g. "Health" — not a taxonomy key) with specific areas so
     # strategic_fit can match the org; leave an already-taxonomy-keyed value

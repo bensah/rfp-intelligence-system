@@ -124,20 +124,22 @@ def role_label(user: dict[str, Any] | None) -> str:
 # Separate from the page/tab access matrix above because this is a
 # RELATIONAL check (actor × target) rather than just (actor × surface).
 #
-# Rules:
-#   super_user → can manage anyone, including other super_users,
-#                including themselves
-#   admin      → can manage reviewer + collaborator only. CANNOT touch
-#                other admins, the super_user, or themselves
-#                (self-lockout guard).
+# Rules (2026-07-26: admin elevated to full user management within its scope):
+#   super_user → can manage anyone, including other super_users and itself.
+#                Reserved for the platform owner / developer.
+#   admin      → can manage admins, reviewers and collaborators (create, edit,
+#                delete, assign roles up to ADMIN). CANNOT touch the super_user
+#                (that role stays platform-owner only), and cannot demote itself
+#                (self-lockout guard). In multi-tenant mode an admin only ever
+#                sees/manages users in its OWN tenant (scoped in the UI + RLS).
 #   others     → cannot manage anyone.
 #
-# Returning True authorises role + is_active + reset-password actions.
+# Returning True authorises role + is_active + reset-password + delete actions.
 # Editing one's OWN profile fields (name / phone / etc.) is governed by
 # the My Profile tab, not this helper.
 _MANAGEABLE_BY: dict[str, set[str]] = {
     "super_user": {"super_user", "admin", "reviewer", "collaborator"},
-    "admin":      {"reviewer", "collaborator"},
+    "admin":      {"admin", "reviewer", "collaborator"},
 }
 
 
@@ -165,13 +167,13 @@ def can_manage_user(actor: dict[str, Any] | None,
 def assignable_roles(actor: dict[str, Any] | None) -> list[str]:
     """Which roles can `actor` assign to others?
        super_user → any of the four
-       admin      → reviewer + collaborator only
+       admin      → collaborator + reviewer + admin (NOT super_user)
        others     → []
     Ordered from least to most privileged for display."""
     if is_super_user(actor):
         return ["collaborator", "reviewer", "admin", "super_user"]
     if is_admin(actor):
-        return ["collaborator", "reviewer"]
+        return ["collaborator", "reviewer", "admin"]
     return []
 
 
