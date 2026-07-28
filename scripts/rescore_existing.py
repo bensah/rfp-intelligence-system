@@ -100,7 +100,9 @@ def _evaluate(row: dict, org: dict, org_set: dict, donors: list[dict],
 
     m = mm.composite_match({**row, **crit}, org, donor, org_set)
     is_fatal, trigger = cdv.fatal_decline(org, row, donor, org_set)
-    new_rec = recommend_from_composite(crit, m["composite"], fatal=is_fatal)
+    new_rec = recommend_from_composite(
+        crit, m["composite"], fatal=is_fatal,
+        below_award_floor=cdv.below_award_floor(row, org))
     new_score = round(m["composite"], 1)
 
     # Parity with auto_score's post-rules so a re-score never diverges from a

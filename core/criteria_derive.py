@@ -101,7 +101,13 @@ def _num(v: Any) -> float | None:
 
 
 def _usd(rfp: dict) -> float | None:
-    val = _num(rfp.get("call_award_value"))
+    # Prefer the headline award value; fall back to the extracted RANGE — the ceiling
+    # (HIGHEST) then the floor — so a call that states its award as a range is still
+    # sized. Mirrors MUST-3 capacity (which already reads call_award_ceiling) and honours
+    # the "use the HIGHEST/MID of a range" rule.
+    val = (_num(rfp.get("call_award_value"))
+           or _num(rfp.get("call_award_ceiling"))
+           or _num(rfp.get("call_award_floor")))
     if not val:
         return None
     try:
@@ -474,8 +480,12 @@ def _geo_partner_in_scope(org: dict, scope: Any) -> bool:
 
 
 def _geo_scope(rfp: dict, donor: dict | None) -> list[str]:
-    """Call call_geographic_scope ∪ donor donor_geographic_scope — deduped (case-insensitive)."""
-    raw = _as_list(rfp.get("call_geographic_scope")) + _as_list((donor or {}).get("donor_geographic_scope"))
+    """The CALL's geographic scope governs MUST-4; the donor's scope is a FALLBACK used
+    ONLY when the call states none — donor intel must never WIDEN an explicit call
+    restriction (e.g. a broad donor 'LMIC' scope must not turn an 'India-only' call into a
+    pass for an org with no India presence). Deduped (case-insensitive)."""
+    raw = (_as_list(rfp.get("call_geographic_scope"))
+           or _as_list((donor or {}).get("donor_geographic_scope")))
     seen, out = set(), []
     for s in raw:
         k = str(s).strip().lower()
@@ -962,6 +972,19 @@ def derive_funding_quality(rfp: dict, org: dict | None = None,
     return "High" if avg >= 0.75 else ("Moderate" if avg >= 0.4 else "Low")
 
 
+def below_award_floor(rfp: dict, org: dict | None = None) -> bool:
+    """True when the org has set a MINIMUM funding target, the call's award is KNOWN
+    (headline value OR extracted range), and it falls BELOW that minimum — a decisive
+    'the org would not prefer this' signal. The decision layer uses it to CAP a would-be
+    Proceed at Park (an award below the org's floor should go to human review, not
+    auto-advance), so a poor funding fit can pull even a perfect-MUST bid down — which the
+    0.08 PREFER-6 weight alone cannot do. Unknown award or unset floor → False (never caps
+    on missing data)."""
+    lo = _num((org or {}).get("org_min_target"))
+    val = _usd(rfp)
+    return bool(lo and val and val < lo)
+
+
 def _host_match(a: str, b: str) -> bool:
     """Two portal hosts match if identical OR one is a sub-domain of the other
     (dot-boundary suffix). So a registration on 'gavi.org' credits a call whose
@@ -1330,11 +1353,16 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
                           hard=True))
 
     # --- C. HQ country — HQ in one of the required countries ------------------
+    # Canonicalize BOTH sides (US == U.S. == United States) so a mere spelling/format
+    # variant of the same country never fails this HARD gate (which auto-Declines).
     hq_req = [h.lower() for h in _as_list(donor.get("donor_hq_country_required"))]
     detected = bool(hq_req and "any" not in hq_req)
-    ohq = str(os.get("org_hq_country") or os.get("org_country") or "").strip().lower()
+    ohq = str(os.get("org_hq_country") or os.get("org_country") or "").strip()
+    _ohq_canon = _geo.canonical_geo(ohq)
+    _hq_req_canon = {_geo.canonical_geo(h) for h in hq_req if h != "any"}
     items.append(_qfactor("donor_hq_country", "HQ country", active=detected,
-                          score=(1.0 if (ohq and ohq in hq_req) else 0.0), hard=True))
+                          score=(1.0 if (_ohq_canon and _ohq_canon in _hq_req_canon)
+                                 else 0.0), hard=True))
 
     # --- D. Registration region — GEO-SCOPE PROXY (owner 2026-06-29). Active when the
     #    donor states a region, when it explicitly says "Any" (a real pass), OR via the
@@ -1470,28 +1498,6 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
         _factor("rel_engaged", "Donor engaged (prior contact, no funding yet)", "DO", engaged),
         _factor("rel_contact", "Shared collaborator or registered", "DO", contact),
     ]
-
-
-def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
-                  org_settings: dict | None = None,
-                  rfp_compliance: dict | None = None) -> tuple[bool, str | None]:
-    """THE auto-Decline gate (replaces the blanket 'any MUST<2 → Decline').
-    Returns (decline?, trigger_name). True ONLY when a 🔒 non-dynamic factor is
-    EXPLICITLY failed (met is False) — a structural ineligibility the org can't
-    fix before the deadline: a MUST-1 identity gate or no geographic reach. (MUST-5
-    has no fatal floor — its credential gates are acquirable.) Unknowns (None) never
-    trigger a decline — they only soften the score (→ usually Park for review)."""
-    org = org or {}
-    eff = _merge_rfp_compliance(donor, rfp_compliance)
-    for f in qualification_factors(org, rfp, eff, org_settings):
-        if f["active"] and f["met"] is False:
-            return True, f["name"]
-    if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
-        return True, "Geographic reach (no presence or partner)"
-    # MUST-5 has NO structural auto-Decline gate (owner 2026-06-30): the hard credential
-    # gates are all acquirable before the deadline, and funding-route / funding-platform
-    # moved to PREFER-8 (Bid Strength only). So MUST-5 never forces a decline here.
-    return False, None
 
 
 def _strategic_factors(org: dict, rfp: dict, donor: dict | None = None) -> list[dict]:
@@ -1690,9 +1696,24 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     trigger a decline — they only soften the score (→ usually Park for review)."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
+    # MUST-1 — identity / qualification gates.
     for f in qualification_factors(org, rfp, eff, org_settings):
         if f["active"] and f["met"] is False:
             return True, f["name"]
+    # MUST-2 (strategic fit) is intentionally NOT a hard auto-Decline gate: unlike legal
+    # status / geography / a budget ceiling, an off-strategy call is not a STRUCTURAL
+    # impossibility, and the strategic component's 0/0.5/1 band can't cleanly separate
+    # "org works here but deprioritises it" (rating ≤1 → band 0) from true zero overlap.
+    # A hard gate here would auto-Decline and HIDE otherwise-strong calls from the review
+    # queue. Its heavy composite weight already pushes an off-strategy call to Park/Decline
+    # by overall strength, so it stays reviewable — matching the "see & review all" model.
+    # MUST-3 — a HARD, ACTIVE capacity ceiling the org exceeds (annual-budget / prior-grant
+    # ceiling) is a structural ineligibility the org cannot shrink before the deadline.
+    # (Soft MUST-3 items — experience / award-absorption — are NOT gates.)
+    for f in capacity_factors(org, rfp, eff, org_settings):
+        if f.get("active") and f.get("hard") and f.get("met") is False:
+            return True, f["name"]
+    # MUST-4 — no geographic reach (own presence or a partner in the call's scope).
     if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
         return True, "Geographic reach (no presence or partner)"
     # MUST-5 has NO structural auto-Decline gate (owner 2026-06-30): the hard credential

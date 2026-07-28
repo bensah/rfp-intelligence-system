@@ -289,6 +289,11 @@ def login_gate() -> Optional[dict[str, Any]]:
         st.caption(f"Details: {type(exc).__name__}")
         st.stop()
 
+    if user and user.get("is_blacklisted"):
+        # Hard block — distinct from is_active deactivation. Set from Settings →
+        # Accounts → Blacklisted; cleared only by removing them from the blacklist.
+        st.error("This account has been blocked. Contact an administrator.")
+        return None
     if not user or not user.get("is_active"):
         st.error("Your account is inactive. Contact an administrator.")
         return None
