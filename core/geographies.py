@@ -402,6 +402,42 @@ for _bt in _ALL_BROAD_TERMS:
     for _bv in SYNONYMS.get(_bt, []):
         _BROAD_CANON.setdefault(_bv.lower(), _bt)
 _COUNTRY_CANON: dict[str, str] = {c.lower(): c for c in COUNTRIES}
+# UN / official LONG-FORM aliases → the canonical short name in COUNTRIES. Lets a
+# call scoped to a long form (common in UN/UNGM/World-Bank sources) be compared
+# correctly by the geo gate: an ELIGIBLE country's long form still matches, and a
+# non-eligible one (e.g. "Lao People's Democratic Republic" → "Laos") reads as foreign.
+_COUNTRY_ALIASES: dict[str, str] = {
+    "lao people's democratic republic": "Laos", "lao pdr": "Laos",
+    "united republic of tanzania": "Tanzania",
+    "republic of korea": "South Korea",
+    "democratic people's republic of korea": "North Korea",
+    "viet nam": "Vietnam",
+    "syrian arab republic": "Syria",
+    "islamic republic of iran": "Iran",
+    "bolivia (plurinational state of)": "Bolivia",
+    "plurinational state of bolivia": "Bolivia",
+    "venezuela (bolivarian republic of)": "Venezuela",
+    "bolivarian republic of venezuela": "Venezuela",
+    "republic of moldova": "Moldova",
+    "republic of the congo": "Congo (Brazzaville)",
+    "democratic republic of congo": "Congo (DRC)",
+    "democratic republic of the congo": "Congo (DRC)",
+    "brunei darussalam": "Brunei",
+    "kyrgyz republic": "Kyrgyzstan",
+    "state of palestine": "Palestine",
+    "republic of türkiye": "Turkey", "türkiye": "Turkey",
+    # Common abbreviation / long-form variants so an HQ-country gate matches regardless of
+    # how the country was typed (e.g. donor requires 'US', org HQ says 'United States').
+    "us": "United States", "u.s.": "United States", "usa": "United States",
+    "u.s.a.": "United States", "united states of america": "United States",
+    "uk": "United Kingdom", "u.k.": "United Kingdom",
+    "united kingdom of great britain and northern ireland": "United Kingdom",
+    "great britain": "United Kingdom",
+    "uae": "United Arab Emirates",
+    "drc": "Congo (DRC)", "dr congo": "Congo (DRC)",
+}
+for _al, _canon in _COUNTRY_ALIASES.items():
+    _COUNTRY_CANON.setdefault(_al, _canon)
 
 
 def canonical_geo(term: str | None) -> str:
