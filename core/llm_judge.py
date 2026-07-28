@@ -82,8 +82,13 @@ _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def is_enabled() -> bool:
-    """True iff an endpoint + key + the openai SDK are available. Cheap probe."""
-    if not (os.environ.get("LLM_JUDGE_BASE_URL") and os.environ.get("LLM_JUDGE_API_KEY")):
+    """True iff an endpoint + the openai SDK are available. Cheap probe.
+
+    Only the BASE URL is required — a local Ollama endpoint ignores the API key, and
+    requiring a non-empty key silently disabled the judge whenever the key var was
+    unset. The key is defaulted to a placeholder in the client; a provider that truly
+    needs one surfaces a visible auth error instead of going dark."""
+    if not os.environ.get("LLM_JUDGE_BASE_URL"):
         return False
     try:
         import openai  # noqa: F401, WPS433
@@ -206,7 +211,9 @@ def judge(candidate: dict[str, Any], policies: dict[str, Any],
             timeout = _DEFAULT_TIMEOUT
         client = OpenAI(
             base_url=os.environ["LLM_JUDGE_BASE_URL"],
-            api_key=os.environ["LLM_JUDGE_API_KEY"],
+            # Placeholder key for endpoints that ignore it (local Ollama); a provider
+            # that requires a real key surfaces a visible auth error, never a silent skip.
+            api_key=os.environ.get("LLM_JUDGE_API_KEY") or "ollama",
             timeout=timeout,
             max_retries=0,          # one shot — we fall back to regex on failure
         )

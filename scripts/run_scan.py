@@ -588,6 +588,10 @@ def main() -> None:
     ap.add_argument("--extract-only", action="store_true",
                     help="Pure extraction: crawl + extract into the global store, "
                          "no per-tenant Screened insert (screening is a separate run).")
+    ap.add_argument("--screen-tenants", action="store_true",
+                    help="After the crawl, screen EACH active tenant against its own "
+                         "policies/profile into that tenant's pipeline (multi-tenant "
+                         "auto-populate). Pair with --extract-only for the Friday cron.")
     ap.add_argument("--source", default=None, help="Restrict to one source name")
     ap.add_argument(
         "--workers", type=int, default=DEFAULT_WORKERS,
@@ -598,13 +602,42 @@ def main() -> None:
         ),
     )
     args = ap.parse_args()
+    # The multi-tenant Option-C flow (extract-only crawl → per-tenant screening) only
+    # applies when multi-tenant is ON. In a SINGLE-tenant deploy (no JWT secret) with the
+    # committed cron flags, run a NORMAL full ingest instead so the single pipeline still
+    # populates — never leave it extract-only with no screening to fill rfp_submissions.
+    _mt = False
+    try:
+        from auth.tenant_context import multitenant_enabled
+        _mt = multitenant_enabled()
+    except Exception:
+        _mt = False
+    _extract_only = args.extract_only
+    _do_screen = bool(args.screen_tenants and _mt)
+    if args.screen_tenants and not _mt:
+        _extract_only = False       # single-tenant: full ingest (populate directly)
+        print("Single-tenant mode (no JWT secret) — running a full ingest; "
+              "per-tenant screening skipped.")
+
     run(
         triggered_by=args.triggered_by,
         dry_run=args.dry_run,
         source_filter=args.source,
         workers=args.workers,
-        extract_only=args.extract_only,
+        extract_only=_extract_only,
     )
+    # Option-C: after the shared-store crawl, auto-populate EACH tenant's pipeline by
+    # screening the store against that tenant's own policies + profile.
+    if _do_screen:
+        try:
+            from core.scan_pipeline import screen_all_tenants
+            _res = screen_all_tenants(dry_run=args.dry_run,
+                                      triggered_by=args.triggered_by)
+            _tot = sum((r or {}).get("added", 0) for r in _res.values()
+                       if isinstance(r, dict))
+            print(f"Per-tenant screening · {len(_res)} tenant(s) · {_tot} row(s) added")
+        except Exception as _sexc:
+            print(f"  (per-tenant screening failed: {_sexc})", file=sys.stderr)
     # The scan COMPLETED (per-source errors are already caught + counted above).
     # Flush, then HARD-exit 0 so a flaky native-lib teardown (Playwright /
     # asyncio) or atexit hook can't raise during interpreter shutdown and set a

@@ -101,7 +101,20 @@ def get_last_sync() -> tuple[Optional[float], Optional[str]]:
 
 
 def needs_sync() -> Optional[Path]:
-    """Return the Excel path if it's newer than the last recorded sync."""
+    """Return the Excel path if an AUTO-sync is due (workbook newer than the last
+    recorded sync).
+
+    DEACTIVATED in multi-tenant mode: the CHAI-Cameroon workbook is single-tenant data
+    with no tenant_id, so auto-syncing it on page load would dump CHAI's records into
+    whatever tenant the user is browsing (e.g. a brand-new Taadom Digital PLC tenant) and
+    also re-run on every session. Admin → Settings → "Sync now" calls sync() directly and
+    still works for a deliberate, owner-initiated single-tenant refresh."""
+    try:
+        from auth.tenant_context import multitenant_enabled
+        if multitenant_enabled():
+            return None
+    except Exception:
+        pass
     path = get_excel_path()
     if not path:
         return None

@@ -75,23 +75,40 @@ def relative_time(ts: datetime | None, now: datetime | None = None) -> str:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def recent_feed(limit_scans: int = 12, limit_rfps: int = 15) -> list[dict]:
-    """Org-wide activity items, newest first. Cached 60s (shared across users).
+def recent_feed(scope_tid: str | None = None, is_super: bool = False,
+                limit_scans: int = 12, limit_rfps: int = 15) -> list[dict]:
+    """Activity items for the current viewer, newest first. Cached 60s PER
+    (scope_tid, is_super) so one tenant's feed is never served to another.
 
-    Each item: {ts: datetime, icon: str, title: str, detail: str,
-                page: str|None}  (page = st.page_link target file path).
+    Scoping (multi-tenant):
+      * scan runs (scan_logs): tenant_id NULL = SYSTEM-WIDE (the discovery auto-scan) →
+        shown to everyone; tenant_id set (eligibility / "Find my matches" screening) →
+        shown only to that tenant (super_user sees all).
+      * new opportunities (rfp_submissions): the get_client() wrapper already scopes the
+        read to the viewer's tenant (super_user / single-tenant → all).
+
+    Each item: {ts, icon, title, detail, page}.
     """
     sb = get_client()
     items: list[dict] = []
 
     # ── Scan runs ───────────────────────────────────────────────────────
+    # Select "*" (resilient if scan_logs.tenant_id / migration 074 isn't applied yet),
+    # then filter in Python: system-wide rows (no tenant_id) are shown to all; a
+    # tenant-stamped row is shown only to that tenant (super_user sees everything).
     try:
-        scans = (safe_execute(
-            sb.table("scan_logs")
-            .select("scan_date,triggered_by,rfps_found,rfps_new,errors")
-            .order("scan_date", desc=True).limit(limit_scans)).data or [])
+        _raw = (safe_execute(
+            sb.table("scan_logs").select("*")
+            .order("scan_date", desc=True).limit(limit_scans * 4)).data or [])
     except Exception:
-        scans = []
+        _raw = []
+    scans = []
+    for s in _raw:
+        _stid = s.get("tenant_id")
+        if is_super or not _stid or (scope_tid and str(_stid) == str(scope_tid)):
+            scans.append(s)
+        if len(scans) >= limit_scans:
+            break
     _kind = {"cron": "Auto-scan", "manual": "Manual scan",
              "startup": "Startup scan", "test": "Test scan"}
     for s in scans:

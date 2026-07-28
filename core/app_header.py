@@ -736,7 +736,7 @@ def _render_user_menu() -> None:
         )
         st.divider()
         st.page_link("app_pages/help.py", label="Help", icon="❓")
-        st.page_link("app_pages/organization.py", label="Organization", icon="🏢")
+        st.page_link("app_pages/organization.py", label="Entity", icon="🏢")
         st.page_link("app_pages/profile.py", label="Profile", icon="👤")
         if _perms.is_admin(u):
             st.page_link("app_pages/admin.py", label="Settings", icon="⚙️")
@@ -801,8 +801,17 @@ def _render_notifications(user: dict) -> None:
     from core import notifications as _notif
 
     email = (user or {}).get("email") or ""
+    # Scope the feed to the EFFECTIVE tenant (the same scope the data pages use): a tenant
+    # user → their own; a super_user → the tenant they're viewing-as, else their home; a
+    # single-tenant deploy → None (everything). So the super_user's bell isn't a firehose
+    # either, and follows the view-as. System-wide (tenant_id NULL) scan runs still show.
     try:
-        feed = _notif.recent_feed()
+        from db.supabase_client import _tenant_scope_tid
+        _eff = _tenant_scope_tid()
+    except Exception:
+        _eff = None
+    try:
+        feed = _notif.recent_feed(scope_tid=_eff, is_super=(_eff is None))
     except Exception:
         feed = []
     seen = _notif.last_seen(email) if email else None
@@ -885,6 +894,74 @@ def _render_org_identity() -> None:
         unsafe_allow_html=True)
 
 
+def _apply_super_view_from_query() -> None:
+    """Super_user 'view-as tenant' (sticky): a ?tenant=<slug|id> link from Settings →
+    Tenants puts the super_user into a view of that tenant that persists across EVERY data
+    page (Pipelines/Grants/Actions/Report/Home/Organization) until they Return to their own
+    account. Stores su_view_tenant/su_view_name/su_view_slug in the session, and keeps
+    ?tenant=<slug> in the browser URL on EVERY page so it is always visible which tenant
+    is being viewed. No-op — and cleared — for non-super users, so the mode can never
+    stick to a normal user."""
+    from core import permissions
+    _u = st.session_state.get("app_user") or {}
+    if not permissions.is_super_user(_u):
+        st.session_state.pop("su_view_tenant", None)
+        st.session_state.pop("su_view_name", None)
+        st.session_state.pop("su_view_slug", None)
+        return
+    try:
+        _key = st.query_params.get("tenant")
+    except Exception:
+        _key = None
+    if _key:
+        # A ?tenant= is present. Resolve it into the sticky view only when it's a NEW
+        # key (avoids a DB round-trip — and a re-stamp loop — every rerun).
+        if _key not in (st.session_state.get("su_view_slug"),
+                        st.session_state.get("su_view_tenant")):
+            try:
+                from auth.tenant_context import resolve_tenant_by_key
+                _row = resolve_tenant_by_key(_key)
+            except Exception:
+                _row = None
+            if _row:
+                st.session_state["su_view_tenant"] = _row["id"]
+                st.session_state["su_view_name"] = _row.get("name")
+                st.session_state["su_view_slug"] = _row.get("slug") or _row["id"]
+        return
+    # No ?tenant= in the URL (e.g. sidebar nav dropped it) but a sticky view-as is
+    # active → re-stamp it so this page's URL also shows the tenant being viewed.
+    _slug = st.session_state.get("su_view_slug")
+    if _slug:
+        try:
+            st.query_params["tenant"] = _slug
+        except Exception:
+            pass
+
+
+def _render_super_view_banner() -> None:
+    """Persistent banner shown on every page while a super_user is viewing ANOTHER
+    tenant's account (not their own home). Offers Return to my account."""
+    _tid = st.session_state.get("su_view_tenant")
+    if not _tid or _tid == st.session_state.get("tenant_id"):
+        return                          # not viewing-as, or viewing own home → no banner
+    _name = st.session_state.get("su_view_name") or "another tenant"
+    _bl, _br = st.columns([5, 1.7])
+    _bl.warning(f"👁 Viewing **{_name}** as super_user — every page is scoped to this "
+                "tenant. (Cross-tenant analytics live in Settings → Analytics.)")
+    if _br.button("← Return to my account", width="stretch", key="su_view_exit"):
+        st.session_state.pop("su_view_tenant", None)
+        st.session_state.pop("su_view_name", None)
+        st.session_state.pop("su_view_slug", None)
+        try:
+            del st.query_params["tenant"]
+        except Exception:
+            try:
+                st.query_params.clear()
+            except Exception:
+                pass
+        st.rerun()
+
+
 def render_app_header() -> None:
     """Top-of-page branding.
 
@@ -901,6 +978,11 @@ def render_app_header() -> None:
     """
     # ────────────────── Global theme CSS ──────────────────────────────
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
+
+    # Super_user 'view-as tenant' — resolve the ?tenant= link into a sticky session view
+    # BEFORE anything reads data (notifications below + the page body after this call), so
+    # every scoped read this render targets the viewed tenant.
+    _apply_super_view_from_query()
 
     # ── Native hover tooltips on the collapsed icon rail ───────────────
     # The collapsed rail shows page icons only. A CSS flyout label proved
@@ -933,26 +1015,26 @@ def render_app_header() -> None:
     )
 
     # ────────────────── Hide user-menu pages from the sidebar ─────────
-    # Profile / Help / Settings are registered with st.navigation (so they
+    # Profile / Help / Search are registered with st.navigation (so they
     # have stable URLs and are reachable via st.page_link), but as of the
     # 2026-06-07 redesign they live in the top-right user menu, NOT the
     # sidebar rail. Hide their sidebar nav links by URL-slug suffix. The
     # `i` flag makes the match case-insensitive, so it works whether
     # Streamlit derives the href from the url_path (lowercase) or the page
-    # title (capitalised). Settings is additionally omitted from the nav
-    # entirely for non-admins (App.py) and its own page guard rejects deep
-    # links — this CSS just keeps the rail clean for everyone.
+    # title (capitalised).
+    # NOTE: **Settings** is intentionally NOT hidden — admins get it as a
+    # first-class sidebar item (labelled when expanded, ⚙️ icon in the
+    # collapsed rail). It's only registered in the nav for admins (App.py),
+    # so non-admins never see a link, and it also remains in the person menu.
     st.markdown(
         """
         <style>
           [data-testid="stSidebarNav"] a[href$="/profile" i],
           [data-testid="stSidebarNav"] a[href$="/help" i],
           [data-testid="stSidebarNav"] a[href$="/search" i],
-          [data-testid="stSidebarNav"] a[href$="/settings" i],
           section[data-testid="stSidebar"] a[href$="/profile" i],
           section[data-testid="stSidebar"] a[href$="/help" i],
-          section[data-testid="stSidebar"] a[href$="/search" i],
-          section[data-testid="stSidebar"] a[href$="/settings" i] {
+          section[data-testid="stSidebar"] a[href$="/search" i] {
             display: none !important;
           }
         </style>
@@ -1016,6 +1098,9 @@ def render_app_header() -> None:
 
     # Tenant (org) identity — moved OUT of the bar to the top-right, just below it.
     _render_org_identity()
+
+    # Super_user 'view-as tenant' banner (only when viewing a tenant other than home).
+    _render_super_view_banner()
 
     # No st.divider() here — the pinned top bar carries its own bottom
     # border (see `.st-key-rfpis_topbar` in _GLOBAL_CSS). A separate
