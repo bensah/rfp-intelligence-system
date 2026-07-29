@@ -486,6 +486,13 @@ _GUIDE_PDF_KEYWORDS = (
 )
 
 
+# CMS "download document" links that serve a PDF without a .pdf extension (UNGM's
+# DownloadDocument, generic getDocument/download endpoints). Used so the RFP PDF behind
+# such a link is still followed for full-text / budget / deadline extraction.
+_DOC_DOWNLOAD_RE = re.compile(
+    r"/downloaddocument\b|[?&]documentid=|/getdocument\b|/download/[^?]*document", re.I)
+
+
 def _find_application_pdf(soup: "BeautifulSoup | None", base_url: str) -> str | None:
     """Find the most likely 'application guide' PDF linked from an HTML
     page. Pierre Fabre (and many foundations) publish a landing page
@@ -503,7 +510,14 @@ def _find_application_pdf(soup: "BeautifulSoup | None", base_url: str) -> str | 
         href = a["href"].strip()
         if not href:
             continue
-        if not href.lower().split("?", 1)[0].split("#", 1)[0].endswith(".pdf"):
+        _low = href.lower().split("#", 1)[0]
+        # Accept a real .pdf link OR a CMS document-DOWNLOAD link that serves a PDF without
+        # a .pdf extension — notably UNGM's `/Public/Notice/DownloadDocument?...&documentId=`
+        # (the full RFP with the budget lives there, not on the landing page). fetch_pdf_text
+        # validates the bytes, so a non-PDF download just yields no text and is skipped.
+        _is_pdf = _low.split("?", 1)[0].endswith(".pdf")
+        _is_doc_dl = bool(_DOC_DOWNLOAD_RE.search(_low))
+        if not (_is_pdf or _is_doc_dl):
             continue
         full = urljoin(base_url, href)
         text = (a.get_text(" ", strip=True) or "").lower()

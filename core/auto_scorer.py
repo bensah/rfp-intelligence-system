@@ -1616,6 +1616,51 @@ _CG_FUND_PARENT_RE = re.compile(
     r"coefficientgiving\.org/funds/[a-z0-9-]+/?(?:[?#].*)?$", re.I)
 
 
+# --- Goods / commodity PROCUREMENT tender gate (owner 2026-07-30) ----------------
+# A procurement RFQ/ITB (the funder BUYS goods/services from a vendor) is NOT a grant/
+# funding call for a grant-seeking org — drop it. High precision: a public-procurement
+# CHANNEL as the funder (EU-TED, e-procurement) is decisive; otherwise require an explicit
+# quotation/tender phrase AND (a commodity noun OR an explicit no-grant statement). Plain
+# "Request for PROPOSAL" for services is intentionally NOT matched (an org may legitimately
+# bid technical-assistance RFPs) — only quotation/goods procurement is dropped.
+# Public-procurement CHANNEL (decisive). Anchored to the EU-TED portal — a bare "ted"
+# token wrongly matched funders like "Ted Turner Foundation" / "TED Audacious Project".
+_PROCUREMENT_FUNDER_RE = re.compile(
+    r"public procurement|tenders? electronic daily|ted\.europa\.eu|\beu[\-\s]?ted\b"
+    r"|e[\-\s]?procurement", re.I)
+# A genuine solicitation LABEL (RFQ/ITB/tender/quotation). NOTE: deliberately does NOT
+# include "procurement of <goods>" — that phrase is common in legitimate grant SOWs
+# ("funds may be used for the procurement of vehicles"), so matching it dropped real
+# grants. A reject needs a real tender LABEL here PLUS a goods noun or a no-grant statement.
+_PROCUREMENT_TENDER_RE = re.compile(
+    r"\b(request for quotation|\brfq\b|invitation to bid|\bitb\b|invitation to tender"
+    r"|request for tenders?|\brft\b|e[\-\s]?sourcing|awarded on a quotation basis)\b", re.I)
+_PROCUREMENT_GOODS_RE = re.compile(
+    r"\b(refreshments?|lunch ?boxes?|tea items?|catering|stationery|furniture"
+    r"|vehicles?|printing|uniforms?|consumables|office supplies)\b", re.I)
+_NO_GRANT_RE = re.compile(
+    r"no (?:monetary )?(?:award|grant|funding)(?: amount)?(?: or grant)? (?:is |will be )?"
+    r"(?:attached|provided|available|offered|disclosed)|awarded on a quotation basis", re.I)
+
+
+def procurement_tender_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
+    """True when the call is a goods/commodity procurement or a public-procurement tender
+    (a contract to SUPPLY the funder), not funding awarded to the applicant."""
+    funder = str(candidate.get("funding_agency") or "")
+    if _PROCUREMENT_FUNDER_RE.search(funder):
+        return True, ("public-procurement tender (a contract to supply the funder, "
+                      "not a grant)")
+    text = " ".join([
+        str(candidate.get("opportunity_title") or ""),
+        str(candidate.get("brief_description") or ""),
+        str(candidate.get("_page_text") or ""),
+    ])
+    if _PROCUREMENT_TENDER_RE.search(text) and (
+            _PROCUREMENT_GOODS_RE.search(text) or _NO_GRANT_RE.search(text)):
+        return True, "goods/commodity procurement quotation (RFQ), not a grant/funding call"
+    return False, ""
+
+
 def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
                 *, geo_org_gates: bool = True,
                 theme_gate: bool = True,
@@ -1725,6 +1770,12 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
         return False, f"type: {reason}"
     # Job/vacancy postings + clearly non-funding pages → drop (RFP-focused).
     rejected, reason = non_funding_reject(candidate)
+    if rejected:
+        return False, f"type: {reason}"
+    # Goods/commodity procurement RFQ or a public-procurement tender (TED / e-procurement)
+    # — a contract to SUPPLY the funder, not funding awarded to us. Not a grant for any
+    # grant-seeking org, so drop at extraction + screening alike (universal type gate).
+    rejected, reason = procurement_tender_reject(candidate)
     if rejected:
         return False, f"type: {reason}"
     # Error / unavailable pages (system error, 404, service down) → not a call.
@@ -2071,8 +2122,15 @@ def _extract_call_geographic_scope(text: str, policies: dict[str, Any]) -> list[
         seen.add("united states")
     # Also capture broad regions / development tiers ("open globally", LMIC,
     # Sub-Saharan Africa) — the country regex only knows explicit countries.
+    # The pure WORLDWIDE tier is only real when a genuine worldwide-eligibility phrase is
+    # present (_WORLDWIDE_RE) — a bare "global" is almost always part of an ORG/PLATFORM
+    # NAME ("United Nations Global Marketplace", "Global Fund", "…Global Health"), not an
+    # eligibility scope. Tagging it would falsely open a country-restricted call worldwide.
+    _worldwide_ok = geo.worldwide_ok(text)
     for tier in geo.broad_geos_in_text((text or "").lower()):
         canon = geo.canonical_geo(tier) or tier
+        if canon == "Global / worldwide" and not _worldwide_ok:
+            continue
         if canon.lower() not in seen:
             seen.add(canon.lower())
             found.append(canon)

@@ -264,6 +264,13 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # terms not in the library are kept verbatim (free-text scope is allowed).
     geo = {geographies.canonical_geo(g) for g in geo}
     geo.discard("")
+    # A bare "global"/"international" is almost always part of an ORG/PLATFORM NAME
+    # ("United Nations Global Marketplace", "Global Fund", "International Labour
+    # Organization"), NOT a worldwide-eligibility scope. Keep the worldwide tier only when
+    # the text has a GENUINE worldwide phrase — otherwise a country-restricted call gets
+    # falsely opened worldwide (the geo-leak class). Guards ALL geo sources at one point.
+    if "Global / worldwide" in geo and not geographies.worldwide_ok(blob):
+        geo.discard("Global / worldwide")
 
     funding_status = "Closed" if (llm and llm.get("is_closed")) else "Open"
     overall_conf = "high" if (llm and llm.get("confidence") == "high") else d_conf
