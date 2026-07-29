@@ -99,7 +99,7 @@ def _render_maintenance(sb, user) -> None:
         bkc2.caption("☁ OneDrive off-site backup: add the `ONEDRIVE_*` secrets to enable "
                      "the daily job + a one-click upload here.")
     if st.session_state.get("_backup_blob"):
-        _fn = st.session_state.get("_backup_ready_at", "rfpis_backup.zip")
+        _fn = st.session_state.get("_backup_ready_at", "opportunova_backup.zip")
         st.download_button(
             "⬇ Download backup ZIP", data=st.session_state["_backup_blob"],
             file_name=_fn, mime="application/zip", key="maint_backup_dl")
