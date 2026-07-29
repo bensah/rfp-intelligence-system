@@ -53,14 +53,14 @@ jobs:
           ONEDRIVE_CLIENT_SECRET: ${{ secrets.ONEDRIVE_CLIENT_SECRET }}
           ONEDRIVE_USER: ${{ secrets.ONEDRIVE_USER }}
           ONEDRIVE_FOLDER: ${{ secrets.ONEDRIVE_FOLDER }}
-          BACKUP_OUT: backup/rfpis_backup.zip
+          BACKUP_OUT: backup/opportunova_backup.zip
         run: python scripts/run_backup.py
 
       - name: Keep a copy as a workflow artifact (fallback)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rfpis-db-backup
-          path: backup/rfpis_backup.zip
+          name: opportunova-db-backup
+          path: backup/opportunova_backup.zip
           retention-days: 30
           if-no-files-found: warn
