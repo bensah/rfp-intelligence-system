@@ -453,7 +453,13 @@ _US_NAMES = {"united states", "united states of america", "usa", "u.s.", "us"}
 
 def _covers_scope(countries: Any, scope: Any) -> bool:
     """Any country in `countries` falls within `scope` (geo expansion), OR `scope` is
-    an inclusive tier (LMIC/global/developing) reachable via the org's own presence."""
+    an inclusive tier (LMIC/global/developing) reachable via the org's own presence.
+
+    The stray-"Global"-tag defence lives at the SOURCE (core.extract.build_record +
+    auto_scorer._extract_call_geographic_scope only tag the worldwide tier when a genuine
+    worldwide phrase is present), so a "Global / worldwide" that reaches here is trusted —
+    we do NOT second-guess it (an earlier strip-when-a-country-is-named heuristic wrongly
+    auto-Declined genuinely-worldwide calls that also name a priority country)."""
     cs = list(countries or [])
     sc = _as_list(scope)
     if not cs or not sc:
