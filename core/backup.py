@@ -90,9 +90,11 @@ def _stamp(iso: str | None) -> str:
 def backup_filename(mode: str = "full", since: str | None = None,
                     until: str | None = None) -> str:
     u = _stamp(until) if until else datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    # "opportunova_" — the public-facing platform name (opportunova.com); this DB is the
+    # funding vertical today. Taadom is the company, not the app.
     if mode == "incremental" and since:
-        return f"rfpis_incr_{_stamp(since)}_to_{u}.zip"
-    return f"rfpis_full_{u}.zip"
+        return f"opportunova_incr_{_stamp(since)}_to_{u}.zip"
+    return f"opportunova_full_{u}.zip"
 
 
 # ── Export ──────────────────────────────────────────────────────────────────
