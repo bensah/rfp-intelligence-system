@@ -50,6 +50,17 @@ jobs:
           # Optional — the --screen-tenants override works without it — but keeps the
           # app's tenant state consistent. Add SUPABASE_JWT_SECRET as a repo Actions secret.
           SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+          # LLM synthesis + judging. WITHOUT these the cron stores RAW scraped preamble as
+          # the brief (unformatted PDF dumps) and skips LLM budget/geo/theme extraction —
+          # exactly the "raw brief" symptom. Point at an OpenAI-compatible endpoint (e.g.
+          # Ollama Cloud). LLM_SYNTH_* fall back to LLM_JUDGE_* in code, so setting the
+          # JUDGE pair alone enables BOTH; set the SYNTH pair too to use a different model.
+          LLM_JUDGE_BASE_URL: ${{ secrets.LLM_JUDGE_BASE_URL }}
+          LLM_JUDGE_API_KEY: ${{ secrets.LLM_JUDGE_API_KEY }}
+          LLM_JUDGE_MODEL: ${{ secrets.LLM_JUDGE_MODEL }}
+          LLM_SYNTH_BASE_URL: ${{ secrets.LLM_SYNTH_BASE_URL }}
+          LLM_SYNTH_API_KEY: ${{ secrets.LLM_SYNTH_API_KEY }}
+          LLM_SYNTH_MODEL: ${{ secrets.LLM_SYNTH_MODEL }}
           RFPIS_DEEP_READ: "1"
           SCAN_INCLUDE_SEEDS: "1"
           SCAN_PARALLELISM: "6"

@@ -299,6 +299,106 @@ def _blank_policies() -> dict[str, Any]:
     return p
 
 
+def _profile_geo_eligible() -> list[str]:
+    """The tenant's OWN geographies — registered + operating countries from its org
+    profile, canonicalised + deduped. Used to seed the geo gate when the tenant hasn't set
+    an explicit scan policy, so a CONFIGURED org still hard-rejects off-geo calls (its
+    profile IS its stated preference). Empty profile → [] → stays permissive (Option C).
+    Best-effort: any error → []."""
+    try:
+        from core import org_profile as _op
+        from core import geographies as _geo
+        prof = _op.get_profile() or {}
+        raw = (list(prof.get("org_registered_countries") or [])
+               + list(prof.get("org_operating_countries") or []))
+        out: list[str] = []
+        seen: set[str] = set()
+        for c in raw:
+            cc = _geo.canonical_geo(c) or c
+            k = str(cc).strip().lower()
+            if cc and k not in seen:
+                seen.add(k)
+                out.append(cc)
+        return out
+    except Exception:
+        return []
+
+
+def _seed_geo_from_profile(pol: dict[str, Any]) -> dict[str, Any]:
+    """If a policy has NO explicit eligible countries, seed them from the tenant's org
+    profile so a configured org still geo-gates. No-op when eligible is already set (an
+    explicit admin choice wins) or the profile has no countries (stays permissive)."""
+    try:
+        c = pol.get("countries") or {}
+        if c.get("eligible") or c.get("broad_terms"):
+            return pol                       # explicit geo scope (countries OR regions) set
+        prof_geo = _profile_geo_eligible()
+        if prof_geo:
+            pol = copy.deepcopy(pol)
+            pol.setdefault("countries", {})
+            pol["countries"]["eligible"] = prof_geo
+    except Exception:
+        pass
+    return pol
+
+
+def _profile_theme_keywords() -> list[str]:
+    """Theme keywords for the tenant's own program-area CATEGORIES (from its profile) —
+    used to seed the theme gate when no explicit theme policy exists. Derives at the
+    CATEGORY level (every sub-area sharing the org's prefixes) PLUS a broad umbrella term,
+    so a call anywhere in the org's categories still matches; only clearly OFF-category
+    calls (e.g. money-laundering for a health org) fail the gate. Deliberately errs toward
+    KEEP (broad terms) — a theme gate must not hide a relevant call. Empty program areas →
+    [] (permissive). Best-effort: any error → []."""
+    try:
+        from core import org_profile as _op
+        from core.program_area_classifier import PROGRAM_AREA_KEYWORDS as _PAK
+        prof = _op.get_profile() or {}
+        codes: set[str] = set()
+        for f in ("org_domain_expertise", "org_priority_areas"):
+            for a in (prof.get(f) or []):
+                if str(a).strip():
+                    codes.add(str(a).strip())
+        for f in ("org_domain_ratings", "org_priority_ratings"):
+            r = prof.get(f)
+            if isinstance(r, dict):
+                codes.update(str(k).strip() for k in r if str(k).strip())
+        if not codes:
+            return []
+        prefixes = {c.split(" - ", 1)[0].strip() for c in codes if " - " in c}
+        kws: set[str] = set()
+        for area, bag in _PAK.items():
+            if area.split(" - ", 1)[0].strip() in prefixes:
+                kws.update(str(k) for k in (bag or []))
+        # Broad umbrella so a generically-worded same-family call still matches.
+        if prefixes & {"WCH", "NCDs", "IDs", "HSS", "Cross-cutting"}:
+            kws.update({"health", "global health", "public health", "healthcare"})
+        if "EDU" in prefixes:
+            kws.update({"education", "school", "learning", "teacher"})
+        return sorted(k for k in kws if k)
+    except Exception:
+        return []
+
+
+def _seed_themes_from_profile(pol: dict[str, Any]) -> dict[str, Any]:
+    """If a policy has NO required theme keywords, seed them from the tenant's org-profile
+    program-area categories so a configured org still theme-gates clearly off-category
+    calls (symmetric to _seed_geo_from_profile). No-op when required_any is already set (an
+    explicit admin choice wins) or the profile has no program areas (stays permissive)."""
+    try:
+        t = pol.get("themes") or {}
+        if t.get("required_any"):
+            return pol
+        kws = _profile_theme_keywords()
+        if kws:
+            pol = copy.deepcopy(pol)
+            pol.setdefault("themes", {})
+            pol["themes"]["required_any"] = kws
+    except Exception:
+        pass
+    return pol
+
+
 def get_policies() -> dict[str, Any]:
     """Return the active policies (admin overrides merged onto defaults)."""
     raw = get_setting(POLICIES_KEY)
@@ -306,21 +406,30 @@ def get_policies() -> dict[str, Any]:
         # No configured policy. A FRESH tenant (multi-tenant session OR a headless cron
         # per-tenant override) starts PERMISSIVE (populate + Decline); single-tenant keeps
         # the shipped the organisation defaults.
+        pol = None
         try:
             from auth.tenant_context import (multitenant_enabled, current_tenant_id,
                                              override_tenant_id)
             if current_tenant_id() and (multitenant_enabled() or override_tenant_id()):
-                return _blank_policies()
+                pol = _blank_policies()
         except Exception:
-            pass
-        return copy.deepcopy(DEFAULT_POLICIES)
+            pol = None
+        if pol is None:
+            pol = copy.deepcopy(DEFAULT_POLICIES)
+        # A tenant with NO configured scan policy still gates on its profile —
+        # geographies (registered + operating) + program-area categories — restoring the
+        # hard geo + theme rejects that multi-tenant blank policies inadvertently relaxed.
+        # ONLY the unconfigured/blank branch is seeded: an EXPLICITLY-saved policy (below)
+        # is honoured verbatim — including a deliberate region-only scope (broad_terms set,
+        # eligible empty), which seeding would otherwise collapse to country-only.
+        return _seed_themes_from_profile(_seed_geo_from_profile(pol))
     try:
         overlay = json.loads(raw)
-        if isinstance(overlay, dict):
-            return _deep_merge(DEFAULT_POLICIES, overlay)
+        pol = (_deep_merge(DEFAULT_POLICIES, overlay)
+               if isinstance(overlay, dict) else copy.deepcopy(DEFAULT_POLICIES))
     except (ValueError, TypeError):
-        pass
-    return copy.deepcopy(DEFAULT_POLICIES)
+        pol = copy.deepcopy(DEFAULT_POLICIES)
+    return pol
 
 
 def set_policies(policies: dict[str, Any], updated_by: str | None = None) -> None:
