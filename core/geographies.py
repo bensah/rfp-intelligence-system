@@ -376,6 +376,42 @@ def text_matches_term(text_lower: str, term: str) -> bool:
 _ALL_BROAD_TERMS = list(dict.fromkeys(list(BROAD_GEOGRAPHIES) + list(SYNONYMS.keys())))
 
 
+# A GENUINE worldwide-eligibility phrase — used to decide whether the "Global / worldwide"
+# tier tagged from text is REAL or just a bare "global"/"international" inside an ORG /
+# PLATFORM NAME ("United Nations Global Marketplace", "International Labour Organization",
+# "Global Fund"). Deliberately EXCLUDES bare "global" and bare "international" (accepts
+# "international" only in an eligibility context: international organisations/NGOs/entities/…).
+_INTL_NOUN = (r"(?:non[\-\s]?governmental\s+)?"
+              r"(?:organi[sz]ations?|ngos?|entities|applicants?|institutions?|firms?|"
+              r"companies|consultants?)")
+# "international <orgs/ngos/...>" ONLY in a genuine eligibility context — either
+# "open to international ..." or "... <noun> (are) eligible/welcomed/may apply" — so proper
+# NAMES ("International Organization for Migration") and descriptive prose ("works with
+# international partners") do NOT count as worldwide eligibility.
+_GENUINE_WORLDWIDE_PATTERN = (
+    r"\b(?:"
+    r"world[\s-]?wide|globally"
+    r"|any (?:country|countries)|all countries|all eligible countries|any eligible country"
+    r"|(?:from|around|across) the (?:globe|world)"
+    r"|open to all(?:\s+(?:countries|applicants?|organi[sz]ations?|entities|nations))?"
+    r"|regardless of (?:country|location|nationality|geograph)"
+    r"|open to (?:any |all )?international\s+" + _INTL_NOUN
+    + r"|international\s+" + _INTL_NOUN
+    + r"\s+(?:are\s+|may\s+|can\s+|is\s+|will\s+be\s+)?"
+    r"(?:eligible|welcomed?|accepted|apply|encouraged|invited)"
+    r")\b")
+_GENUINE_WORLDWIDE_RE = re.compile(_GENUINE_WORLDWIDE_PATTERN, re.IGNORECASE)
+
+
+def worldwide_ok(text: str | None) -> bool:
+    """True when TEXT carries a GENUINE worldwide-eligibility phrase. Used to gate the
+    "Global / worldwide" scope tier so a bare "global"/"international" in an org/platform
+    NAME never opens a country-restricted call worldwide (the geo-leak class). Erring
+    toward True is safe (a false worldwide tag only PARKS a call for review); a false
+    negative would auto-Decline a genuinely global call, so keep this reasonably inclusive."""
+    return bool(_GENUINE_WORLDWIDE_RE.search(str(text or "")))
+
+
 def broad_geos_in_text(text_lower: str) -> set[str]:
     """Like regions_in_text, but over ALL broad geographies — UN regions AND the
     income/development TIERS (LMICs, LDCs, Global South, …). regions_in_text covers
@@ -425,7 +461,7 @@ _COUNTRY_ALIASES: dict[str, str] = {
     "brunei darussalam": "Brunei",
     "kyrgyz republic": "Kyrgyzstan",
     "state of palestine": "Palestine",
-    "republic of türkiye": "Turkey", "türkiye": "Turkey",
+    "republic of türkiye": "Türkiye", "türkiye": "Türkiye", "turkey": "Türkiye",
     # Common abbreviation / long-form variants so an HQ-country gate matches regardless of
     # how the country was typed (e.g. donor requires 'US', org HQ says 'United States').
     "us": "United States", "u.s.": "United States", "usa": "United States",
@@ -438,6 +474,50 @@ _COUNTRY_ALIASES: dict[str, str] = {
 }
 for _al, _canon in _COUNTRY_ALIASES.items():
     _COUNTRY_CANON.setdefault(_al, _canon)
+
+
+# ISO 3166-1 alpha-3 codes → canonical country names. EU-TED, UNGM and World-Bank sources
+# emit codes (e.g. "ROU") rather than names; without this a scope reads as an opaque code
+# AND fails to match a same-country org. (alpha-3 only — 3-letter codes rarely collide with
+# real words; alpha-2 like "IN"/"US" is left to the explicit aliases above to avoid collisions.)
+_ISO3_ALPHA3: dict[str, str] = {
+    "rou": "Romania", "gbr": "United Kingdom", "fra": "France", "deu": "Germany",
+    "ita": "Italy", "esp": "Spain", "prt": "Portugal", "nld": "Netherlands",
+    "bel": "Belgium", "che": "Switzerland", "aut": "Austria", "swe": "Sweden",
+    "nor": "Norway", "dnk": "Denmark", "fin": "Finland", "isl": "Iceland",
+    "irl": "Ireland", "pol": "Poland", "cze": "Czechia", "svk": "Slovakia",
+    "svn": "Slovenia", "hrv": "Croatia", "hun": "Hungary", "bgr": "Bulgaria",
+    "grc": "Greece", "ltu": "Lithuania", "lva": "Latvia", "est": "Estonia",
+    "lux": "Luxembourg", "cyp": "Cyprus", "mlt": "Malta", "ukr": "Ukraine",
+    "srb": "Serbia", "alb": "Albania", "mda": "Moldova", "rus": "Russia",
+    "cmr": "Cameroon", "mli": "Mali", "ken": "Kenya", "nga": "Nigeria",
+    "eth": "Ethiopia", "gha": "Ghana", "tza": "Tanzania", "uga": "Uganda",
+    "rwa": "Rwanda", "zaf": "South Africa", "zmb": "Zambia", "zwe": "Zimbabwe",
+    "mwi": "Malawi", "moz": "Mozambique", "sen": "Senegal", "civ": "Côte d'Ivoire",
+    "bfa": "Burkina Faso", "ner": "Niger", "tcd": "Chad", "cod": "Congo (DRC)",
+    "cog": "Congo (Brazzaville)", "ben": "Benin", "tgo": "Togo", "gin": "Guinea",
+    "sle": "Sierra Leone", "lbr": "Liberia", "mrt": "Mauritania", "mdg": "Madagascar",
+    "ago": "Angola", "ssd": "South Sudan", "sdn": "Sudan", "som": "Somalia",
+    "egy": "Egypt", "mar": "Morocco", "dza": "Algeria", "tun": "Tunisia",
+    "lby": "Libya", "bwa": "Botswana", "nam": "Namibia", "gab": "Gabon",
+    "bdi": "Burundi", "gmb": "Gambia", "lso": "Lesotho", "eri": "Eritrea",
+    "ind": "India", "pak": "Pakistan", "bgd": "Bangladesh", "npl": "Nepal",
+    "lka": "Sri Lanka", "chn": "China", "jpn": "Japan", "kor": "South Korea",
+    "idn": "Indonesia", "phl": "Philippines", "vnm": "Vietnam", "tha": "Thailand",
+    "mmr": "Myanmar", "khm": "Cambodia", "lao": "Laos", "afg": "Afghanistan",
+    "irq": "Iraq", "irn": "Iran", "syr": "Syria", "yem": "Yemen", "jor": "Jordan",
+    "lbn": "Lebanon", "sau": "Saudi Arabia", "are": "United Arab Emirates",
+    "tur": "Türkiye", "kaz": "Kazakhstan", "uzb": "Uzbekistan", "mng": "Mongolia",
+    "mys": "Malaysia", "sgp": "Singapore", "png": "Papua New Guinea",
+    "usa": "United States", "can": "Canada", "mex": "Mexico", "bra": "Brazil",
+    "arg": "Argentina", "col": "Colombia", "per": "Peru", "chl": "Chile",
+    "ecu": "Ecuador", "bol": "Bolivia", "ven": "Venezuela", "gtm": "Guatemala",
+    "hnd": "Honduras", "nic": "Nicaragua", "slv": "El Salvador", "cri": "Costa Rica",
+    "pan": "Panama", "dom": "Dominican Republic", "hti": "Haiti",
+    "aus": "Australia", "nzl": "New Zealand", "fji": "Fiji",
+}
+for _code, _canon in _ISO3_ALPHA3.items():
+    _COUNTRY_CANON.setdefault(_code, _canon)
 
 
 def canonical_geo(term: str | None) -> str:
