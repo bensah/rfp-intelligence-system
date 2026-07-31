@@ -9,7 +9,6 @@ from __future__ import annotations
 import streamlit as st
 
 from core.render_view import render_view
-from core.scan_runner import run_screening_now
 from views.submit_form import render_submit_form
 
 user = st.session_state["app_user"]
@@ -25,29 +24,9 @@ def _submit_rfp_modal():
     )
 
 
-# Title + "Scan now" button (full width) — the live-opportunity rail is lowered BELOW
-# this row (see the columns further down), so it never sits level with the page title.
-_title_col, _btn_col = st.columns([5, 1.5])
-with _title_col:
-    st.title("Discovered Funding Opportunities")
-with _btn_col:
-    st.write("")  # nudge the button down to the title baseline
-    # "Scan now" (tenant-facing) = screen the platform's curated/extracted store
-    # against THIS org's eligibility. Fast (no web crawl) — the heavy extraction
-    # crawl is a separate admin job (Settings → Manual Scan → Run Extraction).
-    # Label kept as "Scan now" on purpose; flips to a disabled "running" state.
-    _scan_slot = st.empty()
-    _go = _scan_slot.button(
-        "🔄 Scan now", type="primary", width='stretch', key="pipelines_scan_now",
-        help="Find the funding your organisation is potentially eligible for, from "
-             "the platform's curated store — runs in seconds (no web crawl). New "
-             "eligible opportunities appear on the Screen tab.")
-    if _go:
-        _scan_slot.button("⏳ Selecting eligible funding…", disabled=True,
-                          width='stretch', key="pipelines_scan_running")
-        _who = user.get("name") or user.get("email") or "unknown"
-        run_screening_now(triggered_by=f"match:{_who}")
-        st.rerun()
+# The page title only. The Submit New Funding + Scan Eligible Funding actions live on the
+# "Weekly Screening Pipeline" header inside the Screen tab (see views/screened_rfp.py).
+st.title("Discovered Funding Opportunities")
 
 # Outcome banner from the last run (survives the post-run rerun).
 _pipe_banner = st.session_state.pop("admin_scan_banner", None)
