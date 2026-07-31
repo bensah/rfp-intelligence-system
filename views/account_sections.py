@@ -444,7 +444,7 @@ def _render_add_tenant(user: dict, svc, *, is_super: bool) -> None:
 
     _kind = "individual" if _kind_label == "Individual" else "organization"
     _label = (("➕ Add anyway (new)" if similar else "➕ Add tenant") if is_super else
-              ("➕ Request anyway" if similar else "➕ Request tenant (needs approval)"))
+              ("➕ Create anyway (new)" if similar else "➕ Create tenant"))
     if st.button(_label, type="primary", key="add_tenant_submit", disabled=not nm.strip()):
         from auth import tenant_context as _tc
         _status = "active" if is_super else "pending"
@@ -475,8 +475,8 @@ def _render_add_tenant(user: dict, svc, *, is_super: bool) -> None:
         if is_super:
             st.success(f"Created “{nm.strip()}”.")
         else:
-            st.success(f"Requested “{nm.strip()}” — pending Super User approval. You're its "
-                       "first member and will get access once it's approved.")
+            st.success(f"Tenant “{nm.strip()}” is being created, pending approval. You're "
+                       "its first member and will get access once it's approved.")
         st.rerun()
 
 
