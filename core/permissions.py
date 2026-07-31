@@ -114,15 +114,23 @@ def role_group(user: dict[str, Any] | None) -> str:
 #
 # The tenant side of the check lives in auth.tenant_context (it needs the
 # service client + session tenant). We import it lazily so permissions.py stays
-# import-light and usable outside a Streamlit/tenant context (scripts, tests):
-# a failure there means "no tenant context" → fall back to role-only gating,
-# which is exactly the single-tenant behaviour (nothing is locked out).
+# import-light and usable outside a Streamlit/tenant context (scripts, tests).
+# FAIL-CLOSED in multi-tenant mode: because the developer review/apply path bypasses
+# RLS via service_client(), THIS gate is the sole control — it must never degrade OPEN.
+# If the tenant check can't be resolved, we grant developer status ONLY when multi-tenant
+# is off (a single-tenant deployment is its own developer). In MT mode, or if we can't even
+# tell, return False so a broken import can't hand a client-tenant super_user developer
+# powers over the shared resources.
 def _active_tenant_is_developer() -> bool:
     try:
         from auth.tenant_context import active_tenant_is_developer
         return active_tenant_is_developer()
     except Exception:
-        return True
+        try:
+            from auth.tenant_context import multitenant_enabled
+            return not multitenant_enabled()      # single-tenant → True; MT → fail closed
+        except Exception:
+            return False                            # can't tell → deny (safe default)
 
 
 def is_developer_super(user: dict[str, Any] | None) -> bool:

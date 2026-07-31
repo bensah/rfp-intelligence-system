@@ -200,10 +200,17 @@ _dev_member = permissions.is_developer_member(user)   # any member of a develope
 
 # Tab set. "Accounts" (users + super-only tenants/blacklisted) sits right after Setup;
 # "Sources" nests Catalog | Blocked | Excel Sync. "Learning data" is a developer-only
-# view (its BODY is gated to developer-tenant members below, like Records → Verify/Reset);
-# the super_user also gets a cross-tenant "Analytics" tab.
+# view (its BODY is gated to developer-tenant members below, like Records → Verify/Reset).
+# A developer Super User also gets a "Suggestions" review inbox (with a pending-count
+# badge); the super_user also gets a cross-tenant "Analytics" tab.
 _tab_labels = ["Setup", "Accounts", "Records", "Sources", "Manual Scan",
                "Learning data"]
+_sug_label = None
+if _dev_super:
+    from core import suggestions as _sugmod
+    _sug_n = _sugmod.pending_count(user)
+    _sug_label = f"Suggestions ({_sug_n})" if _sug_n else "Suggestions"
+    _tab_labels += [_sug_label]
 if _is_super:
     _tab_labels += ["Analytics"]
 _tabs = st.tabs(_tab_labels)
@@ -214,7 +221,13 @@ tab_data = _tab_by["Records"]
 tab_sources = _tab_by["Sources"]
 tab_scan = _tab_by["Manual Scan"]
 tab_learning = _tab_by["Learning data"]
+tab_suggestions = _tab_by.get(_sug_label) if _sug_label else None
 tab_analytics = _tab_by.get("Analytics")
+
+if tab_suggestions is not None:
+    with tab_suggestions:
+        from views.suggestions_inbox import render_suggestions_inbox
+        render_suggestions_inbox(user, sb)
 
 # Accounts — Users (with an inline Access card that appears only once a user is picked
 # in the table) plus super-only Tenants / Blacklisted sub-tabs. User-admin logic lives
@@ -930,13 +943,16 @@ with _cat_tab:
         "or delete. (Download the grid as CSV via its built-in ⤓ icon.)"
     )
     # The catalog is a SHARED, cross-tenant developer resource (every tenant's scan
-    # crawls it), so direct edits are limited to a developer-tenant Super User.
+    # crawls it), so direct edits are limited to a developer-tenant Super User. A
+    # non-developer PROPOSES a change for review instead (Phase B suggestion queue).
+    from core import suggestions as _suggestions
     _can_edit_sources = _dev_super
+    _can_suggest_sources = _suggestions.can_suggest(user)
     if not _can_edit_sources:
         st.info(
             "🔒 Read-only. The sources catalog is shared across all tenants, so edits "
             "are limited to a developer-tenant Super User. Propose additions/changes via "
-            "**Suggest a change** or the Verify → Source registry.")
+            "**💡 Suggest** below or the Verify → Source registry.")
 
     _METHODS = ["html", "html_js", "rss", "rest_json", "manual"]  # scan dispatch
     # Unified "Method" dropdown — SAME labels as the Verify > Source registry, each
@@ -1114,17 +1130,95 @@ with _cat_tab:
         if bc2.button("Cancel", width='stretch', key="ds_del_cancel"):
             st.rerun()
 
-    # ----- Top action bar (right-aligned). "Add" lives in the registry now,
-    # so the catalogue only Imports (from yaml) + Refreshes. ------------------
-    _tsp, t2, t3 = st.columns([6, 1.6, 1])
-    if t2.button("📥 Import from config", width='stretch',
-                 key="ds_import_top", disabled=not _can_edit_sources,
-                 help=None if _can_edit_sources else "Developer Super User only."):
-        try:
-            _import_from_config()
+    # ----- Suggest a change (non-developers) --------------------------------
+    @st.dialog("Suggest a source change", width="large")
+    def _suggest_source_change_dialog(_row=None):
+        """Non-developer proposes an add (_row=None) or edit to a shared source. Reuses the
+        same field set as the add/edit dialogs, but files a suggestion instead of writing."""
+        _is_add = _row is None
+        _row = _row or {}
+        st.caption("Your proposal goes to a developer Super User to review & apply — "
+                   "the shared catalog isn't changed directly.")
+        with st.form("suggest_source_form"):
+            c1, c2 = st.columns(2)
+            s_name = c1.text_input("Donor name *", value=_row.get("donor_name") or "")
+            s_code = c2.text_input("Donor code", value=_row.get("donor_code") or "")
+            c3, c4 = st.columns([3, 1])
+            s_url = c3.text_input("RFP listing URL *", value=_row.get("rfp_listing_url") or "")
+            _lbl = _METHOD_TO_LABEL.get(_row.get("scrape_method"), "Page crawl")
+            s_method = c4.selectbox("Method", _METHOD_LABEL_OPTS,
+                                    index=_METHOD_LABEL_OPTS.index(_lbl))
+            c5, c6 = st.columns(2)
+            _scv = (_row.get("source_class") if _row.get("source_class") in _SRC_OPTS
+                    else "Primary source")
+            s_sc = c5.selectbox("Source class", _SRC_OPTS, index=_SRC_OPTS.index(_scv))
+            _acv = (_row.get("access_model") if _row.get("access_model") in _ACCESS_OPTS
+                    else "Free")
+            s_access = c6.selectbox("Access", _ACCESS_OPTS, index=_ACCESS_OPTS.index(_acv))
+            s_base = st.text_input("Base URL", value=_row.get("base_url") or "")
+            s_notes = st.text_area("Notes", value=_row.get("notes") or "", height=80)
+            s_active = st.checkbox("Active", value=bool(_row.get("is_active", True)))
+            s_rat = st.text_area("Why this change? (optional)", height=70)
+            bc1, bc2 = st.columns(2)
+            ok = bc1.form_submit_button("💡 Submit suggestion", type="primary",
+                                        width='stretch')
+            cancel = bc2.form_submit_button("Cancel", width='stretch')
+        if cancel:
             st.rerun()
-        except Exception as exc:
-            st.error(f"Import failed: {exc}")
+        if ok:
+            if not s_name.strip() or not s_url.strip():
+                st.error("Donor name and listing URL are required.")
+                return
+            _proposed = {
+                "donor_name": s_name.strip(),
+                "donor_code": s_code.strip() or None,
+                "base_url": s_base.strip() or None,
+                "rfp_listing_url": s_url.strip(),
+                "scrape_method": _METHOD_LABELS[s_method],
+                "source_class": s_sc,
+                "access_model": s_access,
+                "notes": s_notes.strip() or None,
+                "is_active": bool(s_active),
+            }
+            _base = {k: _row.get(k) for k in _proposed}
+            _diff, _snap = _suggestions.diff_of(_proposed, _base, allowed=_DS_EDITABLE) \
+                if not _is_add else (_proposed, {})
+            if not _diff:
+                st.warning("No changes to suggest — edit a field first.")
+                return
+            try:
+                _suggestions.create_suggestion(
+                    resource_type="donor_sources",
+                    target_id=(None if _is_add else _row.get("id")),
+                    proposed_diff=_diff, base_snapshot=_snap,
+                    rationale=(s_rat.strip() or None),
+                    target_label=s_name.strip(), user=user)
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Could not submit suggestion: {exc}")
+                return
+            st.toast("💡 Suggestion submitted for review", icon="💡")
+            st.rerun()
+
+    _DS_EDITABLE = _suggestions._DS_EDITABLE
+
+    # ----- Top action bar (right-aligned). "Add" lives in the registry now,
+    # so the catalogue only Imports (from yaml) + Refreshes. Non-developers get a
+    # "Suggest new source" entry instead of the developer-only Import. ------------
+    if _can_edit_sources:
+        _tsp, t2, t3 = st.columns([6, 1.6, 1])
+        if t2.button("📥 Import from config", width='stretch', key="ds_import_top"):
+            try:
+                _import_from_config()
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Import failed: {exc}")
+    elif _can_suggest_sources:
+        _tsp, t2, t3 = st.columns([6, 1.8, 1])
+        if t2.button("💡 Suggest source", width='stretch', key="ds_suggest_add",
+                     help="Propose a new funding source for a developer Super User to review."):
+            _suggest_source_change_dialog(None)
+    else:
+        _tsp, t3 = st.columns([7.6, 1])
     if t3.button("🔄 Refresh", width='stretch', key="ds_refresh_top"):
         st.cache_data.clear()
         st.rerun()
@@ -1186,7 +1280,7 @@ with _cat_tab:
         st.caption(f"**{len(picked)} of {_n_total}** selected." if picked else
                    "Tick rows to edit or delete.")
 
-        a1, a2, _asp = st.columns([1, 1, 6])
+        a1, a2, a3, _asp = st.columns([1, 1, 1.4, 4.6])
         if a1.button("✏️ Edit", width='stretch', key="ds_edit_btn",
                      disabled=(not _can_edit_sources) or len(picked) != 1,
                      help="Select exactly one row to edit." if _can_edit_sources
@@ -1196,6 +1290,13 @@ with _cat_tab:
                      disabled=(not _can_edit_sources) or not picked,
                      help=None if _can_edit_sources else "Developer Super User only."):
             _delete_sources_dialog(sel_ids, sel_names)
+        # Non-developers propose an edit to the selected row instead of editing it.
+        if not _can_edit_sources and _can_suggest_sources:
+            if a3.button("💡 Suggest edit", width='stretch', key="ds_suggest_edit",
+                         disabled=len(picked) != 1,
+                         help="Propose changes to the selected source for review."
+                              if len(picked) == 1 else "Select exactly one row."):
+                _suggest_source_change_dialog(sel_rows[0])
 
 with _xls_tab:
     # ----- Excel sync ------------------------------------------------------
