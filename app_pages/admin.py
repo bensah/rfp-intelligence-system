@@ -189,18 +189,32 @@ def _render_maintenance(sb, user) -> None:
             except Exception as exc:
                 st.error(f"Wipe failed: {exc}")
 
+# Role + tenant-category flags. Developer flags gate the cross-tenant DEVELOPER tasks
+# (donor mapping, Sources catalog + Blocked tokens, Run Extraction, Records Verify/Reset,
+# Learning data) to members of a developer/system tenant (RFPIS Inc / the second tenant). A CLIENT
+# tenant's admins keep only their own tenant-scoped surfaces. See core.permissions.
+_is_super = permissions.is_super_user(user)
+_dev_super = permissions.is_developer_super(user)     # super_user in a developer tenant
+_dev_admin = permissions.is_developer_admin(user)     # admin+ in a developer tenant
+_dev_member = permissions.is_developer_member(user)   # any member of a developer tenant
+
 # Tab set. "Accounts" (users + super-only tenants/blacklisted) sits right after Setup;
-# "Sources" nests Catalog | Blocked | Excel Sync; the super_user also gets a cross-tenant
-# "Analytics" tab.
+# "Sources" nests Catalog | Blocked | Excel Sync. "Learning data" is a developer-only
+# view (its BODY is gated to developer-tenant members below, like Records → Verify/Reset);
+# the super_user also gets a cross-tenant "Analytics" tab.
 _tab_labels = ["Setup", "Accounts", "Records", "Sources", "Manual Scan",
                "Learning data"]
-_is_super = permissions.is_super_user(user)
 if _is_super:
     _tab_labels += ["Analytics"]
 _tabs = st.tabs(_tab_labels)
-(tab_settings, tab_accounts, tab_data, tab_sources, tab_scan,
- tab_learning) = _tabs[:6]
-tab_analytics = _tabs[6] if _is_super else None
+_tab_by = {name: _tabs[i] for i, name in enumerate(_tab_labels)}
+tab_settings = _tab_by["Setup"]
+tab_accounts = _tab_by["Accounts"]
+tab_data = _tab_by["Records"]
+tab_sources = _tab_by["Sources"]
+tab_scan = _tab_by["Manual Scan"]
+tab_learning = _tab_by["Learning data"]
+tab_analytics = _tab_by.get("Analytics")
 
 # Accounts — Users (with an inline Access card that appears only once a user is picked
 # in the table) plus super-only Tenants / Blacklisted sub-tabs. User-admin logic lives
@@ -275,8 +289,19 @@ with tab_settings:
 with tab_data:
     _dtab, _vtab, _rtab = st.tabs(["Data", "Verify", "Reset"])
     with _vtab:
-        from views.verification import render_verification
-        render_verification(user, sb)
+        # Human verification acts on the SHARED scanner (auto-rejects, source registry,
+        # recovering false-rejects into the global store) — a cross-tenant DEVELOPER task,
+        # so it's restricted to a developer-tenant Super User. Info notice (not st.stop())
+        # so sibling Records tabs still render in the same script pass.
+        if not _dev_super:
+            st.info(
+                "🔒 **Verification is a developer task.** It tunes the shared scanner "
+                "(confirming auto-rejects, the source registry, recovering missed calls), "
+                "which affects every tenant — so it's limited to the Super User of a "
+                "developer tenant (RFPIS Inc / the second tenant).")
+        else:
+            from views.verification import render_verification
+            render_verification(user, sb)
     with _dtab:
         st.subheader("Data — view, filter, edit, delete, share")
         st.caption(
@@ -878,16 +903,17 @@ with tab_data:
 
 
     with _rtab:
-        # Maintenance / backup / destructive-reset tools are SUPER-USER-ONLY. They export
-        # and (in the danger zone) delete data, so a regular admin can't reach them — and
-        # we render an info notice instead of st.stop() (which would blank the sibling
+        # Maintenance / backup / destructive-reset tools are DEVELOPER-SUPER-ONLY. They
+        # export and (in the danger zone) delete SHARED data (auto-scanned rows, seen
+        # ledger, scan logs), so a regular admin — even a client-tenant super_user — can't
+        # reach them. Info notice instead of st.stop() (which would blank the sibling
         # Settings tabs, since every tab renders in one script pass).
-        if not _is_super:
+        if not _dev_super:
             st.info(
-                "🔒 **Maintenance & backup tools are restricted to the Super User.** They "
-                "export and (in the danger zone) permanently delete data, so they're not "
-                "part of day-to-day admin. If something needs cleaning up or backing up, "
-                "contact the app owner.")
+                "🔒 **Maintenance & backup tools are restricted to a developer-tenant "
+                "Super User.** They export and (in the danger zone) permanently delete "
+                "shared platform data, so they're not part of day-to-day admin. If "
+                "something needs cleaning up or backing up, contact the app owner.")
         else:
             _render_maintenance(sb, user)
 
@@ -903,6 +929,14 @@ with _cat_tab:
         "registry**, then pushed here (single point of entry). Select rows to edit "
         "or delete. (Download the grid as CSV via its built-in ⤓ icon.)"
     )
+    # The catalog is a SHARED, cross-tenant developer resource (every tenant's scan
+    # crawls it), so direct edits are limited to a developer-tenant Super User.
+    _can_edit_sources = _dev_super
+    if not _can_edit_sources:
+        st.info(
+            "🔒 Read-only. The sources catalog is shared across all tenants, so edits "
+            "are limited to a developer-tenant Super User. Propose additions/changes via "
+            "**Suggest a change** or the Verify → Source registry.")
 
     _METHODS = ["html", "html_js", "rss", "rest_json", "manual"]  # scan dispatch
     # Unified "Method" dropdown — SAME labels as the Verify > Source registry, each
@@ -1084,7 +1118,8 @@ with _cat_tab:
     # so the catalogue only Imports (from yaml) + Refreshes. ------------------
     _tsp, t2, t3 = st.columns([6, 1.6, 1])
     if t2.button("📥 Import from config", width='stretch',
-                 key="ds_import_top"):
+                 key="ds_import_top", disabled=not _can_edit_sources,
+                 help=None if _can_edit_sources else "Developer Super User only."):
         try:
             _import_from_config()
             st.rerun()
@@ -1153,11 +1188,13 @@ with _cat_tab:
 
         a1, a2, _asp = st.columns([1, 1, 6])
         if a1.button("✏️ Edit", width='stretch', key="ds_edit_btn",
-                     disabled=len(picked) != 1,
-                     help="Select exactly one row to edit."):
+                     disabled=(not _can_edit_sources) or len(picked) != 1,
+                     help="Select exactly one row to edit." if _can_edit_sources
+                          else "Developer Super User only."):
             _edit_source_dialog(sel_rows[0])
         if a2.button("🗑 Delete", width='stretch', key="ds_delete_btn",
-                     disabled=not picked):
+                     disabled=(not _can_edit_sources) or not picked,
+                     help=None if _can_edit_sources else "Developer Super User only."):
             _delete_sources_dialog(sel_ids, sel_names)
 
 with _xls_tab:
@@ -1171,6 +1208,16 @@ with _xls_tab:
         "`EXCEL_SOURCE_PATH` in `.env` (or the local repo copy if unset). "
         "Auto-sync runs on page load when the file is newer than the last sync."
     )
+    # migrate_excel.py runs as a SUBPROCESS with no tenant JWT, so its rows aren't
+    # tenant-scoped — running it can dump the workbook into whichever tenant is browsing
+    # (that's why auto-sync is off in multi-tenant mode). Until it's made tenant-aware,
+    # manual sync stays an owner/developer operation → restrict to a developer admin.
+    _can_excel_sync = _dev_admin
+    if not _can_excel_sync:
+        st.info(
+            "🔒 Manual Excel sync is a developer operation. The importer isn't yet "
+            "tenant-aware (it runs outside your tenant context), so it's limited to a "
+            "developer tenant to avoid writing into the wrong tenant.")
 
     resolved = excel_sync.resolve_excel_path()
     xls_path = resolved.get("resolved_path")
@@ -1203,8 +1250,11 @@ with _xls_tab:
         if resolved.get("error"):
             st.error(resolved["error"])
 
-    if sc2.button("🔄 Sync now", type="primary", disabled=xls_path is None,
-                  width='stretch'):
+    if sc2.button("🔄 Sync now", type="primary",
+                  disabled=(xls_path is None) or not _can_excel_sync,
+                  width='stretch',
+                  help=None if _can_excel_sync else "Developer tenant only.") \
+            and _can_excel_sync:                       # defense in depth
         with st.spinner("Running migrate_excel.py..."):
             result = excel_sync.sync(updated_by=user.get("email"))
         if result.get("ok"):
@@ -1227,15 +1277,16 @@ with _xls_tab:
             "Pick a `.xlsx` file from your computer to replace whatever the "
             "app is currently reading. The uploaded file is saved to "
             "the path shown above (or to the repo root if no path is "
-            "resolvable). Admin-only — when user policies land we'll gate this "
-            "behind a per-user permission too."
+            "resolvable). Developer tenant only — it replaces the shared source "
+            "workbook the importer reads."
         )
         up = st.file_uploader(
             "Choose a .xlsx file",
             type=["xlsx"],
             accept_multiple_files=False,
             key="excel_workbook_upload",
-        )
+            disabled=not _can_excel_sync,
+        ) if _can_excel_sync else None
         if up is not None:
             # Determine the destination. Prefer the currently-resolved path
             # (replaces in-place). Fall back to the repo root with the
@@ -1363,17 +1414,24 @@ with tab_scan:
     _bc1, _bcmid, _bc2 = st.columns([1.9, 4.2, 1.9])
     _ext_slot = _bc1.empty()
     _match_slot = _bc2.empty()
+    # Run Extraction is a PLATFORM job that crawls every source into the SHARED global
+    # store (no per-tenant screening) — a developer task. Restricted to an admin/super
+    # of a developer tenant (RFPIS Inc / the second tenant). The "My Eligible Funding" screening
+    # button beside it stays available to every tenant admin (it's tenant-scoped).
     _do_extract = _ext_slot.button(
         "⛏ Run Extraction", type="secondary", key="admin_extract_btn", width='stretch',
-        help="Platform job: crawl all funding sources and extract into the global "
-             "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
-             "(~20-40 min for a full run).")
+        disabled=not _dev_admin,
+        help=("Platform job: crawl all funding sources and extract into the global "
+              "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
+              "(~20-40 min for a full run).") if _dev_admin else
+             ("Developer task — restricted to an admin/Super User of a developer tenant "
+              "(RFPIS Inc / the second tenant). Use 🎯 My Eligible Funding to screen this org."))
     _do_match = _match_slot.button(
         "🎯 My Eligible Funding", type="primary", key="admin_match_btn", width='stretch',
         help="Screen the curated store against this org's eligibility (geography + "
              "MUST/PREFER) — the funding you're potentially eligible for. Fast.")
 
-    if _do_extract:
+    if _do_extract and _dev_admin:          # defense in depth (button is also disabled)
         # Replace the button in place with a disabled "running" label during the run.
         _ext_slot.button("⏳ Running extraction…", disabled=True, width='stretch',
                          key="admin_extract_running")
@@ -1519,55 +1577,64 @@ with _blk_tab:
     from core import blacklist as _blmod
 
     st.subheader("Blocked tokens")
-    st.caption(
-        "Each pattern is matched as a case-insensitive **substring of the "
-        "candidate URL** during scanning. Any match → the link is rejected "
-        "before scoring and never becomes a record. Use a bare domain "
-        "(`cdc.gov`) to block a whole site, or a path fragment "
-        "(`comicrelief.com/sportrelief`, `/donate`, `/careers`) to block a "
-        "section. Edit cells, add rows (＋), then **Save**."
-    )
-    try:
-        _bl_rows = (sb.table("scan_blacklist").select("pattern,reason")
-                    .order("pattern").execute().data or [])
-    except Exception as exc:
-        _bl_rows = []
-        st.warning(f"Couldn't load the blacklist — did you run migration 024? ({exc})")
-
-    if _bl_rows:
-        _bl_df = pd.DataFrame(_bl_rows)[["pattern", "reason"]]
+    # The scan blacklist is a SHARED, platform-wide reject list (it drops candidate URLs
+    # for EVERY tenant's scan), so it's a developer-account feature — restricted to an
+    # admin/super_user of a developer tenant (RFPIS Inc / the second tenant).
+    if not _dev_admin:
+        st.info(
+            "🔒 **Blocked tokens is a developer-account feature.** These patterns drop "
+            "candidate URLs for every tenant's scan, so they're managed by a developer "
+            "tenant (RFPIS Inc / the second tenant), not per client tenant.")
     else:
-        _bl_df = pd.DataFrame({"pattern": pd.Series(dtype="object"),
-                               "reason": pd.Series(dtype="object")})
-    _bl_edited = st.data_editor(
-        _bl_df, num_rows="dynamic", width='stretch', hide_index=True,
-        key="blacklist_editor",
-        column_config={
-            "pattern": st.column_config.TextColumn("Pattern (URL substring)", required=True),
-            "reason": st.column_config.TextColumn("Reason / note"),
-        },
-    )
-    if st.button("💾 Save blacklist", type="primary", key="save_blacklist"):
-        recs, seen = [], set()
-        for _, r in _bl_edited.iterrows():
-            p = str(r.get("pattern") or "").strip().lower()
-            if not p or p in seen:
-                continue
-            seen.add(p)
-            recs.append({
-                "pattern": p,
-                "reason": (str(r.get("reason") or "").strip() or None),
-                "created_by": user.get("email"),
-            })
+        st.caption(
+            "Each pattern is matched as a case-insensitive **substring of the "
+            "candidate URL** during scanning. Any match → the link is rejected "
+            "before scoring and never becomes a record. Use a bare domain "
+            "(`cdc.gov`) to block a whole site, or a path fragment "
+            "(`comicrelief.com/sportrelief`, `/donate`, `/careers`) to block a "
+            "section. Edit cells, add rows (＋), then **Save**."
+        )
         try:
-            sb.table("scan_blacklist").delete().neq("id", -1).execute()  # replace-all
-            if recs:
-                sb.table("scan_blacklist").insert(recs).execute()
-            _blmod.clear_cache()
-            st.success(f"Saved {len(recs)} blacklist pattern(s).")
-            st.rerun()
+            _bl_rows = (sb.table("scan_blacklist").select("pattern,reason")
+                        .order("pattern").execute().data or [])
         except Exception as exc:
-            st.error(f"Save failed: {exc}")
+            _bl_rows = []
+            st.warning(f"Couldn't load the blacklist — did you run migration 024? ({exc})")
+
+        if _bl_rows:
+            _bl_df = pd.DataFrame(_bl_rows)[["pattern", "reason"]]
+        else:
+            _bl_df = pd.DataFrame({"pattern": pd.Series(dtype="object"),
+                                   "reason": pd.Series(dtype="object")})
+        _bl_edited = st.data_editor(
+            _bl_df, num_rows="dynamic", width='stretch', hide_index=True,
+            key="blacklist_editor",
+            column_config={
+                "pattern": st.column_config.TextColumn("Pattern (URL substring)", required=True),
+                "reason": st.column_config.TextColumn("Reason / note"),
+            },
+        )
+        if st.button("💾 Save blacklist", type="primary", key="save_blacklist"):
+            recs, seen = [], set()
+            for _, r in _bl_edited.iterrows():
+                p = str(r.get("pattern") or "").strip().lower()
+                if not p or p in seen:
+                    continue
+                seen.add(p)
+                recs.append({
+                    "pattern": p,
+                    "reason": (str(r.get("reason") or "").strip() or None),
+                    "created_by": user.get("email"),
+                })
+            try:
+                sb.table("scan_blacklist").delete().neq("id", -1).execute()  # replace-all
+                if recs:
+                    sb.table("scan_blacklist").insert(recs).execute()
+                _blmod.clear_cache()
+                st.success(f"Saved {len(recs)} blacklist pattern(s).")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Save failed: {exc}")
 
 
 # Verify (human verification + feedback over the scan) now lives as a sub-tab
@@ -1579,6 +1646,17 @@ with _blk_tab:
 # -----------------------------------------------------------------------------
 with tab_learning:
     st.subheader("Learning data — captured signals")
+    # Learning data is the platform's shared training signal (the labeled set behind the
+    # scoring model) — a developer resource. Restricted to members of a developer tenant
+    # (RFPIS Inc / the second tenant); client-tenant admins see a lock. _dev_member covers the
+    # super_user (homed to the RFPIS platform tenant). Guarded body so sibling tabs still
+    # render (no st.stop()).
+    if not _dev_member:
+        st.info(
+            "🔒 **Learning data is a developer view.** These captured signals train the "
+            "shared scoring model across all tenants, so they're available to members of "
+            "a developer tenant (RFPIS Inc / the second tenant).")
+        st.stop()
     st.caption(
         "Every scan **reject**, human **decision** (Proceed/Park/Decline) and "
         "👍/👎 **feedback** is logged to `scan_decisions` — the labeled training "

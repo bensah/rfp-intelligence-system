@@ -362,6 +362,18 @@ def _set_many_tenant_blacklist(svc, tids: list[str], on: bool, by: str | None) -
             st.error(f"Blacklist change failed: {exc}")
 
 
+def _set_many_developer(svc, tids: list[str], on: bool) -> None:
+    """Flag/unflag the given tenants as DEVELOPER/system tenants (migration 079). Members
+    of a developer tenant may perform cross-tenant developer tasks (donor mapping, Sources
+    catalog/blocked tokens, Run Extraction, Records Verify/Reset, Learning data)."""
+    if not tids:
+        return
+    try:
+        svc.table("tenants").update({"is_developer": on}).in_("id", tids).execute()
+    except Exception as exc:
+        st.error(f"Developer-flag change failed (did you run migration 079?): {exc}")
+
+
 def render_manage_tenants(user: dict, sb) -> None:
     """Settings → Tenants (SUPER USER only). Tenants = organizations registered to the
     platform (a the organisation country / global team now; external orgs later). A management TABLE
@@ -477,6 +489,8 @@ def render_manage_tenants(user: dict, sb) -> None:
             "name": _name,
             "Organization": f"/organization?tenant={_key}&label={_name}",
             "Kind": "🧑 Individual" if t.get("kind") == "individual" else "🏢 Org",
+            "Dev": "🛠 Dev" if t.get("is_developer") else "—",
+            "_is_dev": bool(t.get("is_developer")),
             "_status": (t.get("status") or "active"),
             "Status": "🟢 Active" if (t.get("status") or "active") == "active"
                       else "⏸ Suspended",
@@ -488,7 +502,7 @@ def render_manage_tenants(user: dict, sb) -> None:
     _df = pd.DataFrame(_rows)
 
     _sel = st.dataframe(
-        _df[["Organization", "Kind", "Status", "Members", "Pending", "Profile",
+        _df[["Organization", "Kind", "Dev", "Status", "Members", "Pending", "Profile",
              "Created"]],
         hide_index=True, width="stretch", key="tenants_table",
         selection_mode="multi-row", on_select="rerun",
@@ -503,6 +517,13 @@ def render_manage_tenants(user: dict, sb) -> None:
                 "Kind", width="small",
                 help="🏢 Org = a normal organization tenant. 🧑 Individual = a personal "
                      "account whose activity is visible to all users."),
+            "Dev": st.column_config.TextColumn(
+                "Dev", width="small",
+                help="🛠 Dev = a DEVELOPER / system tenant (RFPIS Inc / the second tenant). Its "
+                     "members may perform cross-tenant developer tasks (donor mapping, "
+                     "Sources catalog & blocked tokens, Run Extraction, Records "
+                     "Verify/Reset, Learning data). Client tenants are confined to their "
+                     "own data."),
             "Members": st.column_config.NumberColumn("Members", width="small"),
             "Pending": st.column_config.NumberColumn("Pending", width="small"),
         })
@@ -540,6 +561,24 @@ def render_manage_tenants(user: dict, sb) -> None:
                  help="Hard-block: members of a blacklisted tenant lose all access. "
                       "Manage / undo under the Blacklisted tab."):
         _set_many_tenant_blacklist(svc, _sel_ids, True, user.get("email")); st.rerun()
+
+    # Developer-tenant toggle. A developer/system tenant (RFPIS Inc / the second tenant) unlocks the
+    # cross-tenant developer tasks for its members; a client tenant stays confined to its
+    # own data. Enable each action only when it would change something for the selection.
+    _dev_states = {bool(r.get("_is_dev")) for r in _sel_rows}
+    _can_mark_dev = any(d is False for d in _dev_states)
+    _can_unmark_dev = any(d is True for d in _dev_states)
+    d1, d2, _dsp = st.columns([1.6, 1.9, 4.5])
+    if d1.button("🛠 Mark developer", width="stretch", key="tn_bulk_mark_dev",
+                 disabled=not _can_mark_dev,
+                 help="Grant developer-tenant status (cross-tenant developer tasks)."
+                 if _can_mark_dev else "All selected tenants are already developer tenants."):
+        _set_many_developer(svc, _sel_ids, True); st.rerun()
+    if d2.button("Remove developer", width="stretch", key="tn_bulk_unmark_dev",
+                 disabled=not _can_unmark_dev,
+                 help="Revoke developer-tenant status."
+                 if _can_unmark_dev else "None of the selected tenants are developer tenants."):
+        _set_many_developer(svc, _sel_ids, False); st.rerun()
 
 
 def render_org_suspend(user: dict, sb) -> None:
