@@ -32,6 +32,17 @@ language sql stable as $$
   select nullif(current_setting('request.jwt.claims', true)::jsonb ->> 'sub', '')::uuid
 $$;
 
+-- Auto-stamp trigger fn (also from 068) — used by the stamp_tenant_resource_suggestions
+-- trigger below. Redefined here so 080 doesn't fail when 068 hasn't applied.
+create or replace function app_stamp_tenant_id() returns trigger
+language plpgsql as $$
+begin
+  if new.tenant_id is null then
+    new.tenant_id := app_current_tenant_id();
+  end if;
+  return new;
+end $$;
+
 create table if not exists resource_suggestions (
   id                uuid primary key default gen_random_uuid(),
 
