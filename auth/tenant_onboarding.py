@@ -208,8 +208,14 @@ def _create_tenant(user: dict, uid: str, name: str) -> None:
             st.warning("That organization already exists — pick it from the list and "
                        "request access instead.")
             return
-        created = (sb.table("tenants").insert(
-            {"name": name, "created_by": uid, "status": "active"}).execute().data or [])
+        # A slug makes the super_user view-as URL a readable, stable ?tenant=<slug>.
+        _payload = {"name": name, "created_by": uid, "status": "active",
+                    "slug": tc.make_tenant_slug(name)}
+        try:
+            created = sb.table("tenants").insert(_payload).execute().data or []
+        except Exception:
+            _payload.pop("slug", None)      # pre-slug schema fallback
+            created = sb.table("tenants").insert(_payload).execute().data or []
         if not created:
             st.error("Couldn't create the organization (no row returned).")
             return
