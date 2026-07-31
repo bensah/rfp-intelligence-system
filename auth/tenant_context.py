@@ -14,6 +14,7 @@ every entry point is best-effort.
 from __future__ import annotations
 
 import contextvars
+import re
 import time
 from typing import Any, Optional
 
@@ -255,6 +256,30 @@ def active_tenant_is_developer() -> bool:
         return str(tid) in set(developer_tenant_ids())
     except Exception:
         return False
+
+
+def _slug_base(name: str | None) -> str:
+    """A URL-safe base slug from a tenant name ('Taadom Digital PLC' → 'taadom-digital-plc')."""
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+    return s or "tenant"
+
+
+def make_tenant_slug(name: str | None) -> str:
+    """A URL-safe, UNIQUE slug for a NEW tenant, deduped against existing slugs. Every tenant
+    should have one so the super_user view-as URL is a readable, stable `?tenant=<slug>` (not
+    a raw UUID). Best-effort on the RLS-bypassing service client; the base slug on any error."""
+    base = _slug_base(name)
+    try:
+        rows = (service_client().table("tenants").select("slug").execute().data or [])
+        existing = {(r.get("slug") or "").strip().lower() for r in rows if r.get("slug")}
+    except Exception:
+        return base
+    if base not in existing:
+        return base
+    i = 2
+    while f"{base}-{i}" in existing:
+        i += 1
+    return f"{base}-{i}"
 
 
 def resolve_tenant_by_key(key: str | None) -> dict | None:
