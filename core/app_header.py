@@ -927,13 +927,19 @@ def _apply_super_view_from_query() -> None:
                 st.session_state["su_view_tenant"] = _row["id"]
                 st.session_state["su_view_name"] = _row.get("name")
                 st.session_state["su_view_slug"] = _row.get("slug") or _row["id"]
-        return
-    # No ?tenant= in the URL (e.g. sidebar nav dropped it) but a sticky view-as is
-    # active → re-stamp it so this page's URL also shows the tenant being viewed.
+            else:
+                # Surface a resolve miss instead of silently continuing (a dropped view-as
+                # then reads as "worked before, now the URL shows nothing").
+                st.warning(f"Couldn't resolve tenant '{_key}' — it may have been renamed "
+                           "or removed. Reopen it from Settings → Tenants.")
+        # fall through to (re)stamp the canonical slug, normalizing a raw id → slug.
+    # (Re)stamp the URL to the canonical slug so EVERY page shows which tenant is being
+    # viewed (readable slug, not a UUID). Guarded on a diff so it never loops.
     _slug = st.session_state.get("su_view_slug")
     if _slug:
         try:
-            st.query_params["tenant"] = _slug
+            if st.query_params.get("tenant") != _slug:
+                st.query_params["tenant"] = _slug
         except Exception:
             pass
 

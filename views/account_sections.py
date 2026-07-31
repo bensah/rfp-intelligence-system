@@ -423,12 +423,15 @@ def render_manage_tenants(user: dict, sb) -> None:
                 if dupe:
                     st.warning("A tenant with that name already exists.")
                 else:
+                    from auth import tenant_context as _tc
+                    # A slug → the super_user view-as URL is a readable, stable ?tenant=<slug>.
+                    _slug = _tc.make_tenant_slug(nm)
                     try:
                         svc.table("tenants").insert(
                             {"name": nm, "kind": _kind, "status": "active",
-                             "created_by": user.get("id")}).execute()
+                             "slug": _slug, "created_by": user.get("id")}).execute()
                     except Exception:
-                        # Pre-migration-078 fallback (no `kind` column) → org tenant.
+                        # Pre-migration fallback (no `kind`/`slug` column) → minimal insert.
                         svc.table("tenants").insert(
                             {"name": nm, "status": "active",
                              "created_by": user.get("id")}).execute()
