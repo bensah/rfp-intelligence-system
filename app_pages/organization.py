@@ -121,7 +121,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Page body (left/main) + the live opportunity right-rail.
+# ── Header (title + Edit) full width — the rail is lowered BELOW this row ──
+_hl, _hr = st.columns([5, 1.4])
+_hl.title("Entity Details")
+if can_edit:
+    if _hr.button("✏️ Edit entity", width="stretch", type="primary"):
+        _edit_entity_dialog()
+else:
+    _hr.caption("View only — editing is restricted to app owners.")
+
+# Page body (left/main) + the live opportunity right-rail, lowered below the header.
 _main, _rail = st.columns([3.4, 1], gap="medium")
 
 with _rail:
@@ -129,14 +138,6 @@ with _rail:
     render_opportunity_rail()
 
 with _main:
-    # ── Header ────────────────────────────────────────────────────────────
-    _hl, _hr = st.columns([5, 1.4])
-    _hl.title("Entity Details")
-    if can_edit:
-        if _hr.button("✏️ Edit entity", width="stretch", type="primary"):
-            _edit_entity_dialog()
-    else:
-        _hr.caption("View only — editing is restricted to app owners.")
 
     _logo_bytes, _ = settings.get_org_logo(view_tid)
     _top = st.columns([1, 5])
