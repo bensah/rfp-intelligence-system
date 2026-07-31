@@ -106,7 +106,7 @@ def needs_sync() -> Optional[Path]:
 
     DEACTIVATED in multi-tenant mode: the the organisation-Cameroon workbook is single-tenant data
     with no tenant_id, so auto-syncing it on page load would dump the organisation's records into
-    whatever tenant the user is browsing (e.g. a brand-new Example Tenant tenant) and
+    whatever tenant the user is browsing (e.g. a brand-new RFPIS Inc. tenant) and
     also re-run on every session. Admin → Settings → "Sync now" calls sync() directly and
     still works for a deliberate, owner-initiated single-tenant refresh."""
     try:
