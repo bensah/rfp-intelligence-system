@@ -1522,9 +1522,9 @@ with tab_scan:
     # Buttons sit ABOVE the summary cards. Each flips to a disabled "running…"
     # label in place while it works.
     _who = user.get("name") or user.get("email") or "admin"
-    # Run Extraction + Scan Funding sit together on the left — compact (narrow columns)
-    # with a wide spacer on the right so the two buttons stay close.
-    _bc1, _bc2, _bcsp = st.columns([1.5, 1.6, 5.2])
+    # Run Extraction + Scan Funding sit together on the RIGHT — compact (narrow columns)
+    # with a wide spacer on the left so the two buttons stay close, pushed right.
+    _bcsp, _bc1, _bc2 = st.columns([5.2, 1.5, 1.6])
     _ext_slot = _bc1.empty()
     _match_slot = _bc2.empty()
     # Run Extraction is a PLATFORM job that crawls every source into the SHARED global
