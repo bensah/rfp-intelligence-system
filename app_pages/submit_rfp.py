@@ -19,11 +19,16 @@ with _b:
     if st.button("← Home", width="stretch", key="submit_back_home"):
         st.switch_page("app_pages/home.py")
 
-st.caption(
-    "Capture an opportunity you found outside the Friday scan. Submitted "
-    "immediately — duplicate-detection runs at display time, so re-entries are "
-    "merged in the dashboards automatically."
-)
+_main, _rail = st.columns([3.4, 1], gap="medium")
+with _rail:
+    from views.opportunity_rail import render_opportunity_rail
+    render_opportunity_rail()
+with _main:
+    st.caption(
+        "Capture an opportunity you found outside the Friday scan. Submitted "
+        "immediately — duplicate-detection runs at display time, so re-entries are "
+        "merged in the dashboards automatically."
+    )
 
-# on_success omitted → the form shows its own inline success (uid + score + rec).
-render_submit_form(user, key_prefix="submit_page")
+    # on_success omitted → the form shows its own inline success (uid + score + rec).
+    render_submit_form(user, key_prefix="submit_page")
