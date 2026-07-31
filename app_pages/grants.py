@@ -25,7 +25,7 @@ from core.records import clean_record, clean_df
 from db.supabase_client import get_client, safe_execute
 
 sb = get_client()
-st.title("Active Grants")
+st.title("Your Active Grants")
 
 
 # -----------------------------------------------------------------------------
