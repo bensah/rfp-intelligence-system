@@ -133,7 +133,8 @@ def active_memberships(user_id: str | None) -> list[dict[str, Any]]:
     if not user_id:
         return []
     rows = None
-    for sel in ("tenant_id, role, tenants(name, slug, is_platform, status)",
+    for sel in ("tenant_id, role, tenants(name, slug, is_platform, is_developer, status)",
+                "tenant_id, role, tenants(name, slug, is_platform, status)",
                 "tenant_id, role, tenants(name, slug, status)",
                 "tenant_id, role, tenants(name, slug, is_platform)",
                 "tenant_id, role, tenants(name, slug)"):
@@ -155,7 +156,8 @@ def active_memberships(user_id: str | None) -> list[dict[str, Any]]:
             continue
         out.append({"tenant_id": r.get("tenant_id"),
                     "name": (t or {}).get("name"), "slug": (t or {}).get("slug"),
-                    "role": r.get("role"), "is_platform": bool((t or {}).get("is_platform"))})
+                    "role": r.get("role"), "is_platform": bool((t or {}).get("is_platform")),
+                    "is_developer": bool((t or {}).get("is_developer"))})
     return out
 
 
@@ -186,6 +188,73 @@ def public_tenant_ids() -> list[str]:
         ids = _PUBLIC_TIDS_CACHE["ids"]            # keep last-good on a transient error
     _PUBLIC_TIDS_CACHE["at"] = now
     return ids
+
+
+_DEV_TIDS_CACHE: dict[str, Any] = {"at": 0.0, "ids": []}
+_DEV_TIDS_TTL = 60.0
+
+
+def developer_tenant_ids() -> list[str]:
+    """Tenant ids flagged `is_developer=true` — the DEVELOPER / SYSTEM tenants (e.g.
+    RFPIS Inc, Example Tenant) whose members may perform cross-tenant DEVELOPER
+    tasks (donor mapping, Sources catalog + Blocked tokens, Run Extraction, Records
+    Verify/Reset, Learning data). Best-effort, 60s-cached on the RLS-bypassing service
+    client (migration 079).
+
+    Graceful degradation: if the `is_developer` column doesn't exist yet (pre-079), we
+    fall back to the `is_platform` tenant so the super_user's home still counts as a
+    developer tenant and they aren't locked out on the flag day. Any hard error → keep
+    last-good. Returns [] in single-tenant mode (the caller treats that as developer)."""
+    try:
+        if not multitenant_enabled():
+            return []
+    except Exception:
+        return []
+    now = time.time()
+    if (now - _DEV_TIDS_CACHE["at"]) < _DEV_TIDS_TTL:
+        return _DEV_TIDS_CACHE["ids"]
+    ids: list[str] | None = None
+    try:
+        rows = (service_client().table("tenants").select("id")
+                .eq("is_developer", True).execute().data or [])
+        ids = [str(r["id"]) for r in rows if r.get("id")]
+    except Exception:
+        # Column not present yet (pre-079) → fall back to the platform/home tenant.
+        try:
+            rows = (service_client().table("tenants").select("id")
+                    .eq("is_platform", True).execute().data or [])
+            ids = [str(r["id"]) for r in rows if r.get("id")]
+        except Exception:
+            ids = None
+    if ids is not None:
+        _DEV_TIDS_CACHE["ids"] = ids               # only overwrite on success
+    _DEV_TIDS_CACHE["at"] = now
+    return _DEV_TIDS_CACHE["ids"]
+
+
+def active_tenant_is_developer() -> bool:
+    """True when THIS session's home tenant is a developer/system tenant — the gate for
+    cross-tenant DEVELOPER tasks (combined with a role check in core.permissions).
+
+    Keys off `current_tenant_id()`, which is the user's OWN home tenant: a super_user's
+    'view-as' another tenant sets a SEPARATE `su_view_tenant` (see core.app_header) and
+    does NOT change current_tenant_id(), so their developer powers over shared resources
+    persist while they inspect a client tenant — and a client-tenant admin never gains
+    them. SINGLE-TENANT (multi-tenant OFF) → True: the sole deployment is its own
+    developer, so these gates collapse to the plain role check and nothing is locked out.
+    Best-effort: never raises."""
+    try:
+        if not multitenant_enabled():
+            return True
+    except Exception:
+        return True
+    try:
+        tid = current_tenant_id()
+        if not tid:
+            return False
+        return str(tid) in set(developer_tenant_ids())
+    except Exception:
+        return False
 
 
 def resolve_tenant_by_key(key: str | None) -> dict | None:
