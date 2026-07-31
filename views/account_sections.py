@@ -14,6 +14,8 @@ dict (+ a Supabase client where it writes), so the calling page just does:
 """
 from __future__ import annotations
 
+import difflib
+import re
 import secrets
 import string
 from datetime import datetime, timezone
@@ -374,6 +376,148 @@ def _set_many_developer(svc, tids: list[str], on: bool) -> None:
         st.error(f"Developer-flag change failed (did you run migration 079?): {exc}")
 
 
+def _norm_tenant_name(s: str | None) -> str:
+    """Normalize a tenant name for dedup: casefold, punctuation/whitespace runs → single
+    space, trimmed. 'RFP Intelligence  Inc.,' and 'rfp intelligence inc' compare equal."""
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").strip().lower()).strip()
+
+
+def _tenant_dedup_matches(name: str, all_tenants: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(exact, similar) existing tenants for `name`. Exact = same normalized name (hard
+    block). Similar = substring either way OR SequenceMatcher ratio ≥ 0.72 (flag, allow
+    override). Pure-Python (difflib) — no deps, no LLM."""
+    nn = _norm_tenant_name(name)
+    if not nn:
+        return [], []
+    exact, similar = [], []
+    for t in all_tenants:
+        tn = _norm_tenant_name(t.get("name"))
+        if not tn:
+            continue
+        if tn == nn:
+            exact.append(t)
+            continue
+        if nn in tn or tn in nn or difflib.SequenceMatcher(None, nn, tn).ratio() >= 0.72:
+            similar.append(t)
+    return exact, similar
+
+
+def _render_add_tenant(user: dict, svc, *, is_super: bool) -> None:
+    """Add-a-tenant with a live typeahead + name deduplicator. As the user types, matching
+    existing tenants surface so they can spot a duplicate; an exact (normalized) match is
+    hard-blocked; a similar name is flagged but can be overridden ("genuinely different").
+    A super_user's add goes live (active); an admin's add is a REQUEST (pending) that a
+    super_user approves, and the admin is auto-added as its first member (R4/R5/R6)."""
+    st.markdown("**➕ Add a tenant**" if is_super else "**➕ Request a new tenant**")
+    c1, c2 = st.columns([3.4, 1.2])
+    nm = c1.text_input(
+        "New tenant name", key="add_tenant_name",
+        placeholder="Start typing — matching existing tenants appear below…")
+    _kind_label = c2.selectbox("Type", ["Organization", "Individual"], key="add_tenant_kind",
+                               help="Organization = a normal org tenant. Individual = a "
+                                    "personal account whose activity is visible to all users.")
+    try:
+        _all = (svc.table("tenants").select("id,name,slug,status")
+                .order("name").execute().data or [])
+    except Exception:
+        _all = []
+    exact, similar = _tenant_dedup_matches(nm, _all)
+
+    if nm.strip():
+        _matches = exact + similar
+        if _matches:
+            _lbl = {"active": "🟢", "suspended": "⏸", "pending": "🕓", "blacklisted": "🚫"}
+            st.caption("Matching existing tenants — is yours already here?")
+            for t in _matches[:8]:
+                st.markdown(f"- {_lbl.get(t.get('status'), '•')} **{t.get('name')}** "
+                            f"· {t.get('status') or 'active'}")
+        else:
+            st.caption("No matching tenant — you can add it as new.")
+
+    if exact:
+        st.warning("A tenant with that name already exists (shown above). Pick it instead "
+                   "of creating a duplicate.")
+        return
+    if similar:
+        st.info("⚠ Similar tenant name(s) exist above. Only add if yours is **genuinely "
+                "different** — otherwise use the existing one.")
+
+    _kind = "individual" if _kind_label == "Individual" else "organization"
+    _label = (("➕ Add anyway (new)" if similar else "➕ Add tenant") if is_super else
+              ("➕ Request anyway" if similar else "➕ Request tenant (needs approval)"))
+    if st.button(_label, type="primary", key="add_tenant_submit", disabled=not nm.strip()):
+        from auth import tenant_context as _tc
+        _status = "active" if is_super else "pending"
+        _now = datetime.now(timezone.utc).isoformat()
+        _payload = {"name": nm.strip(), "kind": _kind, "status": _status,
+                    "slug": _tc.make_tenant_slug(nm.strip()),
+                    "created_by": user.get("id"), "requested_by": user.get("id")}
+        try:
+            _created = svc.table("tenants").insert(_payload).execute().data or []
+        except Exception:
+            try:                                        # pre-migration fallback
+                _created = (svc.table("tenants").insert(
+                    {"name": nm.strip(), "status": _status,
+                     "created_by": user.get("id")}).execute().data or [])
+            except Exception as _exc:
+                st.error(f"Create failed: {_exc}")
+                return
+        _tid = _created[0]["id"] if _created else None
+        # Auto-add the creator as the first member — EXCEPT a super_user (who uses view-as).
+        if _tid and not is_super:
+            try:
+                svc.table("tenant_memberships").insert({
+                    "tenant_id": _tid, "user_id": user.get("id"),
+                    "role": "admin", "status": "active", "decided_at": _now}).execute()
+            except Exception:
+                pass
+        st.session_state.pop("add_tenant_name", None)
+        if is_super:
+            st.success(f"Created “{nm.strip()}”.")
+        else:
+            st.success(f"Requested “{nm.strip()}” — pending Super User approval. You're its "
+                       "first member and will get access once it's approved.")
+        st.rerun()
+
+
+def _render_pending_approvals(user: dict, svc) -> None:
+    """Super_user approval queue for admin-requested (pending) tenants. Approve → active
+    (+ audit); Reject → delete the request (it has no data yet; the creator membership
+    cascades)."""
+    try:
+        pend = (svc.table("tenants")
+                .select("id,name,slug,kind,created_at,requested_by")
+                .eq("status", "pending").order("created_at").execute().data or [])
+    except Exception:
+        pend = []
+    if not pend:
+        return
+    st.markdown(f"**🕓 {len(pend)} tenant request(s) awaiting your approval**")
+    for t in pend:
+        c1, c2, c3 = st.columns([4.5, 1.1, 1.1])
+        _kind = "🧑 Individual" if t.get("kind") == "individual" else "🏢 Org"
+        c1.markdown(f"**{t.get('name')}** · {_kind} · requested {(t.get('created_at') or '')[:10]}")
+        if c2.button("✓ Approve", type="primary", key=f"tn_appr_{t['id']}"):
+            try:
+                svc.table("tenants").update({
+                    "status": "active", "approved_by": user.get("email"),
+                    "approved_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", t["id"]).execute()
+                st.toast(f"Approved {t.get('name')}", icon="✓")
+            except Exception as exc:
+                st.error(f"Approve failed: {exc}")
+            st.rerun()
+        if c3.button("✗ Reject", key=f"tn_rej_{t['id']}",
+                     help="Delete this request (no data yet)."):
+            try:
+                svc.table("tenants").delete().eq("id", t["id"]).execute()
+                st.toast(f"Rejected {t.get('name')}", icon="✗")
+            except Exception as exc:
+                st.error(f"Reject failed: {exc}")
+            st.rerun()
+    st.divider()
+
+
 def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> None:
     """Settings → Tenants. Tenants = organizations/individuals registered to the platform.
 
@@ -400,6 +544,16 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
                 from auth.tenant_context import _resolve_user_id
                 _uid = _resolve_user_id(user)
             _my_tids = {m["tenant_id"] for m in (active_memberships(_uid) if _uid else [])}
+            # + their OWN pending requests — active_memberships drops pending tenants, but
+            # a requester should still see their request tracked in this list (R6).
+            if _uid:
+                try:
+                    _req = (svc.table("tenants").select("id")
+                            .eq("requested_by", _uid).eq("status", "pending")
+                            .execute().data or [])
+                    _my_tids |= {r["id"] for r in _req if r.get("id")}
+                except Exception:
+                    pass
         except Exception:
             _my_tids = set()
 
@@ -417,46 +571,13 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
         st.caption("The tenants you belong to. View-only — adding, suspending and approving "
                    "tenants is handled by the Super User.")
 
-    # ── Add tenant (super-user only; admin request flow lands in a later phase) ──
+    # ── Add / request a tenant. Any ADMIN may request (→ pending, a super_user approves
+    # after due diligence); the super_user adds directly (→ active). Live typeahead + name
+    # deduplicator are in _render_add_tenant. Collaborators (non-admin) get no add form. ──
+    if permissions.is_admin(user):
+        _render_add_tenant(user, svc, is_super=can_manage)
     if can_manage:
-        with st.form("add_tenant_form", clear_on_submit=True):
-            c1, c2, c3 = st.columns([3, 1.2, 1])
-            t_name = c1.text_input(
-                "New tenant name",
-                placeholder="e.g. the organisation Cameroon, the organisation Global Malaria Team...")
-            t_kind = c2.selectbox(
-                "Type", ["Organization", "Individual"], key="add_tenant_kind",
-                help="Organization = a normal org tenant. Individual = a personal account "
-                     "whose activity is visible to all users.")
-            add = c3.form_submit_button("➕ Add tenant", type="primary", width='stretch')
-        if add:
-            nm = (t_name or "").strip()
-            if not nm:
-                st.warning("Enter a tenant name.")
-            else:
-                _kind = "individual" if t_kind == "Individual" else "organization"
-                try:
-                    dupe = (svc.table("tenants").select("id").ilike("name", nm)
-                            .limit(1).execute().data or [])
-                    if dupe:
-                        st.warning("A tenant with that name already exists.")
-                    else:
-                        from auth import tenant_context as _tc
-                        # A slug → the super_user view-as URL is a readable ?tenant=<slug>.
-                        _slug = _tc.make_tenant_slug(nm)
-                        try:
-                            svc.table("tenants").insert(
-                                {"name": nm, "kind": _kind, "status": "active",
-                                 "slug": _slug, "created_by": user.get("id")}).execute()
-                        except Exception:
-                            # Pre-migration fallback (no `kind`/`slug` column).
-                            svc.table("tenants").insert(
-                                {"name": nm, "status": "active",
-                                 "created_by": user.get("id")}).execute()
-                        st.success(f"Created {_kind} “{nm}”.")
-                        st.rerun()
-                except Exception as exc:
-                    st.error(f"Create failed: {exc}")
+        _render_pending_approvals(user, svc)
 
     # ── Management table ─────────────────────────────────────────────────
     # Try selecting `is_developer` (migration 079) + `kind` (078); fall back column-set by
@@ -478,6 +599,8 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
     # Blacklisted tenants (migration 077) are managed under the Blacklisted tab — hide
     # them here so this table only shows live (active / suspended) organizations.
     tenants = [t for t in tenants if (t.get("status") or "active") != "blacklisted"]
+    if can_manage:                      # pending live in the approval queue above, not here
+        tenants = [t for t in tenants if (t.get("status") or "active") != "pending"]
     if _my_tids is not None:            # non-super: only the tenants they belong to (R2)
         tenants = [t for t in tenants if t.get("id") in _my_tids]
     if not tenants:
@@ -518,8 +641,9 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
             "Dev": "🛠 Dev" if t.get("is_developer") else "🙂 Regular",
             "_is_dev": bool(t.get("is_developer")),
             "_status": (t.get("status") or "active"),
-            "Status": "🟢 Active" if (t.get("status") or "active") == "active"
-                      else "⏸ Suspended",
+            "Status": {"active": "🟢 Active", "suspended": "⏸ Suspended",
+                       "pending": "🕓 Pending"}.get(t.get("status") or "active",
+                                                     "⏸ Suspended"),
             "Members": int(active_ct.get(tid, 0)),
             "Pending": int(pending_ct.get(tid, 0)),
             "Profile": "set" if prof else "empty",
@@ -1120,8 +1244,11 @@ def render_manage_users(user: dict, sb) -> None:
 
     df_u = pd.DataFrame(all_users)
     disp = df_u.copy()
-    for col in ("last_login_at", "password_changed_at", "created_at"):
+    for col in ("password_changed_at", "created_at"):
         disp[col] = disp[col].fillna("").astype(str).str[:10]
+    # Last login shows date + time (to the minute), not just the date.
+    disp["last_login_at"] = (disp["last_login_at"].fillna("").astype(str)
+                             .str[:16].str.replace("T", " ", regex=False))
     disp["Force PW reset"] = disp["must_change_password"] \
         .fillna(False).map(lambda v: "⚠ Yes" if bool(v) else "—")
     disp["Status"] = disp["is_active"].map(
