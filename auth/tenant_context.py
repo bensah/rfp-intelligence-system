@@ -134,11 +134,13 @@ def active_memberships(user_id: str | None) -> list[dict[str, Any]]:
     if not user_id:
         return []
     rows = None
+    # Every variant MUST embed `status` — it is the SOLE runtime guard that drops
+    # blacklisted/pending tenants below (RLS gates only on tenant_id, not status). `status`
+    # has existed since mig 067, so a status-bearing select always resolves; the variants
+    # only degrade the newer is_developer (079) / is_platform (072) columns.
     for sel in ("tenant_id, role, tenants(name, slug, is_platform, is_developer, status)",
                 "tenant_id, role, tenants(name, slug, is_platform, status)",
-                "tenant_id, role, tenants(name, slug, status)",
-                "tenant_id, role, tenants(name, slug, is_platform)",
-                "tenant_id, role, tenants(name, slug)"):
+                "tenant_id, role, tenants(name, slug, status)"):
         try:
             rows = (service_client().table("tenant_memberships").select(sel)
                     .eq("user_id", user_id).eq("status", "active").execute().data or [])
@@ -183,7 +185,7 @@ def public_tenant_ids() -> list[str]:
         return _PUBLIC_TIDS_CACHE["ids"]
     try:
         rows = (service_client().table("tenants").select("id")
-                .eq("kind", "individual").execute().data or [])
+                .eq("kind", "individual").eq("status", "active").execute().data or [])
         ids = [str(r["id"]) for r in rows if r.get("id")]
         _PUBLIC_TIDS_CACHE["ids"] = ids            # only overwrite on success
     except Exception:
