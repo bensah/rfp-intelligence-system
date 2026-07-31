@@ -944,6 +944,53 @@ def _apply_super_view_from_query() -> None:
             pass
 
 
+def _render_tenant_switcher() -> None:
+    """A tenant switcher for a NON-super user who belongs to >1 tenant (R3). Picking one
+    scopes the whole session (re-mints the tenant JWT via set_active_tenant) and persists
+    the choice to users.last_tenant_id so it sticks across logins. Super users use the
+    view-as flow instead, so this is a no-op for them; ≤1 membership → no-op."""
+    from core import permissions
+    _u = st.session_state.get("app_user") or {}
+    if not _u or permissions.is_super_user(_u):
+        return
+    try:
+        from auth.tenant_context import (active_memberships, set_active_tenant,
+                                         multitenant_enabled)
+        if not multitenant_enabled():
+            return
+        _uid = _u.get("id")
+        mems = active_memberships(_uid) if _uid else []
+    except Exception:
+        return
+    if len(mems) < 2:
+        return
+    _opts = {str(m["tenant_id"]): (m.get("name") or m.get("slug") or "tenant") for m in mems}
+    _ids = list(_opts)
+    _cur = str(st.session_state.get("tenant_id") or "")
+    _idx = _ids.index(_cur) if _cur in _ids else 0
+    _c1, _c2, _c3 = st.columns([1.1, 3, 4])
+    _c1.markdown("<div style='padding-top:0.45rem;font-size:0.85rem;color:#475569;"
+                 "font-weight:600;'>Active tenant</div>", unsafe_allow_html=True)
+    _pick = _c2.selectbox(
+        "Active tenant", _ids, index=_idx,
+        format_func=lambda t: _opts.get(t, "tenant"),
+        key="tenant_switcher", label_visibility="collapsed",
+        help="You belong to more than one tenant. Switching scopes every page to the "
+             "selected tenant; your choice is remembered.")
+    if _pick and _pick != _cur:
+        _role = next((m.get("role") for m in mems if str(m["tenant_id"]) == _pick), None)
+        set_active_tenant(_u, _pick, role=_role, name=_opts.get(_pick))
+        try:
+            from db.supabase_client import service_client
+            service_client().table("users").update(
+                {"last_tenant_id": _pick}).eq("id", _u.get("id")).execute()
+            _u["last_tenant_id"] = _pick
+            st.session_state["app_user"] = _u
+        except Exception:
+            pass
+        st.rerun()
+
+
 def _render_super_view_banner() -> None:
     """Persistent banner shown on every page while a super_user is viewing ANOTHER
     tenant's account (not their own home). Offers Return to my account."""
@@ -1107,6 +1154,9 @@ def render_app_header() -> None:
 
     # Super_user 'view-as tenant' banner (only when viewing a tenant other than home).
     _render_super_view_banner()
+
+    # Tenant switcher for a non-super user who belongs to >1 tenant (R3).
+    _render_tenant_switcher()
 
     # No st.divider() here — the pinned top bar carries its own bottom
     # border (see `.st-key-rfpis_topbar` in _GLOBAL_CSS). A separate
