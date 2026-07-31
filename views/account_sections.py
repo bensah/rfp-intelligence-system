@@ -405,7 +405,7 @@ def render_manage_tenants(user: dict, sb) -> None:
         c1, c2, c3 = st.columns([3, 1.2, 1])
         t_name = c1.text_input(
             "New tenant name",
-            placeholder="e.g. the organisation Zimbabwe, the organisation Programme Team, Example Tenant")
+            placeholder="e.g. the organisation Cameroon, the organisation Programme Team...")
         t_kind = c2.selectbox(
             "Type", ["Organization", "Individual"], key="add_tenant_kind",
             help="Organization = a normal org tenant. Individual = a personal account "
@@ -438,10 +438,11 @@ def render_manage_tenants(user: dict, sb) -> None:
                 st.error(f"Create failed: {exc}")
 
     # ── Management table ─────────────────────────────────────────────────
-    # Try selecting `kind` (migration 078); fall back to the pre-078 column set so the
-    # table still loads before the migration is applied.
+    # Try selecting `is_developer` (migration 079) + `kind` (078); fall back column-set by
+    # column-set so the table still loads before either migration is applied.
     tenants, _last_exc = None, None
-    for _sel in ("id,name,slug,status,kind,created_at,org_profile",
+    for _sel in ("id,name,slug,status,kind,is_developer,created_at,org_profile",
+                 "id,name,slug,status,kind,created_at,org_profile",
                  "id,name,slug,status,created_at,org_profile"):
         try:
             tenants = (svc.table("tenants").select(_sel)
@@ -1138,6 +1139,13 @@ def render_manage_users(user: dict, sb) -> None:
                      _target_email=target_email):
         role_editable = _can_manage and not _is_self
         profile_editable = _can_manage or _is_self
+        # Per-surface access OVERRIDES are editable whenever the profile is (incl. self):
+        # the self-lockout guard only protects role / active / reset / delete (so a user
+        # can't demote or deactivate themselves), NOT the surface overrides — which is what
+        # the self-edit banner already promises. Overrides can't grant super/developer-task
+        # powers (those gates are role+tenant, not override-driven), so self-editing them is
+        # safe and lets a super_user tune access from the UI, persisted to users.access_overrides.
+        overrides_editable = profile_editable
         assignable = permissions.assignable_roles(user)
         current_role = _tgt.get("role") or "collaborator"
         role_options = list(dict.fromkeys(assignable + [current_role]))
@@ -1200,7 +1208,7 @@ def render_manage_users(user: dict, sb) -> None:
                     "ov", permissions.OVERRIDE_OPTIONS,
                     index=permissions.OVERRIDE_OPTIONS.index(current_choice),
                     key=f"mu_ov_{surface}", label_visibility="collapsed",
-                    disabled=not role_editable)
+                    disabled=not overrides_editable)
                 if pick != "Use role default":
                     new_overrides[surface] = pick
 
@@ -1242,6 +1250,9 @@ def render_manage_users(user: dict, sb) -> None:
             if role_editable:
                 payload["role"] = e_role
                 payload["is_active"] = bool(e_active)
+            # Persist overrides whenever they were editable — including a self-edit, where
+            # role/active stay locked but the surface overrides are the user's to tune.
+            if overrides_editable:
                 payload["access_overrides"] = new_overrides
             try:
                 sb.table("users").update(payload) \
