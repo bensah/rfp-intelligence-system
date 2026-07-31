@@ -1200,16 +1200,19 @@ def render_manage_users(user: dict, sb) -> None:
                     surface, "Use role default")
                 if current_choice not in permissions.OVERRIDE_OPTIONS:
                     current_choice = "Use role default"
+                # Cap the choices by the ACTOR's own capability on this surface — an admin
+                # can't grant a user more than the admin holds (an existing higher grant is
+                # preserved for display so it can be kept or lowered, never raised).
+                _opts = permissions.assignable_override_options(user, surface, current_choice)
                 oc1, oc2 = st.columns([3, 2])
                 oc1.markdown(
                     f"`{surface}` · default: "
                     f"_{permissions.capability_label(default_cap)}_")
                 pick = oc2.selectbox(
-                    "ov", permissions.OVERRIDE_OPTIONS,
-                    index=permissions.OVERRIDE_OPTIONS.index(current_choice),
+                    "ov", _opts, index=_opts.index(current_choice),
                     key=f"mu_ov_{surface}", label_visibility="collapsed",
                     disabled=not overrides_editable)
-                if pick != "Use role default":
+                if pick != permissions.USE_DEFAULT:
                     new_overrides[surface] = pick
 
             bc1, bc2 = st.columns([1, 1])
@@ -1253,6 +1256,15 @@ def render_manage_users(user: dict, sb) -> None:
             # Persist overrides whenever they were editable — including a self-edit, where
             # role/active stay locked but the surface overrides are the user's to tune.
             if overrides_editable:
+                # Server-side ceiling (defense in depth vs the filtered dropdown): never let
+                # the actor grant a capability beyond their own on a surface.
+                _bad = [s for s, cap in new_overrides.items()
+                        if not permissions.can_assign_override(
+                            user, s, cap, current_overrides.get(s))]
+                if _bad:
+                    st.error("You can't grant access beyond your own on: "
+                             + ", ".join(f"`{s}`" for s in _bad))
+                    return
                 payload["access_overrides"] = new_overrides
             try:
                 sb.table("users").update(payload) \
