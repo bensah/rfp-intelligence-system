@@ -265,6 +265,52 @@ OVERRIDE_OPTIONS = [
     "hidden",
 ]
 
+USE_DEFAULT = "Use role default"
+
+# Privilege ORDERING of capabilities, low → high. Used to enforce that an actor can only
+# grant a lower user a capability they THEMSELVES hold on that surface (no escalating a
+# user beyond your own access). "self" (own-row only) and "view" sit at the read tier.
+_CAP_RANK: dict[str, int] = {
+    "hidden": 0, "self": 1, "view": 1, "view+add": 2,
+    "trigger": 2, "edit": 3, "all": 4,
+}
+
+
+def _cap_rank(cap: str | None) -> int:
+    return _CAP_RANK.get(cap or "hidden", 0)
+
+
+def assignable_override_options(actor: dict[str, Any] | None, surface: str,
+                                current: str | None = None) -> list[str]:
+    """Override capabilities `actor` may assign on `surface`, CAPPED by the actor's OWN
+    effective capability there — an admin cannot grant a user more access than the admin
+    holds. Always offers "Use role default" (an escape hatch back to the target's role
+    entitlement) and "hidden" (you can always restrict). `current`, when it already exceeds
+    the ceiling (e.g. a super_user/script granted it), is preserved as a selectable option
+    so the actor can keep or lower — but never applies it to a different surface."""
+    ceiling = _cap_rank(access(actor, surface))
+    opts = [USE_DEFAULT]
+    for cap in OVERRIDE_OPTIONS:
+        if cap == USE_DEFAULT:
+            continue
+        if _cap_rank(cap) <= ceiling:
+            opts.append(cap)
+    if current and current not in opts:
+        opts.append(current)            # preserve an existing higher grant for display
+    return opts
+
+
+def can_assign_override(actor: dict[str, Any] | None, surface: str, cap: str,
+                        current: str | None = None) -> bool:
+    """Server-side guard mirroring assignable_override_options: True iff `actor` may set
+    `surface` to `cap`. Keeping an already-present higher `current` is allowed; raising a
+    surface above the actor's ceiling is not."""
+    if cap in (USE_DEFAULT, "hidden"):
+        return True
+    if cap == current:
+        return True                     # unchanged existing grant — preserve
+    return _cap_rank(cap) <= _cap_rank(access(actor, surface))
+
 
 def can_view(user: dict[str, Any] | None, surface: str) -> bool:
     """True when the user can see `surface` at all (anything except
