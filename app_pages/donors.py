@@ -39,6 +39,10 @@ user = st.session_state["app_user"]
 # including client-tenant admins, views read-only and proposes changes via the
 # suggestion queue (Phase B). Single-tenant deployments collapse this to super_user.
 can_edit = permissions.is_developer_super(user)
+# A non-developer (client-tenant member, or single-tenant non-super admin) can PROPOSE
+# changes for a developer Super User to review & apply, instead of editing directly.
+from core import suggestions as _suggestions
+can_suggest = _suggestions.can_suggest(user)
 sb = get_client()
 
 st.title("Donor Intelligence Mapping")
@@ -1005,7 +1009,7 @@ def _render_contacts(row: dict) -> None:
 # Edit / delete / share dialogs
 # ---------------------------------------------------------------------------
 @st.dialog("Edit donor", width="large")
-def _edit_dialog(row: dict) -> None:
+def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
     import html as _html
     _inject_dialog_css()
     # Sanitize pandas NaN → None up front so blank columns render as empty fields
@@ -1013,11 +1017,14 @@ def _edit_dialog(row: dict) -> None:
     row = {k: (None if _na(v) else v) for k, v in row.items()}
     _ename = _disp(row.get("donor")) or "New donor"
     _eshort = _disp(row.get("donor_short"))
+    _sub = ("Suggesting a change · your edits are submitted for a developer Super User "
+            "to review &amp; apply — nothing is saved directly" if suggest_mode
+            else "Editing donor intelligence · app owners only — keep entries "
+                 "funder-centric &amp; reusable across tenants")
     st.markdown(
         f"<div class='di-stick'><div class='di-stick-title'>{_html.escape(_ename)}"
         + (f" ({_html.escape(_eshort)})" if _eshort else "")
-        + "</div><div class='di-stick-sub'>Editing donor intelligence · "
-        + "app owners only — keep entries funder-centric & reusable across tenants"
+        + "</div><div class='di-stick-sub'>" + _sub
         + "</div></div>", unsafe_allow_html=True)
     edited: dict = {}
     ck = row["canonical_key"]
@@ -1500,7 +1507,14 @@ def _edit_dialog(row: dict) -> None:
             },
         )
 
-    if st.button("💾 Save changes", type="primary", width='stretch'):
+    # In suggest mode a non-editor proposes the change; a rationale helps the reviewer.
+    _rationale = None
+    if suggest_mode:
+        _rationale = st.text_area(
+            "Why this change? (optional — helps the reviewer)",
+            key=f"suggest_rat_{ck}", height=80)
+    _save_label = "💡 Submit suggestion" if suggest_mode else "💾 Save changes"
+    if st.button(_save_label, type="primary", width='stretch'):
         payload = {k: (v.strip() if isinstance(v, str) else v) or None
                    for k, v in edited.items()}
         key = row["canonical_key"]
@@ -1516,6 +1530,29 @@ def _edit_dialog(row: dict) -> None:
         _dropped = sorted(_label(k) for k, v in payload.items()
                           if k not in _cols and v not in (None, ""))
         payload = {k: v for k, v in payload.items() if k in _cols}
+
+        # ── SUGGEST MODE: file a proposal instead of writing the shared row ──
+        if suggest_mode:
+            from core import suggestions as _sug
+            _diff, _base = _sug.diff_of(payload, row,
+                                        allowed=_cols - {"canonical_key"})
+            if not _diff:
+                st.warning("No changes to suggest — edit a field first.")
+                return
+            try:
+                _sug.create_suggestion(
+                    resource_type="donor_intel", target_id=key,
+                    proposed_diff=_diff, base_snapshot=_base,
+                    rationale=_rationale, target_label=row.get("donor"),
+                    user=user)
+            except Exception as e:  # noqa: BLE001
+                st.error(f"❌ Could not submit suggestion.\n\n`{e}`")
+                return
+            st.session_state["_donor_flash"] = (
+                f"💡 Suggestion submitted for {row.get('donor')} — a developer "
+                f"Super User will review {len(_diff)} proposed change(s).")
+            st.rerun()
+            return
 
         # Provenance: a Save means the reviewer reviewed the visible requirements, so mark
         # every non-blank requirement human-verified (the source of truth — auto-enrichment
@@ -1603,30 +1640,55 @@ def _delete_dialog(row: dict) -> None:
 
 
 @st.dialog("Add a new donor")
-def _add_donor_dialog() -> None:
+def _add_donor_dialog(*, suggest_mode: bool = False) -> None:
     """Create a donor record from a name (+ a few basics), then the user fills
     in the full intelligence via ✏️ Edit. canonical_key is slugged from the name
-    and de-duplicated so it never collides with an existing donor."""
-    st.caption("Create the record now; open it and click **✏️ Edit** to add the "
-               "full profile (scope, awards, contacts, …).")
+    and de-duplicated so it never collides with an existing donor. In suggest_mode a
+    non-editor proposes the new donor for a developer Super User to review & create."""
+    if suggest_mode:
+        st.caption("Propose a new donor. A developer Super User reviews and creates it; "
+                   "then the full profile can be filled in.")
+    else:
+        st.caption("Create the record now; open it and click **✏️ Edit** to add the "
+                   "full profile (scope, awards, contacts, …).")
     name = st.text_input("Donor name *", key="add_donor_name")
     c1, c2 = st.columns(2)
     short = c1.text_input("Short code / acronym", key="add_donor_short")
     cat = c2.selectbox("Category", _CATEGORIES, key="add_donor_cat")
     website = st.text_input("Website", key="add_donor_web",
                             placeholder="https://…")
+    _rationale = st.text_area("Why add this donor? (optional)",
+                              key="add_donor_rat", height=70) if suggest_mode else None
     b1, b2 = st.columns(2)
-    if b1.button("➕ Create donor", type="primary", width="stretch",
-                 disabled=not name.strip()):
+    _label = "💡 Submit suggestion" if suggest_mode else "➕ Create donor"
+    if b1.button(_label, type="primary", width="stretch", disabled=not name.strip()):
+        _diff = {"donor": name.strip(),
+                 "donor_short": (short.strip() or None),
+                 "donor_category": _normalize_category(cat),
+                 "donor_website": (website.strip() or None)}
+
+        if suggest_mode:
+            from core import suggestions as _sug
+            try:
+                _sug.create_suggestion(
+                    resource_type="donor_intel", target_id=None,
+                    proposed_diff=_diff, base_snapshot={},
+                    rationale=_rationale, target_label=name.strip(), user=user)
+            except Exception as e:  # noqa: BLE001
+                st.error(f"❌ Could not submit suggestion.\n\n`{e}`")
+                return
+            st.session_state["_donor_flash"] = (
+                f"💡 Suggestion submitted — a developer Super User will review "
+                f"adding {name.strip()}.")
+            st.rerun()
+            return
+
         _slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_") or "donor"
         _existing = set(df["canonical_key"]) if "canonical_key" in df.columns else set()
         _key, _i = _slug, 2
         while _key in _existing:
             _key, _i = f"{_slug}_{_i}", _i + 1
-        payload = {"canonical_key": _key, "donor": name.strip(),
-                   "donor_short": (short.strip() or None),
-                   "donor_category": _normalize_category(cat),
-                   "donor_website": (website.strip() or None)}
+        payload = {"canonical_key": _key, **_diff}
         try:
             resp = sb.table("donor_intel").upsert(
                 payload, on_conflict="canonical_key").execute()
@@ -2113,12 +2175,20 @@ _hdr.subheader("All donors")
 _EDIT_LOCK_HELP = ("Donor intelligence is a shared, cross-tenant developer resource — "
                    "direct edits are limited to a developer-tenant Super User. Use "
                    "“Suggest a change” to propose an update.")
-if _addcol.button("➕ Add donor", width="stretch", disabled=not can_edit,
-                  key="donor_add_btn",
-                  help=None if can_edit else _EDIT_LOCK_HELP):
-    for _k in ("add_donor_name", "add_donor_short", "add_donor_web"):
-        st.session_state.pop(_k, None)   # fresh form each open
-    _add_donor_dialog()
+if can_edit:
+    if _addcol.button("➕ Add donor", width="stretch", key="donor_add_btn"):
+        for _k in ("add_donor_name", "add_donor_short", "add_donor_web", "add_donor_rat"):
+            st.session_state.pop(_k, None)   # fresh form each open
+        _add_donor_dialog()
+elif can_suggest:
+    if _addcol.button("💡 Suggest donor", width="stretch", key="donor_suggest_btn",
+                      help="Propose a new donor for a developer Super User to review."):
+        for _k in ("add_donor_name", "add_donor_short", "add_donor_web", "add_donor_rat"):
+            st.session_state.pop(_k, None)
+        _add_donor_dialog(suggest_mode=True)
+else:
+    _addcol.button("➕ Add donor", width="stretch", disabled=True,
+                   key="donor_add_btn", help=_EDIT_LOCK_HELP)
 with st.expander("🔎 Filter & search", expanded=False):
     fc1, fc2 = st.columns([3, 2])
     q = fc1.text_input("Search name / acronym / alias", key="donor_q")
@@ -2275,11 +2345,21 @@ with _actions_slot.container():
         _ab = st.columns(4)
         if _ab[0].button("👁 View", width='stretch', key="act_view"):
             _view_dialog(_row)
-        if _ab[1].button("✏️ Edit", width='stretch', disabled=not can_edit, key="act_edit"):
-            _edit_dialog(_row)
+        # Editors edit directly; non-editors get "Suggest a change" in the same slot.
+        if can_edit:
+            if _ab[1].button("✏️ Edit", width='stretch', key="act_edit"):
+                _edit_dialog(_row)
+        elif can_suggest:
+            if _ab[1].button("💡 Suggest", width='stretch', key="act_suggest",
+                             help="Propose changes for a developer Super User to review."):
+                _edit_dialog(_row, suggest_mode=True)
+        else:
+            _ab[1].button("✏️ Edit", width='stretch', disabled=True, key="act_edit",
+                          help=_EDIT_LOCK_HELP)
         if _ab[2].button("🔗 Share", width='stretch', key="act_share"):
             _share_dialog(_row)
-        if _ab[3].button("🗑 Delete", width='stretch', disabled=not can_edit, key="act_del"):
+        if _ab[3].button("🗑 Delete", width='stretch', disabled=not can_edit, key="act_del",
+                         help=None if can_edit else _EDIT_LOCK_HELP):
             _delete_dialog(_row)
     else:
         _ab = st.columns([1, 1, 1.4])
