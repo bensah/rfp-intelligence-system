@@ -22,8 +22,8 @@ declare
 begin
   for r in select id, name from tenants
             where slug is null or btrim(slug) = '' loop
-    base := btrim(both '-' from regexp_replace(lower(coalesce(r.name, 'tenant')),
-                                               '[^a-z0-9]+', '-', 'g'));
+    base := btrim(regexp_replace(lower(coalesce(r.name, 'tenant')),
+                                 '[^a-z0-9]+', '-', 'g'), '-');
     if base is null or base = '' then
       base := 'tenant';
     end if;
