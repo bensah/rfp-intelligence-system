@@ -236,22 +236,21 @@ if tab_suggestions is not None:
         from views.suggestions_inbox import render_suggestions_inbox
         render_suggestions_inbox(user, sb)
 
-# Accounts — Users (with an inline Access card that appears only once a user is picked
-# in the table) plus super-only Tenants / Blacklisted sub-tabs. User-admin logic lives
-# in views/account_sections.py so the Profile page and these tabs share one impl.
+# Accounts — Users, plus Tenants / Blacklisted. Tenants/Blacklisted are shown to EVERYONE
+# now, but VIEW-ONLY for non-super users (scoped to the tenants they belong to); only the
+# super_user gets the management controls (add / suspend / blacklist / approve / developer).
+# User-admin logic lives in views/account_sections.py so pages share one impl.
 with tab_accounts:
-    _acct_labels = ["Users"] + (["Tenants", "Blacklisted"] if _is_super else [])
-    _acct_tabs = st.tabs(_acct_labels)
+    _acct_tabs = st.tabs(["Users", "Tenants", "Blacklisted"])
     with _acct_tabs[0]:
         _picked_user = render_manage_users(user, sb)
         if _picked_user:
             st.divider()
             render_user_access(user, target=_picked_user)
-    if _is_super:
-        with _acct_tabs[1]:
-            render_manage_tenants(user, sb)
-        with _acct_tabs[2]:
-            render_blacklisted(user, sb)
+    with _acct_tabs[1]:
+        render_manage_tenants(user, sb, can_manage=_is_super)
+    with _acct_tabs[2]:
+        render_blacklisted(user, sb, can_manage=_is_super)
 if tab_analytics is not None:
     with tab_analytics:
         from views.super_analytics import render_super_analytics
