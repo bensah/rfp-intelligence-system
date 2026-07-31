@@ -195,10 +195,10 @@ _DEV_TIDS_TTL = 60.0
 
 
 def developer_tenant_ids() -> list[str]:
-    """Tenant ids flagged `is_developer=true` — the DEVELOPER / SYSTEM tenants (e.g.
-    RFPIS Inc, Example Tenant) whose members may perform cross-tenant DEVELOPER
-    tasks (donor mapping, Sources catalog + Blocked tokens, Run Extraction, Records
-    Verify/Reset, Learning data). Best-effort, 60s-cached on the RLS-bypassing service
+    """Tenant ids flagged `is_developer=true` — the DEVELOPER / SYSTEM tenants whose
+    members may perform cross-tenant DEVELOPER tasks (donor mapping, Sources catalog +
+    Blocked tokens, Run Extraction, Records Verify/Reset, Learning data). Best-effort,
+    60s-cached on the RLS-bypassing service
     client (migration 079).
 
     Graceful degradation: if the `is_developer` column doesn't exist yet (pre-079), we

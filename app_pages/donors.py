@@ -35,7 +35,7 @@ _COUNTRY = (settings.get_org().get("org_country") or "").strip() or "the focus c
 
 user = st.session_state["app_user"]
 # Donor intelligence is a SHARED, cross-tenant DEVELOPER resource — direct edit is
-# restricted to a developer-tenant super_user (RFPIS Inc / the second tenant). Everyone else,
+# restricted to a developer-tenant super_user. Everyone else,
 # including client-tenant admins, views read-only and proposes changes via the
 # suggestion queue (Phase B). Single-tenant deployments collapse this to super_user.
 can_edit = permissions.is_developer_super(user)
