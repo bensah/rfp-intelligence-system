@@ -79,7 +79,7 @@ def _pages(include_admin: bool) -> list:
         # ── Top-right user-menu pages (sidebar links hidden via CSS) ──
         st.Page("app_pages/organization.py", title="Entity", icon="🏢",
                 url_path="organization"),
-        st.Page("app_pages/submit_rfp.py", title="Submit RFP", icon="📝",
+        st.Page("app_pages/submit_rfp.py", title="Submit", icon="📝",
                 url_path="submit-new-rfp"),
         st.Page("app_pages/profile.py", title="Profile", icon="👤", url_path="profile"),
         st.Page("app_pages/help.py", title="Help", icon="❓", url_path="help"),
