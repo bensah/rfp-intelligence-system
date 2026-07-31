@@ -191,7 +191,7 @@ def _render_maintenance(sb, user) -> None:
 
 # Role + tenant-category flags. Developer flags gate the cross-tenant DEVELOPER tasks
 # (donor mapping, Sources catalog + Blocked tokens, Run Extraction, Records Verify/Reset,
-# Learning data) to members of a developer/system tenant (RFPIS Inc / Taadom). A CLIENT
+# Learning data) to members of a developer/system tenant. A CLIENT
 # tenant's admins keep only their own tenant-scoped surfaces. See core.permissions.
 _is_super = permissions.is_super_user(user)
 _dev_super = permissions.is_developer_super(user)     # super_user in a developer tenant
@@ -203,8 +203,15 @@ _dev_member = permissions.is_developer_member(user)   # any member of a develope
 # view (its BODY is gated to developer-tenant members below, like Records → Verify/Reset).
 # A developer Super User also gets a "Suggestions" review inbox (with a pending-count
 # badge); the super_user also gets a cross-tenant "Analytics" tab.
-_tab_labels = ["Setup", "Accounts", "Records", "Sources", "Manual Scan",
-               "Learning data"]
+# Sources + Learning data are DEVELOPER-only surfaces — hidden entirely (tab AND content)
+# from client tenants; only members of a developer tenant see them. The per-tab render
+# blocks below are guarded on `tab_sources`/`tab_learning` being non-None accordingly.
+_tab_labels = ["Setup", "Accounts", "Records"]
+if _dev_member:
+    _tab_labels.append("Sources")
+_tab_labels.append("Manual Scan")
+if _dev_member:
+    _tab_labels.append("Learning data")
 _sug_label = None
 if _dev_super:
     from core import suggestions as _sugmod
@@ -218,9 +225,9 @@ _tab_by = {name: _tabs[i] for i, name in enumerate(_tab_labels)}
 tab_settings = _tab_by["Setup"]
 tab_accounts = _tab_by["Accounts"]
 tab_data = _tab_by["Records"]
-tab_sources = _tab_by["Sources"]
+tab_sources = _tab_by.get("Sources")            # None for a client tenant
 tab_scan = _tab_by["Manual Scan"]
-tab_learning = _tab_by["Learning data"]
+tab_learning = _tab_by.get("Learning data")      # None for a client tenant
 tab_suggestions = _tab_by.get(_sug_label) if _sug_label else None
 tab_analytics = _tab_by.get("Analytics")
 
@@ -300,7 +307,7 @@ with tab_settings:
     render_org_suspend(user, sb)
 
 with tab_data:
-    _dtab, _vtab, _rtab = st.tabs(["Data", "Verify", "Reset"])
+    _dtab, _vtab, _rtab = st.tabs(["Data", "Verify", "Backup & Reset"])
     with _vtab:
         # Human verification acts on the SHARED scanner (auto-rejects, source registry,
         # recovering false-rejects into the global store) — a cross-tenant DEVELOPER task,
@@ -311,7 +318,7 @@ with tab_data:
                 "🔒 **Verification is a developer task.** It tunes the shared scanner "
                 "(confirming auto-rejects, the source registry, recovering missed calls), "
                 "which affects every tenant — so it's limited to the Super User of a "
-                "developer tenant (RFPIS Inc / Taadom).")
+                "developer tenant.")
         else:
             from views.verification import render_verification
             render_verification(user, sb)
@@ -930,494 +937,499 @@ with tab_data:
         else:
             _render_maintenance(sb, user)
 
-with tab_sources:
-    _cat_tab, _blk_tab, _xls_tab = st.tabs(["Catalog", "Blocked", "Excel Sync"])
+if tab_sources is not None:
+    with tab_sources:
+        _cat_tab, _blk_tab, _xls_tab = st.tabs(["Catalog", "Blocked", "Excel Sync"])
 
-with _cat_tab:
-    st.subheader("Funding sources catalog")
-    st.caption(
-        "Curated per-source funding URLs. The Friday scan + manual scan iterate "
-        "over every **active** row here, in addition to the keyword-wide sources "
-        "in `config/sources.yaml`. **New sources are added in Verify → Source "
-        "registry**, then pushed here (single point of entry). Select rows to edit "
-        "or delete. (Download the grid as CSV via its built-in ⤓ icon.)"
-    )
-    # The catalog is a SHARED, cross-tenant developer resource (every tenant's scan
-    # crawls it), so direct edits are limited to a developer-tenant Super User. A
-    # non-developer PROPOSES a change for review instead (Phase B suggestion queue).
-    from core import suggestions as _suggestions
-    _can_edit_sources = _dev_super
-    _can_suggest_sources = _suggestions.can_suggest(user)
-    if not _can_edit_sources:
-        st.info(
-            "🔒 Read-only. The sources catalog is shared across all tenants, so edits "
-            "are limited to a developer-tenant Super User. Propose additions/changes via "
-            "**💡 Suggest** below or the Verify → Source registry.")
-
-    _METHODS = ["html", "html_js", "rss", "rest_json", "manual"]  # scan dispatch
-    # Unified "Method" dropdown — SAME labels as the Verify > Source registry, each
-    # mapped to a scan dispatch value (donor_sources.scrape_method).
-    _METHOD_LABELS = {"API": "rest_json", "RSS / feed": "rss", "Page crawl": "html",
-                      "JS page crawl": "html_js", "Manual": "manual"}
-    _METHOD_LABEL_OPTS = list(_METHOD_LABELS)
-    _METHOD_TO_LABEL = {v: k for k, v in _METHOD_LABELS.items()}
-    # Shared taxonomy vocab (single source of truth — defined in the registry view).
-    from views.verification import _SRC_OPTS, _ACCESS_OPTS, _TYPE_OPTS
-
-    @st.cache_data(ttl=15)
-    def _donors() -> pd.DataFrame:
-        try:
-            res = safe_execute(get_client().table("donor_sources").select("*")
-                               .order("donor_name"))
-        except Exception as exc:
-            st.warning(f"Couldn't load donor sources right now (network issue): {exc}")
-            return pd.DataFrame()
-        return clean_df(pd.DataFrame(res.data or []))
-
-    def _import_from_config() -> None:
-        """Copy config/sources.yaml entries into donor_sources, skipping any
-        already present (matched by donor_name OR rfp_listing_url)."""
-        from pathlib import Path as _P
-        import yaml as _yaml
-        _yaml_path = (_P(__file__).resolve().parent.parent
-                      / "config" / "sources.yaml")
-        with _yaml_path.open(encoding="utf-8") as _f:
-            _cfg = _yaml.safe_load(_f) or {}
-        existing = (sb.table("donor_sources")
-                    .select("donor_name,rfp_listing_url").execute().data or [])
-        existing_names = {(r.get("donor_name") or "").strip().lower() for r in existing}
-        existing_urls = {(r.get("rfp_listing_url") or "").strip().lower() for r in existing}
-        to_insert, skipped = [], []
-        for s in (_cfg.get("sources", []) or []):
-            name = (s.get("name") or "").strip()
-            url = (s.get("url") or "").strip()
-            method = (s.get("method") or "html").strip()
-            if not name or not url:
-                continue
-            if name.lower() in existing_names or url.lower() in existing_urls:
-                skipped.append(name)
-                continue
-            code = name.split("-")[0].split("(")[0].strip().split()[0][:12]
-            to_insert.append({
-                "donor_name": name, "donor_code": code, "rfp_listing_url": url,
-                "scrape_method": method if method in _METHODS else "html",
-                "notes": s.get("note") or
-                    f"Imported from sources.yaml on {date.today().isoformat()}",
-                "is_active": True, "created_by": user.get("email"),
-            })
-        if to_insert:
-            sb.table("donor_sources").insert(to_insert).execute()
-        st.cache_data.clear()
-        st.toast(f"Imported {len(to_insert)} new source(s); skipped "
-                 f"{len(skipped)} already present.", icon="📥")
-
-    # ----- Add / Edit / Delete dialogs --------------------------------------
-    @st.dialog("Add funding source", width="large")
-    def _add_source_dialog():
-        with st.form("add_donor_source_form", clear_on_submit=False):
-            c1, c2 = st.columns(2)
-            a_name = c1.text_input("Donor name *")
-            a_code = c2.text_input("Donor code (e.g. BMGF)")
-            c3, c4 = st.columns([3, 1])
-            a_url = c3.text_input("RFP listing URL *")
-            a_method = c4.selectbox("Method", _METHOD_LABEL_OPTS,
-                                    index=_METHOD_LABEL_OPTS.index("Page crawl"))
-            c5, c6 = st.columns(2)
-            a_sc = c5.selectbox("Source class", _SRC_OPTS,
-                                index=_SRC_OPTS.index("Primary source"))
-            a_access = c6.selectbox("Access", _ACCESS_OPTS,
-                                    index=_ACCESS_OPTS.index("Free"))
-            a_base = st.text_input("Base URL (optional)")
-            a_notes = st.text_area("Notes", height=80)
-            a_active = st.checkbox("Active", value=True)
-            bc1, bc2 = st.columns(2)
-            ok = bc1.form_submit_button("➕ Add", type="primary",
-                                        width='stretch')
-            cancel = bc2.form_submit_button("Cancel", width='stretch')
-        if cancel:
-            st.rerun()
-        if ok:
-            if not a_name.strip() or not a_url.strip():
-                st.error("Donor name and listing URL are required.")
-                return
-            try:
-                sb.table("donor_sources").insert({
-                    "donor_name": a_name.strip(),
-                    "donor_code": a_code.strip() or None,
-                    "base_url": a_base.strip() or None,
-                    "rfp_listing_url": a_url.strip(),
-                    "scrape_method": _METHOD_LABELS[a_method],
-                    "source_class": a_sc,
-                    "access_model": a_access,
-                    "notes": a_notes.strip() or None,
-                    "is_active": bool(a_active),
-                    "created_by": user.get("email"),
-                }).execute()
-                st.cache_data.clear()
-                st.toast(f"Added {a_name.strip()}", icon="✅")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Could not add: {exc}")
-
-    @st.dialog("Edit funding source", width="large")
-    def _edit_source_dialog(_row):
-        with st.form("edit_donor_source_form"):
-            c1, c2 = st.columns(2)
-            e_name = c1.text_input("Donor name *", value=_row.get("donor_name") or "")
-            e_code = c2.text_input("Donor code", value=_row.get("donor_code") or "")
-            c3, c4 = st.columns([3, 1])
-            e_url = c3.text_input("RFP listing URL *",
-                                  value=_row.get("rfp_listing_url") or "")
-            _lbl = _METHOD_TO_LABEL.get(_row.get("scrape_method"), "Page crawl")
-            e_method = c4.selectbox("Method", _METHOD_LABEL_OPTS,
-                                    index=_METHOD_LABEL_OPTS.index(_lbl))
-            c5, c6 = st.columns(2)
-            _scv = (_row.get("source_class") if _row.get("source_class") in _SRC_OPTS
-                    else "Primary source")
-            e_sc = c5.selectbox("Source class", _SRC_OPTS,
-                                index=_SRC_OPTS.index(_scv))
-            _acv = (_row.get("access_model") if _row.get("access_model") in _ACCESS_OPTS
-                    else "Free")
-            e_access = c6.selectbox("Access", _ACCESS_OPTS,
-                                    index=_ACCESS_OPTS.index(_acv))
-            e_base = st.text_input("Base URL", value=_row.get("base_url") or "")
-            e_notes = st.text_area("Notes", value=_row.get("notes") or "", height=80)
-            e_active = st.checkbox("Active", value=bool(_row.get("is_active")))
-            bc1, bc2 = st.columns(2)
-            ok = bc1.form_submit_button("💾 Save", type="primary",
-                                        width='stretch')
-            cancel = bc2.form_submit_button("Cancel", width='stretch')
-        if cancel:
-            st.rerun()
-        if ok:
-            if not e_name.strip() or not e_url.strip():
-                st.error("Donor name and listing URL are required.")
-                return
-            try:
-                sb.table("donor_sources").update({
-                    "donor_name": e_name.strip(),
-                    "donor_code": e_code.strip() or None,
-                    "base_url": e_base.strip() or None,
-                    "rfp_listing_url": e_url.strip(),
-                    "scrape_method": _METHOD_LABELS[e_method],
-                    "source_class": e_sc,
-                    "access_model": e_access,
-                    "notes": e_notes.strip() or None,
-                    "is_active": bool(e_active),
-                }).eq("id", _row.get("id")).execute()
-                st.cache_data.clear()
-                st.toast(f"Updated {e_name.strip()}", icon="✅")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Could not save: {exc}")
-
-    @st.dialog("Delete funding sources", width="medium")
-    def _delete_sources_dialog(_ids, _names):
-        st.error(f"Permanently delete **{len(_ids)}** funding source(s)? "
-                 f"This cannot be undone.")
-        st.markdown("\n".join(f"- {n}" for n in _names[:12])
-                    + ("\n- …" if len(_names) > 12 else ""))
-        bc1, bc2 = st.columns(2)
-        if bc1.button("🗑 Delete", type="primary", width='stretch',
-                      key="ds_del_confirm"):
-            try:
-                sb.table("donor_sources").delete().in_("id", _ids).execute()
-                st.cache_data.clear()
-                st.toast(f"Deleted {len(_ids)} source(s)", icon="🗑️")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Delete failed: {exc}")
-        if bc2.button("Cancel", width='stretch', key="ds_del_cancel"):
-            st.rerun()
-
-    # ----- Suggest a change (non-developers) --------------------------------
-    @st.dialog("Suggest a source change", width="large")
-    def _suggest_source_change_dialog(_row=None):
-        """Non-developer proposes an add (_row=None) or edit to a shared source. Reuses the
-        same field set as the add/edit dialogs, but files a suggestion instead of writing."""
-        _is_add = _row is None
-        _row = _row or {}
-        st.caption("Your proposal goes to a developer Super User to review & apply — "
-                   "the shared catalog isn't changed directly.")
-        with st.form("suggest_source_form"):
-            c1, c2 = st.columns(2)
-            s_name = c1.text_input("Donor name *", value=_row.get("donor_name") or "")
-            s_code = c2.text_input("Donor code", value=_row.get("donor_code") or "")
-            c3, c4 = st.columns([3, 1])
-            s_url = c3.text_input("RFP listing URL *", value=_row.get("rfp_listing_url") or "")
-            _lbl = _METHOD_TO_LABEL.get(_row.get("scrape_method"), "Page crawl")
-            s_method = c4.selectbox("Method", _METHOD_LABEL_OPTS,
-                                    index=_METHOD_LABEL_OPTS.index(_lbl))
-            c5, c6 = st.columns(2)
-            _scv = (_row.get("source_class") if _row.get("source_class") in _SRC_OPTS
-                    else "Primary source")
-            s_sc = c5.selectbox("Source class", _SRC_OPTS, index=_SRC_OPTS.index(_scv))
-            _acv = (_row.get("access_model") if _row.get("access_model") in _ACCESS_OPTS
-                    else "Free")
-            s_access = c6.selectbox("Access", _ACCESS_OPTS, index=_ACCESS_OPTS.index(_acv))
-            s_base = st.text_input("Base URL", value=_row.get("base_url") or "")
-            s_notes = st.text_area("Notes", value=_row.get("notes") or "", height=80)
-            s_active = st.checkbox("Active", value=bool(_row.get("is_active", True)))
-            s_rat = st.text_area("Why this change? (optional)", height=70)
-            bc1, bc2 = st.columns(2)
-            ok = bc1.form_submit_button("💡 Submit suggestion", type="primary",
-                                        width='stretch')
-            cancel = bc2.form_submit_button("Cancel", width='stretch')
-        if cancel:
-            st.rerun()
-        if ok:
-            if not s_name.strip() or not s_url.strip():
-                st.error("Donor name and listing URL are required.")
-                return
-            _proposed = {
-                "donor_name": s_name.strip(),
-                "donor_code": s_code.strip() or None,
-                "base_url": s_base.strip() or None,
-                "rfp_listing_url": s_url.strip(),
-                "scrape_method": _METHOD_LABELS[s_method],
-                "source_class": s_sc,
-                "access_model": s_access,
-                "notes": s_notes.strip() or None,
-                "is_active": bool(s_active),
-            }
-            _base = {k: _row.get(k) for k in _proposed}
-            _diff, _snap = _suggestions.diff_of(_proposed, _base, allowed=_DS_EDITABLE) \
-                if not _is_add else (_proposed, {})
-            if not _diff:
-                st.warning("No changes to suggest — edit a field first.")
-                return
-            try:
-                _suggestions.create_suggestion(
-                    resource_type="donor_sources",
-                    target_id=(None if _is_add else _row.get("id")),
-                    proposed_diff=_diff, base_snapshot=_snap,
-                    rationale=(s_rat.strip() or None),
-                    target_label=s_name.strip(), user=user)
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"Could not submit suggestion: {exc}")
-                return
-            st.toast("💡 Suggestion submitted for review", icon="💡")
-            st.rerun()
-
-    _DS_EDITABLE = _suggestions._DS_EDITABLE
-
-    # ----- Top action bar (right-aligned). "Add" lives in the registry now,
-    # so the catalogue only Imports (from yaml) + Refreshes. Non-developers get a
-    # "Suggest new source" entry instead of the developer-only Import. ------------
-    if _can_edit_sources:
-        _tsp, t2, t3 = st.columns([6, 1.6, 1])
-        if t2.button("📥 Import from config", width='stretch', key="ds_import_top"):
-            try:
-                _import_from_config()
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Import failed: {exc}")
-    elif _can_suggest_sources:
-        _tsp, t2, t3 = st.columns([6, 1.8, 1])
-        if t2.button("💡 Suggest source", width='stretch', key="ds_suggest_add",
-                     help="Propose a new funding source for a developer Super User to review."):
-            _suggest_source_change_dialog(None)
-    else:
-        _tsp, t3 = st.columns([7.6, 1])
-    if t3.button("🔄 Refresh", width='stretch', key="ds_refresh_top"):
-        st.cache_data.clear()
-        st.rerun()
-
-    # ----- Selectable table -------------------------------------------------
-    ddf = _donors()
-    if ddf.empty:
-        st.info("No sources yet — add them in **Verify → Source registry**, "
-                "then push to this catalogue.")
-    else:
-        ids = ddf["id"].tolist()
-        _n_total = len(ddf)
-        _n_active = int(ddf["is_active"].sum()) if "is_active" in ddf else _n_total
-        # Friendly Method label (matches the Verify registry vocabulary).
-        ddf["method_label"] = ddf["scrape_method"].map(
-            lambda m: _METHOD_TO_LABEL.get(m, m))
-        # source_uid (migration 043) leads the table when present.
-        uid_col = ["source_uid"] if "source_uid" in ddf.columns else []
-        base_cols = uid_col + ["donor_name", "donor_code", "rfp_listing_url",
-                               "method_label"]
-        # Access + Source class (migration 037) shown when present.
-        extra = [c for c in ("source_class", "access_model") if c in ddf.columns]
-        # Solicitation / Instrument types (display as joined strings).
-        type_cols = []
-        for _c in ("solicitation_types", "instrument_types"):
-            if _c in ddf.columns:
-                ddf[_c + "_disp"] = ddf[_c].map(
-                    lambda v: "; ".join(v) if isinstance(v, (list, tuple)) else (v or ""))
-                type_cols.append(_c + "_disp")
-        disp = ddf[base_cols + extra + type_cols + ["is_active", "last_scraped_at",
-                                                    "last_scrape_status", "notes"]].copy()
-        st.markdown(f"**{_n_total}** sources · **{_n_active}** active")
-        sel = st.dataframe(
-            disp, hide_index=True, width='stretch',
-            selection_mode="multi-row", on_select="rerun", key="ds_table",
-            column_config={
-                "source_uid": st.column_config.NumberColumn("ID", width="small"),
-                "donor_name": st.column_config.TextColumn("Source Name"),
-                "donor_code": st.column_config.TextColumn("Code", width="small"),
-                "rfp_listing_url": st.column_config.LinkColumn("Host"),
-                "method_label": st.column_config.TextColumn("Method", width="small"),
-                "source_class": st.column_config.TextColumn("Source class"),
-                "access_model": st.column_config.TextColumn("Access", width="small"),
-                "solicitation_types_disp": st.column_config.TextColumn("Solicitation"),
-                "instrument_types_disp": st.column_config.TextColumn("Instrument"),
-                "is_active": st.column_config.CheckboxColumn("Active", width="small"),
-                "last_scraped_at": st.column_config.DatetimeColumn(
-                    "Last scan", format="YYYY-MM-DD HH:mm"),
-                "last_scrape_status": st.column_config.TextColumn("Last status"),
-                "notes": st.column_config.TextColumn("Notes"),
-            },
-        )
-        picked = (getattr(sel, "selection", None) or {}).get("rows") or []
-        picked = [i for i in picked if 0 <= i < len(ids)]
-        sel_ids = [ids[i] for i in picked]
-        sel_rows = [ddf.iloc[i].to_dict() for i in picked]
-        sel_names = [r.get("donor_name") or "(unnamed)" for r in sel_rows]
-
-        st.caption(f"**{len(picked)} of {_n_total}** selected." if picked else
-                   "Tick rows to edit or delete.")
-
-        a1, a2, a3, _asp = st.columns([1, 1, 1.4, 4.6])
-        if a1.button("✏️ Edit", width='stretch', key="ds_edit_btn",
-                     disabled=(not _can_edit_sources) or len(picked) != 1,
-                     help="Select exactly one row to edit." if _can_edit_sources
-                          else "Developer Super User only."):
-            _edit_source_dialog(sel_rows[0])
-        if a2.button("🗑 Delete", width='stretch', key="ds_delete_btn",
-                     disabled=(not _can_edit_sources) or not picked,
-                     help=None if _can_edit_sources else "Developer Super User only."):
-            _delete_sources_dialog(sel_ids, sel_names)
-        # Non-developers propose an edit to the selected row instead of editing it.
-        if not _can_edit_sources and _can_suggest_sources:
-            if a3.button("💡 Suggest edit", width='stretch', key="ds_suggest_edit",
-                         disabled=len(picked) != 1,
-                         help="Propose changes to the selected source for review."
-                              if len(picked) == 1 else "Select exactly one row."):
-                _suggest_source_change_dialog(sel_rows[0])
-
-with _xls_tab:
-    # ----- Excel sync ------------------------------------------------------
-    # The master workbook is a source in its own right (it seeds rfp_submissions
-    # alongside the scanned donor sources above), so its sync controls live here
-    # under Sources rather than on the Records tab.
-    st.subheader("Excel sync")
-    st.caption(
-        "Pulls the master workbook into Supabase. Path comes from "
-        "`EXCEL_SOURCE_PATH` in `.env` (or the local repo copy if unset). "
-        "Auto-sync runs on page load when the file is newer than the last sync."
-    )
-    # migrate_excel.py runs as a SUBPROCESS with no tenant JWT, so its rows aren't
-    # tenant-scoped — running it can dump the workbook into whichever tenant is browsing
-    # (that's why auto-sync is off in multi-tenant mode). Until it's made tenant-aware,
-    # manual sync stays an owner/developer operation → restrict to a developer admin.
-    _can_excel_sync = _dev_admin
-    if not _can_excel_sync:
-        st.info(
-            "🔒 Manual Excel sync is a developer operation. The importer isn't yet "
-            "tenant-aware (it runs outside your tenant context), so it's limited to a "
-            "developer tenant to avoid writing into the wrong tenant.")
-
-    resolved = excel_sync.resolve_excel_path()
-    xls_path = resolved.get("resolved_path")
-    last_mtime, last_iso = excel_sync.get_last_sync()
-
-    sc1, sc2 = st.columns([3, 1])
-    with sc1:
-        # Single line showing the active workbook path (was two lines before;
-        # EXCEL_SOURCE_PATH and the resolved path were almost always identical).
-        if xls_path:
-            try:
-                mt = xls_path.stat().st_mtime
-                st.code(f"Active workbook: {xls_path}")
-                st.caption(
-                    f"File modified: {datetime.fromtimestamp(mt, tz=timezone.utc).isoformat(timespec='seconds')}  ·  "
-                    f"Last sync: {last_iso or '(never)'}"
-                )
-                if last_mtime and last_mtime >= mt:
-                    st.success("✓ In sync with the workbook")
-                else:
-                    st.warning("⚠ Workbook is newer than last sync — click to refresh")
-            except OSError as exc:
-                st.error(f"Can't read file: {exc}")
-        else:
-            st.error(
-                "No Excel file found. Upload a workbook below, set "
-                "`EXCEL_SOURCE_PATH` in `.env`, or drop the workbook in the "
-                "repo root."
-            )
-        if resolved.get("error"):
-            st.error(resolved["error"])
-
-    if sc2.button("🔄 Sync now", type="primary",
-                  disabled=(xls_path is None) or not _can_excel_sync,
-                  width='stretch',
-                  help=None if _can_excel_sync else "Developer tenant only.") \
-            and _can_excel_sync:                       # defense in depth
-        with st.spinner("Running migrate_excel.py..."):
-            result = excel_sync.sync(updated_by=user.get("email"))
-        if result.get("ok"):
-            st.success(f"Synced from {result['path']}")
-        else:
-            st.error(f"Sync failed: {result.get('error') or 'see stderr'}")
-        with st.expander("Sync output", expanded=not result.get("ok")):
-            st.code(result.get("stdout") or "(no stdout)", language="text")
-            if result.get("stderr"):
-                st.code(result.get("stderr"), language="text")
-        st.rerun()
-
-    # ----- Upload a replacement workbook ----------------------------------
-    # Useful when the user is on a different machine where OneDrive / the
-    # original path doesn't exist, or wants to ship a one-off updated file.
-    # Saves to the currently-resolved path (overwriting), or to the repo
-    # root if no path is resolvable yet.
-    with st.expander("📤 Upload a new workbook (replaces the active file)", expanded=False):
+else:
+    _cat_tab = _blk_tab = _xls_tab = None
+if _cat_tab is not None:
+    with _cat_tab:
+        st.subheader("Funding sources catalog")
         st.caption(
-            "Pick a `.xlsx` file from your computer to replace whatever the "
-            "app is currently reading. The uploaded file is saved to "
-            "the path shown above (or to the repo root if no path is "
-            "resolvable). Developer tenant only — it replaces the shared source "
-            "workbook the importer reads."
+            "Curated per-source funding URLs. The Friday scan + manual scan iterate "
+            "over every **active** row here, in addition to the keyword-wide sources "
+            "in `config/sources.yaml`. **New sources are added in Verify → Source "
+            "registry**, then pushed here (single point of entry). Select rows to edit "
+            "or delete. (Download the grid as CSV via its built-in ⤓ icon.)"
         )
-        up = st.file_uploader(
-            "Choose a .xlsx file",
-            type=["xlsx"],
-            accept_multiple_files=False,
-            key="excel_workbook_upload",
-            disabled=not _can_excel_sync,
-        ) if _can_excel_sync else None
-        if up is not None:
-            # Determine the destination. Prefer the currently-resolved path
-            # (replaces in-place). Fall back to the repo root with the
-            # uploaded filename.
+        # The catalog is a SHARED, cross-tenant developer resource (every tenant's scan
+        # crawls it), so direct edits are limited to a developer-tenant Super User. A
+        # non-developer PROPOSES a change for review instead (Phase B suggestion queue).
+        from core import suggestions as _suggestions
+        _can_edit_sources = _dev_super
+        _can_suggest_sources = _suggestions.can_suggest(user)
+        if not _can_edit_sources:
+            st.info(
+                "🔒 Read-only. The sources catalog is shared across all tenants, so edits "
+                "are limited to a developer-tenant Super User. Propose additions/changes via "
+                "**💡 Suggest** below or the Verify → Source registry.")
+
+        _METHODS = ["html", "html_js", "rss", "rest_json", "manual"]  # scan dispatch
+        # Unified "Method" dropdown — SAME labels as the Verify > Source registry, each
+        # mapped to a scan dispatch value (donor_sources.scrape_method).
+        _METHOD_LABELS = {"API": "rest_json", "RSS / feed": "rss", "Page crawl": "html",
+                          "JS page crawl": "html_js", "Manual": "manual"}
+        _METHOD_LABEL_OPTS = list(_METHOD_LABELS)
+        _METHOD_TO_LABEL = {v: k for k, v in _METHOD_LABELS.items()}
+        # Shared taxonomy vocab (single source of truth — defined in the registry view).
+        from views.verification import _SRC_OPTS, _ACCESS_OPTS, _TYPE_OPTS
+
+        @st.cache_data(ttl=15)
+        def _donors() -> pd.DataFrame:
+            try:
+                res = safe_execute(get_client().table("donor_sources").select("*")
+                                   .order("donor_name"))
+            except Exception as exc:
+                st.warning(f"Couldn't load donor sources right now (network issue): {exc}")
+                return pd.DataFrame()
+            return clean_df(pd.DataFrame(res.data or []))
+
+        def _import_from_config() -> None:
+            """Copy config/sources.yaml entries into donor_sources, skipping any
+            already present (matched by donor_name OR rfp_listing_url)."""
             from pathlib import Path as _P
-            dest = (
-                xls_path
-                if xls_path is not None
-                else _P(__file__).resolve().parent.parent / up.name
-            )
-            ub1, ub2 = st.columns([1, 1])
-            confirm = ub1.button(
-                f"💾 Save as `{dest.name}` and replace active workbook",
-                type="primary", key="confirm_upload_btn",
-            )
-            if ub2.button("Cancel upload", key="cancel_upload_btn"):
-                st.session_state.pop("excel_workbook_upload", None)
+            import yaml as _yaml
+            _yaml_path = (_P(__file__).resolve().parent.parent
+                          / "config" / "sources.yaml")
+            with _yaml_path.open(encoding="utf-8") as _f:
+                _cfg = _yaml.safe_load(_f) or {}
+            existing = (sb.table("donor_sources")
+                        .select("donor_name,rfp_listing_url").execute().data or [])
+            existing_names = {(r.get("donor_name") or "").strip().lower() for r in existing}
+            existing_urls = {(r.get("rfp_listing_url") or "").strip().lower() for r in existing}
+            to_insert, skipped = [], []
+            for s in (_cfg.get("sources", []) or []):
+                name = (s.get("name") or "").strip()
+                url = (s.get("url") or "").strip()
+                method = (s.get("method") or "html").strip()
+                if not name or not url:
+                    continue
+                if name.lower() in existing_names or url.lower() in existing_urls:
+                    skipped.append(name)
+                    continue
+                code = name.split("-")[0].split("(")[0].strip().split()[0][:12]
+                to_insert.append({
+                    "donor_name": name, "donor_code": code, "rfp_listing_url": url,
+                    "scrape_method": method if method in _METHODS else "html",
+                    "notes": s.get("note") or
+                        f"Imported from sources.yaml on {date.today().isoformat()}",
+                    "is_active": True, "created_by": user.get("email"),
+                })
+            if to_insert:
+                sb.table("donor_sources").insert(to_insert).execute()
+            st.cache_data.clear()
+            st.toast(f"Imported {len(to_insert)} new source(s); skipped "
+                     f"{len(skipped)} already present.", icon="📥")
+
+        # ----- Add / Edit / Delete dialogs --------------------------------------
+        @st.dialog("Add funding source", width="large")
+        def _add_source_dialog():
+            with st.form("add_donor_source_form", clear_on_submit=False):
+                c1, c2 = st.columns(2)
+                a_name = c1.text_input("Donor name *")
+                a_code = c2.text_input("Donor code (e.g. BMGF)")
+                c3, c4 = st.columns([3, 1])
+                a_url = c3.text_input("RFP listing URL *")
+                a_method = c4.selectbox("Method", _METHOD_LABEL_OPTS,
+                                        index=_METHOD_LABEL_OPTS.index("Page crawl"))
+                c5, c6 = st.columns(2)
+                a_sc = c5.selectbox("Source class", _SRC_OPTS,
+                                    index=_SRC_OPTS.index("Primary source"))
+                a_access = c6.selectbox("Access", _ACCESS_OPTS,
+                                        index=_ACCESS_OPTS.index("Free"))
+                a_base = st.text_input("Base URL (optional)")
+                a_notes = st.text_area("Notes", height=80)
+                a_active = st.checkbox("Active", value=True)
+                bc1, bc2 = st.columns(2)
+                ok = bc1.form_submit_button("➕ Add", type="primary",
+                                            width='stretch')
+                cancel = bc2.form_submit_button("Cancel", width='stretch')
+            if cancel:
                 st.rerun()
-            if confirm:
+            if ok:
+                if not a_name.strip() or not a_url.strip():
+                    st.error("Donor name and listing URL are required.")
+                    return
                 try:
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    with open(dest, "wb") as f:
-                        f.write(up.getbuffer())
-                    st.success(
-                        f"✓ Saved to `{dest}`. The next sync will pick it up "
-                        "automatically; click 🔄 Sync now above to refresh now."
-                    )
+                    sb.table("donor_sources").insert({
+                        "donor_name": a_name.strip(),
+                        "donor_code": a_code.strip() or None,
+                        "base_url": a_base.strip() or None,
+                        "rfp_listing_url": a_url.strip(),
+                        "scrape_method": _METHOD_LABELS[a_method],
+                        "source_class": a_sc,
+                        "access_model": a_access,
+                        "notes": a_notes.strip() or None,
+                        "is_active": bool(a_active),
+                        "created_by": user.get("email"),
+                    }).execute()
+                    st.cache_data.clear()
+                    st.toast(f"Added {a_name.strip()}", icon="✅")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not add: {exc}")
+
+        @st.dialog("Edit funding source", width="large")
+        def _edit_source_dialog(_row):
+            with st.form("edit_donor_source_form"):
+                c1, c2 = st.columns(2)
+                e_name = c1.text_input("Donor name *", value=_row.get("donor_name") or "")
+                e_code = c2.text_input("Donor code", value=_row.get("donor_code") or "")
+                c3, c4 = st.columns([3, 1])
+                e_url = c3.text_input("RFP listing URL *",
+                                      value=_row.get("rfp_listing_url") or "")
+                _lbl = _METHOD_TO_LABEL.get(_row.get("scrape_method"), "Page crawl")
+                e_method = c4.selectbox("Method", _METHOD_LABEL_OPTS,
+                                        index=_METHOD_LABEL_OPTS.index(_lbl))
+                c5, c6 = st.columns(2)
+                _scv = (_row.get("source_class") if _row.get("source_class") in _SRC_OPTS
+                        else "Primary source")
+                e_sc = c5.selectbox("Source class", _SRC_OPTS,
+                                    index=_SRC_OPTS.index(_scv))
+                _acv = (_row.get("access_model") if _row.get("access_model") in _ACCESS_OPTS
+                        else "Free")
+                e_access = c6.selectbox("Access", _ACCESS_OPTS,
+                                        index=_ACCESS_OPTS.index(_acv))
+                e_base = st.text_input("Base URL", value=_row.get("base_url") or "")
+                e_notes = st.text_area("Notes", value=_row.get("notes") or "", height=80)
+                e_active = st.checkbox("Active", value=bool(_row.get("is_active")))
+                bc1, bc2 = st.columns(2)
+                ok = bc1.form_submit_button("💾 Save", type="primary",
+                                            width='stretch')
+                cancel = bc2.form_submit_button("Cancel", width='stretch')
+            if cancel:
+                st.rerun()
+            if ok:
+                if not e_name.strip() or not e_url.strip():
+                    st.error("Donor name and listing URL are required.")
+                    return
+                try:
+                    sb.table("donor_sources").update({
+                        "donor_name": e_name.strip(),
+                        "donor_code": e_code.strip() or None,
+                        "base_url": e_base.strip() or None,
+                        "rfp_listing_url": e_url.strip(),
+                        "scrape_method": _METHOD_LABELS[e_method],
+                        "source_class": e_sc,
+                        "access_model": e_access,
+                        "notes": e_notes.strip() or None,
+                        "is_active": bool(e_active),
+                    }).eq("id", _row.get("id")).execute()
+                    st.cache_data.clear()
+                    st.toast(f"Updated {e_name.strip()}", icon="✅")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Could not save: {exc}")
+
+        @st.dialog("Delete funding sources", width="medium")
+        def _delete_sources_dialog(_ids, _names):
+            st.error(f"Permanently delete **{len(_ids)}** funding source(s)? "
+                     f"This cannot be undone.")
+            st.markdown("\n".join(f"- {n}" for n in _names[:12])
+                        + ("\n- …" if len(_names) > 12 else ""))
+            bc1, bc2 = st.columns(2)
+            if bc1.button("🗑 Delete", type="primary", width='stretch',
+                          key="ds_del_confirm"):
+                try:
+                    sb.table("donor_sources").delete().in_("id", _ids).execute()
+                    st.cache_data.clear()
+                    st.toast(f"Deleted {len(_ids)} source(s)", icon="🗑️")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Delete failed: {exc}")
+            if bc2.button("Cancel", width='stretch', key="ds_del_cancel"):
+                st.rerun()
+
+        # ----- Suggest a change (non-developers) --------------------------------
+        @st.dialog("Suggest a source change", width="large")
+        def _suggest_source_change_dialog(_row=None):
+            """Non-developer proposes an add (_row=None) or edit to a shared source. Reuses the
+            same field set as the add/edit dialogs, but files a suggestion instead of writing."""
+            _is_add = _row is None
+            _row = _row or {}
+            st.caption("Your proposal goes to a developer Super User to review & apply — "
+                       "the shared catalog isn't changed directly.")
+            with st.form("suggest_source_form"):
+                c1, c2 = st.columns(2)
+                s_name = c1.text_input("Donor name *", value=_row.get("donor_name") or "")
+                s_code = c2.text_input("Donor code", value=_row.get("donor_code") or "")
+                c3, c4 = st.columns([3, 1])
+                s_url = c3.text_input("RFP listing URL *", value=_row.get("rfp_listing_url") or "")
+                _lbl = _METHOD_TO_LABEL.get(_row.get("scrape_method"), "Page crawl")
+                s_method = c4.selectbox("Method", _METHOD_LABEL_OPTS,
+                                        index=_METHOD_LABEL_OPTS.index(_lbl))
+                c5, c6 = st.columns(2)
+                _scv = (_row.get("source_class") if _row.get("source_class") in _SRC_OPTS
+                        else "Primary source")
+                s_sc = c5.selectbox("Source class", _SRC_OPTS, index=_SRC_OPTS.index(_scv))
+                _acv = (_row.get("access_model") if _row.get("access_model") in _ACCESS_OPTS
+                        else "Free")
+                s_access = c6.selectbox("Access", _ACCESS_OPTS, index=_ACCESS_OPTS.index(_acv))
+                s_base = st.text_input("Base URL", value=_row.get("base_url") or "")
+                s_notes = st.text_area("Notes", value=_row.get("notes") or "", height=80)
+                s_active = st.checkbox("Active", value=bool(_row.get("is_active", True)))
+                s_rat = st.text_area("Why this change? (optional)", height=70)
+                bc1, bc2 = st.columns(2)
+                ok = bc1.form_submit_button("💡 Submit suggestion", type="primary",
+                                            width='stretch')
+                cancel = bc2.form_submit_button("Cancel", width='stretch')
+            if cancel:
+                st.rerun()
+            if ok:
+                if not s_name.strip() or not s_url.strip():
+                    st.error("Donor name and listing URL are required.")
+                    return
+                _proposed = {
+                    "donor_name": s_name.strip(),
+                    "donor_code": s_code.strip() or None,
+                    "base_url": s_base.strip() or None,
+                    "rfp_listing_url": s_url.strip(),
+                    "scrape_method": _METHOD_LABELS[s_method],
+                    "source_class": s_sc,
+                    "access_model": s_access,
+                    "notes": s_notes.strip() or None,
+                    "is_active": bool(s_active),
+                }
+                _base = {k: _row.get(k) for k in _proposed}
+                _diff, _snap = _suggestions.diff_of(_proposed, _base, allowed=_DS_EDITABLE) \
+                    if not _is_add else (_proposed, {})
+                if not _diff:
+                    st.warning("No changes to suggest — edit a field first.")
+                    return
+                try:
+                    _suggestions.create_suggestion(
+                        resource_type="donor_sources",
+                        target_id=(None if _is_add else _row.get("id")),
+                        proposed_diff=_diff, base_snapshot=_snap,
+                        rationale=(s_rat.strip() or None),
+                        target_label=s_name.strip(), user=user)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Could not submit suggestion: {exc}")
+                    return
+                st.toast("💡 Suggestion submitted for review", icon="💡")
+                st.rerun()
+
+        _DS_EDITABLE = _suggestions._DS_EDITABLE
+
+        # ----- Top action bar (right-aligned). "Add" lives in the registry now,
+        # so the catalogue only Imports (from yaml) + Refreshes. Non-developers get a
+        # "Suggest new source" entry instead of the developer-only Import. ------------
+        if _can_edit_sources:
+            _tsp, t2, t3 = st.columns([6, 1.6, 1])
+            if t2.button("📥 Import from config", width='stretch', key="ds_import_top"):
+                try:
+                    _import_from_config()
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Import failed: {exc}")
+        elif _can_suggest_sources:
+            _tsp, t2, t3 = st.columns([6, 1.8, 1])
+            if t2.button("💡 Suggest source", width='stretch', key="ds_suggest_add",
+                         help="Propose a new funding source for a developer Super User to review."):
+                _suggest_source_change_dialog(None)
+        else:
+            _tsp, t3 = st.columns([7.6, 1])
+        if t3.button("🔄 Refresh", width='stretch', key="ds_refresh_top"):
+            st.cache_data.clear()
+            st.rerun()
+
+        # ----- Selectable table -------------------------------------------------
+        ddf = _donors()
+        if ddf.empty:
+            st.info("No sources yet — add them in **Verify → Source registry**, "
+                    "then push to this catalogue.")
+        else:
+            ids = ddf["id"].tolist()
+            _n_total = len(ddf)
+            _n_active = int(ddf["is_active"].sum()) if "is_active" in ddf else _n_total
+            # Friendly Method label (matches the Verify registry vocabulary).
+            ddf["method_label"] = ddf["scrape_method"].map(
+                lambda m: _METHOD_TO_LABEL.get(m, m))
+            # source_uid (migration 043) leads the table when present.
+            uid_col = ["source_uid"] if "source_uid" in ddf.columns else []
+            base_cols = uid_col + ["donor_name", "donor_code", "rfp_listing_url",
+                                   "method_label"]
+            # Access + Source class (migration 037) shown when present.
+            extra = [c for c in ("source_class", "access_model") if c in ddf.columns]
+            # Solicitation / Instrument types (display as joined strings).
+            type_cols = []
+            for _c in ("solicitation_types", "instrument_types"):
+                if _c in ddf.columns:
+                    ddf[_c + "_disp"] = ddf[_c].map(
+                        lambda v: "; ".join(v) if isinstance(v, (list, tuple)) else (v or ""))
+                    type_cols.append(_c + "_disp")
+            disp = ddf[base_cols + extra + type_cols + ["is_active", "last_scraped_at",
+                                                        "last_scrape_status", "notes"]].copy()
+            st.markdown(f"**{_n_total}** sources · **{_n_active}** active")
+            sel = st.dataframe(
+                disp, hide_index=True, width='stretch',
+                selection_mode="multi-row", on_select="rerun", key="ds_table",
+                column_config={
+                    "source_uid": st.column_config.NumberColumn("ID", width="small"),
+                    "donor_name": st.column_config.TextColumn("Source Name"),
+                    "donor_code": st.column_config.TextColumn("Code", width="small"),
+                    "rfp_listing_url": st.column_config.LinkColumn("Host"),
+                    "method_label": st.column_config.TextColumn("Method", width="small"),
+                    "source_class": st.column_config.TextColumn("Source class"),
+                    "access_model": st.column_config.TextColumn("Access", width="small"),
+                    "solicitation_types_disp": st.column_config.TextColumn("Solicitation"),
+                    "instrument_types_disp": st.column_config.TextColumn("Instrument"),
+                    "is_active": st.column_config.CheckboxColumn("Active", width="small"),
+                    "last_scraped_at": st.column_config.DatetimeColumn(
+                        "Last scan", format="YYYY-MM-DD HH:mm"),
+                    "last_scrape_status": st.column_config.TextColumn("Last status"),
+                    "notes": st.column_config.TextColumn("Notes"),
+                },
+            )
+            picked = (getattr(sel, "selection", None) or {}).get("rows") or []
+            picked = [i for i in picked if 0 <= i < len(ids)]
+            sel_ids = [ids[i] for i in picked]
+            sel_rows = [ddf.iloc[i].to_dict() for i in picked]
+            sel_names = [r.get("donor_name") or "(unnamed)" for r in sel_rows]
+
+            st.caption(f"**{len(picked)} of {_n_total}** selected." if picked else
+                       "Tick rows to edit or delete.")
+
+            a1, a2, a3, _asp = st.columns([1, 1, 1.4, 4.6])
+            if a1.button("✏️ Edit", width='stretch', key="ds_edit_btn",
+                         disabled=(not _can_edit_sources) or len(picked) != 1,
+                         help="Select exactly one row to edit." if _can_edit_sources
+                              else "Developer Super User only."):
+                _edit_source_dialog(sel_rows[0])
+            if a2.button("🗑 Delete", width='stretch', key="ds_delete_btn",
+                         disabled=(not _can_edit_sources) or not picked,
+                         help=None if _can_edit_sources else "Developer Super User only."):
+                _delete_sources_dialog(sel_ids, sel_names)
+            # Non-developers propose an edit to the selected row instead of editing it.
+            if not _can_edit_sources and _can_suggest_sources:
+                if a3.button("💡 Suggest edit", width='stretch', key="ds_suggest_edit",
+                             disabled=len(picked) != 1,
+                             help="Propose changes to the selected source for review."
+                                  if len(picked) == 1 else "Select exactly one row."):
+                    _suggest_source_change_dialog(sel_rows[0])
+
+if _xls_tab is not None:
+    with _xls_tab:
+        # ----- Excel sync ------------------------------------------------------
+        # The master workbook is a source in its own right (it seeds rfp_submissions
+        # alongside the scanned donor sources above), so its sync controls live here
+        # under Sources rather than on the Records tab.
+        st.subheader("Excel sync")
+        st.caption(
+            "Pulls the master workbook into Supabase. Path comes from "
+            "`EXCEL_SOURCE_PATH` in `.env` (or the local repo copy if unset). "
+            "Auto-sync runs on page load when the file is newer than the last sync."
+        )
+        # migrate_excel.py runs as a SUBPROCESS with no tenant JWT, so its rows aren't
+        # tenant-scoped — running it can dump the workbook into whichever tenant is browsing
+        # (that's why auto-sync is off in multi-tenant mode). Until it's made tenant-aware,
+        # manual sync stays an owner/developer operation → restrict to a developer admin.
+        _can_excel_sync = _dev_admin
+        if not _can_excel_sync:
+            st.info(
+                "🔒 Manual Excel sync is a developer operation. The importer isn't yet "
+                "tenant-aware (it runs outside your tenant context), so it's limited to a "
+                "developer tenant to avoid writing into the wrong tenant.")
+
+        resolved = excel_sync.resolve_excel_path()
+        xls_path = resolved.get("resolved_path")
+        last_mtime, last_iso = excel_sync.get_last_sync()
+
+        sc1, sc2 = st.columns([3, 1])
+        with sc1:
+            # Single line showing the active workbook path (was two lines before;
+            # EXCEL_SOURCE_PATH and the resolved path were almost always identical).
+            if xls_path:
+                try:
+                    mt = xls_path.stat().st_mtime
+                    st.code(f"Active workbook: {xls_path}")
+                    st.caption(
+                        f"File modified: {datetime.fromtimestamp(mt, tz=timezone.utc).isoformat(timespec='seconds')}  ·  "
+                        f"Last sync: {last_iso or '(never)'}"
+                    )
+                    if last_mtime and last_mtime >= mt:
+                        st.success("✓ In sync with the workbook")
+                    else:
+                        st.warning("⚠ Workbook is newer than last sync — click to refresh")
+                except OSError as exc:
+                    st.error(f"Can't read file: {exc}")
+            else:
+                st.error(
+                    "No Excel file found. Upload a workbook below, set "
+                    "`EXCEL_SOURCE_PATH` in `.env`, or drop the workbook in the "
+                    "repo root."
+                )
+            if resolved.get("error"):
+                st.error(resolved["error"])
+
+        if sc2.button("🔄 Sync now", type="primary",
+                      disabled=(xls_path is None) or not _can_excel_sync,
+                      width='stretch',
+                      help=None if _can_excel_sync else "Developer tenant only.") \
+                and _can_excel_sync:                       # defense in depth
+            with st.spinner("Running migrate_excel.py..."):
+                result = excel_sync.sync(updated_by=user.get("email"))
+            if result.get("ok"):
+                st.success(f"Synced from {result['path']}")
+            else:
+                st.error(f"Sync failed: {result.get('error') or 'see stderr'}")
+            with st.expander("Sync output", expanded=not result.get("ok")):
+                st.code(result.get("stdout") or "(no stdout)", language="text")
+                if result.get("stderr"):
+                    st.code(result.get("stderr"), language="text")
+            st.rerun()
+
+        # ----- Upload a replacement workbook ----------------------------------
+        # Useful when the user is on a different machine where OneDrive / the
+        # original path doesn't exist, or wants to ship a one-off updated file.
+        # Saves to the currently-resolved path (overwriting), or to the repo
+        # root if no path is resolvable yet.
+        with st.expander("📤 Upload a new workbook (replaces the active file)", expanded=False):
+            st.caption(
+                "Pick a `.xlsx` file from your computer to replace whatever the "
+                "app is currently reading. The uploaded file is saved to "
+                "the path shown above (or to the repo root if no path is "
+                "resolvable). Developer tenant only — it replaces the shared source "
+                "workbook the importer reads."
+            )
+            up = st.file_uploader(
+                "Choose a .xlsx file",
+                type=["xlsx"],
+                accept_multiple_files=False,
+                key="excel_workbook_upload",
+                disabled=not _can_excel_sync,
+            ) if _can_excel_sync else None
+            if up is not None:
+                # Determine the destination. Prefer the currently-resolved path
+                # (replaces in-place). Fall back to the repo root with the
+                # uploaded filename.
+                from pathlib import Path as _P
+                dest = (
+                    xls_path
+                    if xls_path is not None
+                    else _P(__file__).resolve().parent.parent / up.name
+                )
+                ub1, ub2 = st.columns([1, 1])
+                confirm = ub1.button(
+                    f"💾 Save as `{dest.name}` and replace active workbook",
+                    type="primary", key="confirm_upload_btn",
+                )
+                if ub2.button("Cancel upload", key="cancel_upload_btn"):
+                    st.session_state.pop("excel_workbook_upload", None)
+                    st.rerun()
+                if confirm:
+                    try:
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        with open(dest, "wb") as f:
+                            f.write(up.getbuffer())
+                        st.success(
+                            f"✓ Saved to `{dest}`. The next sync will pick it up "
+                            "automatically; click 🔄 Sync now above to refresh now."
+                        )
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Could not save: {exc}")
 
 
 # -----------------------------------------------------------------------------
@@ -1517,7 +1529,7 @@ with tab_scan:
     _match_slot = _bc2.empty()
     # Run Extraction is a PLATFORM job that crawls every source into the SHARED global
     # store (no per-tenant screening) — a developer task. Restricted to an admin/super
-    # of a developer tenant (RFPIS Inc / Taadom). The "My Eligible Funding" screening
+    # of a developer tenant. The "My Eligible Funding" screening
     # button beside it stays available to every tenant admin (it's tenant-scoped).
     _do_extract = _ext_slot.button(
         "⛏ Run Extraction", type="secondary", key="admin_extract_btn", width='stretch',
@@ -1525,8 +1537,8 @@ with tab_scan:
         help=("Platform job: crawl all funding sources and extract into the global "
               "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
               "(~20-40 min for a full run).") if _dev_admin else
-             ("Developer task — restricted to an admin/Super User of a developer tenant "
-              "(RFPIS Inc / Taadom). Use 🎯 My Eligible Funding to screen this org."))
+             ("Developer task — restricted to an admin/Super User of a developer "
+              "tenant. Use 🎯 My Eligible Funding to screen this org."))
     _do_match = _match_slot.button(
         "🎯 My Eligible Funding", type="primary", key="admin_match_btn", width='stretch',
         help="Screen the curated store against this org's eligibility (geography + "
@@ -1674,68 +1686,69 @@ with tab_scan:
 # Sources → Blocked (formerly the top-level "Blacklist" tab) — hard-reject URL
 # substrings ("blocked tokens"). Distinct from Accounts → Blacklisted (users/tenants).
 # -----------------------------------------------------------------------------
-with _blk_tab:
-    from core import blacklist as _blmod
+if _blk_tab is not None:
+    with _blk_tab:
+        from core import blacklist as _blmod
 
-    st.subheader("Blocked tokens")
-    # The scan blacklist is a SHARED, platform-wide reject list (it drops candidate URLs
-    # for EVERY tenant's scan), so it's a developer-account feature — restricted to an
-    # admin/super_user of a developer tenant (RFPIS Inc / Taadom).
-    if not _dev_admin:
-        st.info(
-            "🔒 **Blocked tokens is a developer-account feature.** These patterns drop "
-            "candidate URLs for every tenant's scan, so they're managed by a developer "
-            "tenant (RFPIS Inc / Taadom), not per client tenant.")
-    else:
-        st.caption(
-            "Each pattern is matched as a case-insensitive **substring of the "
-            "candidate URL** during scanning. Any match → the link is rejected "
-            "before scoring and never becomes a record. Use a bare domain "
-            "(`cdc.gov`) to block a whole site, or a path fragment "
-            "(`comicrelief.com/sportrelief`, `/donate`, `/careers`) to block a "
-            "section. Edit cells, add rows (＋), then **Save**."
-        )
-        try:
-            _bl_rows = (sb.table("scan_blacklist").select("pattern,reason")
-                        .order("pattern").execute().data or [])
-        except Exception as exc:
-            _bl_rows = []
-            st.warning(f"Couldn't load the blacklist — did you run migration 024? ({exc})")
-
-        if _bl_rows:
-            _bl_df = pd.DataFrame(_bl_rows)[["pattern", "reason"]]
+        st.subheader("Blocked tokens")
+        # The scan blacklist is a SHARED, platform-wide reject list (it drops candidate URLs
+        # for EVERY tenant's scan), so it's a developer-account feature — restricted to an
+        # admin/super_user of a developer tenant.
+        if not _dev_admin:
+            st.info(
+                "🔒 **Blocked tokens is a developer-account feature.** These patterns drop "
+                "candidate URLs for every tenant's scan, so they're managed by a developer "
+                "tenant, not per client tenant.")
         else:
-            _bl_df = pd.DataFrame({"pattern": pd.Series(dtype="object"),
-                                   "reason": pd.Series(dtype="object")})
-        _bl_edited = st.data_editor(
-            _bl_df, num_rows="dynamic", width='stretch', hide_index=True,
-            key="blacklist_editor",
-            column_config={
-                "pattern": st.column_config.TextColumn("Pattern (URL substring)", required=True),
-                "reason": st.column_config.TextColumn("Reason / note"),
-            },
-        )
-        if st.button("💾 Save blacklist", type="primary", key="save_blacklist"):
-            recs, seen = [], set()
-            for _, r in _bl_edited.iterrows():
-                p = str(r.get("pattern") or "").strip().lower()
-                if not p or p in seen:
-                    continue
-                seen.add(p)
-                recs.append({
-                    "pattern": p,
-                    "reason": (str(r.get("reason") or "").strip() or None),
-                    "created_by": user.get("email"),
-                })
+            st.caption(
+                "Each pattern is matched as a case-insensitive **substring of the "
+                "candidate URL** during scanning. Any match → the link is rejected "
+                "before scoring and never becomes a record. Use a bare domain "
+                "(`cdc.gov`) to block a whole site, or a path fragment "
+                "(`comicrelief.com/sportrelief`, `/donate`, `/careers`) to block a "
+                "section. Edit cells, add rows (＋), then **Save**."
+            )
             try:
-                sb.table("scan_blacklist").delete().neq("id", -1).execute()  # replace-all
-                if recs:
-                    sb.table("scan_blacklist").insert(recs).execute()
-                _blmod.clear_cache()
-                st.success(f"Saved {len(recs)} blacklist pattern(s).")
-                st.rerun()
+                _bl_rows = (sb.table("scan_blacklist").select("pattern,reason")
+                            .order("pattern").execute().data or [])
             except Exception as exc:
-                st.error(f"Save failed: {exc}")
+                _bl_rows = []
+                st.warning(f"Couldn't load the blacklist — did you run migration 024? ({exc})")
+
+            if _bl_rows:
+                _bl_df = pd.DataFrame(_bl_rows)[["pattern", "reason"]]
+            else:
+                _bl_df = pd.DataFrame({"pattern": pd.Series(dtype="object"),
+                                       "reason": pd.Series(dtype="object")})
+            _bl_edited = st.data_editor(
+                _bl_df, num_rows="dynamic", width='stretch', hide_index=True,
+                key="blacklist_editor",
+                column_config={
+                    "pattern": st.column_config.TextColumn("Pattern (URL substring)", required=True),
+                    "reason": st.column_config.TextColumn("Reason / note"),
+                },
+            )
+            if st.button("💾 Save blacklist", type="primary", key="save_blacklist"):
+                recs, seen = [], set()
+                for _, r in _bl_edited.iterrows():
+                    p = str(r.get("pattern") or "").strip().lower()
+                    if not p or p in seen:
+                        continue
+                    seen.add(p)
+                    recs.append({
+                        "pattern": p,
+                        "reason": (str(r.get("reason") or "").strip() or None),
+                        "created_by": user.get("email"),
+                    })
+                try:
+                    sb.table("scan_blacklist").delete().neq("id", -1).execute()  # replace-all
+                    if recs:
+                        sb.table("scan_blacklist").insert(recs).execute()
+                    _blmod.clear_cache()
+                    st.success(f"Saved {len(recs)} blacklist pattern(s).")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Save failed: {exc}")
 
 
 # Verify (human verification + feedback over the scan) now lives as a sub-tab
@@ -1745,98 +1758,99 @@ with _blk_tab:
 # -----------------------------------------------------------------------------
 # Tab 9 — Learning data (ML Phase 1: captured rejects / decisions / feedback)
 # -----------------------------------------------------------------------------
-with tab_learning:
-    st.subheader("Learning data — captured signals")
-    # Learning data is the platform's shared training signal (the labeled set behind the
-    # scoring model) — a developer resource. Restricted to members of a developer tenant
-    # (RFPIS Inc / Taadom); client-tenant admins see a lock. _dev_member covers the
-    # super_user (homed to the RFPIS platform tenant). Guarded body so sibling tabs still
-    # render (no st.stop()).
-    if not _dev_member:
-        st.info(
-            "🔒 **Learning data is a developer view.** These captured signals train the "
-            "shared scoring model across all tenants, so they're available to members of "
-            "a developer tenant (RFPIS Inc / Taadom).")
-        st.stop()
-    st.caption(
-        "Every scan **reject**, human **decision** (Proceed/Park/Decline) and "
-        "👍/👎 **feedback** is logged to `scan_decisions` — the labeled training "
-        "set for the scoring model (ML Phase 2/3). Read-only here.")
-    # TRUE counts come from server-side count='exact' queries — NOT from the fetched
-    # display window. PostgREST caps a fetch at ~1000 rows, so when a recent scan floods
-    # that window with fresh system_reject rows, counting over it badly undercounts older
-    # feedback / human-decision signals (they fall outside the window). The signals are
-    # NOT lost — only the window is capped — so the cards must count the whole table.
-    @st.cache_data(ttl=30)
-    def _ld_count(event_type: str | None = None) -> int:
-        try:
-            q = get_client().table("scan_decisions").select("id", count="exact")
-            if event_type:
-                q = q.eq("event_type", event_type)
-            return int(q.execute().count or 0)
-        except Exception:
-            return 0
+if tab_learning is not None:
+    with tab_learning:
+        st.subheader("Learning data — captured signals")
+        # Learning data is the platform's shared training signal (the labeled set behind the
+        # scoring model) — a developer resource. Restricted to members of a developer tenant
+        #; client-tenant admins see a lock. _dev_member covers the
+        # super_user (homed to the RFPIS platform tenant). Guarded body so sibling tabs still
+        # render (no st.stop()).
+        if not _dev_member:
+            st.info(
+                "🔒 **Learning data is a developer view.** These captured signals train the "
+                "shared scoring model across all tenants, so they're available to members of "
+                "a developer tenant.")
+            st.stop()
+        st.caption(
+            "Every scan **reject**, human **decision** (Proceed/Park/Decline) and "
+            "👍/👎 **feedback** is logged to `scan_decisions` — the labeled training "
+            "set for the scoring model (ML Phase 2/3). Read-only here.")
+        # TRUE counts come from server-side count='exact' queries — NOT from the fetched
+        # display window. PostgREST caps a fetch at ~1000 rows, so when a recent scan floods
+        # that window with fresh system_reject rows, counting over it badly undercounts older
+        # feedback / human-decision signals (they fall outside the window). The signals are
+        # NOT lost — only the window is capped — so the cards must count the whole table.
+        @st.cache_data(ttl=30)
+        def _ld_count(event_type: str | None = None) -> int:
+            try:
+                q = get_client().table("scan_decisions").select("id", count="exact")
+                if event_type:
+                    q = q.eq("event_type", event_type)
+                return int(q.execute().count or 0)
+            except Exception:
+                return 0
 
-    @st.cache_data(ttl=30)
-    def _reject_reason_counts() -> dict:
-        """Accurate reason histogram over ALL system_reject rows (paginated label-only
-        fetch), not just the recent display window."""
-        from collections import Counter as _Counter
-        out, start, page = _Counter(), 0, 1000
-        try:
-            while True:
-                chunk = (get_client().table("scan_decisions").select("label")
-                         .eq("event_type", "system_reject")
-                         .range(start, start + page - 1).execute().data or [])
-                if not chunk:
-                    break
-                out.update((r.get("label") or "—") for r in chunk)
-                if len(chunk) < page:
-                    break
-                start += page
-        except Exception:
-            pass
-        return dict(out)
+        @st.cache_data(ttl=30)
+        def _reject_reason_counts() -> dict:
+            """Accurate reason histogram over ALL system_reject rows (paginated label-only
+            fetch), not just the recent display window."""
+            from collections import Counter as _Counter
+            out, start, page = _Counter(), 0, 1000
+            try:
+                while True:
+                    chunk = (get_client().table("scan_decisions").select("label")
+                             .eq("event_type", "system_reject")
+                             .range(start, start + page - 1).execute().data or [])
+                    if not chunk:
+                        break
+                    out.update((r.get("label") or "—") for r in chunk)
+                    if len(chunk) < page:
+                        break
+                    start += page
+            except Exception:
+                pass
+            return dict(out)
 
-    _total = _ld_count()
-    try:
-        _ld = (sb.table("scan_decisions").select("*")
-               .order("created_at", desc=True).limit(1000).execute().data or [])
-    except Exception as exc:
-        st.warning(f"Couldn't load scan_decisions — did you run migration 027? ({exc})")
-        _ld = []
-    if _total == 0:
-        st.info("No signals captured yet. Run a scan, set a decision, or hit 👍/👎 "
-                "on a record — they'll appear here.")
-    else:
-        _ldf = pd.DataFrame(_ld)
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Total signals", _total)
-        m2.metric("System rejects", _ld_count("system_reject"))
-        m3.metric("Human decisions", _ld_count("human_decision"))
-        m4.metric("👍/👎 feedback", _ld_count("feedback"))
-        m5.metric("Reject verdicts", _ld_count("reject_verification"))
-        with st.expander("Rejects by reason category", expanded=False):
-            _rc = _reject_reason_counts()
-            if _rc:
-                _by = (pd.DataFrame(sorted(_rc.items(), key=lambda kv: -kv[1]),
-                                    columns=["reason", "count"]))
-                st.dataframe(_by, hide_index=True, width='stretch')
-            else:
-                st.caption("No rejects logged yet.")
-        st.caption(f"Table below shows the **{len(_ldf)}** most recent of **{_total}** "
-                   f"total signals (newest first). Counts above are the full-table totals.")
-        _cols = [c for c in ["created_at", "event_type", "label", "reason",
-                             "opportunity_title", "funding_agency", "source",
-                             "call_submission_deadline", "alignment_score",
-                             "opportunity_link", "decided_by"]
-                 if c in _ldf.columns]
-        st.dataframe(
-            _ldf[_cols], hide_index=True, width='stretch',
-            column_config={
-                "opportunity_link": st.column_config.LinkColumn(
-                    "Link", display_text="Open ↗"),
-            })
-        st.download_button(
-            "⬇ Download CSV", _ldf[_cols].to_csv(index=False).encode("utf-8"),
-            file_name="scan_decisions.csv", mime="text/csv")
+        _total = _ld_count()
+        try:
+            _ld = (sb.table("scan_decisions").select("*")
+                   .order("created_at", desc=True).limit(1000).execute().data or [])
+        except Exception as exc:
+            st.warning(f"Couldn't load scan_decisions — did you run migration 027? ({exc})")
+            _ld = []
+        if _total == 0:
+            st.info("No signals captured yet. Run a scan, set a decision, or hit 👍/👎 "
+                    "on a record — they'll appear here.")
+        else:
+            _ldf = pd.DataFrame(_ld)
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Total signals", _total)
+            m2.metric("System rejects", _ld_count("system_reject"))
+            m3.metric("Human decisions", _ld_count("human_decision"))
+            m4.metric("👍/👎 feedback", _ld_count("feedback"))
+            m5.metric("Reject verdicts", _ld_count("reject_verification"))
+            with st.expander("Rejects by reason category", expanded=False):
+                _rc = _reject_reason_counts()
+                if _rc:
+                    _by = (pd.DataFrame(sorted(_rc.items(), key=lambda kv: -kv[1]),
+                                        columns=["reason", "count"]))
+                    st.dataframe(_by, hide_index=True, width='stretch')
+                else:
+                    st.caption("No rejects logged yet.")
+            st.caption(f"Table below shows the **{len(_ldf)}** most recent of **{_total}** "
+                       f"total signals (newest first). Counts above are the full-table totals.")
+            _cols = [c for c in ["created_at", "event_type", "label", "reason",
+                                 "opportunity_title", "funding_agency", "source",
+                                 "call_submission_deadline", "alignment_score",
+                                 "opportunity_link", "decided_by"]
+                     if c in _ldf.columns]
+            st.dataframe(
+                _ldf[_cols], hide_index=True, width='stretch',
+                column_config={
+                    "opportunity_link": st.column_config.LinkColumn(
+                        "Link", display_text="Open ↗"),
+                })
+            st.download_button(
+                "⬇ Download CSV", _ldf[_cols].to_csv(index=False).encode("utf-8"),
+                file_name="scan_decisions.csv", mime="text/csv")

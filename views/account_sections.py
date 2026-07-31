@@ -520,7 +520,7 @@ def render_manage_tenants(user: dict, sb) -> None:
                      "account whose activity is visible to all users."),
             "Dev": st.column_config.TextColumn(
                 "Dev", width="small",
-                help="🛠 Dev = a DEVELOPER / system tenant (RFPIS Inc / Taadom): its "
+                help="🛠 Dev = a DEVELOPER / system tenant: its "
                      "members may perform cross-tenant developer tasks (donor mapping, "
                      "Sources catalog & blocked tokens, Run Extraction, Records "
                      "Verify/Reset, Learning data). 🙂 Regular = a client tenant, "
@@ -563,7 +563,7 @@ def render_manage_tenants(user: dict, sb) -> None:
                       "Manage / undo under the Blacklisted tab."):
         _set_many_tenant_blacklist(svc, _sel_ids, True, user.get("email")); st.rerun()
 
-    # Developer-tenant toggle. A developer/system tenant (RFPIS Inc / Taadom) unlocks the
+    # Developer-tenant toggle. A developer/system tenant unlocks the
     # cross-tenant developer tasks for its members; a client tenant stays confined to its
     # own data. Enable each action only when it would change something for the selection.
     _dev_states = {bool(r.get("_is_dev")) for r in _sel_rows}
