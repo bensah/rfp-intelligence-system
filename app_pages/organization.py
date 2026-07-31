@@ -123,7 +123,7 @@ st.markdown(
 
 # ── Header (title + Edit) full width — the rail is lowered BELOW this row ──
 _hl, _hr = st.columns([5, 1.4])
-_hl.title("Entity Details")
+_hl.title("Your Organization")
 if can_edit:
     if _hr.button("✏️ Edit entity", width="stretch", type="primary"):
         _edit_entity_dialog()
