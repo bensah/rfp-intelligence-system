@@ -108,7 +108,7 @@ def role_group(user: dict[str, Any] | None) -> str:
 # SHARED, platform-wide resources (donor mapping, the Sources catalog + Blocked
 # tokens, Run Extraction, Records → Verify/Reset, Learning data). Those are
 # DEVELOPER tasks — restricted to members of a DEVELOPER / SYSTEM tenant
-# (is_developer=true; e.g. RFPIS Inc, Taadom Digital PLC), no matter how
+# (is_developer=true), no matter how
 # privileged a CLIENT tenant's own admins/super_user are. A client tenant is
 # confined to its OWN tenant-scoped data + settings.
 #
