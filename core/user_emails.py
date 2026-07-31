@@ -34,18 +34,38 @@ def _app_url() -> str:
     )
 
 
+def _powered_by() -> str:
+    """Optional 'Powered by …' email-footer brand — NOT hardcoded, so the deploying
+    company's name isn't baked into the code. Read from app_settings (key
+    'email_powered_by'), falling back to the EMAIL_POWERED_BY env var; empty → the footer
+    line is omitted entirely. Set it once (Settings/script) to restore branding."""
+    try:
+        from core.settings import get_setting
+        v = (get_setting("email_powered_by") or "").strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    return (os.environ.get("EMAIL_POWERED_BY") or "").strip()
+
+
 def _branded_html(*, recipient_name: str, body_html: str) -> str:
     """Wrap a body in the RFPIS-branded email shell. Inline styles only —
     most email clients strip <style> blocks."""
+    import html as _html
     app_url = _app_url()
     safe_name = recipient_name or "there"
+    _pb = _powered_by()
+    _powered_html = (
+        f'<div style="font-size:12px; color:#94a3b8; margin-bottom:20px;">'
+        f'Powered by {_html.escape(_pb)}</div>' if _pb else "")
     return f"""
 <!doctype html>
 <html>
   <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f5f7fa; padding:24px; margin:0;">
     <div style="max-width:560px; margin:0 auto; background:#ffffff; border-radius:8px; padding:32px 28px; border:1px solid #e3e7e3;">
       <div style="font-size:18px; font-weight:700; color:#1e3a8a; margin-bottom:4px;">RFP Intelligence System</div>
-      <div style="font-size:12px; color:#94a3b8; margin-bottom:20px;">Powered by Taadom Digital</div>
+      {_powered_html}
       <div style="font-size:15px; color:#1f2937; line-height:1.55;">
         <p>Hi <strong>{safe_name}</strong>,</p>
         {body_html}

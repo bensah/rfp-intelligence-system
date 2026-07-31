@@ -2,7 +2,7 @@
 
 Routed by STATE, not by how the account was created: a logged-in user with NO active
 tenant membership is sent here to create or join a tenant before any app page renders.
-This works identically for today's super-admin-provisioned users AND the future Taadom
+This works identically for today's super-admin-provisioned users AND future public
 self-signup — no rework when signup opens.
 
 Flow (a tenant = a CHAI country / global team):
