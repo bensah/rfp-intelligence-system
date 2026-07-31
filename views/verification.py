@@ -180,7 +180,7 @@ def _csv_roundtrip(*, key: str, rows: list[dict], id_header: str, id_fn,
             st.rerun()
 
 
-# Opportunity-type vocabulary — full the second tenant scope (current the organisation use is the first
+# Opportunity-type vocabulary — full platform scope (current the organisation use is the first
 # row: Grant…Tender). A human-set Type in the Verify tables is ground truth for the
 # type classifier, logged to scan_decisions (event_type 'type_label').
 # The Verify human type-capture uses the SOLICITATION axis (how to apply) — the
