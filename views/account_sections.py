@@ -135,7 +135,7 @@ def render_my_profile(user: dict, sb) -> None:
         if (not errs and new_email_clean.lower()
                 != (me.get("email") or "").lower()):
             existing = (
-                sb.table("users").select("email")
+                service_client().table("users").select("email")
                 .ilike("email", new_email_clean).limit(1)
                 .execute().data or []
             )
@@ -146,7 +146,12 @@ def render_my_profile(user: dict, sb) -> None:
             st.error("Please fix:\n\n- " + "\n- ".join(errs))
         else:
             try:
-                sb.table("users").update({
+                # Self-edit of the user's OWN row. Use the service client (RLS-bypassing) so
+                # the write is reliable — the tenant-scoped `authenticated` client can READ
+                # users (the form populates) but its UPDATE on users is silently blocked
+                # (0 rows, no error) = "looks saved but nothing changed". Scoped to THIS user
+                # by the email filter, so no escalation. Verify a row actually came back.
+                resp = (service_client().table("users").update({
                     "name":         (new_name or "").strip() or None,
                     "email":        new_email_clean,
                     "phone":        (new_phone or "").strip() or None,
@@ -157,19 +162,23 @@ def render_my_profile(user: dict, sb) -> None:
                     "city":         (new_city or "").strip() or None,
                     "state_region": (new_state or "").strip() or None,
                     "country":      (new_country or "").strip() or None,
-                }).eq("email", user["email"]).execute()
-                clear_credentials_cache()
-                user["name"] = (new_name or "").strip() or user.get("name")
-                user["email"] = new_email_clean
-                st.session_state["app_user"] = user
-                email_changed = (
-                    new_email_clean.lower() != (me.get("email") or "").lower())
-                st.toast(
-                    "✅ Profile saved."
-                    + (f" Login email is now {new_email_clean}."
-                       if email_changed else ""),
-                    icon="✅")
-                st.rerun()
+                }).eq("email", user["email"]).execute())
+                if not getattr(resp, "data", None):
+                    st.error("Save didn't update your record (no matching row). "
+                             "Please retry, or contact an admin if it persists.")
+                else:
+                    clear_credentials_cache()
+                    user["name"] = (new_name or "").strip() or user.get("name")
+                    user["email"] = new_email_clean
+                    st.session_state["app_user"] = user
+                    email_changed = (
+                        new_email_clean.lower() != (me.get("email") or "").lower())
+                    st.toast(
+                        "✅ Profile saved."
+                        + (f" Login email is now {new_email_clean}."
+                           if email_changed else ""),
+                        icon="✅")
+                    st.rerun()
             except Exception as exc:
                 st.error(f"Save failed: {exc}")
 
@@ -227,7 +236,7 @@ def render_my_profile(user: dict, sb) -> None:
                                 "user_id", _uid).execute()
                         except Exception:
                             pass
-                    sb.table("users").delete().eq("email", _email).execute()
+                    service_client().table("users").delete().eq("email", _email).execute()
                     clear_credentials_cache()
                 except Exception as exc:
                     st.error(f"Delete failed: {exc}")
@@ -281,14 +290,21 @@ def render_change_password(user: dict, sb) -> None:
             st.error("Please fix:\n\n- " + "\n- ".join(errors))
         else:
             try:
-                sb.table("users").update({
+                # Service client (RLS-bypassing) + verify: the tenant-scoped `authenticated`
+                # client's UPDATE on users is silently blocked, which would let a password
+                # "change" no-op while the OLD password still works — a real security trap.
+                resp = (service_client().table("users").update({
                     "password_hash": hash_password(new_pw),
                     "password_changed_at": datetime.now(timezone.utc).isoformat(),
                     "must_change_password": False,
-                }).eq("email", user["email"]).execute()
-                clear_credentials_cache()
-                st.success("Password changed. Future logins will use the "
-                           "new password.")
+                }).eq("email", user["email"]).execute())
+                if not getattr(resp, "data", None):
+                    st.error("Password change didn't take — no matching record. "
+                             "Please retry, or contact an admin.")
+                else:
+                    clear_credentials_cache()
+                    st.success("Password changed. Future logins will use the "
+                               "new password.")
             except Exception as exc:
                 st.error(f"Change failed: {exc}")
 
@@ -999,7 +1015,7 @@ def render_manage_users(user: dict, sb) -> None:
 
             try:
                 temp = _gen_temp_password(12)
-                _ins = sb.table("users").insert({
+                _ins = service_client().table("users").insert({
                     "email": d_email.strip(),
                     "name": d_name.strip(),
                     "role": d_role,
@@ -1444,7 +1460,7 @@ def render_manage_users(user: dict, sb) -> None:
                     return
                 payload["access_overrides"] = new_overrides
             try:
-                sb.table("users").update(payload) \
+                service_client().table("users").update(payload) \
                     .eq("email", _target_email).execute()
                 saved_overrides = "access_overrides" in payload
             except Exception as exc:
@@ -1454,7 +1470,7 @@ def render_manage_users(user: dict, sb) -> None:
                 if missing_overrides and "access_overrides" in payload:
                     payload.pop("access_overrides", None)
                     try:
-                        sb.table("users").update(payload) \
+                        service_client().table("users").update(payload) \
                             .eq("email", _target_email).execute()
                         st.warning(
                             "Profile + role saved, but **access overrides "
@@ -1508,7 +1524,7 @@ def render_manage_users(user: dict, sb) -> None:
         if confirm:
             try:
                 temp = _gen_temp_password(12)
-                sb.table("users").update({
+                service_client().table("users").update({
                     "password_hash": hash_password(temp),
                     "must_change_password": True,
                     "password_changed_at": datetime.now(timezone.utc).isoformat(),
@@ -1576,7 +1592,7 @@ def render_manage_users(user: dict, sb) -> None:
                 st.warning("Type the email exactly as shown to confirm the deletion.")
             else:
                 try:
-                    sb.table("users").delete().eq("email", _target_email).execute()
+                    service_client().table("users").delete().eq("email", _target_email).execute()
                     clear_credentials_cache()
                     st.toast(f"🗑 Deleted {_target_email}", icon="🗑️")
                     st.rerun()
@@ -1596,7 +1612,7 @@ def render_manage_users(user: dict, sb) -> None:
         if bc1.button("🚫 Blacklist", type="primary", width='stretch',
                       key="bl_confirm_user"):
             try:
-                sb.table("users").update({
+                service_client().table("users").update({
                     "is_blacklisted": True,
                     "blacklisted_at": datetime.now(timezone.utc).isoformat(),
                     "blacklisted_by": user.get("email"),
