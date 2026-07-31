@@ -72,26 +72,9 @@ if _pending:
     except Exception as exc:
         st.warning(f"Auto-sync error: {exc}")
 
-# Title + Submit-RFP button on the same row (button top-right).
-_title_col, _btn_col = st.columns([5, 1])
-with _title_col:
-    st.title(f"Welcome, {display_name.split()[0]} 👋")
-with _btn_col:
-    # Vertical spacer aligns the button roughly with the title baseline.
-    st.markdown("<div style='height: 0.8rem'></div>", unsafe_allow_html=True)
-    # Opens the standalone Submit page in a NEW browser tab (target=_blank) so the
-    # dashboard stays put. The relative href resolves to the page's url_path
-    # (App.py: url_path="submit-new-rfp") on both local and Streamlit Cloud.
-    st.markdown(
-        "<a href='submit-new-rfp' target='_blank' rel='noopener' "
-        "title='Capture an opportunity you found outside the Friday scan — opens "
-        "in a new tab. Submitted immediately; dedup happens at display time.' "
-        "style='display:block;width:100%;box-sizing:border-box;text-align:center;"
-        "background:#00703C;color:#ffffff;padding:0.55rem 0.75rem;border-radius:0.5rem;"
-        "text-decoration:none;font-weight:600;font-size:0.88rem;line-height:1.25;'>"
-        "📝 Submit New Funding</a>",
-        unsafe_allow_html=True,
-    )
+# Page title. (The "Submit New Funding" action lives on the Pipelines page now, beside
+# "Find Eligible Funding", so it's removed from the Home header.)
+st.title(f"Welcome, {display_name.split()[0]} 👋")
 
 
 # -----------------------------------------------------------------------------

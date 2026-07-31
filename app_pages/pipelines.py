@@ -25,20 +25,27 @@ def _submit_rfp_modal():
     )
 
 
-# Title + "Scan now" button (full width) — the live-opportunity rail is lowered BELOW
-# this row (see the columns further down), so it never sits level with the page title.
-_title_col, _btn_col = st.columns([5, 1.5])
+# Title + the two page actions (Submit New Funding · Find Eligible Funding) on the same
+# row, reachable from every tab. The live-opportunity rail is lowered BELOW this row.
+_title_col, _submit_col, _scan_col = st.columns([4.4, 1.6, 1.8])
 with _title_col:
     st.title("Discovered Funding Opportunities")
-with _btn_col:
+with _submit_col:
     st.write("")  # nudge the button down to the title baseline
-    # "Scan now" (tenant-facing) = screen the platform's curated/extracted store
-    # against THIS org's eligibility. Fast (no web crawl) — the heavy extraction
-    # crawl is a separate admin job (Settings → Manual Scan → Run Extraction).
-    # Label kept as "Scan now" on purpose; flips to a disabled "running" state.
+    if st.button("📝 Submit New Funding", type="secondary", width='stretch',
+                 key="pipelines_submit_new",
+                 help="Capture a funding opportunity you found outside the scan."):
+        st.switch_page("app_pages/submit_rfp.py")
+with _scan_col:
+    st.write("")
+    # "Find Eligible Funding" (tenant-facing) = screen the platform's curated/extracted
+    # store against THIS org's eligibility. Fast (no web crawl) — the heavy extraction
+    # crawl is a separate admin job (Settings → Manual Scan → Run Extraction). Flips to a
+    # disabled "running" state.
     _scan_slot = st.empty()
     _go = _scan_slot.button(
-        "🔄 Scan now", type="primary", width='stretch', key="pipelines_scan_now",
+        "🎯 Find Eligible Funding", type="primary", width='stretch',
+        key="pipelines_scan_now",
         help="Find the funding your organisation is potentially eligible for, from "
              "the platform's curated store — runs in seconds (no web crawl). New "
              "eligible opportunities appear on the Screen tab.")
