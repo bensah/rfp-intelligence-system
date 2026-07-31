@@ -14,9 +14,9 @@ from views.account_sections import render_my_profile, render_change_password
 user = st.session_state["app_user"]
 sb = get_client()
 
-st.title("Profile")
+st.title("My Profile")
 
-tab_profile, tab_pw = st.tabs(["My Profile", "Change Password"])
+tab_profile, tab_pw = st.tabs(["Profile", "Change Password"])
 with tab_profile:
     render_my_profile(user, sb)
 with tab_pw:
