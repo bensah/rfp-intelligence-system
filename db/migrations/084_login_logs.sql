@@ -4,10 +4,16 @@
 -- user-agent, so a user can review recent sign-ins on their Profile and spot activity they
 -- don't recognise. A user may read ONLY their OWN rows (RLS via the JWT `sub` claim); the
 -- app captures logins on the RLS-bypassing service client. SAFE + ADDITIVE + RE-RUN-SAFE.
--- Requires app_current_jwt_sub() (migration 080).
 -- =========================================================================
 
 begin;
+
+-- acting-user helper — reads the JWT 'sub' claim. Normally created by migration 080, but
+-- redefined here (idempotent) so 084 is self-contained and never fails on a partial 080.
+create or replace function app_current_jwt_sub() returns uuid
+language sql stable as $$
+  select nullif(current_setting('request.jwt.claims', true)::jsonb ->> 'sub', '')::uuid
+$$;
 
 create table if not exists login_logs (
   id         uuid primary key default gen_random_uuid(),
