@@ -1285,6 +1285,10 @@ def render_manage_users(user: dict, sb) -> None:
             if _is_self:
                 user["name"] = payload.get("name") or user.get("name")
                 user["email"] = new_email_clean
+                # Reflect a self-edit of the surface overrides in-session so it takes
+                # effect on the next rerun (not only after re-login).
+                if "access_overrides" in payload:
+                    user["access_overrides"] = payload["access_overrides"]
                 st.session_state["app_user"] = user
             if approval_email_needed:
                 try:
