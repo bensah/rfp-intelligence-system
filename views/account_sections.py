@@ -490,7 +490,7 @@ def render_manage_tenants(user: dict, sb) -> None:
             "name": _name,
             "Organization": f"/organization?tenant={_key}&label={_name}",
             "Kind": "🧑 Individual" if t.get("kind") == "individual" else "🏢 Org",
-            "Dev": "🛠 Dev" if t.get("is_developer") else "—",
+            "Dev": "🛠 Dev" if t.get("is_developer") else "🙂 Regular",
             "_is_dev": bool(t.get("is_developer")),
             "_status": (t.get("status") or "active"),
             "Status": "🟢 Active" if (t.get("status") or "active") == "active"
@@ -520,11 +520,11 @@ def render_manage_tenants(user: dict, sb) -> None:
                      "account whose activity is visible to all users."),
             "Dev": st.column_config.TextColumn(
                 "Dev", width="small",
-                help="🛠 Dev = a DEVELOPER / system tenant (RFPIS Inc / Taadom). Its "
+                help="🛠 Dev = a DEVELOPER / system tenant (RFPIS Inc / Taadom): its "
                      "members may perform cross-tenant developer tasks (donor mapping, "
                      "Sources catalog & blocked tokens, Run Extraction, Records "
-                     "Verify/Reset, Learning data). Client tenants are confined to their "
-                     "own data."),
+                     "Verify/Reset, Learning data). 🙂 Regular = a client tenant, "
+                     "confined to its own data."),
             "Members": st.column_config.NumberColumn("Members", width="small"),
             "Pending": st.column_config.NumberColumn("Pending", width="small"),
         })
