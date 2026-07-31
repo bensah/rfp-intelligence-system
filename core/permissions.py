@@ -101,6 +101,57 @@ def role_group(user: dict[str, Any] | None) -> str:
     return "admin" if is_admin(user) else "user"
 
 
+# ---------------------------------------------------------------------------
+# Developer-vs-client tenant gates (cross-tenant "developer tasks")
+# ---------------------------------------------------------------------------
+# A SECOND authorization axis layered on top of role: some surfaces touch the
+# SHARED, platform-wide resources (donor mapping, the Sources catalog + Blocked
+# tokens, Run Extraction, Records → Verify/Reset, Learning data). Those are
+# DEVELOPER tasks — restricted to members of a DEVELOPER / SYSTEM tenant
+# (is_developer=true; e.g. RFPIS Inc, Taadom Digital PLC), no matter how
+# privileged a CLIENT tenant's own admins/super_user are. A client tenant is
+# confined to its OWN tenant-scoped data + settings.
+#
+# The tenant side of the check lives in auth.tenant_context (it needs the
+# service client + session tenant). We import it lazily so permissions.py stays
+# import-light and usable outside a Streamlit/tenant context (scripts, tests).
+# FAIL-CLOSED in multi-tenant mode: because the developer review/apply path bypasses
+# RLS via service_client(), THIS gate is the sole control — it must never degrade OPEN.
+# If the tenant check can't be resolved, we grant developer status ONLY when multi-tenant
+# is off (a single-tenant deployment is its own developer). In MT mode, or if we can't even
+# tell, return False so a broken import can't hand a client-tenant super_user developer
+# powers over the shared resources.
+def _active_tenant_is_developer() -> bool:
+    try:
+        from auth.tenant_context import active_tenant_is_developer
+        return active_tenant_is_developer()
+    except Exception:
+        try:
+            from auth.tenant_context import multitenant_enabled
+            return not multitenant_enabled()      # single-tenant → True; MT → fail closed
+        except Exception:
+            return False                            # can't tell → deny (safe default)
+
+
+def is_developer_super(user: dict[str, Any] | None) -> bool:
+    """Super_user whose HOME tenant is a developer/system tenant. Gate for the
+    most sensitive cross-tenant developer tasks: donor mapping + Sources catalog
+    EDIT, Records → Verify/Reset."""
+    return is_super_user(user) and _active_tenant_is_developer()
+
+
+def is_developer_admin(user: dict[str, Any] | None) -> bool:
+    """Admin OR super_user in a developer/system tenant. Gate for developer tasks
+    an admin may also perform: Run Extraction, Sources → Blocked tokens."""
+    return is_admin(user) and _active_tenant_is_developer()
+
+
+def is_developer_member(user: dict[str, Any] | None) -> bool:
+    """Any authenticated member of a developer/system tenant (read access to the
+    Learning-data view)."""
+    return bool(user) and _active_tenant_is_developer()
+
+
 # Friendly, audience-facing labels for the raw DB role values. "collaborator"
 # (the default for most teammates) reads as "Contributor" in the UI. Shown in
 # the sidebar identity block + the Help page.
