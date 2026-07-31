@@ -374,68 +374,89 @@ def _set_many_developer(svc, tids: list[str], on: bool) -> None:
         st.error(f"Developer-flag change failed (did you run migration 079?): {exc}")
 
 
-def render_manage_tenants(user: dict, sb) -> None:
-    """Settings → Tenants (SUPER USER only). Tenants = organizations registered to the
-    platform (a the organisation country / global team now; external orgs later). A management TABLE
-    with per-row "Open ↗" links to each tenant's Organization page + multi-row select for
-    bulk Suspend / Activate. Renaming is done in the Organization editor (the "Organization
-    name" field), not here. Deletion is intentionally omitted — suspend instead, so a
-    tenant's data is never orphaned.
+def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> None:
+    """Settings → Tenants. Tenants = organizations/individuals registered to the platform.
+
+    `can_manage` (default = is_super_user): the SUPER USER gets the full management table
+    (add / suspend / activate / blacklist / developer-toggle) with per-row view-as links.
+    A non-super user gets a VIEW-ONLY list scoped to the tenants they belong to — no add
+    form, no action buttons, no view-as link. Renaming is done in the Organization editor;
+    deletion is intentionally omitted — suspend/blacklist instead, so data is never orphaned.
 
     Tenant + membership rows are read/written on the RLS-BYPASSING service client (these
     are privileged platform-admin operations; the passed-in `sb` would be the caller's
     tenant-scoped client and hit RLS on the tenant tables — the 42501 create failure)."""
-    if not permissions.is_super_user(user):
-        st.error("Tenants are managed by the Super User only.")
-        return
+    if can_manage is None:
+        can_manage = permissions.is_super_user(user)
     svc = service_client()
 
-    st.subheader("Tenants")
-    st.caption(
-        "Tenants registered to the platform — **🏢 organizations** (isolated data) or "
-        "**🧑 individuals** (personal accounts whose activity is visible to all users). "
-        "Users belong to a tenant via membership. Suspend — don't delete — to retire a "
-        "tenant without orphaning its records. **Click a tenant name to open its "
-        "Organization page** (view / edit that tenant's identity + profile). Funding "
-        "opportunities are shared platform-wide and screened against each tenant's own "
-        "preferences.")
+    # Non-super users get a VIEW-ONLY list scoped to the tenants they belong to (R1/R2).
+    _my_tids: set[str] | None = None
+    if not can_manage:
+        try:
+            from auth.tenant_context import active_memberships
+            _uid = user.get("id")
+            if not _uid:
+                from auth.tenant_context import _resolve_user_id
+                _uid = _resolve_user_id(user)
+            _my_tids = {m["tenant_id"] for m in (active_memberships(_uid) if _uid else [])}
+        except Exception:
+            _my_tids = set()
 
-    # ── Add tenant ──────────────────────────────────────────────────────
-    with st.form("add_tenant_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns([3, 1.2, 1])
-        t_name = c1.text_input(
-            "New tenant name",
-            placeholder="e.g. the organisation Cameroon, the organisation Programme Team...")
-        t_kind = c2.selectbox(
-            "Type", ["Organization", "Individual"], key="add_tenant_kind",
-            help="Organization = a normal org tenant. Individual = a personal account "
-                 "whose activity is visible to all users.")
-        add = c3.form_submit_button("➕ Add tenant", type="primary", width='stretch')
-    if add:
-        nm = (t_name or "").strip()
-        if not nm:
-            st.warning("Enter a tenant name.")
-        else:
-            _kind = "individual" if t_kind == "Individual" else "organization"
-            try:
-                dupe = (svc.table("tenants").select("id").ilike("name", nm)
-                        .limit(1).execute().data or [])
-                if dupe:
-                    st.warning("A tenant with that name already exists.")
-                else:
-                    try:
-                        svc.table("tenants").insert(
-                            {"name": nm, "kind": _kind, "status": "active",
-                             "created_by": user.get("id")}).execute()
-                    except Exception:
-                        # Pre-migration-078 fallback (no `kind` column) → org tenant.
-                        svc.table("tenants").insert(
-                            {"name": nm, "status": "active",
-                             "created_by": user.get("id")}).execute()
-                    st.success(f"Created {_kind} “{nm}”.")
-                    st.rerun()
-            except Exception as exc:
-                st.error(f"Create failed: {exc}")
+    st.subheader("Tenants")
+    if can_manage:
+        st.caption(
+            "Tenants registered to the platform — **🏢 organizations** (isolated data) or "
+            "**🧑 individuals** (personal accounts whose activity is visible to all users). "
+            "Users belong to a tenant via membership. Suspend — don't delete — to retire a "
+            "tenant without orphaning its records. **Click a tenant name to open its "
+            "Organization page** (view / edit that tenant's identity + profile). Funding "
+            "opportunities are shared platform-wide and screened against each tenant's own "
+            "preferences.")
+    else:
+        st.caption("The tenants you belong to. View-only — adding, suspending and approving "
+                   "tenants is handled by the Super User.")
+
+    # ── Add tenant (super-user only; admin request flow lands in a later phase) ──
+    if can_manage:
+        with st.form("add_tenant_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns([3, 1.2, 1])
+            t_name = c1.text_input(
+                "New tenant name",
+                placeholder="e.g. the organisation Cameroon, the organisation Programme Team...")
+            t_kind = c2.selectbox(
+                "Type", ["Organization", "Individual"], key="add_tenant_kind",
+                help="Organization = a normal org tenant. Individual = a personal account "
+                     "whose activity is visible to all users.")
+            add = c3.form_submit_button("➕ Add tenant", type="primary", width='stretch')
+        if add:
+            nm = (t_name or "").strip()
+            if not nm:
+                st.warning("Enter a tenant name.")
+            else:
+                _kind = "individual" if t_kind == "Individual" else "organization"
+                try:
+                    dupe = (svc.table("tenants").select("id").ilike("name", nm)
+                            .limit(1).execute().data or [])
+                    if dupe:
+                        st.warning("A tenant with that name already exists.")
+                    else:
+                        from auth import tenant_context as _tc
+                        # A slug → the super_user view-as URL is a readable ?tenant=<slug>.
+                        _slug = _tc.make_tenant_slug(nm)
+                        try:
+                            svc.table("tenants").insert(
+                                {"name": nm, "kind": _kind, "status": "active",
+                                 "slug": _slug, "created_by": user.get("id")}).execute()
+                        except Exception:
+                            # Pre-migration fallback (no `kind`/`slug` column).
+                            svc.table("tenants").insert(
+                                {"name": nm, "status": "active",
+                                 "created_by": user.get("id")}).execute()
+                        st.success(f"Created {_kind} “{nm}”.")
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"Create failed: {exc}")
 
     # ── Management table ─────────────────────────────────────────────────
     # Try selecting `is_developer` (migration 079) + `kind` (078); fall back column-set by
@@ -457,8 +478,11 @@ def render_manage_tenants(user: dict, sb) -> None:
     # Blacklisted tenants (migration 077) are managed under the Blacklisted tab — hide
     # them here so this table only shows live (active / suspended) organizations.
     tenants = [t for t in tenants if (t.get("status") or "active") != "blacklisted"]
+    if _my_tids is not None:            # non-super: only the tenants they belong to (R2)
+        tenants = [t for t in tenants if t.get("id") in _my_tids]
     if not tenants:
-        st.info("No tenants yet.")
+        st.info("You don't belong to any tenants yet." if not can_manage
+                else "No tenants yet.")
         return
 
     try:
@@ -488,7 +512,8 @@ def render_manage_tenants(user: dict, sb) -> None:
             "id": tid,
             "slug": _key,
             "name": _name,
-            "Organization": f"/organization?tenant={_key}&label={_name}",
+            "Organization": (f"/organization?tenant={_key}&label={_name}"
+                             if can_manage else _name),
             "Kind": "🧑 Individual" if t.get("kind") == "individual" else "🏢 Org",
             "Dev": "🛠 Dev" if t.get("is_developer") else "🙂 Regular",
             "_is_dev": bool(t.get("is_developer")),
@@ -502,18 +527,22 @@ def render_manage_tenants(user: dict, sb) -> None:
         })
     _df = pd.DataFrame(_rows)
 
+    _org_col = (
+        st.column_config.LinkColumn(
+            "Organization", display_text=r"label=(.+)$", width="large",
+            help="Click a tenant name to open its Organization page in a new tab. "
+                 "That tab runs as a sticky super_user 'view-as' of the tenant — "
+                 "scoped across every page and shown in the URL (?tenant=…) until "
+                 "you Return to your account (banner up top).")
+        if can_manage else
+        st.column_config.TextColumn("Organization", width="large"))
     _sel = st.dataframe(
         _df[["Organization", "Kind", "Dev", "Status", "Members", "Pending", "Profile",
              "Created"]],
         hide_index=True, width="stretch", key="tenants_table",
-        selection_mode="multi-row", on_select="rerun",
+        selection_mode="multi-row", on_select="rerun" if can_manage else "ignore",
         column_config={
-            "Organization": st.column_config.LinkColumn(
-                "Organization", display_text=r"label=(.+)$", width="large",
-                help="Click a tenant name to open its Organization page in a new tab. "
-                     "That tab runs as a sticky super_user 'view-as' of the tenant — "
-                     "scoped across every page and shown in the URL (?tenant=…) until "
-                     "you Return to your account (banner up top)."),
+            "Organization": _org_col,
             "Kind": st.column_config.TextColumn(
                 "Kind", width="small",
                 help="🏢 Org = a normal organization tenant. 🧑 Individual = a personal "
@@ -528,6 +557,9 @@ def render_manage_tenants(user: dict, sb) -> None:
             "Members": st.column_config.NumberColumn("Members", width="small"),
             "Pending": st.column_config.NumberColumn("Pending", width="small"),
         })
+
+    if not can_manage:
+        return                          # view-only — no selection, no action buttons
 
     _picked = (getattr(_sel, "selection", None) or {}).get("rows") or []
     _sel_rows = [_rows[i] for i in _picked if 0 <= i < len(_rows)]
@@ -660,16 +692,24 @@ def render_org_suspend(user: dict, sb) -> None:
             _suspend_org_dialog()
 
 
-def render_blacklisted(user: dict, sb) -> None:
-    """Settings → Accounts → Blacklisted (SUPER USER only). One place to see every
-    hard-blocked user and tenant (migration 077) and lift the block. Blacklisting itself
-    happens from the Users / Tenants tabs; this tab is the register + the undo."""
-    if not permissions.is_super_user(user):
-        st.error("The blacklist is managed by the Super User only.")
-        return
+def render_blacklisted(user: dict, sb, *, can_manage: bool | None = None) -> None:
+    """Settings → Accounts → Blacklisted. The register of hard-blocked users + tenants
+    (migration 077) and the undo. `can_manage` (default = is_super_user): the SUPER USER
+    sees the full platform-wide register with Remove-from-blacklist actions. A non-super
+    user sees only a view-only note — the platform-wide list (with member emails + reasons)
+    is never exposed to a non-super, and they can't be an active member of a blacklisted
+    tenant anyway, so there is nothing tenant-scoped to show them."""
+    if can_manage is None:
+        can_manage = permissions.is_super_user(user)
     svc = service_client()
 
     st.subheader("Blacklisted")
+    if not can_manage:
+        st.caption("Hard-blocking (users can't sign in; a blacklisted tenant blocks all "
+                   "member access) is managed by the Super User. You have no access to any "
+                   "blacklisted tenant, so none appear here.")
+        st.info("Nothing to show.")
+        return
     st.caption(
         "Hard-blocked **users** (can't log in or sign up) and **tenants** (their members "
         "lose all access) — stronger than deactivate / suspend. Select rows and "
