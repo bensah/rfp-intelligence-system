@@ -74,6 +74,12 @@ def _gen_temp_password(length: int = 12) -> str:
 # ===========================================================================
 def render_my_profile(user: dict, sb) -> None:
     me = _fetch_self(sb, user["email"])
+    # Persistent success banner: set just before st.rerun() on a successful save so
+    # the confirmation survives the rerun (a plain st.success would be wiped by it,
+    # and st.toast fades in a few seconds — easy to miss).
+    _flash = st.session_state.pop("pf_profile_flash", None)
+    if _flash:
+        st.success(_flash)
     st.subheader("Update your profile")
     st.caption(
         "Edit your own contact info, including email. **Role is "
@@ -173,11 +179,12 @@ def render_my_profile(user: dict, sb) -> None:
                     st.session_state["app_user"] = user
                     email_changed = (
                         new_email_clean.lower() != (me.get("email") or "").lower())
-                    st.toast(
-                        "✅ Profile saved."
-                        + (f" Login email is now {new_email_clean}."
-                           if email_changed else ""),
-                        icon="✅")
+                    _msg = ("✅ Profile saved successfully."
+                            + (f" Your login email is now **{new_email_clean}** — "
+                               "use it to sign in next session."
+                               if email_changed else ""))
+                    st.session_state["pf_profile_flash"] = _msg
+                    st.toast(_msg, icon="✅")
                     st.rerun()
             except Exception as exc:
                 st.error(f"Save failed: {exc}")
@@ -303,8 +310,9 @@ def render_change_password(user: dict, sb) -> None:
                              "Please retry, or contact an admin.")
                 else:
                     clear_credentials_cache()
-                    st.success("Password changed. Future logins will use the "
-                               "new password.")
+                    st.toast("✅ Password changed.", icon="✅")
+                    st.success("✅ Password changed successfully. Future logins "
+                               "will use your new password.")
             except Exception as exc:
                 st.error(f"Change failed: {exc}")
 
