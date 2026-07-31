@@ -19,7 +19,14 @@
 
 begin;
 
--- acting-user helper — mirror of app_current_tenant_id() (068), reading the JWT 'sub' claim.
+-- acting-user helpers — read the JWT claims. app_current_tenant_id() is normally created by
+-- migration 068; app_current_jwt_sub() is new here. Both are redefined idempotently so 080 is
+-- self-contained and does not fail with 42883 when an earlier migration didn't apply cleanly.
+create or replace function app_current_tenant_id() returns uuid
+language sql stable as $$
+  select nullif(current_setting('request.jwt.claims', true)::jsonb ->> 'tenant_id', '')::uuid
+$$;
+
 create or replace function app_current_jwt_sub() returns uuid
 language sql stable as $$
   select nullif(current_setting('request.jwt.claims', true)::jsonb ->> 'sub', '')::uuid
