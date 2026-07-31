@@ -32,19 +32,35 @@ sb = get_client()
 # now (beside "Discovered RFP Pipelines"), so it's reachable from every tab.
 # -----------------------------------------------------------------------------
 year = settings.get_year()
-_head_l, _head_r = st.columns([4, 1], vertical_alignment="center")
-with _head_l:
+from core.scan_runner import run_screening_now
+# Header: "Weekly Screening Pipeline" + the two compact page actions on the same level.
+_hl, _hspacer, _h_submit, _h_scan = st.columns([4.4, 1.2, 1.5, 1.6],
+                                               vertical_alignment="center")
+with _hl:
     st.markdown(
         f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
         f"margin:0.15rem 0 0.5rem;'>Weekly Screening Pipeline ({year})</h2>",
         unsafe_allow_html=True,
     )
-with _head_r:
-    # Extreme-right, secondary (NOT the deep-green primary used by "Scan now")
-    # entry point to the Submit-RFP page — the form is otherwise easy to miss.
-    if st.button("📝 Submit RFP", type="secondary", use_container_width=True,
-                 key="screened_submit_rfp_btn"):
+with _h_submit:
+    if st.button("📝 Submit New Funding", type="secondary", width='stretch',
+                 key="screen_submit_new",
+                 help="Capture a funding opportunity you found outside the scan."):
         st.switch_page("app_pages/submit_rfp.py")
+with _h_scan:
+    # "Scan Eligible Funding" = screen the platform's curated store against THIS org's
+    # eligibility. Fast (no web crawl); flips to a disabled "running" state.
+    _scan_slot = st.empty()
+    _go = _scan_slot.button(
+        "🎯 Scan Eligible Funding", type="primary", width='stretch', key="screen_scan_now",
+        help="Find the funding your organisation is potentially eligible for, from the "
+             "platform's curated store — runs in seconds (no web crawl).")
+    if _go:
+        _scan_slot.button("⏳ Scanning…", disabled=True, width='stretch',
+                          key="screen_scan_running")
+        _who = user.get("name") or user.get("email") or "unknown"
+        run_screening_now(triggered_by=f"match:{_who}")
+        st.rerun()
 all_weeks = all_weeks_for_year(year)
 default_week = review_week_label()
 if default_week not in all_weeks:
