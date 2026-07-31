@@ -334,7 +334,9 @@ def _default_membership(user: dict, mems: list[dict[str, Any]]) -> dict[str, Any
       * super_user with several → their platform HOME tenant (flagged `is_platform`, else
         slug 'rfpis', else a name starting with "RFPIS"), else the first (name-ordered)
         so they always land somewhere rather than tenant-less;
-      * anyone else with several → None (a multi-tenant switcher is future work)."""
+      * anyone else with several → their remembered choice (users.last_tenant_id) if it's
+        still an active membership, else the first (name-ordered). They always land in a
+        SCOPED session and switch from the header dropdown (R3) — no tenant-less fail-open."""
     if not mems:
         return None
     if len(mems) == 1:
@@ -347,7 +349,13 @@ def _default_membership(user: dict, mems: list[dict[str, Any]]) -> dict[str, Any
             if home is not None:
                 return home
         return sorted(mems, key=lambda m: (m.get("name") or "").lower())[0]
-    return None
+    # Non-super with >1 membership (R3): remembered tenant if still valid, else first.
+    _last = user.get("last_tenant_id")
+    if _last:
+        _m = next((m for m in mems if str(m.get("tenant_id")) == str(_last)), None)
+        if _m is not None:
+            return _m
+    return sorted(mems, key=lambda m: (m.get("name") or "").lower())[0]
 
 
 def set_active_tenant(user: dict, tenant_id: str | None, *, role: str | None = None,
