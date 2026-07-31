@@ -45,7 +45,7 @@ from core import suggestions as _suggestions
 can_suggest = _suggestions.can_suggest(user)
 sb = get_client()
 
-st.title("Donor Intelligence Mapping")
+st.title("Your Curated Donor List")
 
 # Flash message after a modal save/delete closes (so we're sure it landed).
 _flash = st.session_state.pop("_donor_flash", None)
