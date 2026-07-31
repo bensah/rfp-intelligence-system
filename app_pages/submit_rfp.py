@@ -13,7 +13,7 @@ from views.submit_form import render_submit_form
 user = st.session_state["app_user"]
 
 _t, _b = st.columns([5, 1.2])
-_t.title("📝 Submit a Discovered RFP")
+_t.title("📝 Submit New RFP")
 with _b:
     st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
     if st.button("← Home", width="stretch", key="submit_back_home"):

@@ -13,6 +13,6 @@ import streamlit as st
 
 from core.render_view import render_view
 
-st.title("Activity Report")
+st.title("Your Activity Report")
 
 render_view("report")
