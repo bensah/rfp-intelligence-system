@@ -74,7 +74,7 @@ def _gen_temp_password(length: int = 12) -> str:
 # ===========================================================================
 def render_my_profile(user: dict, sb) -> None:
     me = _fetch_self(sb, user["email"])
-    st.subheader("My profile")
+    st.subheader("Update your profile")
     st.caption(
         "Edit your own contact info, including email. **Role is "
         "read-only** — only an admin can change it. Changing your "
