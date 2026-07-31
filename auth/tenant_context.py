@@ -150,10 +150,11 @@ def active_memberships(user_id: str | None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for r in rows:
         t = r.get("tenants") if isinstance(r.get("tenants"), dict) else {}
-        # A BLACKLISTED tenant (migration 077) is a hard block — drop the membership
-        # so its members lose all tenant context. (Suspend is intentionally NOT
-        # enforced here; only the dedicated blacklist state blocks access.)
-        if (t or {}).get("status") == "blacklisted":
+        # BLACKLISTED (mig 077) and PENDING (mig 082) tenants grant NO runtime context —
+        # drop the membership so members get no scope. Blacklist = a hard block; pending =
+        # an unapproved admin request, so its auto-added creator can't work in it until a
+        # super_user approves. (Suspend is intentionally NOT enforced here.)
+        if (t or {}).get("status") in ("blacklisted", "pending"):
             continue
         out.append({"tenant_id": r.get("tenant_id"),
                     "name": (t or {}).get("name"), "slug": (t or {}).get("slug"),
