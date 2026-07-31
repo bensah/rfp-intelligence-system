@@ -172,6 +172,12 @@ _TENANT_SCOPED_TABLES = {
     # per-tenant screening loop would let the first tenant's tombstones suppress the
     # same call for every later tenant.
     "rfp_seen",
+    # Phase-B proposal queue (migration 080). A proposal belongs to the proposer's
+    # tenant; the proposer path (create/list-mine/withdraw) is RLS-scoped here. Developer
+    # review (list-all/approve/reject) deliberately uses service_client() (RLS-bypassing)
+    # gated on permissions.is_developer_super — see core/suggestions.py. NOT in
+    # _PUBLIC_VISIBLE_TABLES (a proposal is private to its tenant, never broadcast).
+    "resource_suggestions",
 }
 
 # Of the scoped tables, these user-facing ACTIVITY tables also surface rows owned by
