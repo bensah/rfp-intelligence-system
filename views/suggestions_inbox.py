@@ -49,8 +49,8 @@ def render_suggestions_inbox(user: dict, sb) -> None:
     if not permissions.is_developer_super(user):
         st.info(
             "🔒 **Suggestions review is a developer task.** Proposed changes to the shared "
-            "donor mapping & sources catalog are reviewed by a developer-tenant Super User "
-            "(RFPIS Inc / the second tenant).")
+            "donor mapping & sources catalog are reviewed by a developer-tenant Super "
+            "User.")
         return
 
     st.caption(
