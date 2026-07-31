@@ -18,6 +18,7 @@ import difflib
 import re
 import secrets
 import string
+import unicodedata
 from datetime import datetime, timezone
 
 import bcrypt
@@ -377,9 +378,13 @@ def _set_many_developer(svc, tids: list[str], on: bool) -> None:
 
 
 def _norm_tenant_name(s: str | None) -> str:
-    """Normalize a tenant name for dedup: casefold, punctuation/whitespace runs → single
-    space, trimmed. 'RFP Intelligence  Inc.,' and 'rfp intelligence inc' compare equal."""
-    return re.sub(r"[^a-z0-9]+", " ", (s or "").strip().lower()).strip()
+    """Normalize a tenant name for dedup: NFKC + casefold (folds full-width/compatibility/
+    case variants so 'ＲＦＰ'/'Rfp'/'RFP' compare equal — the exact-dup block can't be
+    bypassed by those unicode tricks), then non-alphanumeric runs → single space, trimmed.
+    'RFP Intelligence  Inc.,' and 'rfp intelligence inc' compare equal. (Cross-script
+    homoglyphs are a residual risk — the DB unique(name) + super approval are the backstop.)"""
+    s = unicodedata.normalize("NFKC", (s or "")).casefold()
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
 
 
 def _tenant_dedup_matches(name: str, all_tenants: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -423,20 +428,21 @@ def _render_add_tenant(user: dict, svc, *, is_super: bool) -> None:
         _all = []
     exact, similar = _tenant_dedup_matches(nm, _all)
 
-    if nm.strip():
-        _matches = exact + similar
-        if _matches:
-            _lbl = {"active": "🟢", "suspended": "⏸", "pending": "🕓", "blacklisted": "🚫"}
+    # Typeahead: surface matching NAMES so the user can spot a duplicate (the box's whole
+    # point) — but NEVER reveal a tenant's operational status to the caller, and never list
+    # blacklisted tenants. Require ≥3 chars so single letters can't enumerate the platform.
+    if len(nm.strip()) >= 3:
+        _shown = [t for t in (exact + similar) if t.get("status") != "blacklisted"]
+        if _shown:
             st.caption("Matching existing tenants — is yours already here?")
-            for t in _matches[:8]:
-                st.markdown(f"- {_lbl.get(t.get('status'), '•')} **{t.get('name')}** "
-                            f"· {t.get('status') or 'active'}")
+            for t in _shown[:8]:
+                st.markdown(f"- **{t.get('name')}**")
         else:
             st.caption("No matching tenant — you can add it as new.")
 
     if exact:
-        st.warning("A tenant with that name already exists (shown above). Pick it instead "
-                   "of creating a duplicate.")
+        st.warning("A tenant with that name already exists — pick it instead of creating a "
+                   "duplicate.")
         return
     if similar:
         st.info("⚠ Similar tenant name(s) exist above. Only add if yours is **genuinely "
@@ -499,10 +505,11 @@ def _render_pending_approvals(user: dict, svc) -> None:
         c1.markdown(f"**{t.get('name')}** · {_kind} · requested {(t.get('created_at') or '')[:10]}")
         if c2.button("✓ Approve", type="primary", key=f"tn_appr_{t['id']}"):
             try:
+                # Guard on status='pending' so a raced/duplicate click can't re-approve.
                 svc.table("tenants").update({
                     "status": "active", "approved_by": user.get("email"),
                     "approved_at": datetime.now(timezone.utc).isoformat()
-                }).eq("id", t["id"]).execute()
+                }).eq("id", t["id"]).eq("status", "pending").execute()
                 st.toast(f"Approved {t.get('name')}", icon="✓")
             except Exception as exc:
                 st.error(f"Approve failed: {exc}")
@@ -510,7 +517,10 @@ def _render_pending_approvals(user: dict, svc) -> None:
         if c3.button("✗ Reject", key=f"tn_rej_{t['id']}",
                      help="Delete this request (no data yet)."):
             try:
-                svc.table("tenants").delete().eq("id", t["id"]).execute()
+                # Guard on status='pending' — NEVER delete a tenant that was approved in a
+                # race (that would cascade-delete its members).
+                svc.table("tenants").delete().eq("id", t["id"]) \
+                   .eq("status", "pending").execute()
                 st.toast(f"Rejected {t.get('name')}", icon="✗")
             except Exception as exc:
                 st.error(f"Reject failed: {exc}")
