@@ -27,7 +27,7 @@ _BRIEF_MAX = 1000          # hard cap on the synthesised brief (chars)
 # duration sections that live past this many chars on long RFPs (40+ page PDFs folded
 # into _page_text by deep_read.py) — see _build_excerpt(), which anchors on those
 # sections instead of just taking the opening. Env-configurable so a higher-spend
-# deployment (e.g. the second tenant's premium tier) can raise quality without a code fork.
+# deployment (e.g. a premium tier) can raise quality without a code fork.
 _MAX_INPUT_CHARS = int(os.environ.get("LLM_SYNTH_MAX_INPUT_CHARS", "20000"))
 _OPENING_CHARS = int(os.environ.get("LLM_SYNTH_OPENING_CHARS", "6000"))     # always-included lead
 _ANCHOR_WINDOW = int(os.environ.get("LLM_SYNTH_ANCHOR_WINDOW", "1200"))    # chars kept per anchor

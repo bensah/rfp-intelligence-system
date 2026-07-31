@@ -89,7 +89,7 @@ with _btn_col:
         "style='display:block;width:100%;box-sizing:border-box;text-align:center;"
         "background:#00703C;color:#ffffff;padding:0.55rem 0.75rem;border-radius:0.5rem;"
         "text-decoration:none;font-weight:600;font-size:0.88rem;line-height:1.25;'>"
-        "📝 Submit Discovered RFP</a>",
+        "📝 Submit New Funding</a>",
         unsafe_allow_html=True,
     )
 
@@ -187,91 +187,96 @@ except Exception as exc:
          "submitted": 0, "awarded_grants": 0}
 
 
-# Row 1 — pipeline status (deduplicated)
-r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-r1c1.metric(
-    "Total Unique RFPs",
-    k["total_unique"],
-    delta=(f"{k['total_found']} found · {k['duplicates']} duplicate"
-           if k["duplicates"] else f"{k['total_found']} found"),
-    delta_color="off",
-)
-r1c2.metric("Proceed", k["proceed"])
-r1c3.metric("Park", k["park"])
-r1c4.metric("Decline", k["decline"])
-
-# Row 2 — urgency + grants. Flow: Due → Submitted → Past deadline → Awarded
-r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-r2c1.metric("Due in 14 days", k["due_soon"])
-r2c2.metric("Submitted", k["submitted"])
-r2c3.metric("Past deadline", k["overdue"], delta_color="inverse")
-r2c4.metric("Awarded Grants", k["awarded_grants"])
-
-st.divider()
-
-
-# -----------------------------------------------------------------------------
-# Role-aware quick-start cards
-# -----------------------------------------------------------------------------
-st.subheader("Where to start")
-
-CARDS = [
-    ("Pipelines", "app_pages/pipelines.py", "📚", "Screen → Review → Tracking → Summary",
-     "Friday-scan + manual submissions through the full lifecycle: 4 tabs (Screen, Review, Tracking, Summary)."),
-    ("Grants", "app_pages/grants.py", "💼", "Active Grants",
-     "Grants under donor review or already awarded, with reporting deadlines."),
-    ("Actions", "app_pages/actions.py", "🗒️", "Team check-ins + Engagements",
-     "Three tabs — weekly meeting notes, donor engagement touchpoints, and pending follow-ups."),
-    ("Report", "app_pages/report.py", "📊", "KPI dashboard",
-     "Activity dashboard tracing the full pipeline — search → triage → reviews → engagements → grants secured."),
-    ("Organization", "app_pages/organization.py", "🏢", "Organization",
-     "Everything about your organization — profile, bid-fitness, eligibility, partners, team."),
-]
-if role in ("super_user", "admin"):
-    CARDS.append(("Settings", "app_pages/admin.py", "⚙️", "Setup · Users · Data · Sources · Scans",
-                  "Org profile, year setting, Excel sync, currency rates, Manage Users + User Access, "
-                  "the full Records backend, donor sources, manual scans. Also in the 👤 menu (top-right)."))
-
-cols = st.columns(3)
-for i, (page, path, icon, headline, body) in enumerate(CARDS):
-    with cols[i % 3]:
-        st.markdown(
-            f"<div class='quickcard'><h4>{icon} &nbsp; {headline}</h4><p>{body}</p></div>",
-            unsafe_allow_html=True,
-        )
-        if st.button(f"Open {page}", key=f"qs_{page}", width='stretch'):
-            st.switch_page(path)
-
-
-# -----------------------------------------------------------------------------
-# How to use guide
-# -----------------------------------------------------------------------------
-st.divider()
-with st.expander("📖 How to use this app", expanded=False):
-    st.markdown(
-        """
-        **Weekly rhythm**
-        1. **Friday morning** — the automated scanner pulls new opportunities from the
-           configured donor sources and emails the team a digest. New rows appear in
-           **Screenings** with an auto-recommendation (Proceed / Park / Decline).
-        2. **Friday → Sunday** — anyone who finds an RFP outside the scan submits it
-           via **Submit**. The form runs duplicate detection, computes an alignment
-           score, and tags it to next Monday's review week.
-        3. **Monday 09:00** — the team call. Open **Screenings**, walk through each
-           opportunity. For deep discussion of a single RFP, open **Review** and use
-           the badge grid. Capture meeting notes in **Meeting Log**, linked to the
-           RFP under discussion. Decisions saved here override the auto-recommendation
-           and are timestamped.
-        4. **Mid-week** — proposal teams work the **Tracking** pipeline. Update stage,
-           progress, next action, deadlines. Log donor calls in **Engagement Log**.
-
-        **Roles**
-        - **Admin** — everything, plus user management, scan triggers, donor source curation.
-        - **Reviewer** — confirm decisions, edit RFPs, but no delete.
-        - **Collaborator** — submit RFPs and read dashboards.
-
-        **Need help?** The **Data** page (under Admin) is the master record — every
-        column in the old Excel screener lives there and can be edited via the Edit
-        modal.
-        """
+_main, _rail = st.columns([3.4, 1], gap="medium")
+with _rail:
+    from views.opportunity_rail import render_opportunity_rail
+    render_opportunity_rail()
+with _main:
+    # Row 1 — pipeline status (deduplicated)
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+    r1c1.metric(
+        "Total Unique RFPs",
+        k["total_unique"],
+        delta=(f"{k['total_found']} found · {k['duplicates']} duplicate"
+               if k["duplicates"] else f"{k['total_found']} found"),
+        delta_color="off",
     )
+    r1c2.metric("Proceed", k["proceed"])
+    r1c3.metric("Park", k["park"])
+    r1c4.metric("Decline", k["decline"])
+
+    # Row 2 — urgency + grants. Flow: Due → Submitted → Past deadline → Awarded
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+    r2c1.metric("Due in 14 days", k["due_soon"])
+    r2c2.metric("Submitted", k["submitted"])
+    r2c3.metric("Past deadline", k["overdue"], delta_color="inverse")
+    r2c4.metric("Awarded Grants", k["awarded_grants"])
+
+    st.divider()
+
+
+    # -----------------------------------------------------------------------------
+    # Role-aware quick-start cards
+    # -----------------------------------------------------------------------------
+    st.subheader("Where to start")
+
+    CARDS = [
+        ("Pipelines", "app_pages/pipelines.py", "📚", "Screen → Review → Tracking → Summary",
+         "Friday-scan + manual submissions through the full lifecycle: 4 tabs (Screen, Review, Tracking, Summary)."),
+        ("Grants", "app_pages/grants.py", "💼", "Active Grants",
+         "Grants under donor review or already awarded, with reporting deadlines."),
+        ("Actions", "app_pages/actions.py", "🗒️", "Team check-ins + Engagements",
+         "Three tabs — weekly meeting notes, donor engagement touchpoints, and pending follow-ups."),
+        ("Report", "app_pages/report.py", "📊", "KPI dashboard",
+         "Activity dashboard tracing the full pipeline — search → triage → reviews → engagements → grants secured."),
+        ("Organization", "app_pages/organization.py", "🏢", "Organization",
+         "Everything about your organization — profile, bid-fitness, eligibility, partners, team."),
+    ]
+    if role in ("super_user", "admin"):
+        CARDS.append(("Settings", "app_pages/admin.py", "⚙️", "Setup · Users · Data · Sources · Scans",
+                      "Org profile, year setting, Excel sync, currency rates, Manage Users + User Access, "
+                      "the full Records backend, donor sources, manual scans. Also in the 👤 menu (top-right)."))
+
+    cols = st.columns(3)
+    for i, (page, path, icon, headline, body) in enumerate(CARDS):
+        with cols[i % 3]:
+            st.markdown(
+                f"<div class='quickcard'><h4>{icon} &nbsp; {headline}</h4><p>{body}</p></div>",
+                unsafe_allow_html=True,
+            )
+            if st.button(f"Open {page}", key=f"qs_{page}", width='stretch'):
+                st.switch_page(path)
+
+
+    # -----------------------------------------------------------------------------
+    # How to use guide
+    # -----------------------------------------------------------------------------
+    st.divider()
+    with st.expander("📖 How to use this app", expanded=False):
+        st.markdown(
+            """
+            **Weekly rhythm**
+            1. **Friday morning** — the automated scanner pulls new opportunities from the
+               configured donor sources and emails the team a digest. New rows appear in
+               **Screenings** with an auto-recommendation (Proceed / Park / Decline).
+            2. **Friday → Sunday** — anyone who finds an RFP outside the scan submits it
+               via **Submit**. The form runs duplicate detection, computes an alignment
+               score, and tags it to next Monday's review week.
+            3. **Monday 09:00** — the team call. Open **Screenings**, walk through each
+               opportunity. For deep discussion of a single RFP, open **Review** and use
+               the badge grid. Capture meeting notes in **Meeting Log**, linked to the
+               RFP under discussion. Decisions saved here override the auto-recommendation
+               and are timestamped.
+            4. **Mid-week** — proposal teams work the **Tracking** pipeline. Update stage,
+               progress, next action, deadlines. Log donor calls in **Engagement Log**.
+
+            **Roles**
+            - **Admin** — everything, plus user management, scan triggers, donor source curation.
+            - **Reviewer** — confirm decisions, edit RFPs, but no delete.
+            - **Collaborator** — submit RFPs and read dashboards.
+
+            **Need help?** The **Data** page (under Admin) is the master record — every
+            column in the old Excel screener lives there and can be edited via the Edit
+            modal.
+            """
+        )
