@@ -24,7 +24,7 @@ def _submit_rfp_modal():
     )
 
 
-# The page title only. The Submit New Funding + Scan Eligible Funding actions live on the
+# The page title only. The Submit New Funding + Scan Funding actions live on the
 # "Weekly Screening Pipeline" header inside the Screen tab (see views/screened_rfp.py).
 st.title("Discovered Funding Opportunities")
 
