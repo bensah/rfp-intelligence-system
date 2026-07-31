@@ -34,7 +34,11 @@ from db.supabase_client import get_client, safe_execute
 _COUNTRY = (settings.get_org().get("org_country") or "").strip() or "the focus country"
 
 user = st.session_state["app_user"]
-can_edit = permissions.is_admin(user)          # admin OR super_user only
+# Donor intelligence is a SHARED, cross-tenant DEVELOPER resource — direct edit is
+# restricted to a developer-tenant super_user (RFPIS Inc / Taadom). Everyone else,
+# including client-tenant admins, views read-only and proposes changes via the
+# suggestion queue (Phase B). Single-tenant deployments collapse this to super_user.
+can_edit = permissions.is_developer_super(user)
 sb = get_client()
 
 st.title("Donor Intelligence Mapping")
@@ -2106,9 +2110,12 @@ if "category_clean" in df:
 st.divider()
 _hdr, _addcol = st.columns([4, 1.2])
 _hdr.subheader("All donors")
+_EDIT_LOCK_HELP = ("Donor intelligence is a shared, cross-tenant developer resource — "
+                   "direct edits are limited to a developer-tenant Super User. Use "
+                   "“Suggest a change” to propose an update.")
 if _addcol.button("➕ Add donor", width="stretch", disabled=not can_edit,
                   key="donor_add_btn",
-                  help=None if can_edit else "Admins only."):
+                  help=None if can_edit else _EDIT_LOCK_HELP):
     for _k in ("add_donor_name", "add_donor_short", "add_donor_web"):
         st.session_state.pop(_k, None)   # fresh form each open
     _add_donor_dialog()
