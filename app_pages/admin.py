@@ -1441,7 +1441,7 @@ with tab_scan:
         "Two workflows. **⛏ Run Extraction** crawls every catalogued funding source "
         f"and extracts opportunities into the global store — a full run ({_src_count()} "
         "sources with detail-page + PDF + LLM enrichment) is the slow backend job "
-        "(**~20-40 minutes**, no org screening). **🎯 Scan Eligible Funding** then "
+        "(**~20-40 minutes**, no org screening). **🎯 Scan Funding** then "
         "screens that store against this organisation's eligibility (Settings → Scan "
         "eligibility & auto-scoring policies) — fast, no crawl."
     )
@@ -1516,19 +1516,20 @@ with tab_scan:
     # Two SEPARATE workflows (DATA_SCHEMA_ETL.md §2-3):
     #   • Run Extraction      — crawl every donor source → extract into the global
     #     store. PURE extraction, NO org screening (extract_only=True). Slow.
-    #   • Scan Eligible Funding — screen the INTERNAL store against this org
+    #   • Scan Funding — screen the INTERNAL store against this org
     #     (geography + MUST/PREFER) → the funding the org is potentially eligible
     #     for. Fast (no crawl). Tenant-facing version = the Pipeline "Scan now".
     # Buttons sit ABOVE the summary cards. Each flips to a disabled "running…"
     # label in place while it works.
     _who = user.get("name") or user.get("email") or "admin"
-    # Run Extraction = extreme LEFT, Scan Eligible Funding = extreme RIGHT (wide gap).
-    _bc1, _bcmid, _bc2 = st.columns([1.9, 4.2, 1.9])
+    # Run Extraction + Scan Funding sit together on the left — compact (narrow columns)
+    # with a wide spacer on the right so the two buttons stay close.
+    _bc1, _bc2, _bcsp = st.columns([1.5, 1.6, 5.2])
     _ext_slot = _bc1.empty()
     _match_slot = _bc2.empty()
     # Run Extraction is a PLATFORM job that crawls every source into the SHARED global
     # store (no per-tenant screening) — a developer task. Restricted to an admin/super
-    # of a developer tenant. The "Scan Eligible Funding" screening
+    # of a developer tenant. The "Scan Funding" screening
     # button beside it stays available to every tenant admin (it's tenant-scoped).
     _do_extract = _ext_slot.button(
         "⛏ Run Extraction", type="secondary", key="admin_extract_btn", width='stretch',
@@ -1537,9 +1538,9 @@ with tab_scan:
               "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
               "(~20-40 min for a full run).") if _dev_admin else
              ("Developer task — restricted to an admin/Super User of a developer "
-              "tenant. Use 🎯 Scan Eligible Funding to screen this org."))
+              "tenant. Use 🎯 Scan Funding to screen this org."))
     _do_match = _match_slot.button(
-        "🎯 Scan Eligible Funding", type="primary", key="admin_match_btn", width='stretch',
+        "🎯 Scan Funding", type="primary", key="admin_match_btn", width='stretch',
         help="Screen the curated store against this org's eligibility (geography + "
              "MUST/PREFER) — the funding you're potentially eligible for. Fast.")
 
@@ -1564,7 +1565,7 @@ with tab_scan:
         except Exception as exc:
             st.session_state["admin_scan_banner"] = {
                 "ok": False,
-                "msg": f"❌ Scan Eligible Funding failed: `{type(exc).__name__}: {exc}`."}
+                "msg": f"❌ Scan Funding failed: `{type(exc).__name__}: {exc}`."}
         st.rerun()
 
     # Banner from the previous run (survives the post-scan rerun).
