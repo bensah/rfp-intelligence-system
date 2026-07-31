@@ -298,7 +298,7 @@ def login_gate() -> Optional[dict[str, Any]]:
         st.error("Your account is inactive. Contact an administrator.")
         return None
 
-    _record_login(email)
+    _record_login(email, user.get("id"))
     st.session_state["app_user"] = user
     st.session_state.setdefault("display_name", name or email)
 
@@ -354,14 +354,37 @@ def _fetch_user(email: str) -> Optional[dict[str, Any]]:
     raise last_exc if last_exc else RuntimeError("could not reach the database")
 
 
-def _record_login(email: str) -> None:
+def _client_ip_ua() -> tuple[Optional[str], Optional[str]]:
+    """Best-effort client IP + user-agent from the request headers (Streamlit ≥1.37's
+    st.context.headers). Returns (None, None) when unavailable — older Streamlit, or no
+    proxy headers (e.g. some local runs). Never raises."""
+    try:
+        h = dict(st.context.headers or {})
+    except Exception:
+        return None, None
+    low = {k.lower(): v for k, v in h.items()}
+    ip = (low.get("x-forwarded-for") or low.get("x-real-ip") or "")
+    ip = ip.split(",")[0].strip() or None
+    return ip, (low.get("user-agent") or None)
+
+
+def _record_login(email: str, user_id: str | None = None) -> None:
+    now = datetime.now(timezone.utc).isoformat()
     try:
         sb = get_client()
-        sb.table("users").update(
-            {"last_login_at": datetime.now(timezone.utc).isoformat()}
-        ).eq("email", email).execute()
+        sb.table("users").update({"last_login_at": now}).eq("email", email).execute()
     except Exception:
         pass  # non-fatal
+    # Capture a login-history row (IP + user-agent) for the Profile security panel. Runs on
+    # the service client — this fires before any tenant JWT exists. Best-effort / non-fatal.
+    try:
+        from db.supabase_client import service_client
+        _ip, _ua = _client_ip_ua()
+        service_client().table("login_logs").insert({
+            "user_id": user_id, "email": email, "at": now,
+            "ip": _ip, "user_agent": _ua}).execute()
+    except Exception:
+        pass
 
 
 def ensure_logged_in() -> Optional[dict[str, Any]]:
