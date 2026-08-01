@@ -128,28 +128,50 @@ def _is_match(row) -> bool:
             or _f(row.get("alignment_score")) >= STRONG_FIT)
 
 
+def _row_key(r: dict):
+    """Stable identity for cross-bucket dedup — uid, else link, else title."""
+    return (r.get("uid") or r.get("opportunity_link")
+            or r.get("opportunity_title") or id(r))
+
+
+def _prominence_of(r: dict, today: date) -> float:
+    days = _days_until(r.get("call_submission_deadline"), today)
+    return (0.5 * _amount_score(_f(r.get("call_award_value")))
+            + 0.3 * _geo_score(r.get("call_geographic_scope"))
+            + 0.2 * _urgency_score(days))
+
+
 def classify(rows: list[dict], today: date | None = None) -> dict[str, list[dict]]:
     """Split rows into {'top_funding', 'top_matches', 'other'} — each a ranked ≤5 list of
-    item dicts. Top Funding is fit-agnostic (biggest/most-urgent, live deadlines only);
-    Top Matches is strong-fit by alignment; Other is fresh non-matches (live only)."""
+    item dicts. The three cards are MUTUALLY EXCLUSIVE: every opportunity appears in AT
+    MOST ONE, at its single best placement, so the rail never shows the same call twice.
+    Priority: Top Matches (strong fit — most actionable) → Top Funding (biggest/most-urgent
+    of what's left) → Also Interesting (freshest of the rest). Live deadlines only."""
     today = today or date.today()
     rows = rows or []
-
     live = [r for r in rows if not _is_expired(r.get("call_submission_deadline"), today)]
 
-    top_funding = sorted(
-        (_item(r, today) for r in live),
-        key=lambda it: it["_prominence"], reverse=True)[:_TOP_N]
+    used: set = set()
 
-    matches = [r for r in rows if _is_match(r)]
-    top_matches = sorted(
-        (_item(r, today) for r in matches),
-        key=lambda it: (it["alignment"], it["amount"]), reverse=True)[:_TOP_N]
+    def _take(candidate_rows, sort_key, n: int = _TOP_N) -> list[dict]:
+        out: list[dict] = []
+        for r in sorted(candidate_rows, key=sort_key, reverse=True):
+            k = _row_key(r)
+            if k in used:
+                continue                       # already placed in a higher-priority card
+            used.add(k)
+            out.append(_item(r, today))
+            if len(out) >= n:
+                break
+        return out
 
-    match_uids = {r.get("uid") for r in matches}
-    # "Also interesting" = non-matches that are still live, freshest first.
-    other_rows = [r for r in live if r.get("uid") not in match_uids]
-    other = [_item(r, today) for r in
-             sorted(other_rows, key=_recency_key, reverse=True)][:_TOP_N]
+    # 1. Top Matches — strong fit; the most actionable placement wins the opportunity.
+    top_matches = _take(
+        [r for r in live if _is_match(r)],
+        lambda r: (_f(r.get("alignment_score")), _f(r.get("call_award_value"))))
+    # 2. Top Funding — biggest / most-urgent of the REMAINING live rows (fit-agnostic).
+    top_funding = _take(live, lambda r: _prominence_of(r, today))
+    # 3. Also interesting — freshest of whatever is still unplaced.
+    other = _take(live, _recency_key)
 
     return {"top_funding": top_funding, "top_matches": top_matches, "other": other}
