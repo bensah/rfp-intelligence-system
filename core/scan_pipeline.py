@@ -1097,6 +1097,39 @@ def _run_screening_body(*, dry_run: bool, status: str, triggered_by: str) -> dic
     return res
 
 
+def _active_tenants() -> list[dict[str, Any]]:
+    """Active tenants (id, name, is_platform), name-ordered. Empty on any error."""
+    try:
+        from db.supabase_client import service_client
+        return (service_client().table("tenants")
+                .select("id,name,status,is_platform")
+                .eq("status", "active").order("name").execute().data or [])
+    except Exception as exc:
+        log.error("could not list tenants: %s", exc)
+        return []
+
+
+def is_multitenant_deploy(tenants: list[dict[str, Any]] | None = None) -> bool:
+    """True for a MULTI-TENANT deployment. Two signals:
+      * the JWT master switch is on (multitenant_enabled), OR
+      * the DB has >= 2 active NON-platform tenants.
+
+    The second signal matters for the CRON: per-tenant screening writes via the headless
+    override (a ContextVar), which is JWT-INDEPENDENT — so the Friday scan can populate
+    every tenant's pipeline even when SUPABASE_JWT_SECRET isn't in the Actions env, and the
+    app (which DOES have the secret) then reads those tenant-tagged rows scoped correctly.
+    A genuine single-tenant deploy (JWT off, < 2 real tenants) returns False, so run_scan
+    falls back to a normal full ingest instead of tenant-tagging a lone seeded tenant."""
+    try:
+        from auth.tenant_context import multitenant_enabled
+        if multitenant_enabled():
+            return True
+    except Exception:
+        pass
+    rows = tenants if tenants is not None else _active_tenants()
+    return sum(1 for t in rows if not t.get("is_platform")) >= 2
+
+
 def screen_all_tenants(*, dry_run: bool = False, triggered_by: str = "cron",
                        status: str = "Open") -> dict[str, dict]:
     """Headless per-tenant screening (the cron's Option-C step). For each ACTIVE tenant,
@@ -1104,23 +1137,15 @@ def screen_all_tenants(*, dry_run: bool = False, triggered_by: str = "cron",
     insert tenant-tagged rfp_submissions — so the Friday discovery reaches every tenant
     automatically (a fresh tenant with a minimal profile gets many rows, mostly Decline).
     Run AFTER an --extract-only crawl. Returns {tenant_id: screening result}."""
-    # No-op in single-tenant mode (no JWT secret): the headless override would otherwise
-    # screen a seeded tenant with blank policies and stamp rows to it, polluting the
-    # single-tenant pipeline. run_scan handles single-tenant with a normal full ingest.
-    try:
-        from auth.tenant_context import multitenant_enabled
-        if not multitenant_enabled():
-            log.info("screen_all_tenants: multi-tenant off — skipping per-tenant screening")
-            return {}
-    except Exception:
-        return {}
-    from db.supabase_client import service_client
-    try:
-        tenants = (service_client().table("tenants")
-                   .select("id,name,status,is_platform")
-                   .eq("status", "active").order("name").execute().data or [])
-    except Exception as exc:
-        log.error("screen_all_tenants: couldn't list tenants: %s", exc)
+    tenants = _active_tenants()
+    # No-op only in a genuine SINGLE-tenant deploy — NOT merely because SUPABASE_JWT_SECRET
+    # is absent from this (cron) env. Screening stamps tenant_id via the headless override,
+    # which works without the JWT switch, so a multi-tenant deploy (>=2 active non-platform
+    # tenants) is populated even when the cron env lacks the secret. Guarding on the JWT
+    # switch alone silently skipped the Friday auto-populate whenever the secret wasn't set
+    # as an Actions secret.
+    if not is_multitenant_deploy(tenants):
+        log.info("screen_all_tenants: single-tenant deploy — skipping per-tenant screening")
         return {}
     out: dict[str, dict] = {}
     for t in tenants:
