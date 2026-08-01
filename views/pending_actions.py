@@ -9,7 +9,7 @@ Surfaces every open follow-up across two sources:
 
 Each section gets:
   * Two KPI cards (Unresolved count + % Unresolved)
-  * Per-owner summary line ("Bernard (3) · Ornella (2) · …")
+  * Per-owner summary line ("Jane (3) · Robin (2) · …")
   * Filterable list (date range + owner multiselect)
   * Inline Resolved / Not Resolved toggle (same UX as the per-week
     meeting_logs view, no jumping pages to close an item)

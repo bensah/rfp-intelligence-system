@@ -35,7 +35,7 @@ os.environ.setdefault("SUPABASE_KEY", "sb_secret_dummy")
 import db.supabase_client as sc            # noqa: E402
 import auth.tenant_context as tc           # noqa: E402
 
-the organisation = "28b17088-4d52-4546-85fb-5a14ba9ae22c"
+ORG_A = "28b17088-4d52-4546-85fb-5a14ba9ae22c"
 HOME = "13d79b44-44c3-4614-b8fa-463ad7a58e10"       # super_user's platform home (RFPIS APP)
 ORG_B = "df584f3e-42f1-443d-8d08-2ae821e9b2d4"
 
@@ -74,9 +74,9 @@ class TenantIsolationTests(unittest.TestCase):
 
     # --- regular (non-super) users ----------------------------------------
     def test_regular_user_scopes_to_own_tenant_via_jwt(self):
-        _set_session(app_user={"role": "collaborator"}, tenant_id=the organisation, _tenant_jwt="jwt")
+        _set_session(app_user={"role": "collaborator"}, tenant_id=ORG_A, _tenant_jwt="jwt")
         c = sc.get_client()
-        self.assertEqual(self._scope(c), the organisation)
+        self.assertEqual(self._scope(c), ORG_A)
         self.assertIs(self._base(c), self._jwt)   # RLS-backed base
 
     def test_regular_user_missing_tenant_fails_closed(self):
@@ -88,9 +88,9 @@ class TenantIsolationTests(unittest.TestCase):
 
     def test_regular_user_without_jwt_still_scoped(self):
         # JWT client unavailable → falls to service client but STILL app-scoped to tenant.
-        _set_session(app_user={"role": "collaborator"}, tenant_id=the organisation)  # no _tenant_jwt
+        _set_session(app_user={"role": "collaborator"}, tenant_id=ORG_A)  # no _tenant_jwt
         c = sc.get_client()
-        self.assertEqual(self._scope(c), the organisation)
+        self.assertEqual(self._scope(c), ORG_A)
         self.assertIs(self._base(c), self._svc)
 
     # --- super_user -------------------------------------------------------

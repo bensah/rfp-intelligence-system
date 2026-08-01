@@ -10,7 +10,7 @@
 -- _TENANT_SCOPED_TABLES (code change in db/supabase_client.py), the get_client() wrapper
 -- auto-filters fetch_all() to the current tenant and stamps record() with it — so each
 -- tenant's suppression only considers ITS OWN tombstones. Existing tombstones are
--- backfilled to the organisation Cameroon (they were the organisation's historically). Single-tenant/super_user
+-- backfilled to the sample country team (they were the organisation's historically). Single-tenant/super_user
 -- (unscoped) still see the full ledger.
 --
 -- SAFE + ADDITIVE + IDEMPOTENT.
@@ -21,11 +21,11 @@ begin;
 alter table rfp_seen add column if not exists tenant_id uuid references tenants(id);
 create index if not exists idx_rfp_seen_tenant on rfp_seen(tenant_id);
 
--- Backfill the pre-existing global tombstones to the organisation Cameroon (their historical owner).
+-- Backfill the pre-existing global tombstones to the sample country team (their historical owner).
 update rfp_seen
-   set tenant_id = (select id from tenants where name = 'the organisation Cameroon' limit 1)
+   set tenant_id = (select id from tenants where name = 'the sample country team' limit 1)
  where tenant_id is null
-   and exists (select 1 from tenants where name = 'the organisation Cameroon');
+   and exists (select 1 from tenants where name = 'the sample country team');
 
 commit;
 
