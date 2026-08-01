@@ -5,8 +5,8 @@ account owner from the source workbook). Two independent jobs:
 
   --fix-emails        Overwrite rfp_submissions.submitted_by_email for every
                       migration row so it matches its `submitted_by` name.
-                      Pure data correction (no credentials). Fixes the legacy
-                      cross-assignments (e.g. Chris Diaz had Shariffa's email).
+                      Pure data correction (no credentials). Fixes legacy
+                      cross-assignments (a row's email not matching its name).
 
   --create-accounts   Create a users row for each team member who doesn't
                       already have one. SILENT — a direct DB insert sends no
@@ -36,21 +36,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from auth.authenticator import hash_password  # noqa: E402
 from db.supabase_client import get_client, safe_execute  # noqa: E402
 
-# Authoritative roster from the source workbook's Email / Submitted By columns.
-# Each person has exactly one email, so name-keying is unambiguous.
-TEAM: list[tuple[str, str]] = [
-    ("Jane Doe",        "youruser@example.org"),
-    ("John Smith",         "ptata@example.org"),
-    ("Alex Kim",       "mbudzi@example.org"),
-    ("Sam Patel",    "siliassu@example.org"),
-    ("Robin Lee",       "pornella@example.org"),
-    ("Chris Diaz",         "bcisse.ic@example.org"),
-    ("Pat Morgan",    "atraore@example.org"),
-    ("Taylor Reed",  "jlambif@example.org"),
-    ("Jordan Blake",    "ckuetchetakougang@example.org"),
-    ("Casey Fox",       "ayonkeu@example.org"),
-    ("Drew Hall",         "ysaidu@example.org"),
-]
+# Roster (Name -> email). PLACEHOLDER example values — this is a public template.
+# The deployment owner replaces these with their own team, or (preferred) points the
+# script at a local, gitignored roster file / env so real names + emails never enter the
+# repo. Each person has exactly one email, so name-keying is unambiguous.
+_ROSTER_FILE = Path(__file__).resolve().parent.parent / "data" / "team_roster.local.json"
+
+
+def _load_roster() -> list[tuple[str, str]]:
+    """Load the real roster from a local, gitignored JSON ([["Name","email"], …]) when
+    present; otherwise fall back to the example placeholders below. Keeps real PII out of
+    the repo while staying runnable."""
+    try:
+        if _ROSTER_FILE.exists():
+            import json as _json
+            data = _json.loads(_ROSTER_FILE.read_text(encoding="utf-8"))
+            pairs = [(str(n).strip(), str(e).strip()) for n, e in data if n and e]
+            if pairs:
+                return pairs
+    except Exception:
+        pass
+    return [
+        ("Example User One",   "user1@example.org"),
+        ("Example User Two",   "user2@example.org"),
+        ("Example User Three", "user3@example.org"),
+    ]
+
+
+TEAM: list[tuple[str, str]] = _load_roster()
 
 # New accounts start dormant: live row, but no usable password until an admin
 # resets it. Flip to False if you'd rather they be inactive until activation.
