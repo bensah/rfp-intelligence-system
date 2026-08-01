@@ -20,7 +20,7 @@
 | Source | How it enters | Decision origin |
 |---|---|---|
 | `migration` | Excel workbook import (team's familiar tool; slow-change baseline) | **Human-coded** Proceed/Park/Decline already in the sheet |
-| `auto` | Rule-based scan (later + LLM in the the second tenant phase) | **System-generated** after the hard gate; overridable in team meetings |
+| `auto` | Rule-based scan (later + LLM in the the LLM phase) | **System-generated** after the hard gate; overridable in team meetings |
 | `manual` | In-app submission form (built; not yet a team workflow) | Human-entered |
 
 **Lifecycle:** discover → **hard gate (Reject)** → score the **9 criteria** → **decision** (Proceed/Park/Decline) → team review/override → outcome tracking. The hard gate is a deterministic *filter* (you apply a rule, you don't predict it). The decision is the *prediction/judgement* on opportunities that survived the gate.
@@ -232,7 +232,7 @@ crawl/seed (`core/scraper.py`, donor_sources + search) → resolve aggregator hi
 ## 13. Known gaps / roadmap
 1. ~~Competitiveness & cofinancing donor flags placeholder names~~ — **RESOLVED 2026-06-17**: `criteria_derive.py` + `matching.py` now use the REAL `donor_intel` columns — competitiveness factors `local_registration_required`/`local_partner_required` (grassroots), `local_board_required`, `cost_sharing_match_required`/`prefinance_required` (co-financing), `global_multi_country_scope` (multi-country), `hq_country` (HQ match); cofinancing reads `cost_sharing_match_required`/`prefinance_required` (authoritative) before parsing RFP text; route_fit uses `local_board_required`/`local_registration_required`.
 2. **Phase 3 model** — build `scripts/train_decision_model.py` once labels accrue.
-3. **LLM extraction (the second tenant phase)** — replace remaining keyword fallbacks + improve robust crawl.
+3. **LLM extraction (the LLM phase)** — replace remaining keyword fallbacks + improve robust crawl.
 4. **Manual submission** not yet a team workflow; **donor-name split** in submit form (source from `donor_intel`).
 5. Streamlit tab rendering of the recent admin reorg verified structurally only — confirm visually.
 

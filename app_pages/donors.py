@@ -1062,7 +1062,7 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
             _label("donor_is_dual_role_implementer"), _dual_opts,
             index=_dual_opts.index(_cur_dual) if _cur_dual in _dual_opts else 0,
             key=f"dualrole_{ck}",
-            help="Yes for implementers (the organisation, PATH, Sightsavers…) that ALSO publish "
+            help="Yes for implementers (implementing organisations…) that ALSO publish "
                  "their own calls / sub-grants.")
         edited["donor_opportunity_listing_urls"] = st.text_area(
             _label("donor_opportunity_listing_urls"), row.get("donor_opportunity_listing_urls") or "",
