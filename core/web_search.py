@@ -330,7 +330,7 @@ _META_B_RE = re.compile(
     r'(?:property|name|itemprop)=["\']([^"\']+)["\']', re.I)
 
 
-_UA = "Mozilla/5.0 (compatible; RFPIS-discovery/1.0; +https://taadom.org)"
+_UA = "Mozilla/5.0 (compatible; RFPIS-discovery/1.0; +https://example.org)"
 _SCRIPT_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>")
 _TAGS_RE = re.compile(r"(?s)<[^>]+>")
 _WS_RE = re.compile(r"\s+")

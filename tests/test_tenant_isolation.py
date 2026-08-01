@@ -37,7 +37,7 @@ import auth.tenant_context as tc           # noqa: E402
 
 ORG_A = "28b17088-4d52-4546-85fb-5a14ba9ae22c"
 HOME = "13d79b44-44c3-4614-b8fa-463ad7a58e10"       # super_user's platform home (RFPIS APP)
-TAADOM = "df584f3e-42f1-443d-8d08-2ae821e9b2d4"
+ORG_B = "df584f3e-42f1-443d-8d08-2ae821e9b2d4"
 
 
 class _FakeBase:
@@ -96,9 +96,9 @@ class TenantIsolationTests(unittest.TestCase):
     # --- super_user -------------------------------------------------------
     def test_super_viewing_tenant_scopes_to_viewed_not_home(self):
         _set_session(app_user={"role": "super_user"}, tenant_id=HOME,
-                     su_view_tenant=TAADOM, _tenant_jwt="jwt")
+                     su_view_tenant=ORG_B, _tenant_jwt="jwt")
         c = sc.get_client()
-        self.assertEqual(self._scope(c), TAADOM)  # the tenant being viewed, not home
+        self.assertEqual(self._scope(c), ORG_B)  # the tenant being viewed, not home
         self.assertIs(self._base(c), self._svc)   # service base so view-as can read X
 
     def test_super_home_scopes_to_home(self):
@@ -124,10 +124,10 @@ class TenantIsolationTests(unittest.TestCase):
 
     def test_headless_override_scopes_to_override(self):
         _set_session()                                # no web session
-        tok = tc.set_tenant_override(TAADOM)
+        tok = tc.set_tenant_override(ORG_B)
         try:
             c = sc.get_client()
-            self.assertEqual(self._scope(c), TAADOM)
+            self.assertEqual(self._scope(c), ORG_B)
         finally:
             tc.reset_tenant_override(tok)
 

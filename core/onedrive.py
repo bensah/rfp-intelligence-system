@@ -5,14 +5,14 @@ expire — which is what an unattended cron needs. Dormant until the ONEDRIVE_* 
 so importing this never fails and nothing happens without configuration.
 
 Env (set as GitHub Actions secrets for the backup workflow):
-  ONEDRIVE_TENANT_ID      Azure AD tenant for the account (GUID, or the domain taadom.com)
+  ONEDRIVE_TENANT_ID      Azure AD tenant for the account (GUID, or the domain example.com)
   ONEDRIVE_CLIENT_ID      the app registration's Application (client) ID
   ONEDRIVE_CLIENT_SECRET  a client secret for that app registration
-  ONEDRIVE_USER           drive owner UPN, e.g. nsah@taadom.com
+  ONEDRIVE_USER           drive owner UPN, e.g. you@example.com
   ONEDRIVE_FOLDER         destination folder under the drive root (default 'RFPIS Backups')
 
 The app registration needs the APPLICATION permission `Files.ReadWrite.All` (Microsoft
-Graph) with admin consent granted in the taadom.com tenant.
+Graph) with admin consent granted in the example.com tenant.
 """
 from __future__ import annotations
 

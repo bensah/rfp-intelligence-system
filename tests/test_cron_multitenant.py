@@ -42,7 +42,7 @@ class MultiTenantDetectionTests(unittest.TestCase):
 
     def test_jwt_off_two_non_platform_is_multitenant(self):
         self._set_jwt(False)
-        tenants = [_t("RFPIS APP", platform=True), _t("Org A"), _t("Taadom")]
+        tenants = [_t("RFPIS APP", platform=True), _t("Org A"), _t("the second tenant")]
         self.assertTrue(SP.is_multitenant_deploy(tenants))   # DB signal → cron screens
 
     def test_jwt_off_single_non_platform_is_single_tenant(self):

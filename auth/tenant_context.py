@@ -262,7 +262,7 @@ def active_tenant_is_developer() -> bool:
 
 
 def _slug_base(name: str | None) -> str:
-    """A URL-safe base slug from a tenant name ('Taadom Digital PLC' → 'taadom-digital-plc')."""
+    """A URL-safe base slug from a tenant name ('Example Tenant' → 'example-tenant')."""
     s = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
     return s or "tenant"
 
