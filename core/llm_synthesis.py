@@ -412,7 +412,11 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
             # that requires a real key surfaces a visible auth error, never a silent skip.
             api_key=(os.environ.get("LLM_SYNTH_API_KEY")
                      or os.environ.get("LLM_JUDGE_API_KEY") or "ollama"),
-            timeout=float(os.environ.get("LLM_JUDGE_TIMEOUT", "60") or 60),
+            # Synthesis reads up to 20k chars, so a very long RFP can exceed the judge's
+            # 60s. Honour a synth-specific override first (raise it for the backfill of
+            # long docs), else the shared judge timeout, else 60.
+            timeout=float(os.environ.get("LLM_SYNTH_TIMEOUT")
+                          or os.environ.get("LLM_JUDGE_TIMEOUT", "60") or 60),
             max_retries=0,
         )
         resp = client.chat.completions.create(
