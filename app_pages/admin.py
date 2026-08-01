@@ -199,7 +199,7 @@ _dev_admin = permissions.is_developer_admin(user)     # admin+ in a developer te
 _dev_member = permissions.is_developer_member(user)   # any member of a developer tenant
 
 # Tab set. "Accounts" (users + super-only tenants/blacklisted) sits right after Setup;
-# "Sources" nests Catalog | Blocked | Excel Sync. "Learning data" is a developer-only
+# "Sources" nests Catalog | Verify Registry | Blocked | Excel Sync. "Learning data" is a developer-only
 # view (its BODY is gated to developer-tenant members below, like Records → Verify/Reset).
 # A developer Super User also gets a "Suggestions" review inbox (with a pending-count
 # badge); the super_user also gets a cross-tenant "Analytics" tab.
@@ -308,14 +308,14 @@ with tab_settings:
 with tab_data:
     _dtab, _vtab, _rtab = st.tabs(["Data", "Verify", "Backup & Reset"])
     with _vtab:
-        # Human verification acts on the SHARED scanner (auto-rejects, source registry,
-        # recovering false-rejects into the global store) — a cross-tenant DEVELOPER task,
+        # Human verification acts on the SHARED scanner (auto-rejects, recovering
+        # false-rejects into the global store) — a cross-tenant DEVELOPER task,
         # so it's restricted to a developer-tenant Super User. Info notice (not st.stop())
         # so sibling Records tabs still render in the same script pass.
         if not _dev_super:
             st.info(
                 "🔒 **Verification is a developer task.** It tunes the shared scanner "
-                "(confirming auto-rejects, the source registry, recovering missed calls), "
+                "(confirming auto-rejects, recovering missed calls), "
                 "which affects every tenant — so it's limited to the Super User of a "
                 "developer tenant.")
         else:
@@ -936,18 +936,26 @@ with tab_data:
 
 if tab_sources is not None:
     with tab_sources:
-        _cat_tab, _blk_tab, _xls_tab = st.tabs(["Catalog", "Blocked", "Excel Sync"])
+        _cat_tab, _vreg_tab, _blk_tab, _xls_tab = st.tabs(
+            ["Catalog", "Verify Registry", "Blocked", "Excel Sync"])
 
 else:
-    _cat_tab = _blk_tab = _xls_tab = None
+    _cat_tab = _vreg_tab = _blk_tab = _xls_tab = None
+
+# Verify Registry — classify hosts (aggregator vs primary) + push to the catalog.
+# Moved here from Records → Verify so all source-catalogue management lives under Sources.
+if _vreg_tab is not None:
+    with _vreg_tab:
+        from views.verification import _render_source_registry
+        _render_source_registry(user)
 if _cat_tab is not None:
     with _cat_tab:
         st.subheader("Funding sources catalog")
         st.caption(
             "Curated per-source funding URLs. The Friday scan + manual scan iterate "
             "over every **active** row here, in addition to the keyword-wide sources "
-            "in `config/sources.yaml`. **New sources are added in Verify → Source "
-            "registry**, then pushed here (single point of entry). Select rows to edit "
+            "in `config/sources.yaml`. **New sources are added in the Verify Registry "
+            "tab**, then pushed here (single point of entry). Select rows to edit "
             "or delete. (Download the grid as CSV via its built-in ⤓ icon.)"
         )
         # The catalog is a SHARED, cross-tenant developer resource (every tenant's scan
@@ -960,10 +968,10 @@ if _cat_tab is not None:
             st.info(
                 "🔒 Read-only. The sources catalog is shared across all tenants, so edits "
                 "are limited to a developer-tenant Super User. Propose additions/changes via "
-                "**💡 Suggest** below or the Verify → Source registry.")
+                "**💡 Suggest** below or the Verify Registry tab.")
 
         _METHODS = ["html", "html_js", "rss", "rest_json", "manual"]  # scan dispatch
-        # Unified "Method" dropdown — SAME labels as the Verify > Source registry, each
+        # Unified "Method" dropdown — SAME labels as the Verify Registry tab, each
         # mapped to a scan dispatch value (donor_sources.scrape_method).
         _METHOD_LABELS = {"API": "rest_json", "RSS / feed": "rss", "Page crawl": "html",
                           "JS page crawl": "html_js", "Manual": "manual"}
@@ -1234,7 +1242,7 @@ if _cat_tab is not None:
         # ----- Selectable table -------------------------------------------------
         ddf = _donors()
         if ddf.empty:
-            st.info("No sources yet — add them in **Verify → Source registry**, "
+            st.info("No sources yet — add them in the **Verify Registry** tab, "
                     "then push to this catalogue.")
         else:
             ids = ddf["id"].tolist()
