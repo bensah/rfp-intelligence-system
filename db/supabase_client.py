@@ -277,6 +277,50 @@ class _TenantScopedClient:
         return getattr(self._real, name)
 
 
+# A tenant_id that no row will ever carry — used to FAIL CLOSED. When we're inside a
+# live tenant web session but can't resolve a real tenant_id, we scope reads to this
+# sentinel (→ 0 rows) instead of handing back the unscoped RLS-bypassing service client
+# (which would be a cross-tenant firehose). The all-zeros UUID is a valid uuid literal
+# so `.eq("tenant_id", …)` type-checks server-side and simply matches nothing.
+_NO_TENANT_SENTINEL = "00000000-0000-0000-0000-000000000000"
+
+
+def _live_tenant_session() -> bool:
+    """True inside a LOGGED-IN Streamlit web session under multi-tenant mode — the only
+    context where an unresolved tenant must FAIL CLOSED rather than fall back to the
+    unscoped service-role firehose. False for single-tenant deploys, for cron/scripts
+    (no Streamlit session), and when a headless override is active (it always resolves to
+    a concrete tid, handled in _tenant_scope_tid). Best-effort; any failure → False."""
+    try:
+        from auth.tenant_context import override_tenant_id
+        if override_tenant_id():
+            return False            # headless override → concrete tid, not the danger case
+    except Exception:
+        pass
+    try:
+        import streamlit as st  # type: ignore
+        from auth.tenant_context import multitenant_enabled
+        if not multitenant_enabled():
+            return False            # single-tenant deploy → unscoped is correct
+        return bool(st.session_state.get("app_user"))
+    except Exception:
+        return False
+
+
+def _is_super_session() -> bool:
+    """True when the live session's user is a super_user. A super's tenant JWT is pinned
+    to their HOME tenant, so it can't back a 'view-as another tenant' read — supers use
+    the RLS-bypassing service client with the app-layer wrapper scoping to su_view/home
+    instead (see get_client). Best-effort; any failure → False (treated as a normal user,
+    the safer default)."""
+    try:
+        import streamlit as st  # type: ignore
+        u = st.session_state.get("app_user") or {}
+        return str(u.get("role") or "").lower() == "super_user"
+    except Exception:
+        return False
+
+
 def _tenant_scope_tid() -> str | None:
     """The tenant_id to scope this session's data access to, or None for NO scoping —
     when multi-tenant is off, the user is a super_user (sees all tenants), there's no
@@ -310,16 +354,52 @@ def _tenant_scope_tid() -> str | None:
         return None
 
 
-def get_client() -> Client:
-    sc = _session_tenant_client()         # per-session tenant client when one applies
-    base = sc if sc is not None else service_client()   # else RLS-bypassing service-role
-    tid = _tenant_scope_tid()
-    if tid:
+def _scoped(base, tid: str) -> Client:
+    """Wrap `base` in the tenant-scoping proxy; if wrapping itself fails, fall back to a
+    FRESH service-role client scoped to the fail-closed sentinel so a wrapper bug can never
+    downgrade to an unscoped firehose inside a tenant context."""
+    try:
+        return _TenantScopedClient(base, tid)           # type: ignore[return-value]
+    except Exception:
         try:
-            return _TenantScopedClient(base, tid)       # type: ignore[return-value]
+            return _TenantScopedClient(service_client(), _NO_TENANT_SENTINEL)  # type: ignore[return-value]
         except Exception:
-            return base                                 # fail-open — never break access
-    return base
+            return base
+
+
+def get_client() -> Client:
+    """The tenant-aware data client. FAILS CLOSED inside a live multi-tenant web session:
+    it never returns the unscoped RLS-bypassing service-role client there, so an
+    unresolved tenant reads NOTHING rather than every tenant's rows (the cross-tenant leak).
+
+    Routing:
+      * live NON-super session → the per-session tenant JWT client (Postgres RLS is a real
+        DB backstop: a role=authenticated bearer overrides the service-role apikey and RLS
+        filters by request.jwt.claims->>'tenant_id') PLUS the app-layer wrapper. If the JWT
+        client is unavailable, still scope the service client to the resolved tid — or the
+        sentinel — so the read stays closed.
+      * live SUPER_USER session → RLS-bypassing service client + wrapper scoped to the
+        tenant they're VIEWING (su_view_tenant) or their home. Their JWT is pinned to home
+        and would break view-as, so RLS can't back a super; the wrapper is the isolation
+        and is likewise scoped (or sentinel-closed) — never the raw firehose.
+      * NOT a live tenant session (single-tenant deploy, cron/scripts, headless override) →
+        service client, scoped to a resolved/override tid when there is one, else unscoped
+        (correct: there are no other tenants to leak to)."""
+    tid = _tenant_scope_tid()
+    live = _live_tenant_session()
+
+    if live and not _is_super_session():
+        sc = _session_tenant_client()     # RLS-backed JWT client when one applies
+        base = sc if sc is not None else service_client()
+        return _scoped(base, tid or _NO_TENANT_SENTINEL)
+
+    # Super_user, or not a live tenant session.
+    base = service_client()
+    if tid:
+        return _scoped(base, tid)
+    if live:                              # live super with no resolvable view/home
+        return _scoped(base, _NO_TENANT_SENTINEL)   # fail closed — don't firehose
+    return base                           # single-tenant / cron → unscoped is correct
 
 
 def _clear_client_cache() -> None:
