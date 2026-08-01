@@ -71,6 +71,7 @@ except Exception:
 from core.scraper import scan_source  # noqa: E402
 from core.scan_pipeline import ingest_candidates  # noqa: E402
 from core import aggregators  # noqa: E402  — primary/aggregator class for ingest ordering
+from core import extracted_store  # noqa: E402  — global store; incremental extract-only skip
 
 
 def _emit_progress(event: str, **kw) -> None:
@@ -95,6 +96,13 @@ DEFAULT_WORKERS = int(os.environ.get("SCAN_PARALLELISM", "8"))
 # the scan as extra HTML sources. On by default; set SCAN_INCLUDE_SEEDS=0 to
 # disable if it ever gets noisy.
 INCLUDE_SEEDS = os.environ.get("SCAN_INCLUDE_SEEDS", "1") != "0"
+
+# Incremental extraction (extract-only runs, incl. the Friday cron): skip
+# re-crawling + re-LLM-extracting opportunities already in the global store that
+# were refreshed within the last EXTRACT_REFRESH_DAYS days. On by default; set
+# RFPIS_EXTRACT_INCREMENTAL=0 to force a full re-extraction of every candidate.
+EXTRACT_INCREMENTAL = os.environ.get("RFPIS_EXTRACT_INCREMENTAL", "1") != "0"
+EXTRACT_REFRESH_DAYS = int(os.environ.get("RFPIS_EXTRACT_REFRESH_DAYS", "7") or 7)
 
 # A seed URL is worth auto-scanning only if it looks like an opportunities /
 # calls page — not a homepage or a known dead-end. A positive signal (grant /
@@ -305,17 +313,32 @@ def _log_scan(sb, *, source: str, triggered_by: str,
         safe_execute(sb.table("scan_logs").insert(row))
 
 
-def _scrape_one(source: dict[str, Any]) -> dict[str, Any]:
+def _scrape_one(source: dict[str, Any], *, extract_only: bool = False,
+                fresh_uids: set[str] | None = None) -> dict[str, Any]:
     """Pure scrape — no DB, no ingest. Safe to run in a worker thread.
 
     Returns the source's results plus timing/error metadata so the
     sequential ingest phase can process it consistently.
+
+    Incremental extraction: `extract_only`/`fresh_uids` are forwarded to
+    scan_source so already-fresh candidates are dropped before deep-read/LLM.
+    The per-source skip count is read back (thread-local in core.scraper) and
+    returned as "skipped" so run() can log the run-wide total.
     """
     name = source.get("name") or source.get("url") or "(unnamed)"
     t0 = time.time()
     err = None
+    skipped = 0
     try:
-        results = scan_source(source)
+        results = scan_source(source, extract_only=extract_only,
+                              fresh_uids=fresh_uids)
+        # Read this thread's incremental-skip tally right after the scan (same
+        # worker thread, so the thread-local value belongs to THIS source).
+        try:
+            from core.scraper import last_scan_skipped
+            skipped = last_scan_skipped()
+        except Exception:
+            skipped = 0
     except Exception as exc:
         results = []
         err = f"{type(exc).__name__}: {exc}"
@@ -331,6 +354,7 @@ def _scrape_one(source: dict[str, Any]) -> dict[str, Any]:
         "source": source,
         "results": results,
         "err": err,
+        "skipped": skipped,
         "duration": time.time() - t0,
     }
 
@@ -410,6 +434,18 @@ def run(
         f"dry_run={dry_run}"
     )
 
+    # Incremental extraction: in extract-only runs (incl. the Friday cron), load the
+    # set of store UIDs refreshed within the refresh window ONCE, up front, and hand
+    # it to every source's scrape so already-fresh opportunities are skipped before
+    # the costly deep-read + LLM enrichment. Disabled (fresh=None) for full/screening
+    # runs or when RFPIS_EXTRACT_INCREMENTAL=0 — then every candidate is crawled as
+    # before. Best-effort: recent_uids() returns an empty set on error.
+    fresh: set[str] | None = None
+    if extract_only and EXTRACT_INCREMENTAL:
+        fresh = extracted_store.recent_uids(EXTRACT_REFRESH_DAYS)
+        print(f"Incremental extraction: {len(fresh)} opportunity(ies) extracted "
+              f"within {EXTRACT_REFRESH_DAYS}d will be skipped.")
+
     # -------------------------------------------------------------------
     # Phase 1: parallel scrape
     # -------------------------------------------------------------------
@@ -417,7 +453,8 @@ def run(
     _emit_progress("start", total=_n_sources, phase="scrape")
     scraped: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=effective_workers) as ex:
-        futures = {ex.submit(_scrape_one, s): s for s in all_sources}
+        futures = {ex.submit(_scrape_one, s, extract_only=extract_only,
+                             fresh_uids=fresh): s for s in all_sources}
         for fut in as_completed(futures):
             try:
                 scraped.append(fut.result())
@@ -430,6 +467,7 @@ def run(
                     "source": src,
                     "results": [],
                     "err": f"thread crash: {type(exc).__name__}: {exc}",
+                    "skipped": 0,
                     "duration": 0.0,
                 })
             # Live progress for the SLOW phase — one line per source as its crawl
@@ -441,6 +479,13 @@ def run(
                            found=len(_b.get("results") or []),
                            err=bool(_b.get("err")))
     scrape_seconds = time.time() - wall_start
+
+    # Incremental extraction — always report the run-wide skip total (never silently
+    # drop it), even when 0, so the log makes the saving explicit.
+    if extract_only and EXTRACT_INCREMENTAL:
+        _skipped_total = sum(int(b.get("skipped") or 0) for b in scraped)
+        print(f"Incremental: skipped {_skipped_total} already-fresh candidate(s) "
+              "(no re-crawl/LLM).")
 
     # Phase-2 ingest is SEQUENTIAL and dedup state accumulates, so the FIRST batch
     # carrying a given call wins. Order batches so that when the same call is
