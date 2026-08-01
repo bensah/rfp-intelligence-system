@@ -124,22 +124,19 @@ st.markdown(
 )
 
 def _rag_bar_html(pct: float, label: str) -> str:
-    """A red-amber-green segmented completeness bar. The FILL colour reflects the band the
-    score falls in — ≤50% red, 50–80% amber, ≥80% green — over a faint three-zone track so
-    the 50% / 80% thresholds are visible. Self-contained inline styles (semi-transparent
-    zone tints work in light AND dark themes)."""
+    """A red-yellow-green completeness bar. The FILL colour reflects the band the score
+    falls in — ≤50% red, 50–80% yellow, ≥80% green. The not-yet-covered remainder is a
+    subtle GREY (low-visibility), with faint 50% / 80% ticks so the thresholds still read.
+    Self-contained inline styles that work in light AND dark themes."""
     pctw = max(0.0, min(100.0, round(pct * 100, 1)))
-    fill = _RAG_COLOR[_rag_band(pct)]         # red / amber / green by band (single source)
-    red_z, amber_z, green_z = ("rgba(209,52,59,.14)", "rgba(224,138,30,.16)",
-                               "rgba(30,142,62,.16)")
-    tick = "rgba(128,128,128,.45)"
-    track = (f"linear-gradient(to right,{red_z} 0%,{red_z} 50%,"
-             f"{amber_z} 50%,{amber_z} 80%,{green_z} 80%,{green_z} 100%)")
+    fill = _RAG_COLOR[_rag_band(pct)]         # red / yellow / green by band (single source)
+    track = "rgba(128,128,128,.15)"           # the uncovered remainder — greyed, understated
+    tick = "rgba(128,128,128,.30)"            # faint 50% / 80% threshold marks
     return (
         "<div style='margin:.15rem 0 .55rem;'>"
         f"<div style='font-size:.9rem;margin-bottom:.3rem;'>{label}</div>"
         "<div style='position:relative;height:13px;border-radius:7px;overflow:hidden;"
-        f"background:{track};box-shadow:inset 0 0 0 1px rgba(128,128,128,.18);'>"
+        f"background:{track};box-shadow:inset 0 0 0 1px rgba(128,128,128,.14);'>"
         f"<div style='height:100%;width:{pctw}%;background:{fill};"
         "border-radius:7px 0 0 7px;transition:width .35s ease;'></div>"
         f"<div style='position:absolute;top:0;bottom:0;left:50%;width:1px;background:{tick};'></div>"
