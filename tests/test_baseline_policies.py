@@ -43,7 +43,7 @@ class BaselinePolicyTests(unittest.TestCase):
     def test_scoped_tenant_no_policy_seeds_from_profile(self):
         P.get_setting = lambda key: None
         elig, broad = self._geo(P.get_policies())
-        self.assertEqual(elig, ["Kenya"])          # profile geo, NOT the organisation Cameroon/Mali
+        self.assertEqual(elig, ["Kenya"])          # profile geo, NOT the sample country team/Mali
         self.assertEqual(broad, [])
 
     def test_scoped_tenant_saved_without_geo_falls_back_to_profile(self):

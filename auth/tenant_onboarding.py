@@ -112,7 +112,7 @@ def render_onboarding(user: dict) -> None:
 
     st.caption(
         "Choose your organization — a the organisation country or global team "
-        "(e.g. “the organisation Cameroon”, “the organisation Programme Team”). Pick an existing one to "
+        "(e.g. “the sample country team”, “Sample Global Team”). Pick an existing one to "
         "request access, or create yours if it isn't listed yet.")
 
     tenants = _list_tenants()
@@ -130,7 +130,7 @@ def render_onboarding(user: dict) -> None:
 
     elif choice == _CREATE_NEW:
         new_name = st.text_input("New organization name", key="onb_new_name",
-                                 placeholder="e.g. the organisation Zimbabwe")
+                                 placeholder="e.g. Sample Country Team")
         typed = (new_name or "").strip()
         if typed:
             st.caption(f"You'll become the admin of **{typed}**.")
