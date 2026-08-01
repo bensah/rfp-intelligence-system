@@ -342,17 +342,41 @@ def _seed_geo_from_profile(pol: dict[str, Any]) -> dict[str, Any]:
     return pol
 
 
+_THEME_UMBRELLAS: dict[str, set[str]] = {
+    "ECON": {"economic", "livelihood", "livelihoods", "income", "finance",
+             "financial inclusion", "market systems", "enterprise", "employment"},
+    "AGRI": {"agriculture", "agricultural", "farming", "farmer", "crop",
+             "food system", "food systems"},
+    "WASH": {"water", "sanitation", "hygiene"},
+    "ENV": {"climate", "environment", "environmental", "renewable energy",
+            "conservation", "biodiversity"},
+    "GOV": {"governance", "government", "civic", "democracy", "electoral",
+            "accountability", "rule of law"},
+    "GES": {"gender", "equity", "inclusion", "empowerment", "GBV"},
+    "HUM": {"humanitarian", "emergency response", "disaster", "crisis",
+            "relief", "displacement"},
+}
+_HEALTH_THEME_PREFIXES = {"WCH", "NCDs", "IDs", "HSS", "Cross-cutting"}
+
+
 def _profile_theme_keywords() -> list[str]:
     """Theme keywords for the tenant's own program-area CATEGORIES (from its profile) —
     used to seed the theme gate when no explicit theme policy exists. Derives at the
-    CATEGORY level (every sub-area sharing the org's prefixes) PLUS a broad umbrella term,
-    so a call anywhere in the org's categories still matches; only clearly OFF-category
-    calls (e.g. money-laundering for a health org) fail the gate. Deliberately errs toward
-    KEEP (broad terms) — a theme gate must not hide a relevant call. Empty program areas →
-    [] (permissive). Best-effort: any error → []."""
+    CATEGORY level (every sub-area sharing the org's prefixes) PLUS a broad umbrella term
+    per category family, so a call anywhere in the org's categories still matches; only
+    clearly OFF-category calls (e.g. money-laundering for a health org) fail the gate.
+    Deliberately errs toward KEEP (broad terms) — a theme gate must not hide a relevant
+    call. Any health prefix pulls in the FULL default health vocabulary (not just the
+    listed sub-area's keywords), so e.g. a Malaria-only org still matches an adjacent
+    Diagnostics/Research call instead of requiring the literal word "health". Codes are
+    resolved through program_area_classifier.expand() first, so a whole-CATEGORY pick
+    (stored as a full name, e.g. "Infectious Diseases") seeds correctly, not just picks
+    of canonical "PREFIX - Sub-area" keys. Empty program areas → [] (permissive).
+    Best-effort: any error → []."""
     try:
         from core import org_profile as _op
-        from core.program_area_classifier import PROGRAM_AREA_KEYWORDS as _PAK
+        from core.program_area_classifier import (PROGRAM_AREA_KEYWORDS as _PAK,
+                                                    expand as _expand)
         prof = _op.get_profile() or {}
         codes: set[str] = set()
         for f in ("org_domain_expertise", "org_priority_areas"):
@@ -365,16 +389,22 @@ def _profile_theme_keywords() -> list[str]:
                 codes.update(str(k).strip() for k in r if str(k).strip())
         if not codes:
             return []
-        prefixes = {c.split(" - ", 1)[0].strip() for c in codes if " - " in c}
+        canon = _expand(codes)  # Category full-name / bare sub-label / key -> keys
+        prefixes = {k.split(" - ", 1)[0].strip() for k in canon if " - " in k}
+        if not prefixes:
+            return []
         kws: set[str] = set()
         for area, bag in _PAK.items():
             if area.split(" - ", 1)[0].strip() in prefixes:
                 kws.update(str(k) for k in (bag or []))
-        # Broad umbrella so a generically-worded same-family call still matches.
-        if prefixes & {"WCH", "NCDs", "IDs", "HSS", "Cross-cutting"}:
-            kws.update({"health", "global health", "public health", "healthcare"})
+        if prefixes & _HEALTH_THEME_PREFIXES:
+            kws.update(str(k) for k in DEFAULT_POLICIES["themes"]["required_any"])
         if "EDU" in prefixes:
-            kws.update({"education", "school", "learning", "teacher"})
+            kws.update({"education", "school", "learning", "teacher", "student",
+                        "curriculum", "literacy", "pedagogy", "classroom"})
+        for pfx, terms in _THEME_UMBRELLAS.items():
+            if pfx in prefixes:
+                kws.update(terms)
         return sorted(k for k in kws if k)
     except Exception:
         return []

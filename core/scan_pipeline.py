@@ -529,7 +529,8 @@ def ingest_candidates(
             # flow. Best-effort; never affects the scan.
             try:
                 if (not cand.get("extraction_uid")
-                        and is_eligible(cand, policies, geo_org_gates=False)[0]):
+                        and is_eligible(cand, policies, geo_org_gates=False,
+                                         theme_gate=False)[0]):
                     extraction.extract_and_store(cand, policies)
             except Exception as _exc:
                 log.debug("shadow extract (reject path) skipped: %s", _exc)
