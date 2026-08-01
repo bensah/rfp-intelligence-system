@@ -15,6 +15,7 @@ says "SSA" or merely names "Kenya".
 """
 from __future__ import annotations
 
+import json
 import re
 
 # ── UN M49 regions & sub-regions ────────────────────────────────────────────
@@ -520,6 +521,57 @@ for _code, _canon in _ISO3_ALPHA3.items():
     _COUNTRY_CANON.setdefault(_code, _canon)
 
 
+def flatten_scope_terms(scope) -> list[str]:
+    """Return a clean list of raw geo terms from a stored call_geographic_scope value,
+    REPAIRING double-encoded data: some legacy rows stored the scope as a JSON-array
+    STRING (e.g. '["Europe", "European Union"]') — either as the whole value or as a
+    single list element — so the real terms were hidden inside one opaque string and
+    read as unrecognised free-text. Parses those back out; leaves already-clean arrays
+    untouched. De-dups, order-stable; does NOT canonicalise (callers do that next)."""
+    def _expand(v):
+        if v is None:
+            return []
+        if isinstance(v, (list, tuple)):
+            out = []
+            for el in v:
+                out.extend(_expand(el))
+            return out
+        s = str(v).strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    return _expand(parsed)
+            except Exception:
+                pass
+        return [s] if s else []
+
+    seen: list[str] = []
+    for t in _expand(scope):
+        if t and t not in seen:
+            seen.append(t)
+    return seen
+
+
+def _deinvert_official_name(tl: str) -> str | None:
+    """Reorder a comma-/parenthesis-INVERTED official country name into its natural
+    form so it matches the alias table. Sources (UNGM, ISO 3166 name columns) emit
+    'Congo, The Democratic Republic of the', 'Korea, Republic of',
+    'Tanzania, United Republic of', 'Iran (Islamic Republic of)'. Reordering the
+    qualifier before the head noun ('the democratic republic of the congo') lets the
+    existing alias map resolve them to a canonical short name. Returns the reordered
+    lowercase string, or None when the term has no comma/parenthesis to invert."""
+    m = re.match(r"^(.*?)\s*[,(]\s*(.+?)\)?$", tl)
+    if not m:
+        return None
+    head, qualifier = m.group(1).strip(), m.group(2).strip()
+    if not head or not qualifier:
+        return None
+    reordered = re.sub(r"\s+", " ", f"{qualifier} {head}").strip()
+    reordered = re.sub(r"^the\s+", "", reordered)     # drop a leading article
+    return reordered or None
+
+
 def canonical_geo(term: str | None) -> str:
     """Normalise ONE extracted geographic term to the broad-geography vocabulary so
     scope is COMPARABLE across sources: 'SSA'/'sub-saharan' → 'Sub-Saharan Africa',
@@ -534,6 +586,16 @@ def canonical_geo(term: str | None) -> str:
         return _BROAD_CANON[tl]
     if tl in _COUNTRY_CANON:
         return _COUNTRY_CANON[tl]
+    # ISO-inverted official names ('Congo, The Democratic Republic of the',
+    # 'Korea, Republic of') — reorder into natural form and re-lookup. Without this a
+    # named foreign country reads as unrecognised free-text → 'silent' geography →
+    # permissive pass, leaking off-scope calls into a country-defined tenant's pipeline.
+    di = _deinvert_official_name(tl)
+    if di:
+        if di in _COUNTRY_CANON:
+            return _COUNTRY_CANON[di]
+        if di in _BROAD_CANON:
+            return _BROAD_CANON[di]
     hits = broad_geos_in_text(tl)            # e.g. "ssa region", "lmic settings"
     if hits:
         return max(hits, key=len)
