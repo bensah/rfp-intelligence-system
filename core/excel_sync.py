@@ -104,7 +104,7 @@ def needs_sync() -> Optional[Path]:
     """Return the Excel path if an AUTO-sync is due (workbook newer than the last
     recorded sync).
 
-    DEACTIVATED in multi-tenant mode: the the organisation-Cameroon workbook is single-tenant data
+    DEACTIVATED in multi-tenant mode: the the sample country team workbook is single-tenant data
     with no tenant_id, so auto-syncing it on page load would dump the organisation's records into
     whatever tenant the user is browsing (e.g. a brand-new RFPIS Inc. tenant) and
     also re-run on every session. Admin → Settings → "Sync now" calls sync() directly and

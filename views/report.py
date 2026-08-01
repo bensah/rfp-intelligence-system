@@ -222,7 +222,7 @@ def first_name_display_map(canonical_names) -> dict[str, str]:
     canonical members share a first name.
 
     Example: given ["Jane Doe", "Drew Hall", "Alex Kim"]
-      → {"Jane Doe": "Bernard", "Drew Hall": "Yauba", "Alex Kim": "Michael"}
+      → {"Jane Doe": "Jane", "Drew Hall": "Drew", "Alex Kim": "Alex"}
 
     Example with a collision (two Bernards on the team):
       ["Jane Doe", "Bernard Smith"]
