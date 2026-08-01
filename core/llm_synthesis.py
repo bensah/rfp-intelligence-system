@@ -34,6 +34,34 @@ _ANCHOR_WINDOW = int(os.environ.get("LLM_SYNTH_ANCHOR_WINDOW", "1200"))    # cha
 _MAX_OUTPUT_TOKENS = 2200  # reasoning model needs head-room for reasoning + JSON
 _CACHE: dict[str, dict] = {}
 
+# Per-process cap on STORE (org-neutral) synthesis calls — bounds a full extraction's LLM
+# time (synthesis is a heavy per-row call). After the cap synthesize_store() returns None
+# and the store brief is left NULL for a later backfill, rather than stalling the crawl.
+# Env-tunable so a higher-spend deployment can raise it. The per-tenant insert path
+# (synthesize()) is intentionally NOT capped here.
+try:
+    _STORE_MAX_CALLS = int(os.environ.get("LLM_SYNTH_STORE_MAX_CALLS", "400") or 400)
+except ValueError:
+    _STORE_MAX_CALLS = 400
+_STORE_CALLS = 0
+
+
+def synthesize_store(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    """Org-NEUTRAL synthesis for the GLOBAL store (extract.build_record): a clean,
+    sentence-case brief describing THIS call, independent of any tenant. Runs synthesize()
+    with an EMPTY org and no auto-decision, so only the call-descriptive fields are
+    meaningful (brief_description, application_checklist, how_to_apply, compliance /
+    eligibility specifics, domain areas). The org-specific fields (key_risks,
+    decision_rationale) are computed later, per tenant, at the rfp_submissions insert.
+
+    Bounded by its own per-process cap. Returns None when disabled / capped / failed —
+    the caller then leaves the store brief NULL (never the raw attachment text)."""
+    global _STORE_CALLS
+    if not is_enabled() or _STORE_CALLS >= _STORE_MAX_CALLS:
+        return None
+    _STORE_CALLS += 1
+    return synthesize(candidate, {}, None)
+
 
 def is_enabled() -> bool:
     # Only the BASE URL is required. A local Ollama endpoint IGNORES the API key, so
@@ -288,7 +316,11 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "prose, NOT a template or bullet list, and VARY the wording and the opening "
         "for each RFP so it never reads like a robotic fill-in-the-blank. Ground every "
         "statement in the text; if a detail (e.g. the amount) is not stated, OMIT it "
-        "rather than inventing one. MAX 1000 characters.\n"
+        "rather than inventing one. Write in plain, natural language and SENTENCE CASE "
+        "(normal capitalisation) — do NOT copy the source's ALL-CAPS words, headings or "
+        "labels, and strip legalese / contract boilerplate; a first-time reader should "
+        "come away understanding what the opportunity funds, who can apply and how, and "
+        "what would help them decide. MAX 1000 characters.\n"
         '  "call_award_value_usd": the FUNDING amount per award for THIS call, as a plain '
         "NUMBER in US dollars (no symbols/commas). If the call states a RANGE or several "
         "tracks with different amounts, return the HIGHEST amount; convert to USD if the "
