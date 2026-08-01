@@ -192,8 +192,9 @@ with _main:
                         or prof.get("org_registered_countries"))
     _gap = _readiness_gap(prof)               # pieces missing before screening-ready ([] = ready)
     _ready_txt = "✅ screening-ready" if not _gap else "⚠ not yet screening-ready"
-    st.markdown(_rag_bar_html(_pct, f"Profile {round(_pct * 100)}% complete · {_ready_txt}"),
-                unsafe_allow_html=True)
+    # Render via st.html (the purpose-built raw-HTML API) rather than st.markdown, so the
+    # inline-styled RAG bar is emitted verbatim and never runs through markdown processing.
+    st.html(_rag_bar_html(_pct, f"Profile {round(_pct * 100)}% complete · {_ready_txt}"))
     if not _has_any_geo:
         st.warning("**No geography set.** Add your countries of operation so screening can "
                    "gate on where you work — without it, off-scope calls slip into your pipeline.")
