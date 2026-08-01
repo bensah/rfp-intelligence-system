@@ -17,6 +17,8 @@ import streamlit as st
 
 from core import org_profile as _orgp
 from core import permissions, settings
+from core.profile_completeness import (RAG_COLOR as _RAG_COLOR, completeness as _completeness,
+                                       rag_band as _rag_band, readiness_gap as _readiness_gap)
 from core.program_area_classifier import category_full as _cat, subarea_label as _sub
 from core.program_area_select import rating_bars_html
 from db.supabase_client import get_client
@@ -121,44 +123,26 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-def _filled(v) -> bool:
-    """True when a profile field carries a real value. 0 counts as UNSET for the numeric
-    money/target fields (an org never has a $0 budget)."""
-    if v is None:
-        return False
-    if isinstance(v, (list, tuple, dict, str)):
-        return len(v) > 0
-    if isinstance(v, (int, float)):
-        return v not in (0,)
-    return bool(v)
-
-
-# Profile fields that drive matching, with weights. Geography + program areas weigh most
-# (they are the load-bearing gate + fit signals); identity/capacity fields fill in the
-# picture. (label, value, weight).
-def _completeness(org: dict, prof: dict):
-    checks = [
-        ("countries of operation", prof.get("org_operating_countries"), 3),
-        ("countries of registration", prof.get("org_registered_countries"), 2),
-        ("domains / areas of expertise", prof.get("org_domain_expertise"), 3),
-        ("strategic priority areas", prof.get("org_priority_areas"), 2),
-        ("legal type", prof.get("org_legal_type"), 1),
-        ("founding year", prof.get("org_founding_year"), 1),
-        ("primary country", org.get("org_country"), 1),
-        ("HQ country", org.get("org_hq_country") or prof.get("org_hq_country"), 1),
-        ("annual budget", prof.get("org_annual_budget"), 1),
-        ("largest grant managed", prof.get("org_largest_grant"), 1),
-        ("co-financing capacity", prof.get("org_cofinancing_capacity"), 1),
-        ("organization stage", prof.get("org_stage"), 1),
-        ("funding target band", prof.get("org_max_target"), 1),
-        ("funders won from", prof.get("org_funder_history"), 1),
-        ("donor registrations", prof.get("org_donor_registrations"), 1),
-        ("proposal languages", prof.get("proposal_languages"), 1),
-    ]
-    total = sum(w for _, _, w in checks) or 1
-    got = sum(w for _, v, w in checks if _filled(v))
-    missing = [label for label, v, w in checks if not _filled(v)]
-    return got / total, missing
+def _rag_bar_html(pct: float, label: str) -> str:
+    """A red-yellow-green completeness bar. The FILL colour reflects the band the score
+    falls in — ≤50% red, 50–80% yellow, ≥80% green. The not-yet-covered remainder is a
+    subtle GREY (low-visibility), with faint 50% / 80% ticks so the thresholds still read.
+    Self-contained inline styles that work in light AND dark themes."""
+    pctw = max(0.0, min(100.0, round(pct * 100, 1)))
+    fill = _RAG_COLOR[_rag_band(pct)]         # red / yellow / green by band (single source)
+    track = "rgba(128,128,128,.15)"           # the uncovered remainder — greyed, understated
+    tick = "rgba(128,128,128,.30)"            # faint 50% / 80% threshold marks
+    return (
+        "<div style='margin:.15rem 0 .55rem;'>"
+        f"<div style='font-size:.9rem;margin-bottom:.3rem;'>{label}</div>"
+        "<div style='position:relative;height:13px;border-radius:7px;overflow:hidden;"
+        f"background:{track};box-shadow:inset 0 0 0 1px rgba(128,128,128,.14);'>"
+        f"<div style='height:100%;width:{pctw}%;background:{fill};"
+        "border-radius:7px 0 0 7px;transition:width .35s ease;'></div>"
+        f"<div style='position:absolute;top:0;bottom:0;left:50%;width:1px;background:{tick};'></div>"
+        f"<div style='position:absolute;top:0;bottom:0;left:80%;width:1px;background:{tick};'></div>"
+        "</div></div>"
+    )
 
 
 # ── Header (title + Edit) full width — the rail is lowered BELOW this row ──
@@ -204,18 +188,19 @@ with _main:
 
     # ── Profile completeness — nudge toward a matching-ready profile ───────
     _pct, _missing = _completeness(org, prof)
-    _has_geo = bool(prof.get("org_operating_countries")
-                    or prof.get("org_registered_countries"))
-    _ready = bool(prof.get("org_operating_countries")
-                  and (prof.get("org_domain_expertise") or prof.get("org_priority_areas")))
-    _ready_txt = "✅ screening-ready" if _ready else "⚠ not yet screening-ready"
-    st.progress(_pct, text=f"Profile {round(_pct * 100)}% complete · {_ready_txt}")
-    if not _has_geo:
+    _has_any_geo = bool(prof.get("org_operating_countries")
+                        or prof.get("org_registered_countries"))
+    _gap = _readiness_gap(prof)               # pieces missing before screening-ready ([] = ready)
+    _ready_txt = "✅ screening-ready" if not _gap else "⚠ not yet screening-ready"
+    st.markdown(_rag_bar_html(_pct, f"Profile {round(_pct * 100)}% complete · {_ready_txt}"),
+                unsafe_allow_html=True)
+    if not _has_any_geo:
         st.warning("**No geography set.** Add your countries of operation so screening can "
                    "gate on where you work — without it, off-scope calls slip into your pipeline.")
-    elif not _ready:
-        st.info("Add at least one country of operation **and** one program area to unlock "
-                "accurate matching.")
+    elif _gap:
+        # Name ONLY what's actually missing — don't tell a user to add a country of
+        # operation they've already set (they only need the piece they're missing).
+        st.info("Add " + " and ".join(_gap) + " to unlock accurate matching.")
     if _missing and _pct < 1.0:
         _lead = "Complete your profile to improve matching" if can_edit else "Still missing"
         st.caption(f"{_lead}: " + ", ".join(_missing[:6])
