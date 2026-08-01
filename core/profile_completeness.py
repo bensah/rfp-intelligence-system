@@ -60,8 +60,9 @@ def rag_band(pct: float) -> str:
     return "red"
 
 
-# Fill colour per band — one source of truth shared by the bar renderer.
-RAG_COLOR = {"red": "#d1343b", "amber": "#e08a1e", "green": "#1e8e3e"}
+# Fill colour per band — one source of truth shared by the bar renderer. The middle band
+# is a clear YELLOW (not orange-amber) so it reads distinctly from the red band.
+RAG_COLOR = {"red": "#d1343b", "amber": "#eab308", "green": "#1e8e3e"}
 
 
 def readiness_gap(prof: dict) -> list[str]:
