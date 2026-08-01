@@ -12,7 +12,7 @@ import hashlib
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from db.supabase_client import get_client
@@ -110,6 +110,32 @@ def exists(uid: str) -> bool:
         return bool(rows)
     except Exception:
         return False
+
+
+def recent_uids(days: int) -> set[str]:
+    """UIDs of store rows refreshed within the last `days` days (updated_at,
+    falling back to scraped_at). Used to skip re-extraction of still-fresh
+    opportunities. Best-effort: returns an empty set on any error."""
+    try:
+        cutoff = (datetime.now(timezone.utc)
+                  - timedelta(days=max(0, int(days or 0)))).isoformat()
+        rows = (get_client().table(_TABLE).select("uid,updated_at,scraped_at")
+                .gte("updated_at", cutoff).execute().data or [])
+        out = {r["uid"] for r in rows if r.get("uid")}
+        # Rows whose updated_at is NULL are excluded by the server-side .gte above;
+        # sweep those in with a scraped_at fallback so a freshly-inserted row that
+        # never got an updated_at stamp still counts as fresh.
+        try:
+            more = (get_client().table(_TABLE).select("uid,updated_at,scraped_at")
+                    .is_("updated_at", "null").gte("scraped_at", cutoff)
+                    .execute().data or [])
+            out |= {r["uid"] for r in more if r.get("uid")}
+        except Exception:
+            pass
+        return out
+    except Exception as exc:
+        log.debug("extracted_store.recent_uids failed: %s", exc)
+        return set()
 
 
 def list_extracted(*, status: str | None = None, source: str | None = None,
