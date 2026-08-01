@@ -3,7 +3,7 @@
 -- Several "org config" blobs live in the GLOBAL app_settings key/value table and so are
 -- shared by every tenant: the check-in SCHEDULE (schedule_json), the eligibility POLICIES
 -- (scan_policies) and the TEAM roster (team_members_json). That's why a fresh tenant
--- (the second tenant) still saw the sample country team's schedule, and why every tenant would screen against
+-- (a second tenant) still saw the sample country team's schedule, and why every tenant would screen against
 -- the organisation's countries/themes.
 --
 -- This adds a per-tenant key/value store. core.settings.get_setting/set_setting become

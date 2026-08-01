@@ -1,6 +1,6 @@
 -- Migration 035 — source taxonomy + canonicalisation.
 -- (a) Enrich source_registry with the source-catalogue taxonomy so each host
---     carries how to treat + ingest it (serves the the second tenant source catalogue).
+--     carries how to treat + ingest it (serves the the source catalogue).
 -- (b) Canonicalisation rule: rfp_submissions keeps the PRIMARY url in
 --     opportunity_link AND the aggregator url it was discovered through, so we
 --     can show provenance + always re-verify against the primary.

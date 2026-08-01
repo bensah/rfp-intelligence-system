@@ -12,7 +12,7 @@
 --
 -- WHY a distinct column (not is_platform): is_platform marks the single super_user
 -- HOME tenant (auto-selected, never onboarded). "Developer" is a CATEGORY that can
--- cover MORE than one tenant (RFPIS Inc + the second tenant), so it needs its own flag. The
+-- cover MORE than one tenant (RFPIS Inc + a second developer tenant), so it needs its own flag. The
 -- platform tenant is ALWAYS a developer tenant, so we seed is_developer=true from it.
 --
 -- The app reads this via auth.tenant_context.developer_tenant_ids() (60s-cached on
@@ -21,7 +21,7 @@
 -- treats the sole deployment as its own developer, so nothing is locked out there.
 --
 -- SAFE + ADDITIVE + RE-RUN-SAFE. No data is lost; re-running only re-asserts the
--- platform → developer seed. Flag the SECOND developer tenant (the second tenant) from the UI
+-- platform → developer seed. Flag the SECOND developer tenant (a second tenant) from the UI
 -- (Settings → Accounts → Tenants → "Developer tenant" toggle) or below by name.
 -- =========================================================================
 
@@ -34,12 +34,12 @@ alter table tenants
 -- 1. The platform/home tenant (RFPIS Inc.) is ALWAYS a developer tenant. -----
 update tenants set is_developer = true where is_platform;
 
--- 2. Best-effort: also flag a tenant literally named like "the second tenant" if one
+-- 2. Best-effort: also flag a tenant literally named like the second developer tenant if one
 --    already exists (harmless no-op otherwise). The UI toggle is the durable
 --    mechanism; this just spares a manual step when the tenant is present.
 update tenants set is_developer = true
  where is_developer = false
-   and (name ilike '%the-second-tenant%' or slug ilike '%the-second-tenant%'
+   and (name ilike '%example%' or slug ilike '%example%'
         or name ilike 'RFP Intelligence System App%');
 
 commit;
