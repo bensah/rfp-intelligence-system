@@ -275,6 +275,24 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     funding_status = "Closed" if (llm and llm.get("is_closed")) else "Open"
     overall_conf = "high" if (llm and llm.get("confidence") == "high") else d_conf
 
+    # BRIEF — a CLEAN, sentence-case, plain-language synthesis of THIS call for the global
+    # store (org-NEUTRAL). Grounded on the full page text (up to 20k chars). This is the
+    # single store choke point: screening copies this synthesised brief, so the raw
+    # attachment text ("[General_conditions.pdf] GENERAL CONDITIONS OF CONTRACT…") never
+    # reaches a reviewer. NEVER fall back to raw — if synthesis is disabled / capped /
+    # fails, leave brief_description NULL for a later backfill (empty beats ALL-CAPS
+    # legalese). The org-specific reasoning (key_risks / decision) is added per tenant at
+    # the rfp_submissions insert.
+    _store_brief = None
+    if use_llm and len(text) >= 120:
+        try:
+            from core import llm_synthesis
+            _neutral = llm_synthesis.synthesize_store(cand)
+            if _neutral and _neutral.get("brief_description"):
+                _store_brief = _neutral["brief_description"]
+        except Exception as _sexc:
+            log.debug("store synthesis skipped (%s): %s", url, _sexc)
+
     rec = {
         "uid": extracted_store.make_uid(url, title),
         "opportunity_name": title or None,
@@ -299,8 +317,10 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
         "deadline_confidence": d_conf,
         "funding_window": d_window,
         "funding_status": funding_status,
-        # brief kept as-is for now; LLM narrative synthesis (full/eligibility/fit) later
-        "brief_description": candidate.get("brief_description"),
+        # CLEAN synthesised brief (org-neutral, sentence-case) — NEVER the raw attachment
+        # text. NULL when synthesis is unavailable (backfilled later). The raw page text is
+        # preserved separately in raw_text for grounding + backfill.
+        "brief_description": _store_brief,
         "raw_text": (text or None) and str(text)[:20000],
         "content_hash": hashlib.sha1(blob.encode("utf-8")).hexdigest(),
         "extraction_confidence": overall_conf,
