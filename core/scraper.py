@@ -35,9 +35,33 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 
+import threading
+
 from core import http as _http  # polite shared session: per-host throttle + 429 backoff + TTL cache
+from core.extracted_store import make_uid  # stable content key for incremental-skip
 
 log = logging.getLogger(__name__)
+
+# Incremental extraction bookkeeping. `scan_source` runs once per source, each in
+# its own worker thread (see scripts/run_scan.py ThreadPool), so a thread-local
+# counter lets each source tally how many already-fresh candidates it skipped
+# without any cross-thread races. run() reads it via `last_scan_skipped()`
+# immediately after the source's scan_source returns.
+_scan_state = threading.local()
+
+
+def _reset_skipped() -> None:
+    _scan_state.skipped = 0
+
+
+def _record_skipped(n: int) -> None:
+    _scan_state.skipped = getattr(_scan_state, "skipped", 0) + int(n or 0)
+
+
+def last_scan_skipped() -> int:
+    """How many already-fresh candidates the most recent scan_source() on THIS
+    thread skipped (incremental extract-only mode). 0 when not applicable."""
+    return int(getattr(_scan_state, "skipped", 0) or 0)
 
 # Network defaults — keep per-request timeout aggressive so the orchestrator
 # doesn't hang on slow donor sites.
@@ -1063,12 +1087,24 @@ class ScraperNotImplemented(NotImplementedError):
     """Raised when a method dispatcher has no handler."""
 
 
-def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
+def scan_source(source: dict[str, Any], *, extract_only: bool = False,
+                fresh_uids: set[str] | None = None) -> list[dict[str, Any]]:
     """Return candidate RFP dicts for one source. Never raises — errors are
-    logged and converted to an empty list so the orchestrator can move on."""
+    logged and converted to an empty list so the orchestrator can move on.
+
+    Incremental extraction (extract_only=True + fresh_uids): candidates whose
+    opportunity_link is ALREADY in the global store and refreshed recently are
+    dropped BEFORE the expensive detail-page deep-read + LLM enrichment, so a
+    re-run doesn't re-crawl/re-extract still-fresh opportunities. When
+    extract_only is False or fresh_uids is None, behaviour is unchanged (a new
+    tenant / full scan still needs every opportunity). Only the HTML listing
+    paths enrich per-candidate (that's where the LLM cost lives), so the skip is
+    applied there; structured-API handlers are unaffected."""
     method = (source.get("method") or source.get("scrape_method") or "").lower()
     url = source.get("url")
     name = source.get("name") or url or "(unnamed)"
+    # Reset this thread's incremental-skip tally for this source's scan.
+    _reset_skipped()
     if not url:
         log.warning("scan_source: no URL for %s", name)
         return []
@@ -1135,12 +1171,14 @@ def scan_source(source: dict[str, Any]) -> list[dict[str, Any]]:
         if method == "rest_json":
             return _scan_rest_json(name, url)
         if method == "html":
-            return _scan_html(name, url)
+            return _scan_html(name, url, extract_only=extract_only,
+                              fresh_uids=fresh_uids)
         if method == "html_js":
             # Playwright-rendered scan for SPA donor portals (EC Funding
             # Portal, CZI, etc.) where the listing widget only appears
             # after JavaScript executes.
-            return _scan_html_js(name, url)
+            return _scan_html_js(name, url, extract_only=extract_only,
+                                 fresh_uids=fresh_uids)
         if method == "manual":
             return []  # nothing to scan; admin curates donor_sources directly
         raise ValueError(f"Unknown scrape method: {method!r}")
@@ -2803,10 +2841,17 @@ def _is_junk_anchor(text: str, full: str, listing_url: str) -> bool:
     return False
 
 
-def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[dict[str, Any]]:
+def _extract_candidates_from_html(name: str, url: str, html_text: str, *,
+                                  extract_only: bool = False,
+                                  fresh_uids: set[str] | None = None) -> list[dict[str, Any]]:
     """Pure anchor-extraction logic — shared by `_scan_html` (requests) and
     `_scan_html_js` (Playwright-rendered). Takes pre-fetched HTML text;
-    returns enriched candidate dicts."""
+    returns enriched candidate dicts.
+
+    Incremental extraction: when `extract_only and fresh_uids`, any candidate
+    whose opportunity_link is already fresh in the global store is dropped here —
+    BEFORE `_enrich_candidate` (the deep-read + LLM step) runs — and excluded from
+    the returned list. The count is recorded via `_record_skipped` for run()."""
     soup = BeautifulSoup(html_text, "html.parser")
     funder = _funder_from_source_name(name)
     base_host = urlsplit(url).netloc.lower()
@@ -2868,17 +2913,39 @@ def _extract_candidates_from_html(name: str, url: str, html_text: str) -> list[d
         if len(candidates) >= 40:  # cap noise
             break
 
+    all_cands = list(candidates.values())
+
+    # Incremental extraction — drop candidates already fresh in the global store
+    # BEFORE the expensive deep-read + LLM enrichment below, and exclude them from
+    # the returned list (re-extracting a still-fresh opportunity is the waste this
+    # removes). Only active in extract_only mode with a fresh-uid set; otherwise
+    # every candidate flows through unchanged (full scans / new tenants).
+    if extract_only and fresh_uids:
+        kept: list[dict[str, Any]] = []
+        skipped = 0
+        for c in all_cands:
+            link = c.get("opportunity_link") or ""
+            if link and make_uid(link) in fresh_uids:
+                skipped += 1
+                continue
+            kept.append(c)
+        if skipped:
+            _record_skipped(skipped)
+            log.info("incremental: skipped %d already-fresh candidate(s) for %s",
+                     skipped, name)
+        all_cands = kept
+
     # Detail-page enrichment — fetch each candidate's URL and try to fill
     # missing deadline / description / eligibility. This is what allows the
     # eligibility gate downstream to reject US-only or past-deadline RFPs
     # that the listing-page title alone didn't reveal.
-    results = list(candidates.values())[:ENRICH_MAX_PAGES]
+    results = all_cands[:ENRICH_MAX_PAGES]
     for i, c in enumerate(results, 1):
         _enrich_candidate(c)
         if i >= ENRICH_MAX_PAGES:
             log.info("enrich cap reached at %d candidates", ENRICH_MAX_PAGES)
             break
-    return results + list(candidates.values())[ENRICH_MAX_PAGES:]
+    return results + all_cands[ENRICH_MAX_PAGES:]
 
 
 def expand_listing(url: str, source_name: str = "listing") -> list[dict[str, Any]]:
@@ -2944,7 +3011,8 @@ def _looks_like_spa_shell(html_text: str) -> bool:
     return any(m in low for m in _SPA_SHELL_MARKERS)
 
 
-def _scan_html(name: str, url: str) -> list[dict[str, Any]]:
+def _scan_html(name: str, url: str, *, extract_only: bool = False,
+               fresh_uids: set[str] | None = None) -> list[dict[str, Any]]:
     """Generic HTML listing-page scraper using `requests` (no JS).
     Suitable for static / server-rendered donor pages. When the fetch is an
     unrendered SPA shell that yields NO candidates, transparently retry through the
@@ -2960,15 +3028,19 @@ def _scan_html(name: str, url: str) -> list[dict[str, Any]]:
     except Exception as exc:
         log.warning("HTML fetch failed for %s: %s", url, exc)
         return []
-    cands = _extract_candidates_from_html(name, url, r.text)
+    cands = _extract_candidates_from_html(name, url, r.text,
+                                          extract_only=extract_only,
+                                          fresh_uids=fresh_uids)
     if not cands and _looks_like_spa_shell(r.text) and _playwright_available():
         log.info("SPA shell detected for %s (no candidates from static HTML) — "
                  "retrying via Playwright renderer", name)
-        return _scan_html_js(name, url)
+        return _scan_html_js(name, url, extract_only=extract_only,
+                             fresh_uids=fresh_uids)
     return cands
 
 
-def _scan_html_js(name: str, url: str) -> list[dict[str, Any]]:
+def _scan_html_js(name: str, url: str, *, extract_only: bool = False,
+                  fresh_uids: set[str] | None = None) -> list[dict[str, Any]]:
     """JS-rendered HTML scraper using Playwright headless Chromium.
     For SPA donor portals (EC Funding Portal, CZI, Mastercard, etc.)
     where the listing widget only populates after JavaScript runs.
@@ -2984,7 +3056,8 @@ def _scan_html_js(name: str, url: str) -> list[dict[str, Any]]:
             "Install with: pip install playwright && playwright install chromium",
             name,
         )
-        return _scan_html(name, url)
+        return _scan_html(name, url, extract_only=extract_only,
+                          fresh_uids=fresh_uids)
 
     html_text: str | None = None
     try:
@@ -3017,11 +3090,14 @@ def _scan_html_js(name: str, url: str) -> list[dict[str, Any]]:
     except Exception as exc:
         log.warning("Playwright render failed for %s: %s", url, exc)
         # Last-ditch fallback so the source isn't dead.
-        return _scan_html(name, url)
+        return _scan_html(name, url, extract_only=extract_only,
+                          fresh_uids=fresh_uids)
 
     if not html_text:
         return []
-    return _extract_candidates_from_html(name, url, html_text)
+    return _extract_candidates_from_html(name, url, html_text,
+                                         extract_only=extract_only,
+                                         fresh_uids=fresh_uids)
 
 
 # ---------------------------------------------------------------------------
