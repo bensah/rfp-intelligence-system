@@ -2,7 +2,7 @@ name: Database backup
 
 # The Supabase Free plan has no managed backups, so we roll our own: a WEEKLY (Sunday)
 # INCREMENTAL export — only rows changed since the last backup — pushed off-site to
-# OneDrive (the second tenant account). If nothing changed since last week, the run skips (no
+# OneDrive (your account). If nothing changed since last week, the run skips (no
 # upload). The first run (no watermark) is a full backup. A copy is also kept as a
 # GitHub Actions artifact (works even before OneDrive is configured).
 #

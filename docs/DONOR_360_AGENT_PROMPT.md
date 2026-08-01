@@ -83,7 +83,7 @@ official registered HQ. Record the *countries the donor FUNDS* separately in
 `funding_scope_geographic` (these are different: HQ ≠ where it gives money).
 
 **C. Dual-role grantmakers / implementing partners.** Organisations that are
-primarily implementers (e.g. the organisation, Care International, Sightsavers, PATH, IRC, FHI360)
+primarily implementers (e.g. implementing NGOs)
 but ALSO publish their own calls/sub-grants/RFPs MUST be captured as funders.
 - Set `donor_category` to the closest funding role; set `donor_type` to reflect BOTH
   roles, e.g. "Implementing Partner & Sub-grantor (NGO)".
