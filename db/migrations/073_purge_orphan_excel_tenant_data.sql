@@ -1,19 +1,19 @@
 -- Migration 073 — clean up Excel-migration data that leaked across tenants.
 -- =========================================================================
--- Context: the Home page auto-ran the the organisation-Cameroon Excel sync (source='migration')
+-- Context: the Home page auto-ran the the sample country team Excel sync (source='migration')
 -- for EVERY session, including a fresh Taadom Digital PLC super_user. migrate_excel.py
 -- writes source='migration' rows but does NOT set tenant_id, so those rows are either
--- the organisation's (tenant_id backfilled to the organisation Cameroon by migration 067) or ORPHANS
+-- the organisation's (tenant_id backfilled to the sample country team by migration 067) or ORPHANS
 -- (tenant_id IS NULL) — and a NULL-tenant row shows in EVERY tenant until read-isolation
 -- is live. The auto-sync itself is now deactivated in multi-tenant mode (code change).
 --
 -- This script (idempotent, SAFE):
 --   1. DELETES any migration row WRONGLY tagged to Taadom Digital PLC (defensive — there
 --      usually are none, since the sync runs as service-role with no tenant claim).
---   2. RE-HOMES orphan migration rows (tenant_id IS NULL) to the organisation Cameroon, the Excel's
+--   2. RE-HOMES orphan migration rows (tenant_id IS NULL) to the sample country team, the Excel's
 --      rightful owner, so they stop appearing in other tenants. Comment out block (2) if
 --      you prefer to leave them NULL.
--- the organisation Cameroon's own tagged data is never touched.
+-- the sample country team's own tagged data is never touched.
 --
 -- Run the DIAGNOSTIC first (separate query) to see the current tag distribution:
 --   select coalesce(t.name,'(NULL / no tenant)') as tenant, r.source, count(*)
@@ -36,7 +36,7 @@ declare
   _n bigint;
 begin
   select id into _taadom from tenants where name = 'Taadom Digital PLC' limit 1;
-  select id into _chai   from tenants where name = 'the organisation Cameroon'      limit 1;
+  select id into _chai   from tenants where name = 'the sample country team'      limit 1;
 
   foreach _t in array _tables loop
     if to_regclass(_t) is null then continue; end if;
@@ -54,13 +54,13 @@ begin
       raise notice 'deleted % Taadom-tagged migration row(s) from %', _n, _t;
     end if;
 
-    -- 2) Re-home orphan (NULL-tenant) excel rows to the organisation Cameroon (their owner).
+    -- 2) Re-home orphan (NULL-tenant) excel rows to the sample country team (their owner).
     --    Comment out this IF block to leave orphans as-is.
     if _chai is not null then
       execute format('update %I set tenant_id = $1 where tenant_id is null and source = %L',
                      _t, 'migration') using _chai;
       get diagnostics _n = row_count;
-      raise notice 're-homed % orphan migration row(s) to the organisation Cameroon in %', _n, _t;
+      raise notice 're-homed % orphan migration row(s) to the sample country team in %', _n, _t;
     end if;
   end loop;
 end $$;

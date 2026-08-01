@@ -697,7 +697,7 @@ _GLOBAL_CSS = f"""
 
     /* ── Metric tiles shrink to fit ─────────────────────────────────────
        Values like "Mon 08 Jun" / "Lee Robin" were truncating to
-       "Mon 08 Ju…" / "Pokam Or…". Drop the value font, tighten padding,
+       "Mon 08 Ju…" / "Lee Ro…". Drop the value font, tighten padding,
        and let the value wrap instead of clipping with an ellipsis. */
     [data-testid="stMetric"] {{ padding: 8px 10px !important; }}
     [data-testid="stMetricLabel"] {{ font-size: 0.72rem !important; }}
