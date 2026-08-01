@@ -938,9 +938,10 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
     so it can flow back through ingest_candidates. raw_text is supplied as
     _page_text so the thin-candidate enrichment (live-check / deep-read) is skipped
     — the data is already extracted, so screening stays crawl-free."""
-    geo = row.get("call_geographic_scope")
-    if not isinstance(geo, (list, tuple)):
-        geo = [geo] if geo else []
+    # Repair double-encoded scope (some legacy store rows hold a JSON-array STRING) so
+    # the geo gate sees real terms, not one opaque '["Europe", ...]' string.
+    from core import geographies as _geos
+    geo = _geos.flatten_scope_terms(row.get("call_geographic_scope"))
     # Stamp _source_class from the ACTUAL host, not a blanket "primary". Stamping
     # every store row "primary" used to bypass the is_eligible non-primary reject and
     # let aggregator URLs (DevelopmentAid / fundsforNGOs) re-enter screening. A row
@@ -952,6 +953,14 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
         _src_class = "aggregator" if _aggr.is_non_primary(_url)[0] else "primary"
     except Exception:
         _src_class = "primary"
+    # Donor's DECLARED geography — the SILENT-CALL fallback for the geo gate (owner rule:
+    # gate a geo-silent call on the donor's declared geography; pass permissively only
+    # when the donor is geo-silent too). Transient (underscore) — never persisted.
+    try:
+        from core import donor_intel as _di
+        _donor_geo = _di.declared_geo(row.get("funder_name"))
+    except Exception:
+        _donor_geo = None
     return {
         "opportunity_title": row.get("opportunity_name"),
         "opportunity_link": row.get("opportunity_url"),
@@ -976,6 +985,7 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
         "source": row.get("source"),
         "_source_origin": row.get("source"),
         "_source_class": _src_class,       # host-derived (see above), NOT blanket primary
+        "_donor_geo": _donor_geo,          # donor's declared geo (silent-call fallback)
         "extraction_uid": row.get("uid"),
     }
 

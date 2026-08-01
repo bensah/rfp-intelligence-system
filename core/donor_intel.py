@@ -131,6 +131,62 @@ def clear_cache() -> None:
     _CACHE.update(t=0.0, index=None)
 
 
+# Donor-record fields that declare the donor's funded geography. Read in priority
+# order; the first that yields terms wins. Used as the SILENT-CALL fallback for the
+# geo eligibility gate (owner rule: a geo-silent call is gated on the donor's declared
+# geography, and passes permissively only when the donor is ALSO geo-silent).
+_DONOR_GEO_FIELDS = ("donor_geographic_scope", "donor_funded_geographies",
+                     "donor_pi_country_scope", "donor_registration_region")
+_GLOBAL_GEO_RE = re.compile(
+    r"\b(global|globally|worldwide|world[-\s]?wide|any country|all countries|"
+    r"international(?:ly)?|multi[-\s]?country|multiple countries)\b", re.I)
+
+
+def declared_geo(funder: Any) -> Optional[dict]:
+    """The donor's DECLARED funded geography for `funder`, or None when the donor is
+    unknown or states no geography (geo-silent). Returns
+    ``{"terms": set[str canonical], "global": bool, "raw": str}`` where `global` is
+    True when the donor funds worldwide / any country (→ any tenant qualifies).
+
+    Matches strictly (fuzzy=False) — a wrong donor's geography must never drive a
+    false reject on the gate path. Best-effort: any error → None (defer to the call's
+    own geography / permissive)."""
+    try:
+        from core import geographies as _geo
+        row = match_donor(funder, fuzzy=False)
+        if not row:
+            return None
+        raw_parts: list[str] = []
+        for f in _DONOR_GEO_FIELDS:
+            v = row.get(f)
+            if isinstance(v, (list, tuple)):
+                raw_parts += [str(x) for x in v if str(x).strip()]
+            elif v not in (None, ""):
+                raw_parts.append(str(v))
+        # An explicit global flag on the donor record is authoritative for "worldwide".
+        is_global = str(row.get("donor_global_multi_country_scope") or "").strip().lower() in (
+            "yes", "true", "global", "worldwide")
+        raw = " ; ".join(raw_parts).strip()
+        if not raw and not is_global:
+            return None                          # donor is geo-silent → caller stays permissive
+        if _GLOBAL_GEO_RE.search(raw):
+            is_global = True
+        # Canonicalise each declared term (splits on common separators); keep only ones
+        # the geo library recognises as a country/region so noise doesn't gate.
+        terms: set[str] = set()
+        for chunk in re.split(r"[;,/|]| and | & |\n", raw):
+            c = _geo.canonical_geo(chunk.strip())
+            if c and c.lower() not in ("", "global / worldwide"):
+                terms.add(c)
+        if _geo.canonical_geo(raw) == "Global / worldwide":
+            is_global = True
+        if not terms and not is_global:
+            return None
+        return {"terms": terms, "global": is_global, "raw": raw}
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Derivations (each returns Yes / Partial / No / None; None = defer)
 # ---------------------------------------------------------------------------
