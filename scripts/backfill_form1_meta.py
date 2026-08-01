@@ -31,7 +31,7 @@ from db.supabase_client import get_client, safe_execute  # noqa: E402
 
 # search_date + submitted_by + applicant_role come from Form1; submitted_by_email
 # is derived from the users table (the Excel 'Email' column is blank for almost
-# every row). applicant_role lives under the "the organisation Role" header (col Q).
+# every row). applicant_role lives under the "Org Role" header (col Q).
 _FROM_FORM1 = ("search_date", "submitted_by", "applicant_role")
 
 

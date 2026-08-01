@@ -3,13 +3,13 @@
 -- Several "org config" blobs live in the GLOBAL app_settings key/value table and so are
 -- shared by every tenant: the check-in SCHEDULE (schedule_json), the eligibility POLICIES
 -- (scan_policies) and the TEAM roster (team_members_json). That's why a fresh tenant
--- (the second tenant) still saw the organisation Cameroon's schedule, and why every tenant would screen against
+-- (the second tenant) still saw the sample country team's schedule, and why every tenant would screen against
 -- the organisation's countries/themes.
 --
 -- This adds a per-tenant key/value store. core.settings.get_setting/set_setting become
 -- tenant-aware for those keys: a tenant reads/writes its OWN value, and a fresh tenant
 -- with no override falls back to CODE defaults (permissive policies, empty schedule/team)
--- — NOT to the organisation's config. the organisation Cameroon's CURRENT values are seeded below so it keeps
+-- — NOT to the organisation's config. the sample country team's CURRENT values are seeded below so it keeps
 -- exactly what it has today.
 --
 -- SAFE + ADDITIVE + IDEMPOTENT.
@@ -26,14 +26,14 @@ create table if not exists tenant_settings (
   primary key (tenant_id, key)
 );
 
--- Seed the organisation Cameroon's current global schedule / policies / team into its own
+-- Seed the sample country team's current global schedule / policies / team into its own
 -- tenant_settings so nothing changes for the organisation. Fresh tenants get code defaults.
 insert into tenant_settings (tenant_id, key, value)
 select t.id, s.key, s.value
   from tenants t
   join app_settings s
     on s.key in ('schedule_json', 'scan_policies', 'team_members_json')
- where t.name = 'the organisation Cameroon'
+ where t.name = 'the sample country team'
 on conflict (tenant_id, key) do nothing;
 
 commit;
