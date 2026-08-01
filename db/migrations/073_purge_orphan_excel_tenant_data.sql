@@ -25,7 +25,7 @@ begin;
 
 do $$
 declare
-  _the-second-tenant uuid;
+  _tenant uuid;
   _org   uuid;
   _t      text;
   _tables text[] := array[
@@ -35,7 +35,7 @@ declare
   _has_tid boolean;
   _n bigint;
 begin
-  select id into _the-second-tenant from tenants where name = 'Example Tenant' limit 1;
+  select id into _tenant from tenants where name = 'Example Tenant' limit 1;
   select id into _org   from tenants where name = 'the sample country team'      limit 1;
 
   foreach _t in array _tables loop
@@ -47,11 +47,11 @@ begin
     if not (_has_src and _has_tid) then continue; end if;
 
     -- 1) Purge any excel rows tagged to the second tenant (leaves the organisation's data intact).
-    if _the-second-tenant is not null then
+    if _tenant is not null then
       execute format('delete from %I where tenant_id = $1 and source = %L', _t, 'migration')
-        using _the-second-tenant;
+        using _tenant;
       get diagnostics _n = row_count;
-      raise notice 'deleted % the second tenant-tagged migration row(s) from %', _n, _t;
+      raise notice 'deleted % second-tenant-tagged migration row(s) from %', _n, _t;
     end if;
 
     -- 2) Re-home orphan (NULL-tenant) excel rows to the sample country team (their owner).
@@ -68,8 +68,8 @@ end $$;
 commit;
 
 -- =========================================================================
--- NOTE: even after this, a fresh tenant (the second tenant) will still SEE the organisation's rows until
+-- NOTE: even after this, a fresh tenant (a second tenant) will still SEE the organisation's rows until
 -- tenant READ-isolation is active (RLS migration 068, or app-layer tenant filtering on
--- the data reads). This script only removes the second tenant-tagged / orphan rows; it does not
+-- the data reads). This script only removes second-tenant-tagged / orphan rows; it does not
 -- add isolation. See the chat message for the recommended next step.
 -- =========================================================================
