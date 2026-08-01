@@ -647,22 +647,36 @@ def main() -> None:
         ),
     )
     args = ap.parse_args()
-    # The multi-tenant Option-C flow (extract-only crawl → per-tenant screening) only
-    # applies when multi-tenant is ON. In a SINGLE-tenant deploy (no JWT secret) with the
-    # committed cron flags, run a NORMAL full ingest instead so the single pipeline still
-    # populates — never leave it extract-only with no screening to fill rfp_submissions.
+    # The multi-tenant Option-C flow (extract-only crawl → per-tenant screening) applies to
+    # a MULTI-TENANT deployment — detected by the JWT master switch OR, so the CRON works
+    # even without SUPABASE_JWT_SECRET in its env, by >=2 active non-platform tenants in the
+    # DB (per-tenant screening stamps tenant_id via the headless override, which is
+    # JWT-independent). A genuine SINGLE-tenant deploy runs a NORMAL full ingest instead so
+    # the single pipeline still populates — never left extract-only with no screening.
     _mt = False
     try:
-        from auth.tenant_context import multitenant_enabled
-        _mt = multitenant_enabled()
+        from core.scan_pipeline import is_multitenant_deploy
+        _mt = is_multitenant_deploy()
     except Exception:
         _mt = False
     _extract_only = args.extract_only
     _do_screen = bool(args.screen_tenants and _mt)
     if args.screen_tenants and not _mt:
         _extract_only = False       # single-tenant: full ingest (populate directly)
-        print("Single-tenant mode (no JWT secret) — running a full ingest; "
-              "per-tenant screening skipped.")
+        print("Single-tenant deploy — running a full ingest; per-tenant screening skipped.")
+    elif _do_screen:
+        # Multi-tenant, but if the JWT switch isn't in THIS env the app can't read-scope by
+        # tenant. Screening still writes correctly (override-stamped tenant_id), so surface a
+        # loud GitHub-Actions warning to add the secret for full app/cron consistency.
+        try:
+            from auth.tenant_context import multitenant_enabled
+            if not multitenant_enabled():
+                print("::warning title=Add SUPABASE_JWT_SECRET::Per-tenant screening is "
+                      "running via the headless override (rows are correctly tenant-tagged), "
+                      "but SUPABASE_JWT_SECRET is not set in this environment. Add it as a "
+                      "repo Actions secret so the cron matches the app's multi-tenant mode.")
+        except Exception:
+            pass
 
     run(
         triggered_by=args.triggered_by,
