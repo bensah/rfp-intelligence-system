@@ -50,6 +50,9 @@ def _parse_ua(ua: str | None) -> str:
 
 def render_login_history(user: dict) -> None:
     """Right-rail panel: the caller's recent sign-ins."""
+    # Marker so the mobile CSS (@media in core/app_header.py) can reflow this rail
+    # below the main content on phones — same hook the opportunity rail uses.
+    st.markdown("<div class='app-rail-marker'></div>", unsafe_allow_html=True)
     st.markdown("#### 🔐 Recent sign-ins")
     st.caption("Your last logins. See something you don't recognise? Change your password "
                "on the left and tell an admin.")
