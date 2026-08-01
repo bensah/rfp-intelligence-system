@@ -44,3 +44,6 @@ page.html
 
 # Scratch web-page dumps (debugging extraction)
 cg_*.html
+
+# Local team roster for scripts/seed_team_users.py — real names/emails, never committed
+data/team_roster.local.json

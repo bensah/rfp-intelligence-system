@@ -461,11 +461,9 @@ with tab_data:
         # ----- EXTRACTED SOLICITATIONS branch — the global raw store (read-only) -
         elif pick == _EXTRACTED:
             st.info(
-                "Global **raw** store — every captured solicitation across **all "
-                "geographies**, before org screening (DATA_SCHEMA_ETL.md §1–4). This "
-                "is the eventual public-facing dataset. Read-only here; populated by "
-                "scans (shadow). Off-geography rows that the Screened table rejects "
-                "still appear here.")
+                "Every opportunity captured by scans, across **all geographies**, before "
+                "eligibility screening. Read-only here; a scan populates it. Rows that "
+                "your Screened pipeline rejects on geography still appear in this store.")
             from core import extracted_store as _es
             _erows = _es.list_extracted(limit=5000)
             edf = pd.DataFrame(_erows)

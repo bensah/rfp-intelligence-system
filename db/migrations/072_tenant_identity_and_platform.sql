@@ -15,8 +15,8 @@
 --      slug 'rfpis');
 --   B. makes the super_user an ACTIVE super_user member of RFPIS Inc.;
 --   C. (optional) removes the super_user's memberships in OTHER tenants so RFPIS Inc. is
---      their sole home — comment this out to keep the super_user in the organisation Cameroon too;
---   D. SEEDS the organisation Cameroon's CURRENT global identity (from app_settings) into its own
+--      their sole home — comment this out to keep the super_user in the sample country team too;
+--   D. SEEDS the sample country team's CURRENT global identity (from app_settings) into its own
 --      org_identity, so the organisation users + the scan see the SAME identity/flags as today once
 --      get_org() becomes tenant-aware. RFPIS Inc. stays blank.
 --
@@ -72,14 +72,14 @@ begin
     on conflict (tenant_id, user_id) do update
       set role = 'super_user', status = 'active';
 
-    -- C. OPTIONAL — make RFPIS Inc. the super_user's ONLY tenant (drops the organisation Cameroon
+    -- C. OPTIONAL — make RFPIS Inc. the super_user's ONLY tenant (drops the sample country team
     --    et al. from their memberships). Comment out to keep them in other tenants.
     delete from tenant_memberships where user_id = _uid and tenant_id <> _plat;
   end if;
 
-  -- D. Seed the organisation Cameroon's CURRENT global identity into its own org_identity, so a
+  -- D. Seed the sample country team's CURRENT global identity into its own org_identity, so a
   --    the organisation user (and in-session scoring) sees the same values as today. RFPIS Inc.
-  --    stays blank. Only runs if the organisation Cameroon exists and its org_identity is still {}.
+  --    stays blank. Only runs if the sample country team exists and its org_identity is still {}.
   update tenants t
      set org_identity = coalesce((
            select jsonb_object_agg(key, to_jsonb(value))
@@ -90,7 +90,7 @@ begin
               'org_has_bd_team','org_is_grassroot','org_is_multi_country','org_hq_country',
               'org_logo_b64','org_logo_mime')
          ), '{}'::jsonb)
-   where t.name = 'the organisation Cameroon'
+   where t.name = 'the sample country team'
      and coalesce(t.org_identity, '{}'::jsonb) = '{}'::jsonb;
 end $$;
 
@@ -99,7 +99,7 @@ commit;
 -- =========================================================================
 -- ROLLBACK (columns are additive; drop them + the memberships change is manual):
 --   begin;
---     -- (re-add the super_user to the organisation Cameroon if step C removed them, if desired)
+--     -- (re-add the super_user to the sample country team if step C removed them, if desired)
 --     alter table tenants drop column if exists is_platform;
 --     alter table tenants drop column if exists org_identity;
 --   commit;
