@@ -169,9 +169,17 @@ def _build_messages(candidate: dict[str, Any], policies: dict[str, Any]) -> list
         "broad region/tier when the scope is regional. Use the term as written; [] if "
         "the call states no eligible geography.\n"
         '  "country_eligible": true if the org\'s eligible country qualifies under '
-        "the call's geography (directly, or via a containing region/tier); false if "
-        "the call is scoped to a region/country that excludes the org; null if the "
-        "page states no geography.\n"
+        "the call's geography, else false, or null if the page states NO eligibility "
+        "geography at all. DECISION RULES, in order: (1) SPECIFIC COUNTRIES WIN OVER A "
+        "BROAD REGION — if the call names specific eligible country(ies), the org "
+        "qualifies ONLY when one of the ORG ELIGIBLE COUNTRIES is among them; a broad "
+        "region label like 'Sub-Saharan Africa' that also appears does NOT make the org "
+        "eligible (e.g. a call for the DRC that also says 'Sub-Saharan Africa' is NOT "
+        "eligible for a Cameroon org). (2) Only when NO specific eligible countries are "
+        "named does a containing region/tier (Sub-Saharan Africa, Africa, LMICs, Global "
+        "South, worldwide/international) make the org eligible. (3) IGNORE incidental "
+        "geography — timezones, a country named only as an example/statistic/background, "
+        "or the funder's own location — when deciding eligibility.\n"
         '  "theme_relevant": true if the call fits the org THEME FOCUS above '
         "(consider the whole text, not just the title).\n"
         '  "matched_areas": array of the org theme terms the call matches; [].\n'

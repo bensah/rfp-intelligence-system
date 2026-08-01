@@ -881,6 +881,77 @@ def country_eligible(candidate: dict[str, Any], policies: dict[str, Any]) -> tup
     return True, "geo: mixed scope includes an in-region area (parked)"
 
 
+# All canonical country names, lowercased — used to tell a specific COUNTRY in the
+# structured scope from a region/tier/free-text placeholder ("Multiple destinations").
+_ALL_COUNTRY_LOWER = {c.lower() for c in geo.COUNTRIES}
+
+
+def _scope_terms(candidate: dict[str, Any]) -> list[str]:
+    """The candidate's structured eligibility geography (call_geographic_scope) as a
+    clean list of non-empty strings. This is the EXTRACTED eligibility geo — distinct
+    from incidental country mentions elsewhere in the text."""
+    sc = candidate.get("call_geographic_scope") or []
+    if isinstance(sc, str):
+        sc = [sc]
+    return [str(s).strip() for s in sc if str(s).strip()]
+
+
+def _scope_specific_countries(candidate: dict[str, Any]) -> set[str]:
+    """Canonical specific COUNTRIES named in the structured scope field (lowercase).
+    Regions, development tiers, worldwide and free-text placeholders are excluded — a
+    country expands to just itself and must be a known country name."""
+    out: set[str] = set()
+    for t in _scope_terms(candidate):
+        c = geo.canonical_geo(t)
+        cl = (c or "").lower()
+        if not cl or cl in _GEO_REGION_TIER or cl in _GLOBAL_TIER_LOWER:
+            continue
+        exp = geo.expand([c])
+        if len(exp) == 1 and cl in _ALL_COUNTRY_LOWER:
+            out.add(cl)
+    return out
+
+
+def _specific_country_mismatch(candidate: dict[str, Any],
+                               policies: dict[str, Any]) -> bool:
+    """Owner rule — a SPECIFIC named eligible country governs OVER a broad region: the
+    scope names specific countries, and NONE of them is in the org's geography (even if
+    a containing region like 'Sub-Saharan Africa' is also present). Returns True for
+    that mismatch (→ reject / LLM-adjudicate), False when a named country IS the org's,
+    or when the scope names no specific country (region-only / silent)."""
+    org_set = _org_geo_set(policies)
+    if not org_set:
+        return False
+    specific = _scope_specific_countries(candidate)
+    if not specific:
+        return False
+    for c in specific:
+        if ({c} & org_set) or _place_in_org(c, org_set):
+            return False                       # a named country IS the org's → match
+    return True                                # named foreign countries only → mismatch
+
+
+def _donor_geo_reject(candidate: dict[str, Any], policies: dict[str, Any]) -> str:
+    """SILENT-call fallback (owner rule): gate a geo-silent call on the DONOR's declared
+    geography. Returns a reject reason when the donor funds a geography that EXCLUDES the
+    org; '' when the donor is geo-silent, funds worldwide, or includes the org (→ keep).
+    Reads the donor geo injected on the candidate as `_donor_geo` (see scan_pipeline)."""
+    dg = candidate.get("_donor_geo")
+    if not isinstance(dg, dict) or dg.get("global"):
+        return ""                              # donor unknown / silent / worldwide → keep
+    terms = dg.get("terms") or set()
+    org_set = _org_geo_set(policies)
+    if not terms or not org_set:
+        return ""
+    donor_set: set[str] = set()
+    for t in terms:
+        donor_set |= (geo.expand([t]) or {str(t).lower()})
+    if donor_set & org_set:
+        return ""                              # org within the donor's declared geo → keep
+    return ("geography: donor funds " + ", ".join(sorted(terms)[:3])
+            + " - outside the org's scope (call geography silent)")
+
+
 def _theme_hit(kw: str, text: str) -> bool:
     """Word-aware keyword match (NOT a bare substring — that let 'TB' match inside
     'I-TB'). Short tokens & acronyms (<=5 chars or ALL-CAPS, e.g. TB, STI, flu,
@@ -1851,16 +1922,21 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
     ok, reason = deadline_in_future(candidate)
     if not ok:
         return False, f"deadline: {reason}"
-    # LLM fallback (matching) — regex-first: only when the candidate PASSED every
-    # regex gate but its geography is SILENT (no scope captured), so the regex geo
-    # gate couldn't judge it. Ask the LLM whether the org's country qualifies; reject
-    # only on an explicit False. Bounded: most rows have a scope (skip), and
-    # llm_judge has a per-process call cap. Org-facing only (geo_org_gates).
-    if geo_org_gates and llm_adjudicate:
+    # ── GEO AUTHORITY (owner rule 2026-08-01) — LLM CONTEXT-REASONING is the authority
+    # on ambiguous geography; the regex gates above are a weak pre-pass. Consult the LLM
+    # when EITHER (a) a specific named country governs over a broad region that the regex
+    # kept on (precedence conflict), OR (b) the call is geo-SILENT. The LLM separates the
+    # call's real ELIGIBILITY geography from incidental mentions (timezones, examples,
+    # the funder's own country). Its verdict wins; when it's unavailable / undecided we
+    # fall back deterministically: specific-country precedence rejects, and a silent call
+    # is gated on the DONOR's declared geography (permissive only when both are silent).
+    if geo_org_gates:
         _geo = candidate.get("call_geographic_scope")
         _has_geo = (bool(_geo) if isinstance(_geo, (list, tuple))
                     else bool(str(_geo or "").strip()))
-        if not _has_geo:
+        _mismatch = _specific_country_mismatch(candidate, policies)
+        _llm_verdict = None                     # tri-state: True / False / None
+        if llm_adjudicate and (_mismatch or not _has_geo):
             try:
                 from core import llm_judge
                 if llm_judge.is_enabled():
@@ -1871,14 +1947,25 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
                                               or candidate.get("brief_description")),
                     }, policies)
                     if _j:
-                        # Don't discard the structured verdict — stash it on the
-                        # candidate so the pipeline can persist deadline / amount /
-                        # type / geography it recovered (it already paid for the call).
+                        # Stash the verdict so the pipeline can persist deadline / amount
+                        # / type / geography it recovered (it already paid for the call).
                         candidate["_llm_judgment"] = _j
-                        if _j.get("country_eligible") is False:
-                            return False, "geography (LLM): org country not eligible"
+                        _llm_verdict = _j.get("country_eligible")   # True/False/None
             except Exception:
                 pass
+        if _llm_verdict is False:
+            return False, "geography (LLM): org country not eligible for the call's scope"
+        if _llm_verdict is not True:
+            # LLM didn't affirmatively clear it → deterministic fallbacks.
+            if _mismatch:
+                # A specific named country outside the org's scope governs over any broad
+                # region also present (owner rule: specific country beats broad region).
+                return False, ("geography: call scoped to specific countries outside the "
+                               "org's scope (a named country governs over a broad region)")
+            if not _has_geo:
+                _dreason = _donor_geo_reject(candidate, policies)
+                if _dreason:
+                    return False, _dreason
     return True, "eligible"
 
 
