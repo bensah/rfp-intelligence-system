@@ -26,7 +26,7 @@ from core.pipeline import days_to_deadline, usd_value
 from core.records import clean_record, clean_df
 from core.scorer import (score_submission, criterion_score,
                          CRITERION_RESPONSES, default_response)
-from db.supabase_client import get_client
+from db.supabase_client import get_client, safe_execute
 from views.rfp_editor import render_rfp_editor
 
 # auth handled by wrapper page
@@ -689,10 +689,19 @@ def delete_dialog(rows: list[dict]) -> None:
         type="primary", width='stretch',
     ):
         uids = [r["uid"] for r in rows]
-        sb.table("rfp_submissions").delete().in_("uid", uids).execute()
-        st.cache_data.clear()
-        st.toast(f"Deleted {n} record(s)", icon="🗑")
-        st.rerun()
+        try:
+            # Resolve a FRESH tenant-scoped client at click time — the module-level `sb`
+            # was captured once at import and can hold a stale/expired per-session JWT
+            # client, whose write then hangs. safe_execute bounds the call with the
+            # client's timeouts + a short retry so a transient blip can't stall the dialog.
+            with st.spinner("Deleting…"):
+                safe_execute(get_client().table("rfp_submissions")
+                             .delete().in_("uid", uids))
+            st.cache_data.clear()
+            st.toast(f"Deleted {n} record(s)", icon="🗑")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Delete failed — nothing was removed. {type(exc).__name__}: {exc}")
     if c2.button("Cancel", width='stretch'):
         st.rerun()
 
@@ -869,7 +878,8 @@ def blacklist_dialog(row: dict) -> None:
             except Exception:
                 pass
             if also_delete:
-                sb.table("rfp_submissions").delete().eq("uid", row["uid"]).execute()
+                safe_execute(get_client().table("rfp_submissions")
+                             .delete().eq("uid", row["uid"]))
             st.cache_data.clear()
             st.toast(f"Blacklisted '{p}'", icon="🚫")
             st.rerun()
