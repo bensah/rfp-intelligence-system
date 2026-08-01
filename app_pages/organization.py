@@ -217,7 +217,7 @@ with _main:
         _kv(g[3], "Local board", _present(org.get("org_has_local_board")))
         g2 = st.columns(4)
         _kv(g2[0], "BD / fundraising team", _yn(org.get("org_has_bd_team")))
-        _kv(g2[1], "Grassroots / local NGO", _yn(org.get("org_is_grassroot")))
+        _kv(g2[1], "Local organization", _yn(org.get("org_is_grassroot")))
         _kv(g2[2], "Multi-country", _yn(org.get("org_is_multi_country")))
         _kv(g2[3], "HQ country", org.get("org_hq_country"))
 
