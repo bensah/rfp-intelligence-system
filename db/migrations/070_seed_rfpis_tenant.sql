@@ -1,7 +1,7 @@
 -- Migration 070 — seed the platform-owner "RFPIS" tenant + the super_user.
 -- REQUIRES migration 067 (tenants / tenant_memberships) applied first. Idempotent.
 --
--- RFPIS is the super_user's home tenant with a DEFAULT/empty org profile (NOT CHAI's
+-- RFPIS is the super_user's home tenant with a DEFAULT/empty org profile (NOT the organisation's
 -- details). The super_user manages all tenants from Settings → Tenants and (once
 -- Phase-3 RLS carries a super_user bypass) can see across tenants. This seed only
 -- creates the tenant + membership + role; cross-tenant DATA visibility is enforced in

@@ -9,8 +9,8 @@ _All pending registry sources, triaged by the real extraction pipeline then deep
 |---|---|---|
 | Abdul Latif Jameel Poverty Action  | povertyactionlab.org | DIRECT: J-PAL competitive research RFPs on own site; LMIC/SSA RCT funding | listings=https://www.povertyactionlab.org/page/request-proposals | method=html |
 |  | aecid.es | DIRECT: publishes annual ONGD/humanitarian/innovation convocatorias directly; SSA/LMIC | listings=https://www.aecid.es/subvenciones | method=html |
-|  | aics.gov.it | DIRECT: posts open bandi directly (incl. Global Fund AIDS/TB/malaria call) — CHAI-relevant | listings=https://www.aics.gov.it/category/bandi/ | method=html |
-|  | amplifychange.org | DIRECT: SRHR challenge fund, open calls for Africa/Asia CSOs — CHAI-relevant | listings=https://amplifychange.org/apply/ | method=html |
+|  | aics.gov.it | DIRECT: posts open bandi directly (incl. Global Fund AIDS/TB/malaria call) — the organisation-relevant | listings=https://www.aics.gov.it/category/bandi/ | method=html |
+|  | amplifychange.org | DIRECT: SRHR challenge fund, open calls for Africa/Asia CSOs — the organisation-relevant | listings=https://amplifychange.org/apply/ | method=html |
 |  | amref.org | VERIFIED: listings at https://amref.org/tenders/ · 9 call link(s) · extract_ok=0 · eligible=3 | listings=https://amref.org/tenders/ |
 |  | auswaertiges-amt.de | VERIFIED: listings at https://www.auswaertiges-amt.de/en/aussenpolitik/themen/humanitaere-hilfe/funding-humanitarian-assistance/226902 · 2 call link(s) · extrac |
 |  | averydennison.com | VERIFIED: listings at https://www.averydennison.com/en/home/company/avery-dennison-foundation/grantmaking.html · 1 call link(s) · extract_ok=0 · eligible=0 | li |
@@ -20,9 +20,9 @@ _All pending registry sources, triaged by the real extraction pipeline then deep
 |  | cdc.gov | VERIFIED: listings at https://www.cdc.gov/grants/life-cycle-overview/index.html · 7 call link(s) · extract_ok=0 · eligible=0 | listings=https://www.cdc.gov/gran |
 |  | ciff.org | VERIFIED: listings at https://ciff.org/grants · 1 call link(s) · extract_ok=0 · eligible=0 | listings=https://ciff.org/grants |
 |  | civil-protection-humanitarian-aid.ec.europa.eu | VERIFIED: listings at https://civil-protection-humanitarian-aid.ec.europa.eu/funding-evaluations/financing-civil-protection_en · 7 call link(s) · extract_ok=0 · |
-|  | clintonhealthaccess.org | VERIFIED: listings at https://www.clintonhealthaccess.org/resource-center/ · 3 call link(s) · extract_ok=1 · eligible=1 | listings=https://www.clintonhealthacce |
+|  | example.org | VERIFIED: listings at https://www.example.org/resource-center/ · 3 call link(s) · extract_ok=1 · eligible=1 | listings=https://www.clintonhealthacce |
 |  | crs.org | DIRECT: dedicated Bid Opportunities page (RFQ/RFP); 403 to bots -> JS path | listings=https://www.crs.org/bid-opportunities | method=js |
-|  | ddcf.org | DIRECT: publishes comps directly but listing empty; US-focused, low CHAI fit | listings=https://www.dorisduke.org/grants | method=html |
+|  | ddcf.org | DIRECT: publishes comps directly but listing empty; US-focused, low the organisation fit | listings=https://www.dorisduke.org/grants | method=html |
 |  | drkfoundation.org | DIRECT: year-round rolling application form; single standing call | listings=https://www.drkfoundation.org/apply/ | method=html |
 |  | elmaphilanthropies.org | VERIFIED: listings at https://www.elmaphilanthropies.org/all-investments · 7 call link(s) · extract_ok=0 · eligible=0 | listings=https://www.elmaphilanthropies. |
 |  | eltonjohnaidsfoundation.org | VERIFIED: listings at https://www.eltonjohnaidsfoundation.org/grants · 1 call link(s) · extract_ok=0 · eligible=0 | listings=https://www.eltonjohnaidsfoundation |
@@ -40,7 +40,7 @@ _All pending registry sources, triaged by the real extraction pipeline then deep
 |  | grants.nih.gov | DIRECT: NIH publishes NOFOs directly; grants.gov is single official source per NOT-OD-25-143; US-domestic | listings=https://grants.nih.gov/funding/explore-nih- |
 |  | greenclimate.fund | VERIFIED: listings at https://www.greenclimate.fund/access-funding · 10 call link(s) · extract_ok=0 · eligible=0 | listings=https://www.greenclimate.fund/access |
 |  | hinchilla.com | VERIFIED: listings at https://www.hinchilla.com/funders-us/13-5613797-the-starr-foundation#application-process-timeline · 1 call link(s) · extract_ok=0 · eligib |
-|  | hrsa.gov | DIRECT: Live HTML funding pages; apply via grants.gov. US-domestic health, low CHAI geo-relevance. | listings=https://www.hrsa.gov/grants/find-funding | method= |
+|  | hrsa.gov | DIRECT: Live HTML funding pages; apply via grants.gov. US-domestic health, low the organisation geo-relevance. | listings=https://www.hrsa.gov/grants/find-funding | method= |
 |  | ifad.org | DIRECT: Live direct grant calls-for-proposals page; SSA/LMIC ag relevance. | listings=https://www.ifad.org/en/call-for-proposals | method=html | 3rd-party=UNGM  |
 |  | ikeafoundation.org | VERIFIED: listings at https://ikeafoundation.org/grants · 1 call link(s) · extract_ok=0 · eligible=0 | listings=https://ikeafoundation.org/grants |
 |  | international-partnerships.ec.europa.eu | VERIFIED: listings at https://international-partnerships.ec.europa.eu/funding · 9 call link(s) · extract_ok=0 · eligible=0 | listings=https://international-part |
@@ -63,7 +63,7 @@ _All pending registry sources, triaged by the real extraction pipeline then deep
 |  | undp.org | DIRECT: strongest source: server-HTML procurement portal, stable nego_id detail URLs | listings=https://procurement-notices.undp.org/ | method=html | 3rd-party= |
 |  | unfpa.org | VERIFIED: listings at https://www.unfpa.org/ · 1 call link(s) · extract_ok=0 · eligible=0 | listings=https://www.unfpa.org/ |
 |  | unicef.org | VERIFIED: listings at https://www.unicef.org/supply/tender-calendars · 9 call link(s) · extract_ok=0 · eligible=0 | listings=https://www.unicef.org/supply/tende |
-|  | wateraid.org | DIRECT: implementer vendor tenders, fragmented across country offices; low CHAI value | listings=https://www.wateraid.org/tz/work-with-us/procurements | method= |
+|  | wateraid.org | DIRECT: implementer vendor tenders, fragmented across country offices; low the organisation value | listings=https://www.wateraid.org/tz/work-with-us/procurements | method= |
 |  | who.int | VERIFIED: listings at https://www.who.int/about/accountability/procurement/contract-awards · 2 call link(s) · extract_ok=0 · eligible=0 | listings=https://www.w |
 
 ## 🔁 PROMOTE via 3rd-party — donor funds through an external portal (7)
@@ -83,9 +83,9 @@ _All pending registry sources, triaged by the real extraction pipeline then deep
 | Donor | Host | Verdict note |
 |---|---|---|
 |  | barrfoundation.org | MANUAL: invitation-based, New England/US scope — off-geo; no call feed | listings=https://www.barrfoundation.org/grantmaking/ |
-|  | bloomberg.org | MANUAL: invitation-only; no open calls; city/gov competitions, weak CHAI fit | listings=https://apply.bloomberg.org/submit | method=js |
+|  | bloomberg.org | MANUAL: invitation-only; no open calls; city/gov competitions, weak the organisation fit | listings=https://apply.bloomberg.org/submit | method=js |
 |  | carnegie.org | MANUAL: invitation-only; no unsolicited proposals; no open-call feed | listings=https://www.carnegie.org/grants/grant-inquiries/ |
-|  | catalyticopportunityfund.org | MANUAL: CHAI's OWN rapid-response SRH fund (self-reference) — flag for de-listing |
+|  | catalyticopportunityfund.org | MANUAL: the organisation's OWN rapid-response SRH fund (self-reference) — flag for de-listing |
 |  | endfund.org | MANUAL: invitation/relationship-based; no open calls, no 3rd-party channel |
 |  | hiltonfoundation.org | MANUAL: invitation-only; no unsolicited proposals; no open global-health call |
 |  | ifs.se | MANUAL: has Calls page but no open calls now; invitation-only transition | listings=https://www.ifs.se/ifs-programme/no-open-call.html |

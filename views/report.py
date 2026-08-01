@@ -191,11 +191,11 @@ def split_and_normalize_names(value) -> list[str]:
 
     Cases handled:
       * None / NaN / empty                  → []
-      * "Bernard Nsah"                       → ["Bernard Nsah"]
-      * "Michael Budzi, Bernard Nsah"        → ["Michael Budzi", "Bernard Nsah"]
-      * ["Michael Budzi", "Bernard Nsah"]    → ["Michael Budzi", "Bernard Nsah"]
+      * "Jane Doe"                       → ["Jane Doe"]
+      * "Alex Kim, Jane Doe"        → ["Alex Kim", "Jane Doe"]
+      * ["Alex Kim", "Jane Doe"]    → ["Alex Kim", "Jane Doe"]
         (Postgres text[] arrays — contributors column)
-      * ["Michael Budzi, Bernard Nsah"]      → ["Michael Budzi", "Bernard Nsah"]
+      * ["Alex Kim, Jane Doe"]      → ["Alex Kim", "Jane Doe"]
         (one list element that ITSELF contains commas — common when a
         sloppy form submission packed two names into one entry)
 
@@ -221,12 +221,12 @@ def first_name_display_map(canonical_names) -> dict[str, str]:
     FIRST name only when it's unique, or the full name if two
     canonical members share a first name.
 
-    Example: given ["Bernard Nsah", "Yauba Saidu", "Michael Budzi"]
-      → {"Bernard Nsah": "Bernard", "Yauba Saidu": "Yauba", "Michael Budzi": "Michael"}
+    Example: given ["Jane Doe", "Drew Hall", "Alex Kim"]
+      → {"Jane Doe": "Jane", "Drew Hall": "Drew", "Alex Kim": "Alex"}
 
     Example with a collision (two Bernards on the team):
-      ["Bernard Nsah", "Bernard Smith"]
-      → {"Bernard Nsah": "Bernard Nsah", "Bernard Smith": "Bernard Smith"}
+      ["Jane Doe", "Bernard Smith"]
+      → {"Jane Doe": "Jane Doe", "Bernard Smith": "Bernard Smith"}
 
     Shorter labels mean narrower chart legends — important for
     print-to-PDF where wide right-side legends get cut off.

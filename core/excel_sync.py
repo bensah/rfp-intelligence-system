@@ -47,8 +47,8 @@ def _secret(name: str) -> Optional[str]:
 def _unescape_path(raw: str) -> str:
     """Undo dotenv's escape-sequence processing for Windows paths.
 
-    `EXCEL_SOURCE_PATH="C:\\Users\\nbernard\\..."` works, but if the user
-    writes `"C:\\Users\\nbernard"` and dotenv treats `\\n` as a newline, we
+    `EXCEL_SOURCE_PATH="C:\\Users\\youruser\\..."` works, but if the user
+    writes `"C:\\Users\\youruser"` and dotenv treats `\\n` as a newline, we
     receive a string with literal newline/tab chars. Convert those back to
     `\\n` / `\\t` so the Path still resolves.
     """
@@ -72,7 +72,7 @@ def resolve_excel_path() -> dict:
             return out
         out["error"] = (
             f"EXCEL_SOURCE_PATH set but file not found: {p}\n"
-            "If the path contains \\n (e.g. \\nbernard), wrap the .env value in "
+            "If the path contains \\n (e.g. \\youruser), wrap the .env value in "
             "single quotes — double quotes let dotenv interpret \\n as a newline."
         )
     # Repo-root fallback: pick any *.xlsx sitting beside the project.
@@ -104,8 +104,8 @@ def needs_sync() -> Optional[Path]:
     """Return the Excel path if an AUTO-sync is due (workbook newer than the last
     recorded sync).
 
-    DEACTIVATED in multi-tenant mode: the CHAI-Cameroon workbook is single-tenant data
-    with no tenant_id, so auto-syncing it on page load would dump CHAI's records into
+    DEACTIVATED in multi-tenant mode: the the sample country team workbook is single-tenant data
+    with no tenant_id, so auto-syncing it on page load would dump the organisation's records into
     whatever tenant the user is browsing (e.g. a brand-new RFPIS Inc. tenant) and
     also re-run on every session. Admin → Settings → "Sync now" calls sync() directly and
     still works for a deliberate, owner-initiated single-tenant refresh."""

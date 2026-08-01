@@ -101,7 +101,7 @@ DEFAULT_POLICIES: dict[str, Any] = {
         ],
     },
     # Opportunity-TYPE opt-outs (title-based hard rejects). Defaults suit an
-    # implementing org like CHAI that wants project grants/awards. An org that
+    # implementing org like the organisation that wants project grants/awards. An org that
     # DOES pursue training programs or loans turns the flag off in Settings.
     "exclusions": {
         "reject_training_only": True,   # "X Training Center / Education Program"
@@ -401,8 +401,8 @@ def _seed_themes_from_profile(pol: dict[str, Any]) -> dict[str, Any]:
 
 def _is_scoped_tenant() -> bool:
     """True when we're operating as a specific tenant (a multi-tenant browser session OR a
-    headless per-tenant override) — as opposed to the single-tenant CHAI deployment. Such a
-    tenant must NOT inherit CHAI's DEFAULT_POLICIES countries/themes; it falls back to its
+    headless per-tenant override) — as opposed to the single-tenant the organisation deployment. Such a
+    tenant must NOT inherit the organisation's DEFAULT_POLICIES countries/themes; it falls back to its
     own profile instead. Best-effort: any error → False (single-tenant behaviour)."""
     try:
         from auth.tenant_context import (multitenant_enabled, current_tenant_id,
@@ -419,21 +419,21 @@ def get_policies() -> dict[str, Any]:
     tenant's own profile: any geo/theme scope it leaves empty is seeded from the tenant's
     registered/operating countries + program-area categories, so a configured tenant hard-
     gates on at least its own geography instead of seeing everything (baseline default).
-    A tenant NEVER inherits CHAI's DEFAULT_POLICIES countries/themes — those are the shipped
+    A tenant NEVER inherits the organisation's DEFAULT_POLICIES countries/themes — those are the shipped
     single-tenant defaults only."""
     raw = get_setting(POLICIES_KEY)
     scoped = _is_scoped_tenant()
     if not raw:
         # No configured policy. A FRESH tenant starts from a neutral base (populate +
-        # Decline, gated on its profile); single-tenant keeps the shipped CHAI defaults.
+        # Decline, gated on its profile); single-tenant keeps the shipped the organisation defaults.
         pol = _blank_policies() if scoped else copy.deepcopy(DEFAULT_POLICIES)
         return _seed_themes_from_profile(_seed_geo_from_profile(pol))
     try:
         overlay = json.loads(raw)
         if isinstance(overlay, dict):
-            # Merge a SAVED policy onto a NEUTRAL base for a scoped tenant (else onto CHAI's
+            # Merge a SAVED policy onto a NEUTRAL base for a scoped tenant (else onto the organisation's
             # defaults for single-tenant). Merging a per-tenant overlay onto DEFAULT_POLICIES
-            # made a tenant that never chose a geo/theme scope silently inherit CHAI's
+            # made a tenant that never chose a geo/theme scope silently inherit the organisation's
             # Cameroon/Mali + health list (a cross-tenant default leak) — and that non-empty
             # geo then blocked the profile seeding below. Neutral base + seed = the tenant's
             # own explicit scope wins, an unset scope falls back to its profile.

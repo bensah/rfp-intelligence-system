@@ -9,7 +9,7 @@ Surfaces every open follow-up across two sources:
 
 Each section gets:
   * Two KPI cards (Unresolved count + % Unresolved)
-  * Per-owner summary line ("Bernard (3) · Ornella (2) · …")
+  * Per-owner summary line ("Jane (3) · Robin (2) · …")
   * Filterable list (date range + owner multiselect)
   * Inline Resolved / Not Resolved toggle (same UX as the per-week
     meeting_logs view, no jumping pages to close an item)
@@ -42,7 +42,7 @@ sb = get_client()
 # ---------------------------------------------------------------------------
 def _first_name(name: str | None) -> str:
     """First token of a person's name (or the whole string if single token).
-    Used in the per-owner summary so "Bernard Nsah" displays as "Bernard"."""
+    Used in the per-owner summary so "Jane Doe" displays as "Bernard"."""
     if not name:
         return "(unassigned)"
     parts = str(name).strip().split()
@@ -55,7 +55,7 @@ def _owner_summary(series: pd.Series) -> str:
     Comma-separated owner cells split into individual people first."""
     if series.empty:
         return "—"
-    # Comma-split (Owner cells like "Michael Budzi, Bernard Nsah" should
+    # Comma-split (Owner cells like "Alex Kim, Jane Doe" should
     # count as two people each contributing 1).
     exploded: list[str] = []
     for v in series.dropna():

@@ -75,7 +75,7 @@ back-compat but no longer edited in the UI.
 
 ### Strategic-intelligence fields (migration 029)
 
-The donor profile is organised into the same sections as a CHAI BD "Donor
+The donor profile is organised into the same sections as a the organisation BD "Donor
 Intelligence Report" (the edit form is tabbed; the View detail + PDF print in that
 order). Migration 029 adds:
 

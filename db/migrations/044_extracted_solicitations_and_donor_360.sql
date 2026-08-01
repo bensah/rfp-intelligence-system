@@ -114,7 +114,7 @@ create index if not exists rfp_sub_extraction_uid_idx on rfp_submissions(extract
 -- donor_type: descriptive label complementary to donor_category (drives the
 --   per-donor extraction source-template; see DATA_SCHEMA_ETL.md §5.2).
 -- is_dual_role_implementer: 'yes' for implementers that also publish calls
---   (CHAI, Care, Sightsavers…), captured as funders.
+--   (the organisation, Care, Sightsavers…), captured as funders.
 -- opportunity_listing_urls: the donor's RFP/tender/grant listing page(s) — the
 --   "donor source URLs" for scanning (pipe-separated).
 alter table donor_intel add column if not exists donor_type               text;

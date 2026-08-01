@@ -151,7 +151,7 @@ the composite weighting during MUST 1.
 
 ### C. HQ-country  (HARD · 0/1)
 - **Requirement:** applicant must be **HQ'd in the implementation country** (NOT the
-  donor's HQ country). e.g. CHAI HQ'd in the US → disqualified.
+  donor's HQ country). e.g. the organisation HQ'd in the US → disqualified.
 - **Org match:** `org_hq_country` vs the call's required HQ / implementation country.
 - **Distinct from `org_is_us_entity`** ("We are a US-based entity") — keep separate; when
   checked it qualifies the org for US-based opportunities. Do not conflate.

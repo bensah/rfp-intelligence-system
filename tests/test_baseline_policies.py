@@ -1,9 +1,9 @@
 """Regression tests for the baseline-default screener (BUG 4).
 
-A per-tenant policy must never inherit CHAI's DEFAULT_POLICIES countries/themes, and any
+A per-tenant policy must never inherit the organisation's DEFAULT_POLICIES countries/themes, and any
 geo/theme scope a tenant leaves empty is seeded from its own profile — so a configured
 tenant hard-gates on at least its own geography instead of seeing everything. The
-single-tenant CHAI deployment keeps the shipped defaults.
+single-tenant the organisation deployment keeps the shipped defaults.
 
 Pure unit tests: policies internals (tenant detection + profile lookup) are monkeypatched;
 no DB, no streamlit.
@@ -30,7 +30,7 @@ class BaselinePolicyTests(unittest.TestCase):
         # Default stubs — each test overrides what it needs.
         P.get_setting = lambda key: None
         P._is_scoped_tenant = lambda: True
-        P._profile_geo_eligible = lambda: ["Kenya"]      # distinct from CHAI's defaults
+        P._profile_geo_eligible = lambda: ["Kenya"]      # distinct from the organisation's defaults
         P._profile_theme_keywords = lambda: []
 
     def tearDown(self):
@@ -43,11 +43,11 @@ class BaselinePolicyTests(unittest.TestCase):
     def test_scoped_tenant_no_policy_seeds_from_profile(self):
         P.get_setting = lambda key: None
         elig, broad = self._geo(P.get_policies())
-        self.assertEqual(elig, ["Kenya"])          # profile geo, NOT CHAI Cameroon/Mali
+        self.assertEqual(elig, ["Kenya"])          # profile geo, NOT the sample country team/Mali
         self.assertEqual(broad, [])
 
     def test_scoped_tenant_saved_without_geo_falls_back_to_profile(self):
-        # A saved policy that set only themes must NOT inherit CHAI's Cameroon/Mali.
+        # A saved policy that set only themes must NOT inherit the organisation's Cameroon/Mali.
         P.get_setting = lambda key: json.dumps({"themes": {"required_any": ["water"]}})
         pol = P.get_policies()
         elig, broad = self._geo(pol)
@@ -72,10 +72,10 @@ class BaselinePolicyTests(unittest.TestCase):
         P._is_scoped_tenant = lambda: False
         P.get_setting = lambda key: None
         elig, _ = self._geo(P.get_policies())
-        self.assertEqual(sorted(elig), ["Cameroon", "Mali"])   # shipped CHAI defaults
+        self.assertEqual(sorted(elig), ["Cameroon", "Mali"])   # shipped the organisation defaults
 
     def test_single_tenant_saved_without_geo_inherits_defaults(self):
-        # Single-tenant: merging onto DEFAULT_POLICIES is correct (they're CHAI's own).
+        # Single-tenant: merging onto DEFAULT_POLICIES is correct (they're the organisation's own).
         P._is_scoped_tenant = lambda: False
         P.get_setting = lambda key: json.dumps({"themes": {"required_any": ["health"]}})
         elig, _ = self._geo(P.get_policies())

@@ -15,7 +15,7 @@
 --   • Every table has explicit RLS policies that describe what the anon
 --     role (i.e. the live app) is allowed to do.
 --
--- For an internal CHAI BDT tool with auth-gated access at the Streamlit
+-- For an internal the organisation BDT tool with auth-gated access at the Streamlit
 -- layer, we use a permissive baseline: anon can do anything. The win over
 -- "service_role on the client" is that the anon key is rotatable
 -- separately AND the policies are now ready to tighten — when you decide

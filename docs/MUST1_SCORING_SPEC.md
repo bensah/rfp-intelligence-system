@@ -87,8 +87,8 @@ default have them checked) AND **detected from the funding call** by regex/LLM (
 1. **Eligibility type** — named entity types eligible to apply (NGO, for-profit,
    government, enterprise, …). Usually on the call.
 2. **HQ-country requirement** — the call requires the applicant be **HQ'd in the
-   implementation country** (NOT the donor's HQ country). e.g. CHAI is HQ'd in the US →
-   such a requirement disqualifies CHAI.
+   implementation country** (NOT the donor's HQ country). e.g. the organisation is HQ'd in the US →
+   such a requirement disqualifies the organisation.
 3. **Registration status** — where the applicant must be **registered** (e.g. must be in
    an LMIC / Africa / Asia / a specific country). Has **two child checks**:
    (a) **Registration country** vs the call's required region/country; and
@@ -117,7 +117,7 @@ default have them checked) AND **detected from the funding call** by regex/LLM (
    registration region/country **PLUS** a NEW field **"Entity Registered"** (see new
    fields) — score = Registration-country × Entity-Registered.
    - Note: the system only counts the org's **preference** countries (currently
-     Cameroon + Mali), even though CHAI is registered in 35 countries.
+     Cameroon + Mali), even though the organisation is registered in 35 countries.
 4. **Individual-PI** ↔ a NEW **"Has well-established PI"** checkbox. Logic:
    - If the call requires a PI from an **eligible (in-scope) country** → the org's own
      PI qualifies it.
