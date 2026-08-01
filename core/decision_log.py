@@ -47,7 +47,7 @@ def _scope_text(v: Any) -> str | None:
 
 def _org_tag() -> str | None:
     """The deploying org's short/long name — stamps every learning row so labels
-    stay attributable to THIS tenant (CHAI). Each deployment already has its own
+    stay attributable to THIS tenant (the organisation). Each deployment already has its own
     DB, and the features are computed against this org's profile, so labels are
     inherently per-tenant; this tag makes it explicit (and pooled-DB-ready)."""
     try:

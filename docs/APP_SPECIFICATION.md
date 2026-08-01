@@ -3,8 +3,8 @@
 
 > A multi-tenant product that discovers funding opportunities (RFPs/RFAs/CFPs), screens
 > them against a deploying organization's eligibility & fit, recommends Proceed / Park /
-> Decline, and learns from human decisions over time. CHAI's Business Development Team is
-> the reference deployment; nothing is hard-coded to CHAI.
+> Decline, and learns from human decisions over time. the organisation's Business Development Team is
+> the reference deployment; nothing is hard-coded to the organisation.
 
 - **Stack:** Streamlit (Python) UI · Supabase/PostgreSQL data · deployed on Streamlit
   Community Cloud (auto-deploys on push to `main`); the deep-read scan runs on GitHub Actions.

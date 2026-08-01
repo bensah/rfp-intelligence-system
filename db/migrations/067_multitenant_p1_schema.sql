@@ -1,8 +1,8 @@
 -- Migration 067 — MULTI-TENANT Phase 1: schema + backfill.
 -- =========================================================================
--- Introduces the tenant model (a tenant = a CHAI country / global team, e.g.
--- "CHAI Cameroon", "CHAI Global Malaria Team") and scopes every PER-TENANT data
--- table to a tenant_id, backfilling all existing rows to the CHAI Cameroon tenant.
+-- Introduces the tenant model (a tenant = a the organisation country / global team, e.g.
+-- "the sample country team", "Sample Global Team") and scopes every PER-TENANT data
+-- table to a tenant_id, backfilling all existing rows to the the sample country team tenant.
 --
 -- SAFE + ADDITIVE + IDEMPOTENT. This migration does NOT enable Row-Level Security
 -- and does NOT change any app behaviour: tenant_id is populated but nothing reads
@@ -25,7 +25,7 @@
 
 begin;
 
--- 1. TENANTS — one row per CHAI country / global team. `name` is unique and feeds
+-- 1. TENANTS — one row per the organisation country / global team. `name` is unique and feeds
 --    the onboarding type-ahead. org_profile moves here from app_settings (per-tenant).
 create table if not exists tenants (
   id           uuid primary key default gen_random_uuid(),
@@ -59,23 +59,23 @@ create table if not exists tenant_memberships (
 create index if not exists idx_tenant_memberships_user   on tenant_memberships(user_id);
 create index if not exists idx_tenant_memberships_tenant on tenant_memberships(tenant_id);
 
--- 3. SEED the CHAI Cameroon tenant, carrying the existing single org_profile into it.
+-- 3. SEED the the sample country team tenant, carrying the existing single org_profile into it.
 --    (app_settings is key/value with a TEXT value → cast to jsonb; missing → '{}'.)
 insert into tenants (name, slug, status, org_profile)
 values (
-  'CHAI Cameroon', 'chai-cameroon', 'active',
+  'the sample country team', 'chai-cameroon', 'active',
   coalesce((select value from app_settings where key = 'org_profile'), '{}')::jsonb
 )
 on conflict (name) do nothing;
 
--- 3b. Make every EXISTING user an ACTIVE member of CHAI Cameroon, preserving their role.
+-- 3b. Make every EXISTING user an ACTIVE member of the sample country team, preserving their role.
 insert into tenant_memberships (tenant_id, user_id, role, status, decided_at)
 select t.id, u.id, coalesce(u.role, 'collaborator'), 'active', now()
 from users u
-cross join (select id from tenants where name = 'CHAI Cameroon') t
+cross join (select id from tenants where name = 'the sample country team') t
 on conflict (tenant_id, user_id) do nothing;
 
--- 4. Add tenant_id to each PER-TENANT table, backfill existing rows to CHAI Cameroon,
+-- 4. Add tenant_id to each PER-TENANT table, backfill existing rows to the sample country team,
 --    and index it. Edit the _SCOPED_TABLES array below to change the split BEFORE running.
 do $$
 declare
@@ -86,9 +86,9 @@ declare
     'active_grants','narrative_logs','scan_decisions','donor_contacts'
   ];
 begin
-  select id into _tid from tenants where name = 'CHAI Cameroon';
+  select id into _tid from tenants where name = 'the sample country team';
   if _tid is null then
-    raise exception 'CHAI Cameroon tenant seed failed — aborting';
+    raise exception 'the sample country team tenant seed failed — aborting';
   end if;
   foreach _t in array _scoped loop
     if to_regclass(_t) is null then

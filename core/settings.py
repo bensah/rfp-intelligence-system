@@ -24,7 +24,7 @@ def _now() -> float:
 # policies, and the team roster. When a tenant context resolves, these read/write the
 # per-tenant tenant_settings store (migration 075) with NO fallback to the global
 # app_settings value — so a fresh tenant gets the caller's CODE default (permissive
-# policies, empty schedule/team), not CHAI's config. Everything else stays global/shared.
+# policies, empty schedule/team), not the organisation's config. Everything else stays global/shared.
 _TENANT_SCOPED_KEYS = {"schedule_json", "scan_policies", "team_members_json"}
 
 
@@ -65,7 +65,7 @@ def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
         except Exception as exc:
             if not _is_missing_tenant_settings(exc):
                 # Transient/other error → return the CODE default, never serve the global
-                # (CHAI) value as this tenant's config. (Only a missing table falls back.)
+                # (the organisation) value as this tenant's config. (Only a missing table falls back.)
                 return default
             # tenant_settings table missing (pre-075) → fall back to the global store below
     cached = _CACHE.get(key)

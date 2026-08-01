@@ -3,7 +3,7 @@
 -- The app is a generic, multi-tenant product (RFPIS); "chai_" column
 -- names were carried over from the original Excel screener and leak the
 -- reference-deployment's branding into every install's schema. This
--- renames the two CHAI-prefixed columns to provider-neutral names that
+-- renames the two the organisation-prefixed columns to provider-neutral names that
 -- already match their UI labels:
 --
 --   rfp_submissions.chai_role   -> applicant_role   ("Applicant role" / "Role")

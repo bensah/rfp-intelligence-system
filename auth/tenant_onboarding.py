@@ -5,7 +5,7 @@ tenant membership is sent here to create or join a tenant before any app page re
 This works identically for today's super-admin-provisioned users AND future public
 self-signup — no rework when signup opens.
 
-Flow (a tenant = a CHAI country / global team):
+Flow (a tenant = a the organisation country / global team):
   * pick your organization from a dropdown of the tenants that already exist;
   * SELECT an existing one → a PENDING membership request (admin approves, Phase 5);
   * or choose "Create a new organization" → the creator becomes its admin (active) and
@@ -111,8 +111,8 @@ def render_onboarding(user: dict) -> None:
         st.stop()
 
     st.caption(
-        "Choose your organization — a CHAI country or global team "
-        "(e.g. “CHAI Cameroon”, “CHAI Global Malaria Team”). Pick an existing one to "
+        "Choose your organization — a the organisation country or global team "
+        "(e.g. “the sample country team”, “Sample Global Team”). Pick an existing one to "
         "request access, or create yours if it isn't listed yet.")
 
     tenants = _list_tenants()
@@ -130,7 +130,7 @@ def render_onboarding(user: dict) -> None:
 
     elif choice == _CREATE_NEW:
         new_name = st.text_input("New organization name", key="onb_new_name",
-                                 placeholder="e.g. CHAI Zimbabwe")
+                                 placeholder="e.g. Sample Country Team")
         typed = (new_name or "").strip()
         if typed:
             st.caption(f"You'll become the admin of **{typed}**.")

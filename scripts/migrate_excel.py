@@ -180,10 +180,10 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
         "call_domain_areas": _multi(get("Program Area")),
         "focus_theme": _txt(get("Focus Theme")),
         "opportunity_link": _txt(get("Opportunity Link")),
-        # applicant_role: the source workbook header is "CHAI Role" (col Q);
+        # applicant_role: the source workbook header is "Org Role" (col Q);
         # "Applicant Role"/"Role" are accepted as de-branded aliases. Omitting
-        # "CHAI Role" silently dropped the role on every migration row.
-        "applicant_role": _txt(get("Applicant Role", "Role", "CHAI Role")),
+        # "Org Role" silently dropped the role on every migration row.
+        "applicant_role": _txt(get("Applicant Role", "Role", "Org Role")),
         "lead_applicant": _txt(get("Lead Applicant")),
         "sub_applicant": _txt(get("Sub Applicant")),
         "funding_window": _txt(get("Funding Window")),

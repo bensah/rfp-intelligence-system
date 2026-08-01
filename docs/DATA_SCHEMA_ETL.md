@@ -43,7 +43,7 @@ The org lens is applied **only** downstream, in the per-tenant scorer.
 
 - **`extracted_solicitations` = GLOBAL.** We do the broad extraction once, store it
   on our servers. No org scoping. This is the eventual **public-facing** dataset.
-- **`rfp_submissions` (Screened) = PER-TENANT.** Each subscribed org (CHAI is the
+- **`rfp_submissions` (Screened) = PER-TENANT.** Each subscribed org (the organisation is the
   first) runs *their own* screening against the shared extracted store and gets a
   curated, tailored view. Orgs never crawl the web — we do the heavy lifting; they
   consume the curation.
@@ -51,7 +51,7 @@ The org lens is applied **only** downstream, in the per-tenant scorer.
   1. **Central extraction** (crawl → extract → `extracted_solicitations`) — runs once for everyone.
   2. **Per-org screening** (`extracted_solicitations` → score vs org policy → `rfp_submissions`) — runs per tenant.
 
-(Today CHAI is the only tenant, so this works single-tenant immediately; the split
+(Today the organisation is the only tenant, so this works single-tenant immediately; the split
 is designed so adding tenants needs no re-extraction.)
 
 ---

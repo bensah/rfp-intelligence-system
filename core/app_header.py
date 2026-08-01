@@ -40,7 +40,7 @@ THEME_BG_CARD = "#fafcfa"       # near-white card (metric tiles / quick-cards)
 THEME_BORDER = "#e3e7e3"        # hairline border on cards/tiles
 # Top app bar (owner 2026-06-29): a full-width DARK GREEN bar — the page itself
 # stays white. Tune THEME_HEADER_BG / THEME_HEADER_H to restyle the whole bar.
-THEME_HEADER_BG = "#014729"     # deep CHAI green — the top app bar
+THEME_HEADER_BG = "#014729"     # deep the organisation green — the top app bar
 THEME_HEADER_TEXT = "#ffffff"   # primary org line + icons (on green)
 THEME_HEADER_SUB = "#bfe0cf"    # muted light-green — secondary org line
 THEME_HEADER_H = "4.6rem"       # bar height (also the content top-offset)
@@ -696,8 +696,8 @@ _GLOBAL_CSS = f"""
     h4, [data-testid="stHeading"] h4 {{ font-size: 0.92rem !important; }}
 
     /* ── Metric tiles shrink to fit ─────────────────────────────────────
-       Values like "Mon 08 Jun" / "Pokam Ornella" were truncating to
-       "Mon 08 Ju…" / "Pokam Or…". Drop the value font, tighten padding,
+       Values like "Mon 08 Jun" / "Lee Robin" were truncating to
+       "Mon 08 Ju…" / "Lee Ro…". Drop the value font, tighten padding,
        and let the value wrap instead of clipping with an ellipsis. */
     [data-testid="stMetric"] {{ padding: 8px 10px !important; }}
     [data-testid="stMetricLabel"] {{ font-size: 0.72rem !important; }}

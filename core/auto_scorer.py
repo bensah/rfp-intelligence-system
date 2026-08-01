@@ -718,7 +718,7 @@ def error_page_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
     return False, ""
 
 
-# Title-level signals for opportunity TYPES many implementing orgs (e.g. CHAI)
+# Title-level signals for opportunity TYPES many implementing orgs (e.g. the organisation)
 # don't pursue, BOTH configurable via policies['exclusions'] so an org that DOES
 # want them just turns the flag off:
 #   * training / education programs — capacity-building of named trainees, not a
@@ -1110,7 +1110,7 @@ def feasibility_hard_reject(candidate: dict[str, Any], policies: dict[str, Any])
 
 
 # Construction / civil-works PROCUREMENT — unambiguous architecture-engineering-works
-# tenders (FR + EN). These are off-domain for CHAI even when health words appear, because
+# tenders (FR + EN). These are off-domain for the organisation even when health words appear, because
 # the health word is just WHAT is being built (e.g. "construction d'un Laboratoire P2",
 # "installation de cliniques modulaires"). Conservative on purpose (the user warned against
 # over-hardening): only matches works-procurement phrasing, never a health-programming call
@@ -1134,7 +1134,7 @@ _CONSTRUCTION_WORKS_RE = re.compile(
 
 def construction_works_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
     """Hard reject for construction / civil-works PROCUREMENT tenders (design office,
-    works supervision, building construction). Off-domain for CHAI even when a clinic /
+    works supervision, building construction). Off-domain for the organisation even when a clinic /
     lab is the thing being built."""
     m = _CONSTRUCTION_WORKS_RE.search(_full_text(candidate))
     if m:

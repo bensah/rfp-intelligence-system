@@ -1,5 +1,5 @@
 [
-  {"host":"hrsa.gov","verdict":"DIRECT","listings_url":"https://www.hrsa.gov/grants/find-funding","method":"html","third_party":"grants.gov (HHS-HRSA)","reason":"Live HTML funding pages; apply via grants.gov. US-domestic health, low CHAI geo-relevance."},
+  {"host":"hrsa.gov","verdict":"DIRECT","listings_url":"https://www.hrsa.gov/grants/find-funding","method":"html","third_party":"grants.gov (HHS-HRSA)","reason":"Live HTML funding pages; apply via grants.gov. US-domestic health, low the organisation geo-relevance."},
   {"host":"ifad.org","verdict":"DIRECT","listings_url":"https://www.ifad.org/en/call-for-proposals","method":"html","third_party":"UNGM (procurement)","reason":"Live direct grant calls-for-proposals page; SSA/LMIC ag relevance."},
   {"host":"kfw-entwicklungsbank.de","verdict":"THIRD_PARTY","listings_url":"","method":"","third_party":"GTAI / EU TED","reason":"Site only describes procurement; tenders published via GTAI + TED, not directly."},
   {"host":"mulagofoundation.org","verdict":"MANUAL","listings_url":"","method":"","third_party":"","reason":"No unsolicited proposals; referral-only fellowships. No open-call feed."},

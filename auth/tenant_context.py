@@ -1,7 +1,7 @@
 """Multi-tenant session context (Phase 2 — Option A).
 
 Keep streamlit-authenticator for login, but once a user is authenticated, resolve
-WHICH tenant (a CHAI country / global team) they belong to and mint a short-lived
+WHICH tenant (a the organisation country / global team) they belong to and mint a short-lived
 JWT that carries a `tenant_id` claim, signed with the project's Supabase JWT secret.
 That JWT becomes the PostgREST bearer (see `db.supabase_client.get_client`), so the
 Phase-3 RLS policies can enforce isolation via `request.jwt.claims ->> 'tenant_id'`.
