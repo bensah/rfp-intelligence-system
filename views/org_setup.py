@@ -1015,6 +1015,15 @@ def render_org_setup(user, sb, tenant_id=None):
                         "funder_relationship", "competitiveness", "bid_effort")
                 },
             }
+            # Never PERSIST a geo-empty policy for a tenant that HAS a geography in its
+            # profile — a saved blank scope would otherwise read as "see everything". When
+            # the admin left BOTH the country and region scope empty, default the eligible
+            # countries from the profile (registered + operating). An explicit region-only
+            # scope (broad_terms set) is respected — the seeder no-ops when any scope is set.
+            try:
+                new_pol = _pol._seed_geo_from_profile(new_pol)
+            except Exception:
+                pass
             try:
                 _pol.set_policies(new_pol, updated_by=user.get("email"))
                 st.session_state["pol_save_msg"] = (
