@@ -399,36 +399,55 @@ def _seed_themes_from_profile(pol: dict[str, Any]) -> dict[str, Any]:
     return pol
 
 
+def _is_scoped_tenant() -> bool:
+    """True when we're operating as a specific tenant (a multi-tenant browser session OR a
+    headless per-tenant override) — as opposed to the single-tenant the organisation deployment. Such a
+    tenant must NOT inherit the organisation's DEFAULT_POLICIES countries/themes; it falls back to its
+    own profile instead. Best-effort: any error → False (single-tenant behaviour)."""
+    try:
+        from auth.tenant_context import (multitenant_enabled, current_tenant_id,
+                                         override_tenant_id)
+        return bool(current_tenant_id() and (multitenant_enabled() or override_tenant_id()))
+    except Exception:
+        return False
+
+
 def get_policies() -> dict[str, Any]:
-    """Return the active policies (admin overrides merged onto defaults)."""
+    """Return the active policies (admin overrides merged onto defaults).
+
+    A per-tenant policy (multi-tenant / cron-override) is ALWAYS reconciled against the
+    tenant's own profile: any geo/theme scope it leaves empty is seeded from the tenant's
+    registered/operating countries + program-area categories, so a configured tenant hard-
+    gates on at least its own geography instead of seeing everything (baseline default).
+    A tenant NEVER inherits the organisation's DEFAULT_POLICIES countries/themes — those are the shipped
+    single-tenant defaults only."""
     raw = get_setting(POLICIES_KEY)
+    scoped = _is_scoped_tenant()
     if not raw:
-        # No configured policy. A FRESH tenant (multi-tenant session OR a headless cron
-        # per-tenant override) starts PERMISSIVE (populate + Decline); single-tenant keeps
-        # the shipped the organisation defaults.
-        pol = None
-        try:
-            from auth.tenant_context import (multitenant_enabled, current_tenant_id,
-                                             override_tenant_id)
-            if current_tenant_id() and (multitenant_enabled() or override_tenant_id()):
-                pol = _blank_policies()
-        except Exception:
-            pol = None
-        if pol is None:
-            pol = copy.deepcopy(DEFAULT_POLICIES)
-        # A tenant with NO configured scan policy still gates on its profile —
-        # geographies (registered + operating) + program-area categories — restoring the
-        # hard geo + theme rejects that multi-tenant blank policies inadvertently relaxed.
-        # ONLY the unconfigured/blank branch is seeded: an EXPLICITLY-saved policy (below)
-        # is honoured verbatim — including a deliberate region-only scope (broad_terms set,
-        # eligible empty), which seeding would otherwise collapse to country-only.
+        # No configured policy. A FRESH tenant starts from a neutral base (populate +
+        # Decline, gated on its profile); single-tenant keeps the shipped the organisation defaults.
+        pol = _blank_policies() if scoped else copy.deepcopy(DEFAULT_POLICIES)
         return _seed_themes_from_profile(_seed_geo_from_profile(pol))
     try:
         overlay = json.loads(raw)
-        pol = (_deep_merge(DEFAULT_POLICIES, overlay)
-               if isinstance(overlay, dict) else copy.deepcopy(DEFAULT_POLICIES))
+        if isinstance(overlay, dict):
+            # Merge a SAVED policy onto a NEUTRAL base for a scoped tenant (else onto the organisation's
+            # defaults for single-tenant). Merging a per-tenant overlay onto DEFAULT_POLICIES
+            # made a tenant that never chose a geo/theme scope silently inherit the organisation's
+            # Cameroon/Mali + health list (a cross-tenant default leak) — and that non-empty
+            # geo then blocked the profile seeding below. Neutral base + seed = the tenant's
+            # own explicit scope wins, an unset scope falls back to its profile.
+            base = _blank_policies() if scoped else DEFAULT_POLICIES
+            pol = _deep_merge(base, overlay)
+        else:
+            pol = copy.deepcopy(DEFAULT_POLICIES)
     except (ValueError, TypeError):
         pol = copy.deepcopy(DEFAULT_POLICIES)
+    # Seed geo/theme from the tenant's profile when the SAVED policy left them empty — same
+    # as the unconfigured branch. The seeders no-op when an explicit scope is set (including
+    # a deliberate region-only scope), so an admin's explicit choice is always honoured.
+    if scoped:
+        pol = _seed_themes_from_profile(_seed_geo_from_profile(pol))
     return pol
 
 
