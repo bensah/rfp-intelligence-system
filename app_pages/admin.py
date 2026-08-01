@@ -199,7 +199,7 @@ _dev_admin = permissions.is_developer_admin(user)     # admin+ in a developer te
 _dev_member = permissions.is_developer_member(user)   # any member of a developer tenant
 
 # Tab set. "Accounts" (users + super-only tenants/blacklisted) sits right after Setup;
-# "Sources" nests Catalog | Verify Registry | Blocked | Excel Sync. "Learning data" is a developer-only
+# "Sources" nests Validated | Verify Registry | Blocked | Excel Sync. "Learning data" is a developer-only
 # view (its BODY is gated to developer-tenant members below, like Records → Verify/Reset).
 # A developer Super User also gets a "Suggestions" review inbox (with a pending-count
 # badge); the super_user also gets a cross-tenant "Analytics" tab.
@@ -937,7 +937,7 @@ with tab_data:
 if tab_sources is not None:
     with tab_sources:
         _cat_tab, _vreg_tab, _blk_tab, _xls_tab = st.tabs(
-            ["Catalog", "Verify Registry", "Blocked", "Excel Sync"])
+            ["Validated", "Verify Registry", "Blocked", "Excel Sync"])
 
 else:
     _cat_tab = _vreg_tab = _blk_tab = _xls_tab = None
@@ -950,7 +950,7 @@ if _vreg_tab is not None:
         _render_source_registry(user)
 if _cat_tab is not None:
     with _cat_tab:
-        st.subheader("Funding sources catalog")
+        st.subheader("Validated sources catalog")
         st.caption(
             "Curated per-source funding URLs. The Friday scan + manual scan iterate "
             "over every **active** row here, in addition to the keyword-wide sources "
