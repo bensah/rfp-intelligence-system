@@ -597,6 +597,19 @@ _GLOBAL_CSS = f"""
       flex: 1 1 11rem !important;
     }}
 
+    /* ── Right rail (opportunity feed / login history) drops BELOW main ──
+       The main+rail split (main_col, rail_col = st.columns([3.4, 1])) would
+       otherwise sit side-by-side and squash to ~11rem each on a phone. The
+       rail column carries a .app-rail-marker; force BOTH columns of the row
+       that contains it to full width so they stack — main on top (1st DOM
+       child), rail underneath (2nd). Scoped via :has() so ONLY the rail row
+       stacks; metric/button rows keep the 2-up wrap above. */
+    [data-testid="stHorizontalBlock"]:has(.app-rail-marker) > [data-testid="stColumn"],
+    [data-testid="stHorizontalBlock"]:has(.app-rail-marker) > [data-testid="column"] {{
+      min-width: 100% !important;
+      flex: 1 1 100% !important;
+    }}
+
     /* ── Top bar stays horizontal + borderless icons ───────────────────
        The generic column-stack above would wrap the 🔍🔔👤 icons into
        full-width boxes; these rules (later → win) keep the top bar in one

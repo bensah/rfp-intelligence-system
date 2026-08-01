@@ -23,11 +23,13 @@ from core.scorer import (
 )
 from core.records import clean_df, drop_concluded
 from db.supabase_client import get_client, safe_execute
+from views.rfp_editor import render_rfp_editor
 
 # auth handled by wrapper page
 user = st.session_state["app_user"]
 role = user.get("role", "collaborator")
 can_edit = role in ("super_user", "admin", "reviewer")
+is_admin = role in ("super_user", "admin")
 sb = get_client()
 
 year = settings.get_year()
@@ -1013,6 +1015,10 @@ if not edit_mode:
                       help="Edit the eligibility criteria and record the team decision"):
             st.session_state[_edit_key] = True
             st.rerun()
+        if _be2.button("✏️ Edit full details", type="primary", width='stretch',
+                       key=f"edit_full_{row['uid']}",
+                       help="Open the shared full-RFP editor (all fields)"):
+            render_rfp_editor(row, sb=sb, user=user, is_admin=is_admin)
 else:
     decisions = dropdowns.get("decisions")
     choices = list(decisions)
