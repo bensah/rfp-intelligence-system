@@ -850,12 +850,11 @@ def render_verification(user: dict[str, Any], sb=None) -> None:
     st.caption(
         "Confirm or counter what the scanner did — every verdict grows and "
         "cleans the training set for the learning engine.")
-    t_rej, t_ins, t_src = st.tabs(
-        ["🚫 Auto-rejected (gate quality)", "✅ Inserted RFPs (model labels)",
-         "🗂 Source registry (aggregator vs primary)"])
+    # The "Source registry (aggregator vs primary)" tab moved to Sources → Verify Registry
+    # (all source-catalogue management now lives together under Sources).
+    t_rej, t_ins = st.tabs(
+        ["🚫 Auto-rejected (gate quality)", "✅ Inserted RFPs (model labels)"])
     with t_rej:
         _render_reject_log(user)
     with t_ins:
         _render_inserted_feedback(user)
-    with t_src:
-        _render_source_registry(user)
