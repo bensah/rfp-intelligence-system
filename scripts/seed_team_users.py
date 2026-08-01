@@ -37,33 +37,29 @@ from auth.authenticator import hash_password  # noqa: E402
 from db.supabase_client import get_client, safe_execute  # noqa: E402
 
 # Roster (Name -> email). PLACEHOLDER example values — this is a public template.
-# The deployment owner replaces these with their own team, or (preferred) points the
-# script at a local, gitignored roster file / env so real names + emails never enter the
-# repo. Each person has exactly one email, so name-keying is unambiguous.
+# No names live in the repo. The roster is read at runtime from a LOCAL, gitignored file
+# (data/team_roster.local.json, an array of ["Name", "email"] pairs) — real names/emails
+# stay private, never committed. If the file is absent the roster is empty and the script
+# no-ops with a note, so nothing here identifies anyone.
 _ROSTER_FILE = Path(__file__).resolve().parent.parent / "data" / "team_roster.local.json"
 
 
 def _load_roster() -> list[tuple[str, str]]:
-    """Load the real roster from a local, gitignored JSON ([["Name","email"], …]) when
-    present; otherwise fall back to the example placeholders below. Keeps real PII out of
-    the repo while staying runnable."""
+    """Read the roster from the gitignored local file; empty list when it's absent."""
     try:
         if _ROSTER_FILE.exists():
             import json as _json
             data = _json.loads(_ROSTER_FILE.read_text(encoding="utf-8"))
-            pairs = [(str(n).strip(), str(e).strip()) for n, e in data if n and e]
-            if pairs:
-                return pairs
+            return [(str(n).strip(), str(e).strip()) for n, e in data if n and e]
     except Exception:
         pass
-    return [
-        ("Example User One",   "user1@example.org"),
-        ("Example User Two",   "user2@example.org"),
-        ("Example User Three", "user3@example.org"),
-    ]
+    return []
 
 
 TEAM: list[tuple[str, str]] = _load_roster()
+if not TEAM:
+    print("No roster found. Create data/team_roster.local.json "
+          '([["Name","email"], …]) to seed accounts; it is gitignored (kept private).')
 
 # New accounts start dormant: live row, but no usable password until an admin
 # resets it. Flip to False if you'd rather they be inactive until activation.
