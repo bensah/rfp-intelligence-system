@@ -92,8 +92,8 @@ def render_opportunity_rail() -> None:
     scope = _tenant_scope_tid() or "all"
     groups = _feed.classify(_load_pipeline(f"t:{scope}"))
 
-    st.markdown("<div style='font-size:.8rem;color:#00703C;font-weight:700;"
-                "letter-spacing:.03em;'>🔴 LIVE OPPORTUNITY FEED</div>",
+    st.markdown("<div class='app-rail-marker' style='font-size:.8rem;color:#00703C;"
+                "font-weight:700;letter-spacing:.03em;'>🔴 LIVE OPPORTUNITY FEED</div>",
                 unsafe_allow_html=True)
     st.caption("Updates as new funding calls arrive. Open any item in **Pipelines → "
                "Review**.")
