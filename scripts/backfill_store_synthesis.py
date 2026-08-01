@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -72,10 +73,31 @@ def _candidate(row: dict) -> dict:
     }
 
 
+def _synth_with_retry(cand: dict, *, retries: int, pause: float):
+    """Org-neutral synthesis with retry+backoff on TRANSIENT LLM-endpoint failures.
+
+    Calls synthesize() DIRECTLY (not synthesize_store) so the backfill is NOT bounded by
+    the per-process store cap — a bulk backfill is a deliberate, complete pass. synthesize()
+    swallows exceptions and returns None on any failure (timeout / connection drop / rate
+    limit), so we retry a few times with an increasing sleep to ride out the endpoint
+    rate-limiting that a rapid bulk run provokes. Returns the synthesis dict or None."""
+    for attempt in range(max(1, retries)):
+        res = llm_synthesis.synthesize(cand, {}, None)
+        if res and res.get("brief_description"):
+            return res
+        if attempt < retries - 1:
+            time.sleep(pause * (attempt + 2))     # 2x, 3x, … backoff between retries
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry-run)")
     ap.add_argument("--limit", type=int, default=0, help="max rows to synthesise (0 = all)")
+    ap.add_argument("--sleep", type=float, default=0.7,
+                    help="seconds to pause between rows (paces the LLM endpoint; default 0.7)")
+    ap.add_argument("--retries", type=int, default=3,
+                    help="attempts per row on a transient LLM failure (default 3)")
     args = ap.parse_args()
 
     if not llm_synthesis.is_enabled():
@@ -92,27 +114,40 @@ def main() -> None:
         todo = todo[:args.limit]
 
     done = fail = 0
-    for r in todo:
+    total = len(todo)
+    for i, r in enumerate(todo, 1):
         syn = None
         try:
-            syn = llm_synthesis.synthesize_store(_candidate(r))
-        except Exception as exc:
-            print(f"  ! synth error {r.get('uid')}: {exc}")
+            syn = _synth_with_retry(_candidate(r), retries=args.retries, pause=args.sleep)
+        except Exception as exc:                    # never let one row abort the run
+            print(f"  ! synth error {r.get('uid')}: {type(exc).__name__}: {exc}")
         brief = (syn or {}).get("brief_description")
         if not brief:
             fail += 1
-            continue
-        done += 1
-        if done <= 10:
-            print(f"  {r.get('uid')}: {str(r.get('brief_description'))[:60]!r} -> {brief[:80]!r}")
-        if args.apply:
-            try:
-                sb.table("extracted_solicitations").update(
-                    {"brief_description": brief}).eq("uid", r.get("uid")).execute()
-            except Exception as exc:
-                print(f"    ! update failed {r.get('uid')}: {exc}")
+        else:
+            done += 1
+            if done <= 10:
+                print(f"  {r.get('uid')}: {str(r.get('brief_description'))[:55]!r} -> {brief[:80]!r}")
+            if args.apply:
+                try:
+                    sb.table("extracted_solicitations").update(
+                        {"brief_description": brief}).eq("uid", r.get("uid")).execute()
+                except Exception as exc:
+                    print(f"    ! update failed {r.get('uid')}: {exc}")
+                    done -= 1
+                    fail += 1
+        if i % 25 == 0 or i == total:               # periodic progress on a long run
+            print(f"  … {i}/{total} processed — {done} written, {fail} skipped")
+        time.sleep(max(0.0, args.sleep))            # pace so the endpoint doesn't rate-limit us
+
     verb = "synthesised + wrote" if args.apply else "would synthesise"
-    print(f"\n{verb} {done} brief(s); {fail} could not be synthesised (left as-is).")
+    print(f"\n{verb} {done} brief(s); {fail} could not be synthesised (transient LLM "
+          "errors — left as-is).")
+    if fail:
+        print("The skipped rows are usually transient endpoint timeouts/rate-limits. This "
+              "script is idempotent (it only touches raw/empty briefs), so just RE-RUN it to "
+              "pick up the leftovers; raise --sleep (e.g. 1.5) if failures persist, or set "
+              "LLM_SYNTH_TIMEOUT higher for very long RFPs.")
     if not args.apply and done:
         print("Re-run with --apply to write. Then re-run scripts/backfill_synthesis.py "
               "for the per-tenant rfp_submissions rows.")
