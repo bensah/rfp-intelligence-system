@@ -1003,10 +1003,22 @@ def run_screening(*, dry_run: bool = False, status: str = "Open",
     from auth import tenant_context as _tc
     _tid = tenant_id
     if not _tid:
+        # Default the write-target to the tenant this session is SCOPED to, which for a
+        # super_user is the tenant they're VIEWING (su_view_tenant) — NOT current_tenant_id()
+        # (their HOME). Otherwise a super_user who runs "Find my matches" while viewing
+        # tenant X would screen the store into their own home pipeline instead of X's
+        # (the cross-tenant write leak, H5). Falls back to current_tenant_id() when the
+        # scope helper can't resolve (e.g. it's importable but returns None).
         try:
-            _tid = _tc.current_tenant_id()
+            from db.supabase_client import _tenant_scope_tid
+            _tid = _tenant_scope_tid()
         except Exception:
             _tid = None
+        if not _tid:
+            try:
+                _tid = _tc.current_tenant_id()
+            except Exception:
+                _tid = None
     _tok = _tc.set_tenant_override(_tid) if _tid else None
     try:
         return _run_screening_body(dry_run=dry_run, status=status,
