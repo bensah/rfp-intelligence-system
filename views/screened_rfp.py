@@ -48,11 +48,11 @@ with _h_submit:
                  help="Capture a funding opportunity you found outside the scan."):
         st.switch_page("app_pages/submit_rfp.py")
 with _h_scan:
-    # "Scan Funding" = screen the platform's curated store against THIS org's
+    # "Eligibility Scan" = screen the platform's curated store against THIS org's
     # eligibility. Fast (no web crawl); flips to a disabled "running" state.
     _scan_slot = st.empty()
     _go = _scan_slot.button(
-        "🎯 Scan Funding", type="primary", width='stretch', key="screen_scan_now",
+        "🎯 Eligibility Scan", type="primary", width='stretch', key="screen_scan_now",
         help="Find the funding your organisation is potentially eligible for, from the "
              "platform's curated store — runs in seconds (no web crawl).")
     if _go:
