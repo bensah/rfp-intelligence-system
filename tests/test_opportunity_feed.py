@@ -75,5 +75,56 @@ class RailDedupTests(unittest.TestCase):
         self.assertEqual(_uids(res["top_funding"]), [])
 
 
+class GeoGateTests(unittest.TestCase):
+    """A geo_reject callable must keep hard geo-mismatches OUT of the fit-agnostic cards
+    (Top Funding, Also Interesting) while leaving global/non-geo-tagged calls in, and never
+    touching Top Matches."""
+
+    @staticmethod
+    def _reject_samoa(row):
+        # Stand-in for auto_scorer.geographic_exclusion_reject bound to a Congo-DRC tenant:
+        # reject any row whose geography names Samoa; keep everything else.
+        blob = " ".join([
+            row.get("opportunity_title") or "",
+            " ".join(row.get("call_geographic_scope") or []),
+        ]).lower()
+        return "samoa" in blob
+
+    def test_geo_mismatch_excluded_from_top_funding(self):
+        samoa = _row("samoa-big", amount=9_000_000)
+        samoa["opportunity_title"] = "Supply of Medical Equipment to Samoa"
+        samoa["call_geographic_scope"] = ["Samoa"]
+        home = _row("home-mid", amount=1_000_000)          # Kenya (default) — eligible
+        res = F.classify([samoa, home], today=_TODAY, geo_reject=self._reject_samoa)
+        self.assertNotIn("samoa-big", _uids(res["top_funding"]))
+        self.assertNotIn("samoa-big", _uids(res["other"]))
+        self.assertIn("home-mid", _uids(res["top_funding"]))
+
+    def test_without_gate_geo_mismatch_still_shows(self):
+        samoa = _row("samoa-big", amount=9_000_000)
+        samoa["call_geographic_scope"] = ["Samoa"]
+        res = F.classify([samoa], today=_TODAY)              # no geo_reject → legacy behaviour
+        self.assertIn("samoa-big", _uids(res["top_funding"]))
+
+    def test_global_call_survives_gate(self):
+        glob = _row("global-big", amount=9_000_000)
+        glob["call_geographic_scope"] = ["Global"]
+        res = F.classify([glob], today=_TODAY, geo_reject=self._reject_samoa)
+        self.assertIn("global-big", _uids(res["top_funding"]))
+
+    def test_gate_never_touches_top_matches(self):
+        samoa_match = _row("samoa-match", amount=9_000_000, alignment=0.95, rec="Proceed")
+        samoa_match["call_geographic_scope"] = ["Samoa"]
+        res = F.classify([samoa_match], today=_TODAY, geo_reject=self._reject_samoa)
+        self.assertIn("samoa-match", _uids(res["top_matches"]))
+
+    def test_failing_gate_fails_open(self):
+        def _boom(_row):
+            raise RuntimeError("gate bug")
+        rows = [_row("keep", amount=9_000_000)]
+        res = F.classify(rows, today=_TODAY, geo_reject=_boom)
+        self.assertIn("keep", _uids(res["top_funding"]))    # error → keep showing
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
