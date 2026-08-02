@@ -106,6 +106,14 @@ class TenantIsolationTests(unittest.TestCase):
         c = sc.get_client()
         self.assertEqual(self._scope(c), HOME)
 
+    def test_super_own_tenant_uses_jwt_client(self):
+        # A super on their OWN tenant (no view-as) uses the RLS-backed JWT client, so their
+        # own data doesn't depend on SUPABASE_KEY being the service-role key.
+        _set_session(app_user={"role": "super_user"}, tenant_id=HOME, _tenant_jwt="jwt")
+        c = sc.get_client()
+        self.assertEqual(self._scope(c), HOME)
+        self.assertIs(self._base(c), self._jwt)   # JWT client, NOT the service client
+
     def test_super_no_tenant_fails_closed(self):
         _set_session(app_user={"role": "super_user"}, tenant_id=None, _tenant_jwt="jwt")
         c = sc.get_client()
