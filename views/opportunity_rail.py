@@ -20,7 +20,10 @@ from db.supabase_client import get_client, _tenant_scope_tid
 
 _FIELDS = ("uid,opportunity_title,funding_agency,call_award_value,currency,"
            "call_submission_deadline,call_geographic_scope,date_posted,search_date,"
-           "created_at,alignment_score,auto_recommendation,decision,opportunity_link")
+           "created_at,alignment_score,auto_recommendation,decision,opportunity_link,"
+           # brief_description + focus_theme feed the geo hard-gate's text detection
+           # (auto_scorer._geo_text) so Top Funding excludes off-geography calls robustly.
+           "brief_description,focus_theme")
 
 
 @st.cache_data(ttl=45, show_spinner=False)
@@ -90,14 +93,28 @@ def _card(title: str, help_txt: str, items: list[dict], empty: str) -> None:
 def render_opportunity_rail() -> None:
     """Render the three live cards. Safe to call in any column/container."""
     scope = _tenant_scope_tid() or "all"
-    groups = _feed.classify(_load_pipeline(f"t:{scope}"))
+    # Bind the org's HARD geographic gate (same predicate the screener uses) so the
+    # fit-agnostic cards never feature calls that geographically exclude this tenant —
+    # e.g. a Samoa-only call to a Congo-DRC entity. Global / non-geo-tagged calls pass
+    # the gate untouched, so they remain as the natural fallback. Unconfigured geo (or a
+    # super's 'all' scope) → empty org set → the gate defers (no filtering).
+    _geo_reject = None
+    try:
+        from core.policies import get_policies as _get_policies
+        from core.auto_scorer import geographic_exclusion_reject as _geo_rej
+        _pol = _get_policies()
+        _geo_reject = lambda r: _geo_rej(r, _pol)[0]        # noqa: E731
+    except Exception:
+        _geo_reject = None
+    groups = _feed.classify(_load_pipeline(f"t:{scope}"), geo_reject=_geo_reject)
 
     st.markdown("<div class='app-rail-marker' style='font-size:.8rem;color:#00703C;"
                 "font-weight:700;letter-spacing:.03em;'>🔴 LIVE OPPORTUNITY FEED</div>",
                 unsafe_allow_html=True)
     st.caption("Updates as new funding calls arrive. Open any item in **Pipelines → "
                "Review**.")
-    _card("💰 Top Funding", "Biggest / most-urgent calls — regardless of fit.",
+    _card("💰 Top Funding", "Biggest / most-urgent calls your entity is geographically "
+          "eligible for.",
           groups["top_funding"], "No live opportunities yet — run a scan.")
     _card("✅ Top Matches", "Strong fit for this entity (Proceed / Park / high alignment).",
           groups["top_matches"], "No strong matches yet.")
