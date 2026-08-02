@@ -257,6 +257,7 @@ def _build_merge_payload(
         NULL (= row has never been reviewed). Otherwise human work wins.
       * Title is never overwritten — humans may have cleaned it up.
     """
+    from core.records import clean_brief          # never gap-fill a RAW brief
     _derive_duration(candidate)          # mine inline "12-18 month" durations
     payload: dict[str, Any] = {}
     deadline = candidate.get("call_submission_deadline")
@@ -265,7 +266,11 @@ def _build_merge_payload(
         "opportunity_link": candidate.get("opportunity_link"),
         "opportunity_id": candidate.get("opportunity_id"),
         "funding_agency": candidate.get("funding_agency"),
-        "brief_description": candidate.get("brief_description"),
+        # Only backfill an existing blank brief with a CLEAN one — clean_brief returns ""
+        # for raw attachment/legalese text, which _is_blank() then skips (leaving NULL for a
+        # later synthesis backfill; empty beats surfacing General-Conditions clauses).
+        "brief_description": clean_brief(candidate.get("brief_description"),
+                                         candidate.get("raw_text")) or None,
         "date_posted": _iso_date(posted),
         "call_submission_deadline": _iso_date(deadline),
         # Structured donor fields — gap-filled on rescan so EXISTING empty rows
@@ -854,6 +859,15 @@ def ingest_candidates(
         if not dry_run:
             try:
                 from db.supabase_client import safe_execute
+                # FINAL brief guard: synthesis above should have replaced the raw brief,
+                # but on an LLM failure/timeout/cap it leaves the raw attachment text in
+                # place ("[General_conditions.pdf] … 1.1 …"). Never persist that — clean it,
+                # and NULL it when it's still raw so the render shows a neutral line and the
+                # synthesis backfill can fill it later. (raw_text/_page_text kept for grounding.)
+                from core.records import clean_brief as _clean_brief
+                row["brief_description"] = _clean_brief(
+                    row.get("brief_description"),
+                    cand.get("raw_text") or cand.get("_page_text")) or None
                 safe_execute(sb.table("rfp_submissions").insert(row))
                 # Tombstone immediately so it's remembered even if later deleted.
                 seen_ledger.record_one(row, reason="ingested")

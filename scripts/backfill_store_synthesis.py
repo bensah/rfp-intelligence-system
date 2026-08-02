@@ -35,29 +35,8 @@ except Exception:
     pass
 
 from core import llm_synthesis
+from core.records import looks_raw_brief as _looks_raw   # single source of truth
 from db.supabase_client import service_client, safe_execute
-
-# An attachment-tagged or ALL-CAPS-heavy brief is raw source text, not a summary.
-_ATTACH_TAG = re.compile(r"^\s*\[[^\]]+\.(pdf|docx?|xlsx?|zip)\]", re.I)
-
-
-def _looks_raw(brief: str | None, raw_text: str | None) -> bool:
-    b = (brief or "").strip()
-    if not b:
-        return True                              # empty → synthesise
-    if _ATTACH_TAG.search(b):
-        return True                              # "[X.pdf] …" attachment dump
-    # A brief that's a verbatim prefix of raw_text was copied, not synthesised.
-    rt = (raw_text or "").strip()
-    if rt and rt[:120].lower() == b[:120].lower():
-        return True
-    # Heavy ALL-CAPS (legalese headings) → treat as raw.
-    words = re.findall(r"[A-Za-z]{3,}", b)
-    if words:
-        caps = sum(1 for w in words if w.isupper())
-        if caps / len(words) > 0.30:
-            return True
-    return False
 
 
 def _candidate(row: dict) -> dict:
