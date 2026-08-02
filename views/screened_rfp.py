@@ -119,15 +119,15 @@ if not df.empty:
          + _json_live.dumps(_stg_live.get_org(), sort_keys=True, default=str)).encode()
     ).hexdigest()[:12]
 
-    @st.cache_data(ttl=600, show_spinner="Scoring rows…")
-    def _live_scores(prof_sig: str, rows_json: str) -> dict:
-        rows = _json_live.loads(rows_json)
-        return {r.get("uid"): _assess_row(r) for r in rows if r.get("uid")}
-
+    # PER-ROW memo in session_state — only new/edited rows are scored, so navigation and
+    # pagination don't re-run scoring (see core.live_scoring). Survives st.cache_data.clear().
     try:
-        _sc = _live_scores(_prof_sig, _json_live.dumps(df.to_dict("records"), default=str))
-        df["alignment_score"] = df["uid"].map(lambda u: (_sc.get(u) or {}).get("alignment_score"))
-        df["auto_recommendation"] = df["uid"].map(lambda u: (_sc.get(u) or {}).get("auto_recommendation"))
+        from core.live_scoring import scores_for as _scores_for
+        _memo = st.session_state.setdefault("_screen_score_memo", {})
+        with st.spinner("Scoring rows…"):    # only visible when real work happens
+            _sc, _ = _scores_for(df.to_dict("records"), _prof_sig, _memo)
+        df["alignment_score"] = df["uid"].map(lambda u: (_sc.get(str(u)) or {}).get("alignment_score"))
+        df["auto_recommendation"] = df["uid"].map(lambda u: (_sc.get(str(u)) or {}).get("auto_recommendation"))
     except Exception:
         pass
 # Canonical (non-duplicate) rows — what we actually "screened" this week.
