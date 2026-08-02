@@ -62,6 +62,7 @@ def _fetch_all() -> pd.DataFrame:
         .select("*")
         .order("created_at", desc=True)
         .order("submitted_at", desc=True)
+        .order("uid", desc=True)          # deterministic final tiebreaker — stable order
         .execute()
     )
     return clean_df(pd.DataFrame(res.data or []))
@@ -98,18 +99,19 @@ _prof_sig = _hashlib_live.sha1(
 ).hexdigest()[:12]
 
 
-@st.cache_data(ttl=600, show_spinner="Scoring rows…")
-def _live_scores(prof_sig: str, rows_json: str) -> dict:
-    rows = _json_live.loads(rows_json)
-    return {r.get("uid"): _assess_row(r) for r in rows if r.get("uid")}
-
-
+# PER-ROW memo in session_state so navigation / pagination / delete don't re-score every
+# row. Only genuinely new or edited rows are scored (see core.live_scoring); the memo
+# survives st.cache_data.clear() (which the delete/edit handlers fire) because it lives in
+# session_state, not the data cache.
 try:
-    _sc = _live_scores(_prof_sig, _json_live.dumps(df.to_dict("records"), default=str))
+    from core.live_scoring import scores_for as _scores_for
+    _memo = st.session_state.setdefault("_records_score_memo", {})
+    with st.spinner("Scoring rows…"):        # only visible when real work happens
+        _sc, _n_scored = _scores_for(df.to_dict("records"), _prof_sig, _memo)
     df["alignment_score"] = df["uid"].map(
-        lambda u: (_sc.get(u) or {}).get("alignment_score"))
+        lambda u: (_sc.get(str(u)) or {}).get("alignment_score"))
     df["auto_recommendation"] = df["uid"].map(
-        lambda u: (_sc.get(u) or {}).get("auto_recommendation"))
+        lambda u: (_sc.get(str(u)) or {}).get("auto_recommendation"))
 except Exception:
     pass  # fall back to stored columns if live scoring is unavailable
 
