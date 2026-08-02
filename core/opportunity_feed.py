@@ -141,15 +141,39 @@ def _prominence_of(r: dict, today: date) -> float:
             + 0.2 * _urgency_score(days))
 
 
-def classify(rows: list[dict], today: date | None = None) -> dict[str, list[dict]]:
+def _geo_ineligible(geo_reject, row) -> bool:
+    """True when `geo_reject` says the call's geography HARD-excludes the org. Fail-OPEN:
+    any error → False (keep showing) so a bug in the gate empties nothing — worst case we
+    fall back to today's fit-agnostic behaviour rather than a blank card."""
+    if geo_reject is None:
+        return False
+    try:
+        return bool(geo_reject(row))
+    except Exception:
+        return False
+
+
+def classify(rows: list[dict], today: date | None = None,
+             geo_reject=None) -> dict[str, list[dict]]:
     """Split rows into {'top_funding', 'top_matches', 'other'} — each a ranked ≤5 list of
     item dicts. The three cards are MUTUALLY EXCLUSIVE: every opportunity appears in AT
     MOST ONE, at its single best placement, so the rail never shows the same call twice.
     Priority: Top Matches (strong fit — most actionable) → Top Funding (biggest/most-urgent
-    of what's left) → Also Interesting (freshest of the rest). Live deadlines only."""
+    of what's left) → Also Interesting (freshest of the rest). Live deadlines only.
+
+    `geo_reject` (optional callable row→bool) is the org's HARD geographic gate — e.g.
+    auto_scorer.geographic_exclusion_reject bound to the tenant's policies. When given, the
+    two FIT-AGNOSTIC discovery cards (Top Funding, Also Interesting) EXCLUDE calls whose
+    geography hard-excludes the org (so a Congo-DRC tenant never sees a Samoa-only call),
+    while calls that are global / non-geo-tagged / inclusive stay (the gate keeps those),
+    which is exactly the "if none match, feature non-geo-tagged" fallback. Top Matches is
+    NOT geo-filtered — a human Proceed/Park or strong-alignment row is shown regardless."""
     today = today or date.today()
     rows = rows or []
     live = [r for r in rows if not _is_expired(r.get("call_submission_deadline"), today)]
+    # Fit-agnostic discovery pool, minus hard geo-mismatches. Global / non-geo-tagged /
+    # inclusive calls are NOT rejected by the gate, so they remain as the natural fallback.
+    discover = [r for r in live if not _geo_ineligible(geo_reject, r)]
 
     used: set = set()
 
@@ -166,12 +190,13 @@ def classify(rows: list[dict], today: date | None = None) -> dict[str, list[dict
         return out
 
     # 1. Top Matches — strong fit; the most actionable placement wins the opportunity.
+    #    NOT geo-filtered: a human decision / strong alignment shows regardless of the gate.
     top_matches = _take(
         [r for r in live if _is_match(r)],
         lambda r: (_f(r.get("alignment_score")), _f(r.get("call_award_value"))))
-    # 2. Top Funding — biggest / most-urgent of the REMAINING live rows (fit-agnostic).
-    top_funding = _take(live, lambda r: _prominence_of(r, today))
-    # 3. Also interesting — freshest of whatever is still unplaced.
-    other = _take(live, _recency_key)
+    # 2. Top Funding — biggest / most-urgent of the GEO-ELIGIBLE remaining rows.
+    top_funding = _take(discover, lambda r: _prominence_of(r, today))
+    # 3. Also interesting — freshest of whatever geo-eligible rows are still unplaced.
+    other = _take(discover, _recency_key)
 
     return {"top_funding": top_funding, "top_matches": top_matches, "other": other}
