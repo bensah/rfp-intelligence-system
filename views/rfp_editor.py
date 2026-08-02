@@ -23,7 +23,17 @@ from core.scorer import (score_submission, CRITERION_RESPONSES, default_response
 
 
 @st.dialog("Edit RFP", width="large")
-def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
+def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
+                      show_application: bool = True,
+                      show_reporting: bool = False) -> None:
+    """Full RFP editor (shared by Review / Tracking / Records / Applied Funding).
+
+    `show_application` — the auto-synthesised Application detail tab (how-to-apply,
+    eligibility specifics, compliance, checklist). Useful when reviewing an RFP; hidden on
+    the Applied Funding page to keep the grant editor lean.
+    `show_reporting` — a Reporting tab that reads/writes the linked active_grants row
+    (report status/type/due/owner/remarks). Shown only on the Applied Funding page so grant
+    reporting is edited in ONE place (no separate control)."""
     st.markdown(f"**`{row['uid']}`** — {row.get('opportunity_title') if isinstance(row.get('opportunity_title'), str) else ''}")
     # Provenance line — who submitted this and when, so an editor can reach out.
     # Guard on type: a blank cell arrives as NaN (a float), which `or ""` won't
@@ -36,10 +46,32 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
     _sd_str = _sd.strftime("%d %b %Y, %H:%M") if pd.notna(_sd) else "date unknown"
     _who = f"**{_sub_by}**" + (f" · {_sub_email}" if _sub_email else "")
     st.caption(f"📥 Submitted by {_who} · on {_sd_str}")
-    tab_opp, tab_elig, tab_dec, tab_team, tab_award, tab_app = st.tabs(
-        ["Opportunity", "Eligibility", "Decision & Pipeline", "Team",
-         "Submission & Award", "Application"]
-    )
+    _labels = ["Opportunity", "Eligibility", "Decision & Pipeline", "Team",
+               "Submission & Award"]
+    if show_application:
+        _labels.append("Application")
+    if show_reporting:
+        _labels.append("Reporting")
+    _tabs = st.tabs(_labels)
+    tab_opp, tab_elig, tab_dec, tab_team, tab_award = _tabs[:5]
+    _ti = 5
+    tab_app = None
+    if show_application:
+        tab_app = _tabs[_ti]; _ti += 1
+    tab_report = None
+    if show_reporting:
+        tab_report = _tabs[_ti]; _ti += 1
+
+    # Reporting comes from the linked active_grants row (Excel Active_Grants_Log). Look it up
+    # once so the Reporting tab can prefill; None when this RFP has no reporting record yet.
+    _ag_row = None
+    if show_reporting:
+        try:
+            _ag = (sb.table("active_grants").select("*")
+                   .eq("form_id_link", row.get("uid")).limit(1).execute().data or [])
+            _ag_row = _ag[0] if _ag else None
+        except Exception:
+            _ag_row = None
 
     def _date(v):
         if v is None or v == "" or (not isinstance(v, str) and pd.isna(v)):
@@ -334,20 +366,50 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
         ko = c5.date_input("Kick-off date", value=_date(row.get("kickoff_date")), key=f"e_ko_{row['uid']}")
         ns = c6.text_input("Next step", value=_str(row.get("next_step")), key=f"e_ns_{row['uid']}")
 
-    with tab_app:
-        # Application detail — usually LLM-synthesised at scan time, editable here so a
-        # reviewer can correct or flesh them out. Shown on the Review / detail views.
-        how_in = st.text_area("How to apply", value=_str(row.get("how_to_apply")), height=90,
-                              key=f"e_howapply_{row['uid']}")
-        elig_spec_in = st.text_area("Eligibility specifics",
-                                    value=_str(row.get("eligibility_specifics")), height=90,
-                                    key=f"e_eligspec_{row['uid']}")
-        comp_in = st.text_area("Compliance requirements",
-                               value=_str(row.get("compliance_requirements")), height=90,
-                               key=f"e_comp_{row['uid']}")
-        checklist_in = st.text_area("Application checklist",
-                                    value=_str(row.get("application_checklist")), height=90,
-                                    key=f"e_checklist_{row['uid']}")
+    # Application detail — auto-synthesised at scan time. Default to the stored values so a
+    # hidden Application tab writes them back unchanged; the widgets below override when shown.
+    how_in = _str(row.get("how_to_apply"))
+    elig_spec_in = _str(row.get("eligibility_specifics"))
+    comp_in = _str(row.get("compliance_requirements"))
+    checklist_in = _str(row.get("application_checklist"))
+    if show_application and tab_app is not None:
+        with tab_app:
+            how_in = st.text_area("How to apply", value=how_in, height=90,
+                                  key=f"e_howapply_{row['uid']}")
+            elig_spec_in = st.text_area("Eligibility specifics", value=elig_spec_in,
+                                        height=90, key=f"e_eligspec_{row['uid']}")
+            comp_in = st.text_area("Compliance requirements", value=comp_in, height=90,
+                                   key=f"e_comp_{row['uid']}")
+            checklist_in = st.text_area("Application checklist", value=checklist_in,
+                                        height=90, key=f"e_checklist_{row['uid']}")
+
+    # Reporting — the linked active_grants row (written on save when this tab is shown).
+    rep_status_in = rep_type_in = rep_owner_in = rep_remarks_in = None
+    rep_due_in = None
+    if show_reporting and tab_report is not None:
+        with tab_report:
+            _agr = _ag_row or {}
+            _rep_opts = list(dropdowns.get("report_statuses") or [])
+            _cur_rs = str(_agr.get("status") or "")
+            rc1, rc2 = st.columns(2)
+            rep_status_in = rc1.selectbox(
+                "Report status", _rep_opts,
+                index=_rep_opts.index(_cur_rs) if _cur_rs in _rep_opts else 0,
+                key=f"e_repstatus_{row['uid']}")
+            rep_type_in = rc2.text_input("Report type", value=_str(_agr.get("report_type")),
+                                         key=f"e_reptype_{row['uid']}")
+            rc3, rc4 = st.columns(2)
+            rep_due_in = rc3.date_input("Report due date",
+                                        value=_date(_agr.get("report_due_date")),
+                                        key=f"e_repdue_{row['uid']}")
+            rep_owner_in = rc4.text_input("Reporting owner", value=_str(_agr.get("owner")),
+                                          key=f"e_repowner_{row['uid']}")
+            rep_remarks_in = st.text_area("Reporting remarks",
+                                          value=_str(_agr.get("remarks")), height=70,
+                                          key=f"e_represmarks_{row['uid']}")
+            if _ag_row is None:
+                st.caption("_No reporting record yet — saving with a status/type will "
+                           "create one linked to this grant._")
 
     st.divider()
     bs, bd, bc = st.columns([1, 1, 1])
@@ -465,6 +527,32 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
                 and str(update.get("donor_decision") or "").strip().lower() in ("", "not submitted"):
             update["donor_decision"] = "Under Review"
         sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
+        # Reporting → active_grants (only when the Reporting tab was shown). Update the linked
+        # row if it exists; otherwise create one when the user entered any reporting value.
+        if show_reporting:
+            _rep_payload = {
+                "status": _val(rep_status_in),
+                "report_type": _val(rep_type_in),
+                "report_due_date": (rep_due_in.isoformat()
+                                    if isinstance(rep_due_in, date) else None),
+                "owner": _val(rep_owner_in),
+                "remarks": _val(rep_remarks_in),
+            }
+            try:
+                if _ag_row and _ag_row.get("grant_id"):
+                    sb.table("active_grants").update(_rep_payload).eq(
+                        "grant_id", _ag_row.get("grant_id")).execute()
+                elif any(v for v in _rep_payload.values()):
+                    # No reporting row yet — create one keyed to this grant. grant_id is NOT
+                    # NULL, so seed it from the uid; form_id_link ties it back to the RFP.
+                    sb.table("active_grants").insert({
+                        **_rep_payload,
+                        "grant_id": f"G-{row.get('uid')}",
+                        "form_id_link": row.get("uid"),
+                        "donor_title": row.get("opportunity_title"),
+                    }).execute()
+            except Exception as _rexc:
+                st.warning(f"Saved the RFP, but reporting didn't persist: {_rexc}")
         # ML Phase 1/3 — log the human decision as a labeled signal on save.
         # Captures CONFIRMATIONS (reviewer kept the recommended decision) as
         # well as overrides — logging only changes would bias the model toward
