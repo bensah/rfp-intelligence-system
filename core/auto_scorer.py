@@ -1067,6 +1067,41 @@ _CLOSURE_PHRASE_RE = re.compile(
 )
 
 
+# "Soft" closure signals — a bare status word/badge ("closed", "now closed", "closed call",
+# "status: closed", "(closed)", "<call> is closed"). These are OVERRIDDEN by a still-future
+# deadline: a two-stage EU topic reads "Closed" after stage-1 while stage-2 is live. The
+# STRONG phrases in _CLOSURE_PHRASE_RE (no-longer-accepting, thank-you-to-applicants,
+# assessment-concluded, reopen/check-back) mean the whole opportunity is over and reject
+# regardless of any date.
+_SOFT_CLOSED_RE = re.compile(
+    r"^(?:"
+    r"now\s+closed"
+    r"|\(\s*closed\s*\)"
+    r"|closed call|call closed"
+    r"|status:\s*closed"
+    r"|(?:rfp|rfa|rfq|call|round|competition|programme?|program|fund|window)\s+"
+    r"(?:is\s+|was\s+|has\s+(?:been\s+)?|now\s+)?closed"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def _max_deadline_future(candidate: dict[str, Any]) -> bool:
+    """True when the candidate's EFFECTIVE (latest) submission deadline is today or later.
+    call_submission_deadline already holds the MAX/stage-2 date for two-stage EU topics
+    (see scraper._scan_eu_funding_tenders), so this is the single authority on live-ness."""
+    from datetime import date as _date, datetime as _dt
+    dl = candidate.get("call_submission_deadline")
+    if isinstance(dl, str):
+        try:
+            dl = _dt.fromisoformat(dl.split("T")[0]).date()
+        except (ValueError, TypeError):
+            return False
+    elif isinstance(dl, _dt):
+        dl = dl.date()
+    return isinstance(dl, _date) and dl >= _date.today()
+
+
 def closed_call_hard_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
     """Scan-time reject if the page body contains an explicit "closed /
     not accepting" phrase. Especially valuable for rolling-deadline
@@ -1075,15 +1110,27 @@ def closed_call_hard_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
 
     Conservative on phrasing — only matches unambiguous closure language,
     not generic occurrences of "closed" (e.g. "closed-loop systems").
+
+    TWO-STAGE SURVIVAL: a still-future effective deadline (stage-2) OVERRIDES a bare
+    portal/badge "Closed" status — the EU portal marks a two-stage topic Closed once
+    stage-1 passes, yet stage-2 is still open. Strong closure prose (no-longer-accepting,
+    thank-you-to-applicants, assessment-concluded) still rejects regardless of date.
     """
-    # Explicit portal status (e.g. EU SEDIA status=Closed) OVERRIDES everything — a
-    # two-stage topic stays Closed even with a future second deadline.
+    _future = _max_deadline_future(candidate)
+    # Explicit portal status (e.g. EU SEDIA status=Closed). Reject UNLESS a future stage-2
+    # deadline shows the opportunity is still live.
     if candidate.get("_closed") is True \
             or str(candidate.get("call_status") or "").strip().lower() == "closed":
+        if _future:
+            return False, ""       # two-stage: portal-Closed but a later deadline is still open
         return True, "portal status: closed"
     text = _full_text(candidate)
     m = _CLOSURE_PHRASE_RE.search(text)
     if m:
+        # A future deadline overrides a SOFT status-word match (badge/shorthand), but never
+        # the strong "the opportunity is over" phrases.
+        if _future and _SOFT_CLOSED_RE.match(m.group(0).strip()):
+            return False, ""
         # Trim the match to keep the reason line compact in scan_logs.
         return True, f"call explicitly closed: {m.group(0)!r}"
     return False, ""
