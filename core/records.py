@@ -38,6 +38,69 @@ def strip_html(text: Any) -> Any:
     return _WS_RE.sub(" ", s).strip()
 
 
+# A brief that opens with an attachment tag ("[General_conditions.pdf] …") is a raw
+# document dump, not a synthesised summary. Also catches the .docx/.xlsx/.zip variants.
+_ATTACH_TAG_RE = re.compile(r"^\s*\[[^\]]+\.(?:pdf|docx?|xlsx?|pptx?|zip)\]\s*", re.IGNORECASE)
+# Decimal sub-clause numbering ("1.1", "2.3", "10.2") — the shape of copied contract
+# boilerplate. Requires the N.N decimal form so a real brief's "Stage 1. … Stage 2. …" or
+# "Phase 1." (a bare integer + period) is NOT mistaken for legalese. Two+ ⇒ raw.
+_CLAUSE_NUM_RE = re.compile(r"(?:^|\s)\d{1,2}\.\d{1,2}\b")
+# Contract-boilerplate phrasing that a real call summary never leads with.
+_LEGALESE_RE = re.compile(
+    r"general conditions of contract|legal status of the part|"
+    r"the contractor shall|shall be construed|terms and conditions of contract",
+    re.IGNORECASE)
+
+
+def looks_raw_brief(brief: Any, raw_text: Any = None) -> bool:
+    """True when `brief` is RAW scraped/attachment text rather than a clean synthesised
+    summary. Single source of truth reused by the render guard, the write choke point, and
+    the backfills so 'what counts as raw' is defined once.
+
+    Heuristics: empty; an opening "[file.pdf]" attachment tag; a verbatim prefix of the
+    row's raw_text (copied, not synthesised); contract-boilerplate legalese; dense clause
+    numbering (≥2 "1.1"-style clauses); or ALL-CAPS-heavy headings (>30% of words)."""
+    b = strip_html(brief) if isinstance(brief, str) else brief
+    b = (b or "").strip() if isinstance(b, str) else ""
+    if not b:
+        return True
+    if _ATTACH_TAG_RE.search(b):
+        return True
+    if _LEGALESE_RE.search(b[:400]):
+        return True
+    if len(_CLAUSE_NUM_RE.findall(b)) >= 2:
+        return True
+    rt = (raw_text or "").strip() if isinstance(raw_text, str) else ""
+    # A brief that is a verbatim opening of raw_text was COPIED, not synthesised. Require a
+    # substantial (≥60-char) match so a short shared opener doesn't misfire on real prose.
+    if rt and len(b) >= 60 and rt.lower().startswith(b[:200].lower()):
+        return True
+    # ALL-CAPS legalese headings ("GENERAL CONDITIONS OF CONTRACT PROVISION OF GOODS…"):
+    # require BOTH a high ratio AND many caps words, so a normal brief peppered with a few
+    # acronyms (UNOPS, RFQ, PPE, DRC) is NOT flagged — only a genuine shouting heading run.
+    words = re.findall(r"[A-Za-z]{3,}", b)
+    caps = sum(1 for w in words if w.isupper())
+    if words and caps >= 6 and caps / len(words) > 0.6:
+        return True
+    return False
+
+
+def clean_brief(brief: Any, raw_text: Any = None) -> str:
+    """Return a DISPLAY-safe brief: HTML stripped and a leading "[file.pdf]" attachment tag
+    removed. If what remains still reads as RAW legalese/boilerplate (looks_raw_brief), return
+    "" so the caller can show a graceful fallback instead of contract clauses. A genuine
+    synthesised brief passes through unchanged (minus any stray attachment tag)."""
+    s = strip_html(brief) if isinstance(brief, str) else brief
+    s = (s or "").strip() if isinstance(s, str) else ""
+    if not s:
+        return ""
+    stripped = _ATTACH_TAG_RE.sub("", s).strip()
+    # Re-test the marker-stripped text: if the remainder is still raw legalese, reject it.
+    if looks_raw_brief(stripped, raw_text):
+        return ""
+    return stripped
+
+
 def md_safe(text: Any, dash: str = "—") -> str:
     """Make free / LLM text safe to render via st.markdown / st.write.
 
