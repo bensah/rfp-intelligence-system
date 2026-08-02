@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -875,7 +876,28 @@ def main() -> None:
     if not args.xlsx.exists():
         sys.exit(f"Excel file not found: {args.xlsx}")
     print(f"Reading: {args.xlsx}")
-    migrate(args.xlsx, dry_run=args.dry_run)
+    # Tenant-aware sync: when launched from a tenant admin's "Sync Excel" (core.excel_sync
+    # passes RFPIS_SYNC_TENANT_ID), stamp EVERY imported row to that tenant via the headless
+    # override, so the workbook lands in the acting tenant's pipeline — not as NULL-tenant
+    # rows hidden from everyone. Without the env var it behaves exactly as before.
+    _tid = os.environ.get("RFPIS_SYNC_TENANT_ID")
+    _tok = None
+    if _tid and not args.dry_run:
+        try:
+            from auth.tenant_context import set_tenant_override
+            _tok = set_tenant_override(_tid)
+            print(f"Tenant-scoped import → tenant_id={_tid}")
+        except Exception as _e:
+            print(f"(tenant override unavailable, importing unscoped: {_e})")
+    try:
+        migrate(args.xlsx, dry_run=args.dry_run)
+    finally:
+        if _tok is not None:
+            try:
+                from auth.tenant_context import reset_tenant_override
+                reset_tenant_override(_tok)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
