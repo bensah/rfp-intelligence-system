@@ -37,7 +37,7 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
     _who = f"**{_sub_by}**" + (f" · {_sub_email}" if _sub_email else "")
     st.caption(f"📥 Submitted by {_who} · on {_sd_str}")
     tab_opp, tab_elig, tab_dec, tab_team, tab_award = st.tabs(
-        ["Opportunity", "Eligibility", "Decision & Pipeline", "Team", "Award"]
+        ["Opportunity", "Eligibility", "Decision & Pipeline", "Team", "Submission & Award"]
     )
 
     def _date(v):
@@ -112,6 +112,13 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
             tta_in = _opt("Time to award", "tta", dropdowns.get("time_to_award"), row.get("time_to_award"))
         with c9:
             fmt_in = _opt("Submission format", "fmt", dropdowns.get("submission_format"), row.get("submission_format"))
+        c_la, c_sa = st.columns(2)
+        lead_in = c_la.text_input("Lead applicant", value=_str(row.get("lead_applicant")),
+                                  key=f"e_lead_{row['uid']}",
+                                  help="The prime/lead institution on this application.")
+        sub_in = c_sa.text_input("Sub applicant", value=_str(row.get("sub_applicant")),
+                                 key=f"e_sub_{row['uid']}",
+                                 help="Sub-recipient / co-applicant, if any.")
         c10, c11, c12 = st.columns([2, 1, 1])
         link_in = c10.text_input("Opportunity link", value=_str(row.get("opportunity_link")), key=f"e_link_{row['uid']}")
         val_in = c11.number_input("Estimated value", min_value=0.0, step=10000.0,
@@ -269,6 +276,15 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
             help="e.g. tech / finance / compliance")
 
     with tab_award:
+        # Submission facts (what we asked for / when we submitted) sit alongside the award
+        # outcome (what was secured / when approved) so the whole money+timeline is editable.
+        cs1, cs2 = st.columns(2)
+        date_sub = cs1.date_input("Date submitted", value=_date(row.get("date_completed")),
+                                  key=f"e_dsub_{row['uid']}",
+                                  help="When the proposal was submitted to the donor.")
+        requested = cs2.number_input("Amount requested", min_value=0.0, step=10000.0,
+                                     value=_num(row.get("amount_requested")),
+                                     key=f"e_req_{row['uid']}")
         c1, c2 = st.columns(2)
         doa = c1.date_input("Date of approval", value=_date(row.get("date_of_approval")), key=f"e_doa_{row['uid']}")
         secured = c2.number_input("Amount secured", min_value=0.0, step=10000.0,
@@ -334,6 +350,10 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
             "call_submission_deadline": dl.isoformat() if isinstance(dl, date) else None,
             "expected_award_date": ad.isoformat() if isinstance(ad, date) else None,
             "applicant_role": _val(role_in),
+            "lead_applicant": _val(lead_in),
+            "sub_applicant": _val(sub_in),
+            "date_completed": date_sub.isoformat() if isinstance(date_sub, date) else None,
+            "amount_requested": float(requested) if requested else None,
             "funding_window": _val(win_in),
             "time_to_award": _val(tta_in),
             "submission_format": _val(fmt_in),
