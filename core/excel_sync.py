@@ -128,8 +128,11 @@ def needs_sync() -> Optional[Path]:
     return path
 
 
-def sync(timeout: int = 300, updated_by: Optional[str] = None) -> dict:
-    """Run the migration. Records last sync on success."""
+def sync(timeout: int = 300, updated_by: Optional[str] = None,
+         tenant_id: Optional[str] = None) -> dict:
+    """Run the migration. Records last sync on success. When `tenant_id` is given, the
+    importer stamps every row to that tenant (so a tenant admin's sync lands in THEIR
+    pipeline rather than as NULL-tenant rows)."""
     path = get_excel_path()
     if not path:
         return {
@@ -145,6 +148,8 @@ def sync(timeout: int = 300, updated_by: Optional[str] = None) -> dict:
     _env = dict(os.environ)
     _env["PYTHONIOENCODING"] = "utf-8"
     _env["PYTHONUTF8"] = "1"
+    if tenant_id:
+        _env["RFPIS_SYNC_TENANT_ID"] = str(tenant_id)   # importer stamps rows to this tenant
     try:
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "scripts" / "migrate_excel.py"),

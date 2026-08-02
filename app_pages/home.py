@@ -73,7 +73,7 @@ if _pending:
         st.warning(f"Auto-sync error: {exc}")
 
 # Page title. (The "Submit New Funding" action lives on the Pipelines Screen header now,
-# beside "Scan Funding", so it's removed from the Home header.)
+# beside "Eligibility Scan", so it's removed from the Home header.)
 st.title(f"Welcome, {display_name.split()[0]} 👋")
 
 
