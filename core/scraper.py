@@ -1853,14 +1853,20 @@ _EU_JU_FUNDERS = {
 }
 
 
-def _eu_budget(bo_str: str) -> tuple[float | None, str | None]:
-    """Parse a SEDIA `budgetOverview` JSON blob → (total amount, currency). Sums
-    every action's per-year budget. EU budgets are EUR (the blob omits currency)."""
+def _eu_budget(bo_str: str) -> tuple[float | None, str | None, float | None,
+                                      float | None, int | None]:
+    """Parse a SEDIA `budgetOverview` JSON blob →
+    (total, currency, per-grant floor, per-grant ceiling, expected #grants).
+    Sums every action's per-year budget for the total, and reads each action's
+    minContribution / maxContribution / expectedGrants for the per-grant envelope.
+    EU budgets are EUR (the blob omits currency)."""
     try:
         b = json.loads(bo_str) if bo_str else {}
     except (ValueError, TypeError):
-        return None, None
+        return None, None, None, None, None
     tot, cur = 0.0, None
+    floor = ceil = None
+    awards = 0
     for actions in (b.get("budgetTopicActionMap") or {}).values():
         if not isinstance(actions, list):
             continue
@@ -1871,7 +1877,38 @@ def _eu_budget(bo_str: str) -> tuple[float | None, str | None]:
                     tot += float(v)
                 except (TypeError, ValueError):
                     pass
-    return (tot or None), (cur or ("EUR" if tot else None))
+            try:
+                mn = a.get("minContribution")
+                if mn not in (None, "", 0, "0"):
+                    floor = float(mn) if floor is None else min(floor, float(mn))
+            except (TypeError, ValueError):
+                pass
+            try:
+                mx = a.get("maxContribution")
+                if mx not in (None, "", 0, "0"):
+                    ceil = float(mx) if ceil is None else max(ceil, float(mx))
+            except (TypeError, ValueError):
+                pass
+            try:
+                awards += int(a.get("expectedGrants") or 0)
+            except (TypeError, ValueError):
+                pass
+    return ((tot or None), (cur or ("EUR" if tot else None)),
+            floor, ceil, (awards or None))
+
+
+def _eu_deadlines(val: Any) -> list:
+    """Parse a SEDIA `deadlineDate` (a single ISO datetime OR, for a two-stage topic, a
+    LIST [stage-1, stage-2]) → a sorted list of date objects. The EFFECTIVE deadline is the
+    LAST element (stage-2): the portal flips a two-stage topic to Closed once stage-1 passes,
+    but the opportunity is still live until stage-2 — so we key expiry off the latest date."""
+    vals = val if isinstance(val, list) else ([val] if val else [])
+    out = []
+    for v in vals:
+        d = _parse_iso_date(str(v)[:10]) if v else None
+        if d:
+            out.append(d)
+    return sorted(out)
 
 
 def _eu_funder(identifier: str) -> str:
@@ -1950,7 +1987,14 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
             if not title:
                 continue
             ident = _clean(_first(md, "identifier"))
-            amt, cur = _eu_budget(_first(md, "budgetOverview"))
+            amt, cur, _floor, _ceil, _awards = _eu_budget(_first(md, "budgetOverview"))
+            # Two-stage deadline handling: keep ALL stage deadlines and use the LAST
+            # (stage-2) as the effective submission deadline, so the row doesn't expire when
+            # stage-1 passes (the portal marks it Closed but stage-2 is still open).
+            _dls = _eu_deadlines(md.get("deadlineDate"))
+            _eff_deadline = _dls[-1] if _dls else None
+            _two_stage = (_first(md, "deadlineModel").lower() == "two-stage"
+                          or len(_dls) >= 2)
             action = _first(md, "typesOfAction").lower()
             is_prize = "prize" in action
             status = _first(md, "status")
@@ -2017,15 +2061,24 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
                 "raw_text": full_text or None,
                 "call_geographic_scope": geo_seed or None,
                 "date_posted": _parse_iso_date(_first(md, "startDate")[:10]),
-                "call_submission_deadline": _parse_iso_date(_first(md, "deadlineDate")[:10]),
+                # Effective deadline = LAST (stage-2) date for a two-stage topic, else the
+                # single date. Survives the portal flipping the topic to Closed after stage-1.
+                "call_submission_deadline": _eff_deadline,
+                # Window label: surface the two-stage nature (stage-1 concept → stage-2 full).
+                "funding_window": "Two-stage" if _two_stage else None,
                 "call_award_value": amt,
                 "currency": cur,
+                "call_award_floor": _floor,
+                "call_award_ceiling": _ceil,
+                "expected_awards": _awards,
                 "solicitation_type": "Prize" if is_prize else None,
                 "instrument_type": "Award" if is_prize else (
                     "Grant" if _first(md, "type") == "2" else "Contract"),
                 "opportunity_type": opp_type,
                 "_action_family": action_family,
                 "_tags": tags,
+                # Stage deadlines (ISO) so the gate/UI can reason about two-stage survival.
+                "_deadline_stages": [d.isoformat() for d in _dls] or None,
                 "_closed": _is_closed,
                 "_source_origin": f"{name} (status={status})",
             })
