@@ -36,8 +36,9 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
     _sd_str = _sd.strftime("%d %b %Y, %H:%M") if pd.notna(_sd) else "date unknown"
     _who = f"**{_sub_by}**" + (f" · {_sub_email}" if _sub_email else "")
     st.caption(f"📥 Submitted by {_who} · on {_sd_str}")
-    tab_opp, tab_elig, tab_dec, tab_team, tab_award = st.tabs(
-        ["Opportunity", "Eligibility", "Decision & Pipeline", "Team", "Submission & Award"]
+    tab_opp, tab_elig, tab_dec, tab_team, tab_award, tab_app = st.tabs(
+        ["Opportunity", "Eligibility", "Decision & Pipeline", "Team",
+         "Submission & Award", "Application"]
     )
 
     def _date(v):
@@ -114,10 +115,10 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
             fmt_in = _opt("Submission format", "fmt", dropdowns.get("submission_format"), row.get("submission_format"))
         c_la, c_sa = st.columns(2)
         lead_in = c_la.text_input("Lead applicant", value=_str(row.get("lead_applicant")),
-                                  key=f"e_lead_{row['uid']}",
+                                  key=f"e_leadapp_{row['uid']}",   # NB: e_lead_ is Proposal lead
                                   help="The prime/lead institution on this application.")
         sub_in = c_sa.text_input("Sub applicant", value=_str(row.get("sub_applicant")),
-                                 key=f"e_sub_{row['uid']}",
+                                 key=f"e_subapp_{row['uid']}",
                                  help="Sub-recipient / co-applicant, if any.")
         c10, c11, c12 = st.columns([2, 1, 1])
         link_in = c10.text_input("Opportunity link", value=_str(row.get("opportunity_link")), key=f"e_link_{row['uid']}")
@@ -142,6 +143,24 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
             default=_multi_default(row.get("call_domain_areas")),
             key=f"e_prog_{row['uid']}",
         )
+        c_ref1, c_ref2 = st.columns(2)
+        fon_in = c_ref1.text_input("Funding opportunity number",
+                                   value=_str(row.get("funding_opportunity_number")),
+                                   key=f"e_fon_{row['uid']}")
+        apply_in = c_ref2.text_input("Apply URL (funder portal)", value=_str(row.get("apply_url")),
+                                     key=f"e_applyurl_{row['uid']}",
+                                     help="Where applicants actually submit (if different "
+                                          "from the opportunity link).")
+        c_cls1, c_cls2, c_cls3 = st.columns(3)
+        otype_in = c_cls1.text_input("Opportunity type", value=_str(row.get("opportunity_type")),
+                                     key=f"e_otype_{row['uid']}")
+        stype_in = c_cls2.text_input("Solicitation type", value=_str(row.get("solicitation_type")),
+                                     key=f"e_stype_{row['uid']}")
+        itype_in = c_cls3.text_input("Instrument type", value=_str(row.get("instrument_type")),
+                                     key=f"e_itype_{row['uid']}")
+        notes_in = st.text_area("Notes", value=_str(row.get("notes")), height=80,
+                                key=f"e_notes_{row['uid']}",
+                                help="Free-form internal notes on this opportunity.")
 
     def _coerce_elig_edit(v) -> str:
         try:
@@ -285,6 +304,20 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
         requested = cs2.number_input("Amount requested", min_value=0.0, step=10000.0,
                                      value=_num(row.get("amount_requested")),
                                      key=f"e_req_{row['uid']}")
+        cf1, cf2 = st.columns(2)
+        floor_in = cf1.number_input("Award floor (per grant)", min_value=0.0, step=10000.0,
+                                    value=_num(row.get("call_award_floor")),
+                                    key=f"e_floor_{row['uid']}")
+        ceil_in = cf2.number_input("Award ceiling (per grant)", min_value=0.0, step=10000.0,
+                                   value=_num(row.get("call_award_ceiling")),
+                                   key=f"e_ceil_{row['uid']}")
+        cf3, cf4 = st.columns(2)
+        totprog_in = cf3.number_input("Total program funding", min_value=0.0, step=100000.0,
+                                      value=_num(row.get("total_program_funding")),
+                                      key=f"e_totprog_{row['uid']}")
+        expaward_in = cf4.number_input("Expected # awards", min_value=0, step=1,
+                                       value=int(_num(row.get("expected_awards"))),
+                                       key=f"e_expaward_{row['uid']}")
         c1, c2 = st.columns(2)
         doa = c1.date_input("Date of approval", value=_date(row.get("date_of_approval")), key=f"e_doa_{row['uid']}")
         secured = c2.number_input("Amount secured", min_value=0.0, step=10000.0,
@@ -300,6 +333,21 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
         c5, c6 = st.columns(2)
         ko = c5.date_input("Kick-off date", value=_date(row.get("kickoff_date")), key=f"e_ko_{row['uid']}")
         ns = c6.text_input("Next step", value=_str(row.get("next_step")), key=f"e_ns_{row['uid']}")
+
+    with tab_app:
+        # Application detail — usually LLM-synthesised at scan time, editable here so a
+        # reviewer can correct or flesh them out. Shown on the Review / detail views.
+        how_in = st.text_area("How to apply", value=_str(row.get("how_to_apply")), height=90,
+                              key=f"e_howapply_{row['uid']}")
+        elig_spec_in = st.text_area("Eligibility specifics",
+                                    value=_str(row.get("eligibility_specifics")), height=90,
+                                    key=f"e_eligspec_{row['uid']}")
+        comp_in = st.text_area("Compliance requirements",
+                               value=_str(row.get("compliance_requirements")), height=90,
+                               key=f"e_comp_{row['uid']}")
+        checklist_in = st.text_area("Application checklist",
+                                    value=_str(row.get("application_checklist")), height=90,
+                                    key=f"e_checklist_{row['uid']}")
 
     st.divider()
     bs, bd, bc = st.columns([1, 1, 1])
@@ -354,6 +402,20 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
             "sub_applicant": _val(sub_in),
             "date_completed": date_sub.isoformat() if isinstance(date_sub, date) else None,
             "amount_requested": float(requested) if requested else None,
+            "call_award_floor": float(floor_in) if floor_in else None,
+            "call_award_ceiling": float(ceil_in) if ceil_in else None,
+            "total_program_funding": float(totprog_in) if totprog_in else None,
+            "expected_awards": int(expaward_in) if expaward_in else None,
+            "funding_opportunity_number": _val(fon_in),
+            "apply_url": _val(apply_in),
+            "opportunity_type": _val(otype_in),
+            "solicitation_type": _val(stype_in),
+            "instrument_type": _val(itype_in),
+            "notes": _val(notes_in),
+            "how_to_apply": _val(how_in),
+            "eligibility_specifics": _val(elig_spec_in),
+            "compliance_requirements": _val(comp_in),
+            "application_checklist": _val(checklist_in),
             "funding_window": _val(win_in),
             "time_to_award": _val(tta_in),
             "submission_format": _val(fmt_in),
