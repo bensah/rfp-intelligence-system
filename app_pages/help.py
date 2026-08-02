@@ -198,7 +198,7 @@ if is_admin:
             "- **Records** — the full opportunity backend in **Data · Verify · "
             "Reset** (view / edit / delete, export, share). The **Reset** tab holds "
             "**backup + maintenance** tools and is **Super-User-only**.\n"
-            "- **Sources** — **Catalog** (the donor-site catalogue the scanner "
+            "- **Sources** — **Validated** (the donor-site catalogue the scanner "
             "crawls), **Verify Registry** (classify hosts aggregator-vs-primary + push "
             "new sources to the catalogue), **Blocked** (URL tokens excluded from scans + "
             "web search), and **Excel Sync**.\n"
