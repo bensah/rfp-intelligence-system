@@ -52,7 +52,16 @@ def prob_tier(score: Any, short: bool = False) -> str | None:
     return "Low" if short else PROB_LABEL_LOW
 
 
-def deadline_status(d: Any) -> str | None:
+def deadline_status(d: Any, submitted: bool = False,
+                    decision: str | None = None) -> str | None:
+    """Deadline chip for a call/grant.
+
+    Once a proposal has been SUBMITTED, a passed deadline is no longer "Overdue" — the
+    window closing is expected. Instead we report the state-accurate outcome:
+      * decision Approved  → "Awarded"
+      * decision Not Approved → "Not approved"
+      * otherwise (awaiting a decision) → "Submitted"
+    Not-yet-submitted calls keep the discovery semantics (Overdue / Due Soon / On Track)."""
     if d is None or (isinstance(d, float) and pd.isna(d)):
         return None
     try:
@@ -64,6 +73,13 @@ def deadline_status(d: Any) -> str | None:
         return None
     today = date.today()
     if deadline < today:
+        if submitted:
+            dec = (decision or "").strip().lower()
+            if dec == "approved":
+                return "Awarded"
+            if dec == "not approved":
+                return "Not approved"
+            return "Submitted"
         return "Overdue"
     if deadline <= today + timedelta(days=DUE_SOON_DAYS):
         return "Due Soon"
