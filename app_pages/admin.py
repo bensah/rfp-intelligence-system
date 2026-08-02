@@ -199,7 +199,7 @@ _dev_admin = permissions.is_developer_admin(user)     # admin+ in a developer te
 _dev_member = permissions.is_developer_member(user)   # any member of a developer tenant
 
 # Tab set. "Accounts" (users + super-only tenants/blacklisted) sits right after Setup;
-# "Sources" nests Validated | Verify Registry | Blocked | Excel Sync. "Learning data" is a developer-only
+# "Sources" nests Validated | Verify Registry | Blocked (Excel Sync moved to Manual Scan). "Learning data" is a developer-only
 # view (its BODY is gated to developer-tenant members below, like Records → Verify/Reset).
 # A developer Super User also gets a "Suggestions" review inbox (with a pending-count
 # badge); the super_user also gets a cross-tenant "Analytics" tab.
@@ -936,11 +936,11 @@ with tab_data:
 
 if tab_sources is not None:
     with tab_sources:
-        _cat_tab, _vreg_tab, _blk_tab, _xls_tab = st.tabs(
-            ["Validated", "Verify Registry", "Blocked", "Excel Sync"])
+        _cat_tab, _vreg_tab, _blk_tab = st.tabs(
+            ["Validated", "Verify Registry", "Blocked"])
 
 else:
-    _cat_tab = _vreg_tab = _blk_tab = _xls_tab = None
+    _cat_tab = _vreg_tab = _blk_tab = None
 
 # Verify Registry — classify hosts (aggregator vs primary) + push to the catalog.
 # Moved here from Records → Verify so all source-catalogue management lives under Sources.
@@ -1314,129 +1314,6 @@ if _cat_tab is not None:
                                   if len(picked) == 1 else "Select exactly one row."):
                     _suggest_source_change_dialog(sel_rows[0])
 
-if _xls_tab is not None:
-    with _xls_tab:
-        # ----- Excel sync ------------------------------------------------------
-        # The master workbook is a source in its own right (it seeds rfp_submissions
-        # alongside the scanned donor sources above), so its sync controls live here
-        # under Sources rather than on the Records tab.
-        st.subheader("Excel sync")
-        st.caption(
-            "Pulls the master workbook into Supabase. Path comes from "
-            "`EXCEL_SOURCE_PATH` in `.env` (or the local repo copy if unset). "
-            "Auto-sync runs on page load when the file is newer than the last sync."
-        )
-        # migrate_excel.py runs as a SUBPROCESS with no tenant JWT, so its rows aren't
-        # tenant-scoped — running it can dump the workbook into whichever tenant is browsing
-        # (that's why auto-sync is off in multi-tenant mode). Until it's made tenant-aware,
-        # manual sync stays an owner/developer operation → restrict to a developer admin.
-        _can_excel_sync = _dev_admin
-        if not _can_excel_sync:
-            st.info(
-                "🔒 Manual Excel sync is a developer operation. The importer isn't yet "
-                "tenant-aware (it runs outside your tenant context), so it's limited to a "
-                "developer tenant to avoid writing into the wrong tenant.")
-
-        resolved = excel_sync.resolve_excel_path()
-        xls_path = resolved.get("resolved_path")
-        last_mtime, last_iso = excel_sync.get_last_sync()
-
-        sc1, sc2 = st.columns([3, 1])
-        with sc1:
-            # Single line showing the active workbook path (was two lines before;
-            # EXCEL_SOURCE_PATH and the resolved path were almost always identical).
-            if xls_path:
-                try:
-                    mt = xls_path.stat().st_mtime
-                    st.code(f"Active workbook: {xls_path}")
-                    st.caption(
-                        f"File modified: {datetime.fromtimestamp(mt, tz=timezone.utc).isoformat(timespec='seconds')}  ·  "
-                        f"Last sync: {last_iso or '(never)'}"
-                    )
-                    if last_mtime and last_mtime >= mt:
-                        st.success("✓ In sync with the workbook")
-                    else:
-                        st.warning("⚠ Workbook is newer than last sync — click to refresh")
-                except OSError as exc:
-                    st.error(f"Can't read file: {exc}")
-            else:
-                st.error(
-                    "No Excel file found. Upload a workbook below, set "
-                    "`EXCEL_SOURCE_PATH` in `.env`, or drop the workbook in the "
-                    "repo root."
-                )
-            if resolved.get("error"):
-                st.error(resolved["error"])
-
-        if sc2.button("🔄 Sync now", type="primary",
-                      disabled=(xls_path is None) or not _can_excel_sync,
-                      width='stretch',
-                      help=None if _can_excel_sync else "Developer tenant only.") \
-                and _can_excel_sync:                       # defense in depth
-            with st.spinner("Running migrate_excel.py..."):
-                result = excel_sync.sync(updated_by=user.get("email"))
-            if result.get("ok"):
-                st.success(f"Synced from {result['path']}")
-            else:
-                st.error(f"Sync failed: {result.get('error') or 'see stderr'}")
-            with st.expander("Sync output", expanded=not result.get("ok")):
-                st.code(result.get("stdout") or "(no stdout)", language="text")
-                if result.get("stderr"):
-                    st.code(result.get("stderr"), language="text")
-            st.rerun()
-
-        # ----- Upload a replacement workbook ----------------------------------
-        # Useful when the user is on a different machine where OneDrive / the
-        # original path doesn't exist, or wants to ship a one-off updated file.
-        # Saves to the currently-resolved path (overwriting), or to the repo
-        # root if no path is resolvable yet.
-        with st.expander("📤 Upload a new workbook (replaces the active file)", expanded=False):
-            st.caption(
-                "Pick a `.xlsx` file from your computer to replace whatever the "
-                "app is currently reading. The uploaded file is saved to "
-                "the path shown above (or to the repo root if no path is "
-                "resolvable). Developer tenant only — it replaces the shared source "
-                "workbook the importer reads."
-            )
-            up = st.file_uploader(
-                "Choose a .xlsx file",
-                type=["xlsx"],
-                accept_multiple_files=False,
-                key="excel_workbook_upload",
-                disabled=not _can_excel_sync,
-            ) if _can_excel_sync else None
-            if up is not None:
-                # Determine the destination. Prefer the currently-resolved path
-                # (replaces in-place). Fall back to the repo root with the
-                # uploaded filename.
-                from pathlib import Path as _P
-                dest = (
-                    xls_path
-                    if xls_path is not None
-                    else _P(__file__).resolve().parent.parent / up.name
-                )
-                ub1, ub2 = st.columns([1, 1])
-                confirm = ub1.button(
-                    f"💾 Save as `{dest.name}` and replace active workbook",
-                    type="primary", key="confirm_upload_btn",
-                )
-                if ub2.button("Cancel upload", key="cancel_upload_btn"):
-                    st.session_state.pop("excel_workbook_upload", None)
-                    st.rerun()
-                if confirm:
-                    try:
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        with open(dest, "wb") as f:
-                            f.write(up.getbuffer())
-                        st.success(
-                            f"✓ Saved to `{dest}`. The next sync will pick it up "
-                            "automatically; click 🔄 Sync now above to refresh now."
-                        )
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Could not save: {exc}")
-
-
 # -----------------------------------------------------------------------------
 # Tab 2 — Manual Scan
 # -----------------------------------------------------------------------------
@@ -1447,9 +1324,10 @@ with tab_scan:
         "Two workflows. **⛏ Run Extraction** crawls every catalogued funding source "
         f"and extracts opportunities into the global store — a full run ({_src_count()} "
         "sources with detail-page + PDF + LLM enrichment) is the slow backend job "
-        "(**~20-40 minutes**, no org screening). **🎯 Scan Funding** then "
+        "(**~20-40 minutes**, no org screening). **🎯 Eligibility Scan** then "
         "screens that store against this organisation's eligibility (Settings → Scan "
-        "eligibility & auto-scoring policies) — fast, no crawl."
+        "eligibility & auto-scoring policies) — fast, no crawl. **📊 Sync Excel** (when a "
+        "workbook is configured) imports the master workbook into **this tenant's** pipeline."
     )
 
     from core.scan_pipeline import MATCH_RUN_LABEL
@@ -1522,20 +1400,45 @@ with tab_scan:
     # Two SEPARATE workflows (DATA_SCHEMA_ETL.md §2-3):
     #   • Run Extraction      — crawl every donor source → extract into the global
     #     store. PURE extraction, NO org screening (extract_only=True). Slow.
-    #   • Scan Funding — screen the INTERNAL store against this org
+    #   • Eligibility Scan — screen the INTERNAL store against this org
     #     (geography + MUST/PREFER) → the funding the org is potentially eligible
     #     for. Fast (no crawl). Tenant-facing version = the Pipeline "Scan now".
+    #   • Sync Excel (optional) — import a master workbook into THIS tenant's
+    #     pipeline; shown only when a workbook resolves.
     # Buttons sit ABOVE the summary cards. Each flips to a disabled "running…"
     # label in place while it works.
     _who = user.get("name") or user.get("email") or "admin"
-    # Run Extraction + Scan Funding sit together on the RIGHT — compact (narrow columns)
-    # with a wide spacer on the left so the two buttons stay close, pushed right.
-    _bcsp, _bc1, _bc2 = st.columns([5.2, 1.5, 1.6])
+    # The whole Admin page is admin-gated at the top (permissions.is_admin), so anyone here
+    # is an admin of the acting tenant — Excel sync is open to ANY tenant admin (not just a
+    # developer tenant), per the "admin from any tenant" requirement.
+    is_admin = permissions.is_admin(user)
+    # Excel workbook availability — the "📊 Sync Excel" button appears ONLY when a workbook
+    # resolves for this deployment (optional feature; some tenants have no workbook). Sync is
+    # now available to ANY tenant admin (was developer-only) and is TENANT-AWARE: rows land in
+    # the acting tenant's pipeline (excel_sync passes the tenant to the importer's override).
+    from core import excel_sync as _xls
+    _xls_resolved = _xls.resolve_excel_path()
+    _xls_path = _xls_resolved.get("resolved_path")
+    _excel_available = _xls_path is not None
+    try:
+        from auth.tenant_context import current_tenant_id as _ctid
+        _cur_tid = _ctid()
+    except Exception:
+        _cur_tid = None
+
+    # Run Extraction + Eligibility Scan (+ Sync Excel when available) sit together on the
+    # RIGHT — compact narrow columns, wide spacer on the left.
+    if _excel_available and is_admin:
+        _bcsp, _bc1, _bc2, _bc3 = st.columns([3.6, 1.5, 1.7, 1.5])
+        _xls_slot = _bc3.empty()
+    else:
+        _bcsp, _bc1, _bc2 = st.columns([5.2, 1.5, 1.6])
+        _xls_slot = None
     _ext_slot = _bc1.empty()
     _match_slot = _bc2.empty()
     # Run Extraction is a PLATFORM job that crawls every source into the SHARED global
     # store (no per-tenant screening) — a developer task. Restricted to an admin/super
-    # of a developer tenant. The "Scan Funding" screening
+    # of a developer tenant. The "Eligibility Scan" screening
     # button beside it stays available to every tenant admin (it's tenant-scoped).
     _do_extract = _ext_slot.button(
         "⛏ Run Extraction", type="secondary", key="admin_extract_btn", width='stretch',
@@ -1544,11 +1447,16 @@ with tab_scan:
               "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
               "(~20-40 min for a full run).") if _dev_admin else
              ("Developer task — restricted to an admin/Super User of a developer "
-              "tenant. Use 🎯 Scan Funding to screen this org."))
+              "tenant. Use 🎯 Eligibility Scan to screen this org."))
     _do_match = _match_slot.button(
-        "🎯 Scan Funding", type="primary", key="admin_match_btn", width='stretch',
+        "🎯 Eligibility Scan", type="primary", key="admin_match_btn", width='stretch',
         help="Screen the curated store against this org's eligibility (geography + "
              "MUST/PREFER) — the funding you're potentially eligible for. Fast.")
+    _do_excel = (_xls_slot.button(
+        "📊 Sync Excel", type="secondary", key="admin_excel_btn", width='stretch',
+        help="Import the master Excel workbook into THIS tenant's pipeline (rows are "
+             "tagged to your tenant). Optional — shown only when a workbook is configured.")
+        if _xls_slot is not None else False)
 
     if _do_extract and _dev_admin:          # defense in depth (button is also disabled)
         # Replace the button in place with a disabled "running" label during the run.
@@ -1571,13 +1479,64 @@ with tab_scan:
         except Exception as exc:
             st.session_state["admin_scan_banner"] = {
                 "ok": False,
-                "msg": f"❌ Scan Funding failed: `{type(exc).__name__}: {exc}`."}
+                "msg": f"❌ Eligibility Scan failed: `{type(exc).__name__}: {exc}`."}
+        st.rerun()
+
+    if _do_excel and _xls_slot is not None and is_admin:   # defense in depth
+        _xls_slot.button("⏳ Syncing Excel…", disabled=True, width='stretch',
+                         key="admin_excel_running")
+        with st.spinner("Importing the workbook into this tenant…"):
+            _res = _xls.sync(updated_by=user.get("email"), tenant_id=_cur_tid)
+        st.session_state["admin_scan_banner"] = (
+            {"ok": True, "msg": f"✓ Excel synced from `{_res.get('path')}` into this tenant."}
+            if _res.get("ok") else
+            {"ok": False, "msg": f"❌ Excel sync failed: {_res.get('error') or 'see output below'}"})
+        st.session_state["admin_excel_output"] = _res
         st.rerun()
 
     # Banner from the previous run (survives the post-scan rerun).
     _scan_banner = st.session_state.pop("admin_scan_banner", None)
     if _scan_banner:
         (st.success if _scan_banner.get("ok") else st.error)(_scan_banner["msg"])
+
+    # ----- Excel workbook: status + upload (any tenant admin) ------------------
+    # Optional feature: a tenant admin can point this deployment at a master workbook
+    # and sync it into THEIR pipeline. Shown to admins whether or not a workbook is
+    # currently resolved, so a tenant with none can add one.
+    if is_admin:
+        _wb_label = (f"📊 Excel workbook — `{_xls_path.name}` ready"
+                     if _excel_available else "📊 Excel workbook — none configured")
+        with st.expander(_wb_label, expanded=False):
+            _last_mt, _last_ts = _xls.get_last_sync()
+            if _excel_available:
+                st.caption(f"Resolved via **{_xls_resolved.get('source')}** → `{_xls_path}`")
+                if _last_ts:
+                    st.caption(f"Last synced: {_last_ts}")
+                st.caption(
+                    "Use the **📊 Sync Excel** button above to import into this tenant. "
+                    "Rows are tagged to your current tenant.")
+            else:
+                if _xls_resolved.get("error"):
+                    st.warning(_xls_resolved["error"])
+                st.caption(
+                    "No workbook found. Set `EXCEL_SOURCE_PATH` in `.env`, drop an "
+                    "`.xlsx` at the repo root, or upload one below (saved beside the "
+                    "project as a gitignored local copy).")
+            _up = st.file_uploader("Upload a master workbook (.xlsx)", type=["xlsx"],
+                                   key="admin_excel_upload")
+            if _up is not None and st.button("Save workbook", key="admin_excel_save"):
+                try:
+                    from core.excel_sync import REPO_ROOT as _RR
+                    _dest = _RR / _up.name
+                    _dest.write_bytes(_up.getbuffer())
+                    st.success(f"Saved `{_dest.name}`. Reopen this tab, then Sync Excel.")
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Could not save workbook: {type(_e).__name__}: {_e}")
+            _out = st.session_state.pop("admin_excel_output", None)
+            if _out and (_out.get("stdout") or _out.get("stderr")):
+                st.code((_out.get("stdout") or "") + "\n" + (_out.get("stderr") or ""),
+                        language="text")
 
     # Extraction summary cards (BELOW the buttons).
     _ext = _run_summary(_ext_rows)
