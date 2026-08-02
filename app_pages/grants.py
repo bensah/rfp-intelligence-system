@@ -339,56 +339,45 @@ with _main:
                 f"(owner: {n.get('owner') or '—'}, due: {n.get('deadline') or '—'})"
             )
 
-    # ── Update status (open to ANY tenant member) ───────────────────────────────
-    # Team-meeting workflow: pick a grant above, change its Status / Progress / Report
-    # status here and Save. Setting "Not Approved" drops the grant from Active Grants
-    # (donor_decision drives membership). Writes rfp_submissions (decision/progress) and,
-    # when a reporting row exists, active_grants.status.
+    # ── Edit this grant (open to ANY tenant member) ─────────────────────────────
+    # Team-meeting workflow: pick a grant above and edit the WHOLE record in a pop-up —
+    # status, progress, applicants (Lead/Sub), Date Submitted, Amount Requested/Secured,
+    # reporting, etc. Reuses the shared full RFP editor (Settings → Records / Review /
+    # Tracking), so every field is editable in one place. Delete inside stays admin-only.
+    # Setting donor_decision = "Not Approved" drops the grant from Active Grants on save.
     if _can_edit:
-        from core import dropdowns as _dropdowns
-        st.markdown("**Update status**")
-        _dec_opts = list(_dropdowns.get("donor_decision") or [])
-        _prog_opts = list(_dropdowns.get("progress_status") or [])
-        _cur_dec = str(r.get("donor_decision") or "")
-        _cur_prog = str(r.get("progress_status") or "")
-        _has_linked = not linked.empty
-        _cur_rep = str(linked.iloc[0].get("status") or "") if _has_linked else ""
-        _widths = [1.4, 1.4, 1.4, 0.8] if _has_linked else [1.9, 1.9, 0.8]
-        _ec = st.columns(_widths)
-        _new_dec = _ec[0].selectbox(
-            "Status (donor decision)", _dec_opts,
-            index=_dec_opts.index(_cur_dec) if _cur_dec in _dec_opts else 0,
-            key=f"grant_dec_{uid}")
-        _new_prog = _ec[1].selectbox(
-            "Progress", _prog_opts,
-            index=_prog_opts.index(_cur_prog) if _cur_prog in _prog_opts else 0,
-            key=f"grant_prog_{uid}")
-        _new_rep = None
-        if _has_linked:
+        from views.rfp_editor import render_rfp_editor
+        if st.button("✏️ Edit grant details", type="primary", key=f"grant_edit_{uid}"):
+            # Pass the RAW submissions row (not the display-augmented dict) so the editor
+            # writes real column values. render_rfp_editor is an @st.dialog → opens a modal.
+            _raw = clean_record(rfps[rfps["uid"] == uid].iloc[0].to_dict())
+            render_rfp_editor(_raw, sb=sb, user=_user, is_admin=_perm.is_admin(_user))
+        st.caption("Opens the full editor — Status, Progress, Lead/Sub applicant, Date "
+                   "Submitted, Amount Requested/Secured and more.")
+
+        # Report status lives in the separate active_grants table (not rfp_submissions), so
+        # the full editor doesn't reach it — offer a focused control here when a reporting
+        # row exists. "Not applicable" N/A's the reporting questions for a grant with nothing
+        # to report on.
+        if not linked.empty and linked.iloc[0].get("grant_id"):
+            from core import dropdowns as _dropdowns
             _rep_opts = list(_dropdowns.get("report_statuses") or [])
-            _new_rep = _ec[2].selectbox(
+            _cur_rep = str(linked.iloc[0].get("status") or "")
+            _rc1, _rc2, _rc3 = st.columns([1.6, 0.8, 3])
+            _new_rep = _rc1.selectbox(
                 "Report status", _rep_opts,
                 index=_rep_opts.index(_cur_rep) if _cur_rep in _rep_opts else 0,
                 key=f"grant_rep_{uid}")
-        _ec[-1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
-        if _ec[-1].button("💾 Save", type="primary", key=f"grant_save_{uid}"):
-            _payload: dict = {}
-            if _new_dec != _cur_dec:
-                _payload["donor_decision"] = _new_dec
-            if _new_prog != _cur_prog:
-                _payload["progress_status"] = _new_prog
-            try:
-                if _payload:
-                    safe_execute(sb.table("rfp_submissions").update(_payload).eq("uid", uid))
-                if (_has_linked and _new_rep is not None and _new_rep != _cur_rep
-                        and linked.iloc[0].get("grant_id")):
+            _rc2.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+            if _rc2.button("💾 Save", key=f"grant_rep_save_{uid}") and _new_rep != _cur_rep:
+                try:
                     safe_execute(sb.table("active_grants").update({"status": _new_rep})
                                  .eq("grant_id", linked.iloc[0].get("grant_id")))
-                st.cache_data.clear()          # _fetch is cached 60s — refresh badge/KPIs
-                st.success(f"Updated {uid} → {_new_dec}.")
-                st.rerun()
-            except Exception as _exc:
-                st.error(f"Couldn't save: {type(_exc).__name__}: {_exc}")
+                    st.cache_data.clear()
+                    st.success(f"Report status → {_new_rep}.")
+                    st.rerun()
+                except Exception as _exc:
+                    st.error(f"Couldn't save report status: {type(_exc).__name__}: {_exc}")
 
     st.divider()
 
