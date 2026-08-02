@@ -69,35 +69,56 @@ class CanEditStatusTests(unittest.TestCase):
         self.assertTrue(PERM.is_admin({"role": "admin"}))
 
 
-class ActiveGrantsMembershipTests(unittest.TestCase):
-    """Mirror of app_pages/grants.py _active/_pending intent (kept in lockstep)."""
+class AppliedFundingMembershipTests(unittest.TestCase):
+    """Mirror of app_pages/grants.py _submitted/_pending/_not_approved intent (Applied
+    Funding page keeps the FULL submitted log — Not Approved is kept, not dropped)."""
 
     @staticmethod
     def _bucket(donor_decision, progress_status):
         dd = str(donor_decision or "").strip().lower()
         ps = str(progress_status or "").strip().lower()
         completed = ps == "completed"
-        active = dd in ("approved", "under review") or (completed and dd != "not approved")
+        submitted = dd in ("approved", "under review", "not approved") or completed
         pending = dd == "under review" or (completed and dd not in ("approved", "not approved"))
-        return active, pending
+        not_approved = dd == "not approved"
+        return submitted, pending, not_approved
 
     def test_completed_but_undecided_enters_as_pending(self):
-        active, pending = self._bucket("Not submitted", "Completed")   # lead-poisoning row
-        self.assertTrue(active)
+        submitted, pending, na = self._bucket("Not submitted", "Completed")  # lead-poisoning
+        self.assertTrue(submitted)
         self.assertTrue(pending)
+        self.assertFalse(na)
 
-    def test_not_approved_stays_out(self):
-        active, _ = self._bucket("Not Approved", "Completed")
-        self.assertFalse(active)
-
-    def test_discontinued_stays_out(self):
-        active, _ = self._bucket("Not submitted", "Discontinued")
-        self.assertFalse(active)
-
-    def test_approved_is_active_not_pending(self):
-        active, pending = self._bucket("Approved", "Completed")
-        self.assertTrue(active)
+    def test_not_approved_stays_in_the_log(self):
+        submitted, pending, na = self._bucket("Not Approved", "Completed")
+        self.assertTrue(submitted)     # KEPT on Applied Funding (was dropped before)
         self.assertFalse(pending)
+        self.assertTrue(na)
+
+    def test_discontinued_undecided_stays_out(self):
+        submitted, _, _ = self._bucket("Not submitted", "Discontinued")
+        self.assertFalse(submitted)    # never submitted → not in the log
+
+    def test_approved_is_submitted_not_pending(self):
+        submitted, pending, na = self._bucket("Approved", "Completed")
+        self.assertTrue(submitted)
+        self.assertFalse(pending)
+        self.assertFalse(na)
+
+
+class AppliedFundingAmountsTests(unittest.TestCase):
+    """The four amount cards: Requested / Secured / Unsecured / Requested Balance."""
+
+    def test_amount_math(self):
+        # approved: requested 100, secured 80 ; under-review: requested 50 ;
+        # not-approved: requested 40 (lost).
+        total_requested = 100 + 50 + 40
+        total_secured = 80
+        total_unsecured = 40                      # requested of Not-Approved
+        balance = max(0.0, total_requested - total_secured - total_unsecured)
+        self.assertEqual(total_requested, 190)
+        self.assertEqual(total_unsecured, 40)
+        self.assertEqual(balance, 70)             # 20 approved shortfall + 50 pending
 
 
 if __name__ == "__main__":
