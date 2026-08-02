@@ -292,7 +292,7 @@ from core.records import strip_html as _strip_html
 _brief = _esc(_strip_html(row.get("brief_description"))).rstrip()
 if row.get("opportunity_link"):
     _brief += (f" <a href='{_html.escape(str(row['opportunity_link']))}' "
-               f"target='_blank' style='white-space:nowrap'>Opportunity link &#8599;</a>")
+               f"target='_blank' style='white-space:nowrap'>Learn more&hellip; &#8599;</a>")
 
 _CARD = ("background:#fff;border:1px solid #e6e6e6;border-radius:10px;"
          "padding:14px 16px")
