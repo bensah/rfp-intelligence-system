@@ -95,6 +95,16 @@ def is_admin(user: dict[str, Any] | None) -> bool:
     return bool(user and user.get("role") in ("admin", "super_user"))
 
 
+def can_edit_status(user: dict[str, Any] | None) -> bool:
+    """True for ANY authenticated tenant member (super_user / admin / reviewer /
+    collaborator). Status editing on the Pipelines (Review / Tracking) and Active
+    Grants pages is a routine team-meeting task that any member may be handed —
+    so it's open to every logged-in member, while destructive/privileged actions
+    (delete, Settings, source management, user admin) stay gated on is_admin /
+    is_super_user. Tenant/RLS scoping already confines which rows a member sees."""
+    return bool(user and user.get("role"))
+
+
 def role_group(user: dict[str, Any] | None) -> str:
     """Map raw DB role → access-matrix column key. Super_user + admin
     collapse to 'admin'; reviewer + collaborator collapse to 'user'."""

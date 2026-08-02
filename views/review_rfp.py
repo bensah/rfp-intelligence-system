@@ -28,7 +28,10 @@ from views.rfp_editor import render_rfp_editor
 # auth handled by wrapper page
 user = st.session_state["app_user"]
 role = user.get("role", "collaborator")
-can_edit = role in ("super_user", "admin", "reviewer")
+# Status/decision editing is a routine team-meeting task open to ANY tenant member
+# (collaborator included); only destructive actions (Delete, via is_admin below) stay gated.
+from core import permissions as _perm
+can_edit = _perm.can_edit_status(user)
 is_admin = role in ("super_user", "admin")
 sb = get_client()
 
