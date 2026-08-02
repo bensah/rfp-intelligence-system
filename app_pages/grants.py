@@ -1,17 +1,18 @@
-"""Page 5 — Active Grants.
+"""Page 5 — Your Applied Funding.
 
-Tracks **active** grants only: those still under donor review or already
-approved. Once a row's `donor_decision` is set to "Not Approved", it drops
-out automatically.
+The full log of every application we've SUBMITTED to a donor — Approved, Under Review,
+or Not Approved (plus Progress=Completed rows awaiting a decision). Not-Approved
+applications are KEPT here, not dropped, so the page is a complete applied-funding record.
 
 Layout:
-  1. KPI strip
-  2. Per-grant detail (dropdown of Approved + Under Review only)
-  3. By funder (paginated at 10 rows/page)
+  1. KPI strip — counts row (Total Submitted / Approved / Under Review / Not Approved) +
+     amounts row (Total Requested / Secured / Unsecured / Requested Balance)
+  2. Per-application detail (dropdown of every submitted application) + full editor pop-up
+  3. Applications by funder (paginated at 10 rows/page)
 
-Source of truth: `rfp_submissions.donor_decision` (which mirrors the Excel
-"Donor Decision Status" column). The `active_grants` table provides the
-reporting status / type / due date / owner for the per-grant drilldown.
+Source of truth: `rfp_submissions.donor_decision` (which mirrors the Excel "Donor Decision
+Status" column). The `active_grants` table provides the reporting status / type / due date /
+owner, edited via the editor's Reporting tab.
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ sb = get_client()
 from core import permissions as _perm
 _user = st.session_state.get("app_user") or {}
 _can_edit = _perm.can_edit_status(_user)
-st.title("Your Active Grants")
+st.title("Your Applied Funding")
 
 
 # -----------------------------------------------------------------------------
@@ -67,13 +68,16 @@ with _main:
             # Completed-but-undecided grant is bucketed as Under Review (awaiting the donor).
             # Not Approved / Discontinued correctly stay OUT.
             _completed = ps.eq("completed")
-            # Completed (submitted) ENTERS Active Grants — UNLESS the donor already said No
-            # (Not Approved drops out regardless of progress).
-            rfps["_active"] = (dd.isin({"approved", "under review"})
-                               | (_completed & ~dd.eq("not approved")))
+            # SUBMITTED = every application we've sent to a donor: Approved, Under Review, or
+            # Not Approved — PLUS a Progress=Completed row (submitted, decision still pending).
+            # This page keeps the full applied-funding log, so Not Approved is NOT dropped;
+            # only never-submitted rows (e.g. Discontinued with no decision) stay out.
+            rfps["_submitted"] = (dd.isin({"approved", "under review", "not approved"})
+                                  | _completed)
             rfps["_approved"] = dd.eq("approved")
             rfps["_pending"] = (dd.eq("under review")
                                 | (_completed & ~dd.isin({"approved", "not approved"})))
+            rfps["_not_approved"] = dd.eq("not approved")
             # Display status = the raw donor_decision, EXCEPT a Completed-but-undecided grant
             # shows as "Under Review" (its effective bucket) so the badge/label match the KPI.
             rfps["_status_display"] = (rfps["donor_decision"].fillna("").astype(str)
@@ -94,11 +98,12 @@ with _main:
         st.info("No RFPs in the database yet.")
         st.stop()
 
-    active = rfps[rfps["_active"]].copy()
+    active = rfps[rfps["_submitted"]].copy()
     if active.empty:
         st.info(
-            "No active grants. A grant shows up here once its `donor_decision` is "
-            "set to **Approved** or **Under Review**."
+            "No applied funding yet. An application shows up here once it's **submitted** "
+            "to a donor — its `donor_decision` is Approved / Under Review / Not Approved, "
+            "or its Progress is marked **Completed**."
         )
         st.stop()
 
@@ -106,30 +111,39 @@ with _main:
     # -----------------------------------------------------------------------------
     # KPIs
     # -----------------------------------------------------------------------------
-    total_active = int(len(active))
+    total_submitted = int(len(active))
     approved = int(active["_approved"].sum())
     pending = int(active["_pending"].sum())
+    not_approved = int(active["_not_approved"].sum())
     total_requested = float(active["_usd_requested"].sum())
     total_secured = float(active.loc[active["_approved"], "_usd_secured"].sum())
-    # Not Secured = requested we've applied for but NOT yet secured (outstanding across all
-    # active grants) = total requested − total secured. Highlights the funding still in play.
-    not_secured = max(0.0, total_requested - total_secured)
-    win_rate = (approved / total_active * 100) if total_active else 0
+    # Unsecured = requested amount tied to declined (Not Approved) applications — funding lost.
+    total_unsecured = float(active.loc[active["_not_approved"], "_usd_requested"].sum())
+    # Requested balance = requested still in play = requested − secured (won) − unsecured
+    # (lost) = the amount on applications still awaiting a donor decision.
+    requested_balance = max(0.0, total_requested - total_secured - total_unsecured)
+    win_rate = (approved / total_submitted * 100) if total_submitted else 0
 
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Total Active", total_active)
-    k2.metric("Approved", approved)
-    k3.metric("Under Review", pending)
-    k4.metric("Total Requested (USD)", f"${total_requested:,.0f}")
-    k5.metric("Secured (USD)", f"${total_secured:,.0f}")
-    k6.metric("Not Secured (USD)", f"${not_secured:,.0f}",
-              help="Requested − Secured: funding you've applied for that isn't secured yet.")
-    st.caption(f"Win rate: **{win_rate:.0f}%** (Approved ÷ Total Active)")
+    # Row 1 — counts. Row 2 — amounts (own row so the $ figures aren't truncated).
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Submitted", total_submitted)
+    c2.metric("Approved", approved)
+    c3.metric("Under Review", pending)
+    c4.metric("Not Approved", not_approved)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Requested (USD)", f"${total_requested:,.0f}")
+    m2.metric("Total Secured (USD)", f"${total_secured:,.0f}",
+              help="Secured on Approved applications.")
+    m3.metric("Total Unsecured (USD)", f"${total_unsecured:,.0f}",
+              help="Requested amount tied to Not-Approved applications (funding lost).")
+    m4.metric("Total Requested Balance (USD)", f"${requested_balance:,.0f}",
+              help="Requested − Secured − Unsecured: funding still awaiting a decision.")
+    st.caption(f"Win rate: **{win_rate:.0f}%** (Approved ÷ Total Submitted)")
     st.divider()
 
 
     # -----------------------------------------------------------------------------
-    # Per-grant detail (Approved + Under Review only) — appears BEFORE By funder
+    # Per-application detail (every submitted application) — appears BEFORE "by funder"
     # -----------------------------------------------------------------------------
     st.subheader("Per-grant detail")
 
@@ -156,7 +170,7 @@ with _main:
     # (without it, a rerun triggered elsewhere on the page snaps the
     # selectbox back to index 0).
     pick = st.selectbox(
-        "Pick an active grant", labels,
+        "Pick an application", labels,
         key="grants_active_picker",
     )
     uid = uid_by_label[pick]
@@ -164,7 +178,7 @@ with _main:
 
     # Status badge — uses the display status (Completed-but-undecided shows as Under Review).
     _status = r.get("_status_display") or r.get("donor_decision") or "—"
-    DD_COLOR = {"approved": "#dcf5e3", "under review": "#fff4cc"}
+    DD_COLOR = {"approved": "#dcf5e3", "under review": "#fff4cc", "not approved": "#fde0e0"}
     bg = DD_COLOR.get(str(_status).lower(), "#eee")
 
     # Deadline chip — every grant here is SUBMITTED, so a passed deadline reads as an
@@ -339,58 +353,36 @@ with _main:
                 f"(owner: {n.get('owner') or '—'}, due: {n.get('deadline') or '—'})"
             )
 
-    # ── Edit this grant (open to ANY tenant member) ─────────────────────────────
-    # Team-meeting workflow: pick a grant above and edit the WHOLE record in a pop-up —
-    # status, progress, applicants (Lead/Sub), Date Submitted, Amount Requested/Secured,
-    # reporting, etc. Reuses the shared full RFP editor (Settings → Records / Review /
-    # Tracking), so every field is editable in one place. Delete inside stays admin-only.
-    # Setting donor_decision = "Not Approved" drops the grant from Active Grants on save.
+    # ── Edit this application (open to ANY tenant member) ───────────────────────
+    # Pick an application above and edit the WHOLE record in ONE pop-up — status, progress,
+    # applicants (Lead/Sub), Date Submitted, Amount Requested/Secured, AND reporting (report
+    # status/type/due/owner → active_grants). Reuses the shared editor; the Application tab is
+    # hidden here (it belongs on Review) and a Reporting tab is shown so reporting is edited in
+    # the same place. Delete inside stays admin-only. Setting donor_decision keeps/moves the
+    # application between buckets on save.
     if _can_edit:
         from views.rfp_editor import render_rfp_editor
         if st.button("✏️ Edit grant details", type="primary", key=f"grant_edit_{uid}"):
             # Pass the RAW submissions row (not the display-augmented dict) so the editor
             # writes real column values. render_rfp_editor is an @st.dialog → opens a modal.
             _raw = clean_record(rfps[rfps["uid"] == uid].iloc[0].to_dict())
-            render_rfp_editor(_raw, sb=sb, user=_user, is_admin=_perm.is_admin(_user))
+            render_rfp_editor(_raw, sb=sb, user=_user, is_admin=_perm.is_admin(_user),
+                              show_application=False, show_reporting=True)
         st.caption("Opens the full editor — Status, Progress, Lead/Sub applicant, Date "
-                   "Submitted, Amount Requested/Secured and more.")
-
-        # Report status lives in the separate active_grants table (not rfp_submissions), so
-        # the full editor doesn't reach it — offer a focused control here when a reporting
-        # row exists. "Not applicable" N/A's the reporting questions for a grant with nothing
-        # to report on.
-        if not linked.empty and linked.iloc[0].get("grant_id"):
-            from core import dropdowns as _dropdowns
-            _rep_opts = list(_dropdowns.get("report_statuses") or [])
-            _cur_rep = str(linked.iloc[0].get("status") or "")
-            _rc1, _rc2, _rc3 = st.columns([1.6, 0.8, 3])
-            _new_rep = _rc1.selectbox(
-                "Report status", _rep_opts,
-                index=_rep_opts.index(_cur_rep) if _cur_rep in _rep_opts else 0,
-                key=f"grant_rep_{uid}")
-            _rc2.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
-            if _rc2.button("💾 Save", key=f"grant_rep_save_{uid}") and _new_rep != _cur_rep:
-                try:
-                    safe_execute(sb.table("active_grants").update({"status": _new_rep})
-                                 .eq("grant_id", linked.iloc[0].get("grant_id")))
-                    st.cache_data.clear()
-                    st.success(f"Report status → {_new_rep}.")
-                    st.rerun()
-                except Exception as _exc:
-                    st.error(f"Couldn't save report status: {type(_exc).__name__}: {_exc}")
+                   "Submitted, Amount Requested/Secured, and the **Reporting** tab.")
 
     st.divider()
 
 
     # -----------------------------------------------------------------------------
-    # By funder (paginated at 10 rows / page)
+    # Applications by funder — the full submitted log, incl. Not Approved (paginated)
     # -----------------------------------------------------------------------------
-    st.subheader("By funder")
+    st.subheader("Applications by funder")
     st.caption(
-        "**Submissions** sums the per-RFP `submissions` column (an RFP can have "
-        "multiple donor-side submissions). **RFPs** is the distinct count of "
-        "active RFPs. Requested is the sum of `amount_requested`; Secured is the "
-        "sum of `amount_secured` from approved rows only."
+        "Every application we've submitted, grouped by funder — including declined ones. "
+        "**Submissions** sums the per-RFP `submissions` column (an RFP can have multiple "
+        "donor-side submissions). **RFPs** is the distinct count of applications. **Requested** "
+        "sums `amount_requested`; **Secured** sums `amount_secured` from Approved rows only."
     )
 
     # Submissions sums the per-row Submissions column (one RFP can have multiple
@@ -405,6 +397,7 @@ with _main:
             Submissions=("_submissions_int", "sum"),
             Approved=("_approved", "sum"),
             Pending=("_pending", "sum"),
+            NotApproved=("_not_approved", "sum"),
             Requested=("_usd_requested", "sum"),
             Secured=("_usd_secured", lambda s: float(s[active.loc[s.index, "_approved"]].sum())),
         )
@@ -448,7 +441,8 @@ with _main:
                 help="Sum of submission events (RFPs × Submissions per RFP)"
             ),
             "Approved":    st.column_config.NumberColumn("Approved", format="%d"),
-            "Pending":     st.column_config.NumberColumn("Pending",  format="%d"),
+            "Pending":     st.column_config.NumberColumn("Under Review",  format="%d"),
+            "NotApproved": st.column_config.NumberColumn("Not Approved", format="%d"),
             "Requested":   st.column_config.NumberColumn("Requested (USD)", format="$%.0f"),
             "Secured":     st.column_config.NumberColumn("Secured (USD)",   format="$%.0f"),
         },
