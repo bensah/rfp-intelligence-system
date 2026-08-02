@@ -25,6 +25,11 @@ from core.records import clean_record, clean_df
 from db.supabase_client import get_client, safe_execute
 
 sb = get_client()
+# Any tenant member may edit grant statuses (routine team-meeting task); Delete/admin
+# actions live elsewhere and stay gated.
+from core import permissions as _perm
+_user = st.session_state.get("app_user") or {}
+_can_edit = _perm.can_edit_status(_user)
 st.title("Your Active Grants")
 
 
@@ -52,10 +57,29 @@ with _main:
         rfps = clean_df(rfps)
         if not rfps.empty:
             dd = rfps["donor_decision"].fillna("").astype(str).str.strip().str.lower()
-            # ACTIVE = Approved OR Under Review. Not Approved drops out.
-            rfps["_active"] = dd.isin({"approved", "under review"})
+            _ps_col = (rfps["progress_status"] if "progress_status" in rfps.columns
+                       else pd.Series("", index=rfps.index))
+            ps = _ps_col.fillna("").astype(str).str.strip().str.lower()
+            # ACTIVE = Approved OR Under Review OR submitted-to-donor (progress=Completed).
+            # A row marked Progress=Completed on Tracking LEAVES Tracking (it's submitted),
+            # so it must ENTER Active Grants even if its donor_decision is still blank —
+            # otherwise it falls into the gap between the two pages (count stuck low). A
+            # Completed-but-undecided grant is bucketed as Under Review (awaiting the donor).
+            # Not Approved / Discontinued correctly stay OUT.
+            _completed = ps.eq("completed")
+            # Completed (submitted) ENTERS Active Grants — UNLESS the donor already said No
+            # (Not Approved drops out regardless of progress).
+            rfps["_active"] = (dd.isin({"approved", "under review"})
+                               | (_completed & ~dd.eq("not approved")))
             rfps["_approved"] = dd.eq("approved")
-            rfps["_pending"] = dd.eq("under review")
+            rfps["_pending"] = (dd.eq("under review")
+                                | (_completed & ~dd.isin({"approved", "not approved"})))
+            # Display status = the raw donor_decision, EXCEPT a Completed-but-undecided grant
+            # shows as "Under Review" (its effective bucket) so the badge/label match the KPI.
+            rfps["_status_display"] = (rfps["donor_decision"].fillna("").astype(str)
+                                       .str.strip())
+            _needs_ur = _completed & ~dd.isin({"approved", "under review", "not approved"})
+            rfps.loc[_needs_ur, "_status_display"] = "Under Review"
             rfps["_usd_requested"] = rfps.apply(
                 lambda r: usd_value(r.get("amount_requested"), r.get("currency")), axis=1
             )
@@ -87,14 +111,19 @@ with _main:
     pending = int(active["_pending"].sum())
     total_requested = float(active["_usd_requested"].sum())
     total_secured = float(active.loc[active["_approved"], "_usd_secured"].sum())
+    # Not Secured = requested we've applied for but NOT yet secured (outstanding across all
+    # active grants) = total requested − total secured. Highlights the funding still in play.
+    not_secured = max(0.0, total_requested - total_secured)
     win_rate = (approved / total_active * 100) if total_active else 0
 
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Total Active", total_active)
     k2.metric("Approved", approved)
     k3.metric("Under Review", pending)
     k4.metric("Total Requested (USD)", f"${total_requested:,.0f}")
     k5.metric("Secured (USD)", f"${total_secured:,.0f}")
+    k6.metric("Not Secured (USD)", f"${not_secured:,.0f}",
+              help="Requested − Secured: funding you've applied for that isn't secured yet.")
     st.caption(f"Win rate: **{win_rate:.0f}%** (Approved ÷ Total Active)")
     st.divider()
 
@@ -117,7 +146,7 @@ with _main:
     for _, gr in priority.iterrows():
         label = (
             f"{gr.get('opportunity_title') or '(no title)'}  ·  "
-            f"{gr['uid']}  ·  {gr.get('donor_decision') or '—'}"
+            f"{gr['uid']}  ·  {gr.get('_status_display') or gr.get('donor_decision') or '—'}"
         )
         option_pairs.append((label, gr["uid"]))
     labels = [lbl for lbl, _ in option_pairs]
@@ -133,18 +162,24 @@ with _main:
     uid = uid_by_label[pick]
     r = clean_record(active[active["uid"] == uid].iloc[0].to_dict())
 
-    # Status badge
+    # Status badge — uses the display status (Completed-but-undecided shows as Under Review).
+    _status = r.get("_status_display") or r.get("donor_decision") or "—"
     DD_COLOR = {"approved": "#dcf5e3", "under review": "#fff4cc"}
-    dd_key = (r.get("donor_decision") or "").lower()
-    bg = DD_COLOR.get(dd_key, "#eee")
+    bg = DD_COLOR.get(str(_status).lower(), "#eee")
+
+    # Deadline chip — every grant here is SUBMITTED, so a passed deadline reads as an
+    # outcome (Submitted / Awarded / Not approved), never "Overdue".
+    from core.pipeline import deadline_status as _dl_status
+    _dchip = _dl_status(r.get("call_submission_deadline"), submitted=True, decision=_status)
+    _dchip_txt = f" · Deadline: **{_dchip}**" if _dchip else ""
 
     h1, h2 = st.columns([4, 1])
     h1.markdown(f"### {r.get('opportunity_title') or '(no title)'}")
-    h1.caption(f"UID `{r['uid']}` · Funder: **{r.get('funding_agency') or '—'}**")
+    h1.caption(f"UID `{r['uid']}` · Funder: **{r.get('funding_agency') or '—'}**{_dchip_txt}")
     h2.markdown(
         f"<div style='background:{bg};padding:14px 18px;border-radius:8px;"
         f"text-align:center;font-weight:600;font-size:1.05rem;margin-top:6px'>"
-        f"{r.get('donor_decision') or '—'}</div>",
+        f"{_status}</div>",
         unsafe_allow_html=True,
     )
 
@@ -250,16 +285,22 @@ with _main:
 
     if not linked.empty:
         g = clean_record(linked.iloc[0].to_dict())
+        # "Not applicable" report status (e.g. a grant that wasn't approved) N/A's the
+        # dependent reporting questions — there's nothing to report on, so we don't show a
+        # spurious report type / due date / overdue countdown.
+        _rep_na = str(g.get("status") or "").strip().lower() == "not applicable"
         st.markdown("**Reporting**")
         rep1, rep2, rep3, rep4, rep5 = st.columns(5)
         # Markdown rather than st.metric so long text values (e.g. "Not Started")
         # are not truncated to "Comp…" by the metric component's narrow width.
         rep1.markdown(f"**Grant ID**  \n{_fmt(g.get('grant_id'))}")
-        rep2.markdown(f"**Report type**  \n{_fmt(g.get('report_type'))}")
+        rep2.markdown(f"**Report type**  \n{'N/A' if _rep_na else _fmt(g.get('report_type'))}")
         rep3.markdown(f"**Report status**  \n{_fmt(g.get('status'))}")
-        rep4.markdown(f"**Due**  \n{_fmt(g.get('report_due_date'))}")
+        rep4.markdown(f"**Due**  \n{'N/A' if _rep_na else _fmt(g.get('report_due_date'))}")
         due = pd.to_datetime(g.get("report_due_date"), errors="coerce")
-        if pd.notna(due):
+        if _rep_na:
+            rep5.markdown("**Days to due**  \nN/A")
+        elif pd.notna(due):
             delta = (due.date() - date.today()).days
             rep5.markdown(f"**Days to due**  \n{delta:+d}")
         else:
@@ -297,6 +338,57 @@ with _main:
                 f"- **{n.get('meeting_date')}** — _{n.get('actions') or '(no action)'}_ "
                 f"(owner: {n.get('owner') or '—'}, due: {n.get('deadline') or '—'})"
             )
+
+    # ── Update status (open to ANY tenant member) ───────────────────────────────
+    # Team-meeting workflow: pick a grant above, change its Status / Progress / Report
+    # status here and Save. Setting "Not Approved" drops the grant from Active Grants
+    # (donor_decision drives membership). Writes rfp_submissions (decision/progress) and,
+    # when a reporting row exists, active_grants.status.
+    if _can_edit:
+        from core import dropdowns as _dropdowns
+        st.markdown("**Update status**")
+        _dec_opts = list(_dropdowns.get("donor_decision") or [])
+        _prog_opts = list(_dropdowns.get("progress_status") or [])
+        _cur_dec = str(r.get("donor_decision") or "")
+        _cur_prog = str(r.get("progress_status") or "")
+        _has_linked = not linked.empty
+        _cur_rep = str(linked.iloc[0].get("status") or "") if _has_linked else ""
+        _widths = [1.4, 1.4, 1.4, 0.8] if _has_linked else [1.9, 1.9, 0.8]
+        _ec = st.columns(_widths)
+        _new_dec = _ec[0].selectbox(
+            "Status (donor decision)", _dec_opts,
+            index=_dec_opts.index(_cur_dec) if _cur_dec in _dec_opts else 0,
+            key=f"grant_dec_{uid}")
+        _new_prog = _ec[1].selectbox(
+            "Progress", _prog_opts,
+            index=_prog_opts.index(_cur_prog) if _cur_prog in _prog_opts else 0,
+            key=f"grant_prog_{uid}")
+        _new_rep = None
+        if _has_linked:
+            _rep_opts = list(_dropdowns.get("report_statuses") or [])
+            _new_rep = _ec[2].selectbox(
+                "Report status", _rep_opts,
+                index=_rep_opts.index(_cur_rep) if _cur_rep in _rep_opts else 0,
+                key=f"grant_rep_{uid}")
+        _ec[-1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+        if _ec[-1].button("💾 Save", type="primary", key=f"grant_save_{uid}"):
+            _payload: dict = {}
+            if _new_dec != _cur_dec:
+                _payload["donor_decision"] = _new_dec
+            if _new_prog != _cur_prog:
+                _payload["progress_status"] = _new_prog
+            try:
+                if _payload:
+                    safe_execute(sb.table("rfp_submissions").update(_payload).eq("uid", uid))
+                if (_has_linked and _new_rep is not None and _new_rep != _cur_rep
+                        and linked.iloc[0].get("grant_id")):
+                    safe_execute(sb.table("active_grants").update({"status": _new_rep})
+                                 .eq("grant_id", linked.iloc[0].get("grant_id")))
+                st.cache_data.clear()          # _fetch is cached 60s — refresh badge/KPIs
+                st.success(f"Updated {uid} → {_new_dec}.")
+                st.rerun()
+            except Exception as _exc:
+                st.error(f"Couldn't save: {type(_exc).__name__}: {_exc}")
 
     st.divider()
 
