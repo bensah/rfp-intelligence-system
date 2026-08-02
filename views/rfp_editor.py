@@ -374,6 +374,14 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False) -> None:
             "decision_overridden_by": user.get("email"),
             "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
         }
+        # Invariant: Progress = "Completed" means the proposal was SUBMITTED to the donor,
+        # so a donor decision is now pending. If the user marked Completed but left the
+        # donor decision blank/Not submitted, default it to "Under Review" — otherwise the
+        # row leaves Tracking (Completed) yet never enters Active Grants (which keys off
+        # donor_decision), the exact gap that hid the lead-poisoning grant.
+        if str(update.get("progress_status") or "").strip().lower() == "completed" \
+                and str(update.get("donor_decision") or "").strip().lower() in ("", "not submitted"):
+            update["donor_decision"] = "Under Review"
         sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
         # ML Phase 1/3 — log the human decision as a labeled signal on save.
         # Captures CONFIRMATIONS (reviewer kept the recommended decision) as

@@ -126,7 +126,7 @@ engagement_formats: [In-person, Virtual, Written, Hybrid]
 
 report_types: [Financial, Annual, Final, Ad-hoc, Interim]
 
-report_statuses: [Not Started, In Progress, Submitted, Overdue, Accepted]
+report_statuses: [Not Started, In Progress, Submitted, Overdue, Accepted, Not applicable]
 
 narrative_uses: [Partner meeting, Conference, Website, Internal brief, Other]
 
