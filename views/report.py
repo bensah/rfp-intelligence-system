@@ -1583,18 +1583,45 @@ if _show_sec("2"):
         # Belongs in Insights because it's another "where is each RFP in the
         # pipeline?" view — the funnel above shows attrition, this shows the
         # current workflow distribution. Same narrative beat.
+        #
+        # PROCEED-ONLY: progress_status is a lifecycle only Proceed RFPs have — a Park/Decline
+        # row has no proposal to progress, so including them produced a meaningless "(unset)"
+        # bar (which was really just one blank-progress Decline row, not a data gap). Scoping
+        # to Proceed removes that noise and matches the Summary reconciliation funnel. Any
+        # blank progress on a Proceed row defaults to "Not Started" (its correct default), so
+        # every Proceed RFP is accounted for and there is no "(unset)".
         if _show("s2_progress") and "progress_status" in unique_all.columns:
-            ps = (
-                unique_all["progress_status"].fillna("(unset)")
-                .replace("", "(unset)")
-                .value_counts().reset_index()
-                .rename(columns={"progress_status": "Status", "count": "RFPs"})
-            )
-            fig_ps = px.bar(ps, x="Status", y="RFPs", text="RFPs",
-                            title="Progress status — all RFPs", color="Status")
-            fig_ps.update_layout(height=300, showlegend=False,
-                                 margin=dict(t=40, b=10), xaxis_title=None)
-            st.plotly_chart(fig_ps, width='stretch')
+            _proc_ps = unique_all[
+                unique_all["decision"].fillna("").str.lower().str.startswith("proceed")
+            ].copy()
+            _PS_CANON = {
+                "not started": "Not Started", "in progress": "In Progress",
+                "completed": "Completed", "discontinued": "Discontinued",
+                "missed": "Missed", "missing": "Missed",
+            }
+
+            def _canon_progress(v) -> str:
+                s = str(v or "").strip().lower()
+                return _PS_CANON.get(s, "Not Started")  # blank/unknown → Not Started
+
+            if _proc_ps.empty:
+                st.caption("_No Proceed RFPs in scope._")
+            else:
+                _order = ["Not Started", "In Progress", "Completed",
+                          "Discontinued", "Missed"]
+                ps = (
+                    _proc_ps["progress_status"].apply(_canon_progress)
+                    .value_counts().reindex(_order, fill_value=0)
+                    .rename_axis("Status").reset_index(name="RFPs")
+                )
+                fig_ps = px.bar(ps, x="Status", y="RFPs", text="RFPs",
+                                title="Progress status — Proceed RFPs", color="Status",
+                                category_orders={"Status": _order})
+                fig_ps.update_layout(height=300, showlegend=False,
+                                     margin=dict(t=40, b=10), xaxis_title=None)
+                st.plotly_chart(fig_ps, width='stretch')
+                st.caption(f"_{len(_proc_ps)} Proceed RFPs (blank progress counts as "
+                           f"'Not Started'). Completed = submitted to donor._")
 
     st.divider()
 
@@ -2131,34 +2158,63 @@ if _show_sec("5"):
                 usd_view["amount_secured"],
                 usd_view.get("currency_secured", pd.Series(dtype=str)),
             )
-            scatter_df = usd_view[(usd_view["req_usd"] > 0) | (usd_view["sec_usd"] > 0)][
-                ["opportunity_title", "funding_agency", "req_usd", "sec_usd",
-                 "progress_status", "donor_decision"]
+            # Only SUBMITTED RFPs (a donor decision exists) have a secured/unsecured outcome.
+            _ddv = usd_view["donor_decision"].fillna("").str.strip().str.lower()
+            out_df = usd_view[
+                _ddv.isin({"approved", "under review", "not approved"})
+                & ((usd_view["req_usd"] > 0) | (usd_view["sec_usd"] > 0))
             ].copy()
-            if not scatter_df.empty:
-                fig_amt = px.scatter(
-                    scatter_df, x="req_usd", y="sec_usd",
-                    hover_data=["opportunity_title", "funding_agency",
-                                "progress_status", "donor_decision"],
-                    title="Requested vs Secured — every RFP with a value",
-                    labels={"req_usd": "Amount requested (USD)",
-                            "sec_usd": "Amount secured (USD)"},
+            if not out_df.empty:
+                _d = out_df["donor_decision"].str.strip().str.lower()
+                # SIGNED outcome so the axis itself tells the story:
+                #   Approved      → +secured (won; falls back to requested if secured blank)
+                #   Under Review  → +requested (pending — potential, awaiting decision)
+                #   Not Approved  → −requested (UNSECURED / lost — plotted BELOW zero, red)
+                def _signed(row):
+                    d = str(row.get("donor_decision") or "").strip().lower()
+                    if d == "approved":
+                        return row["sec_usd"] or row["req_usd"]
+                    if d == "not approved":
+                        return -row["req_usd"]
+                    return row["req_usd"]           # under review → pending (positive)
+                out_df["signed_usd"] = out_df.apply(_signed, axis=1)
+                _STATE = {"approved": "Secured", "under review": "Requested (pending)",
+                          "not approved": "Unsecured (declined)"}
+                out_df["Outcome"] = _d.map(_STATE)
+                out_df["label"] = (out_df["opportunity_title"].fillna("(untitled)")
+                                   .astype(str).str.slice(0, 42))
+                out_df = out_df.sort_values("signed_usd", ascending=False)
+                _COLORS = {"Secured": "#1e8e3e",
+                           "Requested (pending)": "#eab308",
+                           "Unsecured (declined)": "#d1343b"}
+                fig_amt = px.bar(
+                    out_df, x="label", y="signed_usd", color="Outcome",
+                    color_discrete_map=_COLORS,
+                    title="Requested vs Secured — secured (▲) vs unsecured / declined (▼)",
+                    labels={"signed_usd": "USD  ·  secured ▲ / unsecured ▼", "label": ""},
+                    hover_data={"funding_agency": True, "req_usd": ":,.0f",
+                                "sec_usd": ":,.0f", "donor_decision": True,
+                                "signed_usd": False, "label": False},
                 )
-                # Add y = x dashed reference line so "full ask received" is visible.
-                mx = max(scatter_df["req_usd"].max(), scatter_df["sec_usd"].max())
-                fig_amt.add_shape(type="line", line=dict(dash="dash", color="#94a3b8"),
-                                  x0=0, y0=0, x1=mx, y1=mx)
-                fig_amt.update_layout(height=400, margin=dict(t=40, b=10))
+                fig_amt.add_hline(y=0, line_color="#334155", line_width=1)
+                fig_amt.update_layout(height=430, margin=dict(t=40, b=110),
+                                      xaxis_tickangle=-40,
+                                      legend=dict(orientation="h", y=-0.35))
                 st.plotly_chart(fig_amt, width='stretch')
 
-                t1, t2, t3 = st.columns(3)
-                t1.metric("Total Requested (USD)", f"${scatter_df['req_usd'].sum():,.0f}")
-                t2.metric("Total Secured (USD)",  f"${scatter_df['sec_usd'].sum():,.0f}")
-                pct = (scatter_df["sec_usd"].sum() / scatter_df["req_usd"].sum() * 100
-                       if scatter_df["req_usd"].sum() > 0 else 0)
-                t3.metric("Secured ÷ Requested", f"{pct:.1f}%")
+                total_req = float(out_df["req_usd"].sum())
+                total_sec = float(out_df.loc[_d.eq("approved"), "sec_usd"].sum())
+                total_unsec = float(out_df.loc[_d.eq("not approved"), "req_usd"].sum())
+                t1, t2, t3, t4 = st.columns(4)
+                t1.metric("Total Requested (USD)", f"${total_req:,.0f}")
+                t2.metric("Total Secured (USD)", f"${total_sec:,.0f}")
+                t3.metric("Total Unsecured (USD)", f"${total_unsec:,.0f}",
+                          help="Requested amount on Not-Approved (declined) RFPs — shown "
+                               "below the zero line in red.")
+                pct = (total_sec / total_req * 100) if total_req > 0 else 0
+                t4.metric("Secured ÷ Requested", f"{pct:.1f}%")
             else:
-                st.info("No RFPs with monetary amounts recorded yet.")
+                st.info("No submitted RFPs with monetary amounts recorded yet.")
 
         # ───────────── Conversion rates (relocated from §4) ───────────────────
         # The actual rates that quantify the funnel. Belongs with Outcomes
