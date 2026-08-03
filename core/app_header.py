@@ -427,6 +427,16 @@ _GLOBAL_CSS = f"""
   [data-testid="stMetricValue"] {{
     color: {THEME_PRIMARY_DARK} !important;
     font-weight: 700;
+    /* Streamlit's default clips a metric value to nowrap+ellipsis, so a long money
+       figure like "C$1,200,000 CAD" rendered "C$1,200,00…". Let it wrap instead — at
+       every width, not just mobile (the mobile @media already had this). */
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+  }}
+  [data-testid="stMetricValue"] > div {{
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
   }}
 
   /* Primary action buttons — use the green */
