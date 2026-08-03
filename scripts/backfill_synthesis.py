@@ -1,15 +1,25 @@
-"""Backfill LLM review-synthesis onto existing rfp_submissions rows.
+"""Backfill LLM review-synthesis onto existing rfp_submissions rows — BLANK-ONLY, safe.
 
-Every row in rfp_submissions has already passed the gate (Decline/Park/Proceed),
-so all qualify (rejected candidates were never inserted). For each row we run
-core.llm_synthesis once and write:
-  * brief_description  — LLM synthesis, ≤1000 chars (replaces the copied site text)
-  * program_area       — LLM taxonomy classification (replaces keyword guess)
-  * key_risks          — set ONLY if currently blank (human edits win)
-  * decision_note      — set ONLY if currently blank (draft rationale; human wins)
+Every row in rfp_submissions has already passed the gate (Decline/Park/Proceed), so all
+qualify. For each row we run core.llm_synthesis once and FILL ONLY the fields that are
+currently blank — a populated value (human or prior) is NEVER overwritten:
+
+  * brief_description        * how_to_apply            * key_risks
+  * call_domain_areas        * compliance_requirements * decision_note (from rationale)
+  * application_checklist    * eligibility_specifics   * apply_url (→ opportunity_link)
+
+This script does NOT re-score: it never re-derives qualification/capacity/cofinancing and
+never touches alignment_score or auto_recommendation. (An earlier version did, which could
+flip a live decision from non-deterministic LLM output — see spawn_task task_29c95605 and
+the memory note. Use the live pipeline / Review UI to re-score, not a bulk backfill.)
+
+DRY-RUN by default: it only reports what it WOULD fill. Pass --apply to write. Scoped to
+ONE tenant (synthesis reads that tenant's org profile) via --tenant; without it the run is
+tenant-less and fail-closed get_client() will see no rows.
 
 Usage:
-    python scripts/backfill_synthesis.py [--limit N] [--workers 4] [--dry-run]
+    python scripts/backfill_synthesis.py --tenant <slug-or-id> [--limit N] [--workers 4]
+    python scripts/backfill_synthesis.py --tenant <slug-or-id> --apply
 """
 from __future__ import annotations
 
@@ -35,9 +45,38 @@ from db.supabase_client import get_client
 _CRIT = ("qualification", "strategic_fit", "capacity", "geographic_fit", "cofinancing",
          "funding_quality", "funder_relationship", "competitiveness", "bid_effort")
 
+# rfp_submissions column  ←  synthesize() output key. apply_url is special (falls back to
+# the opportunity link, not an LLM field). Every one is filled ONLY when the row's current
+# value is blank.
+_FILL_FIELDS = {
+    "brief_description": "brief_description",
+    "call_domain_areas": "call_domain_areas",
+    "how_to_apply": "how_to_apply",
+    "compliance_requirements": "compliance_requirements",
+    "application_checklist": "application_checklist",
+    "eligibility_specifics": "eligibility_specifics",
+    "key_risks": "key_risks",
+    "decision_note": "decision_rationale",
+    "apply_url": None,
+}
 
-def _one(row: dict, org: dict, sb=None,
-         org_set: dict | None = None) -> tuple[str, dict | None, dict | None]:
+
+def _is_blank(v) -> bool:
+    """A field counts as blank (safe to fill) if None, an empty/whitespace string, or an
+    empty list/dict. A populated value is left untouched."""
+    if v is None:
+        return True
+    if isinstance(v, str):
+        return not v.strip()
+    if isinstance(v, (list, tuple, dict)):
+        return len(v) == 0
+    return False
+
+
+def _one(row: dict, org: dict) -> tuple[str, dict | None, dict | None]:
+    """Synthesise once; return a BLANK-ONLY update for this row (or None if nothing to
+    fill). Never overwrites a populated field; never re-scores; never touches
+    auto_recommendation / alignment_score / the eligibility gate."""
     crit = {k: row.get(k) for k in _CRIT}
     syn = llm_synthesis.synthesize(row, org, row.get("auto_recommendation"), crit)
     if not syn:
@@ -45,127 +84,86 @@ def _one(row: dict, org: dict, sb=None,
     usage = {"prompt_tokens": syn.get("_prompt_tokens"),
              "completion_tokens": syn.get("_completion_tokens")}
     upd: dict = {}
-    if syn.get("brief_description"):
-        upd["brief_description"] = syn["brief_description"]
-    if syn.get("call_domain_areas"):
-        upd["call_domain_areas"] = syn["call_domain_areas"]
-    if syn.get("key_risks") and not (row.get("key_risks") or "").strip():
-        upd["key_risks"] = syn["key_risks"]
-    if syn.get("decision_rationale") and not (row.get("decision_note") or "").strip():
-        upd["decision_note"] = syn["decision_rationale"]
-    if syn.get("how_to_apply"):
-        upd["how_to_apply"] = syn["how_to_apply"]
-    if syn.get("compliance_requirements"):
-        upd["compliance_requirements"] = syn["compliance_requirements"]
-    if syn.get("application_checklist"):
-        upd["application_checklist"] = syn["application_checklist"]
-    if syn.get("eligibility_specifics"):
-        upd["eligibility_specifics"] = syn["eligibility_specifics"]
-    if not (row.get("apply_url") or "").strip():
-        upd["apply_url"] = row.get("opportunity_link")   # portal URL (fallback to call link)
-    # Feed LLM-extracted RFP compliance flags into MUST-5 → re-derive + re-score
-    # (auto fields only; the human's decision/notes are untouched).
-    _flags = syn.get("call_compliance_flags") or {}
-    if _flags:
-        import json as _json
-        upd["call_compliance_flags"] = _json.dumps(_flags)   # persist for Review re-merge
-    if _flags and sb is not None:
-        try:
-            from core import criteria_derive as _cdv, matching as _mm
-            from core.auto_scorer import recommend_from_composite as _rec
-            _dn = None
-            _fa = (row.get("funding_agency") or "").strip()
-            if _fa:
-                # Resolve donors IDENTICALLY to the live scorer (exact-key, no fuzzy),
-                # so a re-score never diverges from / overwrites the live decision.
-                from core.donor_intel import match_donor as _match_donor
-                _dn = _match_donor(_fa, fuzzy=False)
-            # Re-derive BOTH call-flag-sensitive labels: MUST-1 qualification +
-            # MUST-5 cofinancing. Recompute the composite + gate if either changed.
-            _cv = {k: row.get(k) for k in _CRIT}
-            _changed = False
-            _newqual = _cdv.derive_qualification(org, row, _dn, org_set or {},
-                                                 rfp_compliance=_flags)
-            if _newqual and _newqual != row.get("qualification"):
-                _cv["qualification"] = _newqual
-                upd["qualification"] = _newqual
-                _changed = True
-            _newcap = _cdv.derive_capacity(org, row, _dn, org_set or {},
-                                           rfp_compliance=_flags)
-            if _newcap and _newcap != row.get("capacity"):
-                _cv["capacity"] = _newcap
-                upd["capacity"] = _newcap
-                _changed = True
-            _newcof = _cdv.derive_cofinancing(org, row, _dn, rfp_compliance=_flags,
-                                              org_settings=org_set or {})
-            if _newcof and _newcof != row.get("cofinancing"):
-                _cv["cofinancing"] = _newcof
-                upd["cofinancing"] = _newcof
-                _changed = True
-            if _changed:
-                _m = _mm.composite_match({**row, **_cv}, org, _dn, org_set or {})
-                _isf, _ = _cdv.fatal_decline(org, row, _dn, org_set or {},
-                                             rfp_compliance=_flags)
-                upd["alignment_score"] = round(_m["composite"], 1)
-                upd["auto_recommendation"] = _rec(
-                    _cv, _m["composite"], fatal=_isf,
-                    below_award_floor=_cdv.below_award_floor(row, org))
-        except Exception:
-            pass
+    for col, synkey in _FILL_FIELDS.items():
+        if not _is_blank(row.get(col)):
+            continue                                   # human / prior value wins
+        val = row.get("opportunity_link") if col == "apply_url" else syn.get(synkey)
+        if val:
+            upd[col] = val
     return row["uid"], (upd or None), usage
 
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--tenant", default=None,
+                    help="tenant slug or id to scope this backfill to (required to see rows)")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--apply", action="store_true",
+                    help="write changes (default: dry-run, report only)")
     args = ap.parse_args(argv)
 
     if not llm_synthesis.is_enabled():
         print("LLM synthesis disabled (no LLM_JUDGE_/LLM_SYNTH_ endpoint). Aborting.")
         return 1
-    sb = get_client()
-    org = orgp.get_profile()
-    try:
-        from core import settings as _settings
-        org_set = _settings.get_org()
-    except Exception:
-        org_set = {}
-    rows = sb.table("rfp_submissions").select("*").order(
-        "created_at", desc=True).limit(5000).execute().data or []
-    if args.limit:
-        rows = rows[:args.limit]
-    print(f"Backfilling synthesis on {len(rows)} screened row(s), workers={args.workers}"
-          + (" [DRY-RUN]" if args.dry_run else ""))
 
-    done = wrote = 0
-    calls_with_usage = 0
-    total_prompt = total_completion = 0
-    with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = {ex.submit(_one, r, org, sb, org_set): r for r in rows}
-        for f in as_completed(futs):
-            uid, upd, usage = f.result()
-            done += 1
-            if usage and usage.get("prompt_tokens") is not None:
-                calls_with_usage += 1
-                total_prompt += usage["prompt_tokens"]
-                total_completion += usage.get("completion_tokens") or 0
-            if upd:
-                if not args.dry_run:
-                    sb.table("rfp_submissions").update(upd).eq("uid", uid).execute()
-                wrote += 1
-                print(f"  [{done}/{len(rows)}] {uid}: {', '.join(upd.keys())}")
-            else:
-                print(f"  [{done}/{len(rows)}] {uid}: (no change)")
-    print(f"\nDone. {wrote}/{len(rows)} rows {'would be ' if args.dry_run else ''}updated.")
-    if calls_with_usage:
-        print(
-            f"Token cost — {calls_with_usage} call(s) reported usage: "
-            f"prompt {total_prompt} total / {total_prompt / calls_with_usage:.0f} avg, "
-            f"completion {total_completion} total / {total_completion / calls_with_usage:.0f} avg."
-        )
-    return 0
+    # Scope the whole run (reads, org profile, writes) to the target tenant.
+    _tok = None
+    if args.tenant:
+        from auth import tenant_context as _tc
+        tid = args.tenant
+        try:
+            resolved = _tc.resolve_tenant_by_key(args.tenant)
+            if resolved and resolved.get("id"):
+                tid = resolved["id"]
+        except Exception:
+            pass
+        _tok = _tc.set_tenant_override(tid)
+        print(f"Scoped to tenant {args.tenant} ({tid}).")
+    else:
+        print("WARNING: no --tenant given; fail-closed get_client() will likely see 0 rows.")
+
+    try:
+        sb = get_client()
+        org = orgp.get_profile()
+        rows = sb.table("rfp_submissions").select("*").order(
+            "created_at", desc=True).limit(5000).execute().data or []
+        if args.limit:
+            rows = rows[:args.limit]
+        print(f"Blank-only synthesis backfill on {len(rows)} screened row(s), "
+              f"workers={args.workers}" + ("" if args.apply else "  [DRY-RUN]"))
+
+        done = wrote = 0
+        calls_with_usage = 0
+        total_prompt = total_completion = 0
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futs = {ex.submit(_one, r, org): r for r in rows}
+            for f in as_completed(futs):
+                uid, upd, usage = f.result()
+                done += 1
+                if usage and usage.get("prompt_tokens") is not None:
+                    calls_with_usage += 1
+                    total_prompt += usage["prompt_tokens"]
+                    total_completion += usage.get("completion_tokens") or 0
+                if upd:
+                    if args.apply:
+                        sb.table("rfp_submissions").update(upd).eq("uid", uid).execute()
+                    wrote += 1
+                    print(f"  [{done}/{len(rows)}] {uid}: fill {', '.join(sorted(upd.keys()))}")
+                else:
+                    print(f"  [{done}/{len(rows)}] {uid}: (nothing blank to fill)")
+        print(f"\nDone. {wrote}/{len(rows)} rows {'updated' if args.apply else 'would be filled'}.")
+        if calls_with_usage:
+            print(
+                f"Token cost — {calls_with_usage} call(s) reported usage: "
+                f"prompt {total_prompt} total / {total_prompt / calls_with_usage:.0f} avg, "
+                f"completion {total_completion} total / {total_completion / calls_with_usage:.0f} avg."
+            )
+        return 0
+    finally:
+        if _tok is not None:
+            from auth import tenant_context as _tc
+            _tc.reset_tenant_override(_tok)
 
 
 if __name__ == "__main__":
