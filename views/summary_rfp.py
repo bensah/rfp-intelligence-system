@@ -214,26 +214,31 @@ for col, (label, val) in zip(r1c, [
     with col:
         _kpi(label, val)
 
-# Row 2 — role mix (centered, slightly lower; 3 cards across the middle)
-role_lower = unique["applicant_role"].fillna("").str.lower()
-prime = int(role_lower.eq("prime").sum())
-sub = int(role_lower.eq("sub").sum())
-ta = int(role_lower.eq("technical").sum())
+# Row 2 — role mix of the PROCEED pipeline. Single denominator = Total Unique RFPs so the
+# three cards are comparable ("of 75") and add up to Proceed. Shows count of / total + %.
+_total_unique = int(len(unique))
 proc_role_lower = proceed_df["applicant_role"].fillna("").str.lower()
 proc_prime = int(proc_role_lower.eq("prime").sum())
 proc_sub = int(proc_role_lower.eq("sub").sum())
 proc_ta = int(proc_role_lower.eq("technical").sum())
 
+
+def _role_val(n: int) -> str:
+    pct = (n / _total_unique * 100) if _total_unique else 0
+    return f"{n} of {_total_unique} ({pct:.0f}%)"
+
+
 st.write("")  # vertical spacer
-# Three even cards (was [1,2,2,2,1] with empty side cells, which wrapped into
-# a lopsided layout with blank gaps on mobile).
 rc1, rc2, rc3 = st.columns(3)
 with rc1:
-    _kpi("Prime Opportunities", f"{proc_prime} of {prime}", "Proceed as prime applicant")
+    _kpi("Prime Opportunities", _role_val(proc_prime),
+         "Proceed as prime applicant · of all unique RFPs")
 with rc2:
-    _kpi("Sub Opportunities", f"{proc_sub} of {sub}", "Proceed, applying as Sub")
+    _kpi("Sub Opportunities", _role_val(proc_sub),
+         "Proceed, applying as Sub · of all unique RFPs")
 with rc3:
-    _kpi("TA Provider", f"{proc_ta} of {ta}", "Technical assistance only")
+    _kpi("TA Provider", _role_val(proc_ta),
+         "Technical assistance only · of all unique RFPs")
 
 st.markdown("---")
 

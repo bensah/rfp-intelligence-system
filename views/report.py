@@ -764,6 +764,7 @@ _REPORT_SECTIONS = [
         ("s1_kw_success", "Keywords driving success"),
         ("s1_sources",    "Top sources by yield"),
         ("s1_cycle",      "Search → Submission cycle time"),
+        ("s1_pipehealth", "Pipeline health (stage · tier · $)"),
     ]),
     ("2", "2 · Insights", [
         ("s2_funnel",   "Conversion funnel"),
@@ -783,9 +784,10 @@ _REPORT_SECTIONS = [
     ]),
     ("5", "5 · Our results", [
         ("s5_cumusd", "Cumulative USD secured"),
-        ("s5_grants", "Active grants pipeline"),
+        ("s5_grants", "Submitted grants"),
         ("s5_reqsec", "Requested vs secured"),
         ("s5_conv",   "Conversion rates"),
+        ("s5_donorconc", "Donor concentration (submitted)"),
     ]),
 ]
 _ALL_KEYS = [k for _, _, _items in _REPORT_SECTIONS for k, _ in _items]
@@ -1531,6 +1533,47 @@ if _show_sec("1"):
             else:
                 st.info("No RFPs with both search_date and date_completed yet — "
                         "cycle time chart will populate as proposals get submitted.")
+
+        # ───────────── Pipeline health (Proceed) — moved from Summary §B ──────
+        # Stage, probability tier, and $ by tier across the actionable PROCEED pipeline,
+        # using the LIVE alignment_score (same as the Review gauge) and per-row USD.
+        if _show("s1_pipehealth") and not rfps_all.empty:
+            st.markdown("##### Pipeline health (Proceed)")
+            from core.pipeline import prob_tier as _ptier
+            _ph = rfps_all[~rfps_all["is_duplicate"]]
+            _ph = _ph[_ph["decision"].fillna("").str.lower()
+                      .str.startswith("proceed")].copy()
+            if _ph.empty:
+                st.caption("_No Proceed RFPs yet._")
+            else:
+                _ph["_usd"] = _series_to_usd(
+                    _ph["call_award_value"], _ph.get("currency", pd.Series(dtype=str)))
+                _ph["_tier"] = _ph["alignment_score"].apply(lambda s: _ptier(s, short=True))
+                _torder = ["High", "Medium", "Low"]
+
+                def _phbar(container, title, y_vals, x_vals, money=False):
+                    with container:
+                        st.caption(f"**{title}**")
+                        _f = px.bar(x=list(x_vals), y=list(y_vals), orientation="h",
+                                    color_discrete_sequence=["#00703C"])
+                        _f.update_layout(height=230, margin=dict(t=6, b=6, l=6, r=6),
+                                         showlegend=False, xaxis_title=None, yaxis_title=None)
+                        if money:
+                            _f.update_traces(texttemplate="$%{x:,.0f}", textposition="inside",
+                                             insidetextanchor="end",
+                                             textfont=dict(color="white", size=12))
+                        st.plotly_chart(_f, width='stretch')
+
+                ph1, ph2, ph3 = st.columns(3)
+                _sc = _ph["stage"].fillna("Unspecified").value_counts()
+                _phbar(ph1, "Stage", _sc.index.tolist(), _sc.values.tolist())
+                _tc = _ph["_tier"].dropna().value_counts().reindex(_torder, fill_value=0)
+                _phbar(ph2, "Probability tier", _torder[::-1],
+                       [int(_tc.get(t, 0)) for t in _torder[::-1]])
+                _tv = (_ph.dropna(subset=["_tier"]).groupby("_tier")["_usd"].sum()
+                       .reindex(_torder, fill_value=0))
+                _phbar(ph3, "Pipeline value by tier (USD)", _torder[::-1],
+                       [float(_tv.get(t, 0)) for t in _torder[::-1]], money=True)
 
     st.divider()
 
@@ -2337,6 +2380,36 @@ if _show_sec("5"):
                             "Submissions", format="%d",
                             help="Number of donor-side submissions for this RFP "
                                  "(an RFP can be submitted more than once)."),
+                    },
+                )
+
+        # ───────────── Donor concentration (Submitted) — moved from Summary ───
+        # Which donors hold the most of what we've SUBMITTED (requested $), so a
+        # concentration risk is visible. Scoped to submitted grants (not the whole pipeline).
+        if _show("s5_donorconc"):
+            st.markdown("##### Donor concentration (submitted)")
+            if _pc.empty:
+                st.caption("_No submitted grants yet._")
+            else:
+                _dc = _pc.copy()
+                _dc["_req"] = _series_to_usd(
+                    _dc["amount_requested"], _dc.get("currency", pd.Series(dtype=str)))
+                by_donor = (
+                    _dc.groupby(_dc["funding_agency"].fillna("(unknown)"))
+                    .agg(Grants=("uid", "count"), Requested=("_req", "sum"))
+                    .reset_index().rename(columns={"funding_agency": "Funder"})
+                    .sort_values("Requested", ascending=False))
+                _tot = max(float(by_donor["Requested"].sum()), 1.0)
+                by_donor["% share"] = (by_donor["Requested"] / _tot * 100).round(1)
+                _top3 = by_donor.head(3)["% share"].sum()
+                st.caption(f"Top 3 funders hold **{_top3:.0f}%** of submitted (requested) value.")
+                st.dataframe(
+                    by_donor, width='stretch', hide_index=True,
+                    column_config={
+                        "Grants": st.column_config.NumberColumn("Grants", format="%d"),
+                        "Requested": st.column_config.NumberColumn(
+                            "Requested (USD)", format="$%,.0f"),
+                        "% share": st.column_config.NumberColumn("% share", format="%.1f%%"),
                     },
                 )
 
