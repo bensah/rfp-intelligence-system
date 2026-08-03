@@ -3,7 +3,7 @@
 A funding call can require the applicant/lead institution to be HEADQUARTERED in a specific
 country OR REGION (e.g. IDRC/ANeSA: "Organizations headquartered outside sub-Saharan Africa
 are not eligible"). MUST-1 item C must:
-  * DISQUALIFY an org whose HQ is outside the required region (CHAI Cameroon, HQ = United
+  * DISQUALIFY an org whose HQ is outside the required region (an org HQ'd in the United
     States, applying to a Sub-Saharan-Africa-HQ call);
   * ADMIT an org genuinely HQ'd inside the region (HQ = Cameroon / Nigeria) — the region
     requirement must be expanded to member countries, not matched as a literal string;
@@ -38,7 +38,7 @@ _SSA_REQ = {"donor_hq_country_required": ["Sub-Saharan Africa"]}
 
 class HqIneligibilityTests(unittest.TestCase):
     def test_hq_outside_region_is_declined(self):
-        # CHAI Cameroon: HQ = United States → excluded from a Sub-Saharan-Africa-HQ call.
+        # A US-HQ'd org: excluded from a Sub-Saharan-Africa-HQ call.
         it = _hq(donor=_SSA_REQ, org_settings={"org_hq_country": "United States"})
         self.assertTrue(it["active"])
         self.assertEqual(it["score"], 0.0)

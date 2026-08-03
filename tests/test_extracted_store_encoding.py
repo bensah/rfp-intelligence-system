@@ -41,7 +41,7 @@ class CleanEncodingTests(unittest.TestCase):
     def test_all_list_jsonb_columns_stay_lists(self):
         rec = {
             "eligibility_applicant_types": ["NGO"],
-            "eligibility_countries": ["Cameroon"],
+            "eligibility_countries": ["Kenya"],
             "focus_themes": ["health"],
             "call_domain_areas": ["malaria"],
             "attachments": [{"name": "rfp.pdf"}],

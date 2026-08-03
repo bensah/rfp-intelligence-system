@@ -375,7 +375,7 @@ def _default_membership(user: dict, mems: list[dict[str, Any]]) -> dict[str, Any
         # No membership qualified — the platform membership was likely filtered out by
         # active_memberships() (pending/blacklisted tenant, non-active membership row, or a
         # lost is_platform embed). Resolve it directly so the super never falls through to
-        # an alphabetical non-platform tenant (the old "lands in CHAI Cameroon" bug).
+        # an alphabetical non-platform tenant (the old wrong-tenant landing bug).
         direct = _platform_home_membership()
         if direct is not None:
             return direct
