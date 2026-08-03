@@ -1765,29 +1765,53 @@ if _show_sec("3"):
                                   yaxis={"categoryorder": "total ascending"})
             st.plotly_chart(fig_dec, width='stretch')
 
-        if _show("s3_dectime") and not decided.empty:
-            dec_dates = pd.to_datetime(decided["decision_date"], errors="coerce").dropna()
+        # Proceed-only from here down: §3's lower charts drill into the RFPs the
+        # team chose to pursue (consistent with §4+). The KPI row and Decision
+        # Distribution above stay full-triage — they describe the whole review
+        # process, and the distribution chart IS the Proceed/Park/Decline split.
+        _proc_dec = decided[
+            decided["decision"].fillna("").str.lower().str.startswith("proceed")
+        ]
+
+        if _show("s3_dectime") and not _proc_dec.empty:
+            dec_dates = pd.to_datetime(_proc_dec["decision_date"], errors="coerce").dropna()
             if not dec_dates.empty:
                 ts_df = _bucketed_count(dec_dates, "decisions")
                 fig = px.bar(ts_df, x="bucket", y="decisions",
-                             title=f"Decisions ({_period_label_str}, {bucket_mode.lower()})",
-                             labels={"bucket": _bucket_label(bucket_mode)})
+                             title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
+                             labels={"bucket": _bucket_label(bucket_mode),
+                                     "decisions": "Proceed decisions"})
                 fig.update_layout(height=280, margin=dict(t=40, b=10),
                                   xaxis=_fmt_bucket_ticks(bucket_mode))
                 st.plotly_chart(fig, width='stretch')
 
-        if _show("s3_autorec") and not decided.empty:
-            comp = (
-                decided.assign(
-                    ar=decided["auto_recommendation"].fillna("—"),
-                    dec=decided["decision"].fillna("—"),
+        if _show("s3_autorec") and not _proc_dec.empty:
+            # Of the RFPs we chose to pursue, what had the auto-scorer recommended?
+            # Rows other than "Proceed" are where human judgment overrode a
+            # park/decline suggestion — the most decision-relevant slice.
+            _ar = (
+                _proc_dec.assign(
+                    ar=_proc_dec["auto_recommendation"].fillna("—").replace("", "—").str.title()
                 )
-                .groupby(["ar", "dec"]).size().reset_index(name="count")
+                .groupby("ar").size().reset_index(name="count")
                 .sort_values("count", ascending=False)
             )
-            with st.expander("Auto-recommendation vs final decision", expanded=False):
+            _n_proc = int(len(_proc_dec))
+            _n_agree = int(
+                _proc_dec["auto_recommendation"].fillna("").str.lower()
+                .str.startswith("proceed").sum()
+            )
+            with st.expander(
+                f"Auto-recommendation for Proceed RFPs — model agreed on "
+                f"{_n_agree} of {_n_proc}", expanded=False,
+            ):
+                st.caption(
+                    "Of the RFPs the team chose to pursue, what the auto-scorer had "
+                    "recommended. Rows other than *Proceed* are where human judgment "
+                    "overrode a park/decline suggestion."
+                )
                 st.dataframe(
-                    comp.rename(columns={"ar": "Auto-recommendation", "dec": "Final decision"}),
+                    _ar.rename(columns={"ar": "Auto-recommendation", "count": "Proceed RFPs"}),
                     width='stretch', hide_index=True,
                 )
 
