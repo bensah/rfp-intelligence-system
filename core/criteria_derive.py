@@ -1367,9 +1367,10 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     # United States) never mis-fires this HARD gate (which auto-Declines).
     #
     # IMPORTANT: this reads the org's HEADQUARTERS country (org_hq_country), NOT its
-    # operating country — Example Country Team OPERATES in Cameroon but is HQ'd in the United
-    # States, so org_hq_country must be set to "United States" for this gate to disqualify
-    # it. The fallback to org_country is only for orgs whose HQ == primary country.
+    # operating country — an org may OPERATE inside the required region yet be HQ'd
+    # elsewhere; org_hq_country must be set to the true HQ (e.g. "United States") for this
+    # gate to disqualify it. The fallback to org_country is only for orgs whose HQ ==
+    # primary country.
     hq_req = [h for h in _as_list(donor.get("donor_hq_country_required"))
               if str(h).strip() and str(h).strip().lower() != "any"]
     detected = bool(hq_req)
