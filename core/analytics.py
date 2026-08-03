@@ -25,9 +25,11 @@ def _svc():
 
 
 def _count(table: str, **eq) -> int:
-    """Exact row count for a table, optionally filtered by equality. 0 on any error."""
+    """Exact row count for a table, optionally filtered by equality. 0 on any error.
+    Selects "*" (not "id") because some shared tables — e.g. extracted_solicitations —
+    have no `id` column (their PK is `uid`), which made the count silently return 0."""
     try:
-        q = _svc().table(table).select("id", count="exact")
+        q = _svc().table(table).select("*", count="exact")
         for k, v in eq.items():
             q = q.eq(k, v)
         return q.limit(1).execute().count or 0
