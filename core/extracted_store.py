@@ -9,7 +9,6 @@ so re-scanning the same page UPSERTS the same row instead of duplicating it.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -21,12 +20,6 @@ log = logging.getLogger(__name__)
 
 _TABLE = "extracted_solicitations"
 
-# jsonb columns — serialised to JSON strings on write if a list/dict is passed.
-_JSON_COLS = {
-    "eligibility_applicant_types", "eligibility_countries", "eligibility_other",
-    "focus_themes", "call_domain_areas", "call_geographic_scope", "attachments",
-    "resource_links", "field_provenance", "funding_tiers",
-}
 # Columns the table actually has — anything else in a record dict is dropped so a
 # stray key never fails the insert.
 _COLS = {
@@ -60,16 +53,20 @@ def make_uid(url: str, title: str = "") -> str:
 
 
 def _clean(rec: dict[str, Any]) -> dict[str, Any]:
-    """Keep only real columns; JSON-encode list/dict values for jsonb columns;
-    drop None so DB defaults apply on insert."""
+    """Keep only real columns; drop None so DB defaults apply on insert.
+
+    List/dict values are passed through NATIVELY. supabase-py (PostgREST) serialises
+    the whole request body to JSON exactly once, so a Python list/dict lands in a
+    jsonb column as a real array/object. A previous ``json.dumps(v)`` here
+    DOUBLE-ENCODED — the client re-serialised the already-stringified value, so jsonb
+    stored a string scalar like ``"[\\"EU\\"]"`` instead of ``["EU"]``. Readers such
+    as ``geographies.flatten_scope_terms`` / ``criteria_derive._as_list`` still tolerate
+    the legacy stringified shape, but every new write must be clean single-encoded."""
     out: dict[str, Any] = {}
     for k, v in rec.items():
         if k not in _COLS or v is None:
             continue
-        if k in _JSON_COLS and isinstance(v, (list, dict)):
-            out[k] = json.dumps(v)
-        else:
-            out[k] = v
+        out[k] = v
     return out
 
 
