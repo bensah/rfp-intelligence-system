@@ -1859,7 +1859,12 @@ if _show_sec("4"):
         st.info("No RFPs in the database yet — team / partner charts will populate "
                 "as data lands.")
     else:
-        activity_rows = rfps_all[~rfps_all["is_duplicate"]].copy()
+        # Section 4 RFP distributions reflect the PROCEED pipeline only (the actionable
+        # RFPs found) — consistent with the convention that everything after the Section-2
+        # eligibility/conversion funnels is Proceed-scoped.
+        _ded_all = rfps_all[~rfps_all["is_duplicate"]]
+        activity_rows = _ded_all[
+            _ded_all["decision"].fillna("").str.lower().str.startswith("proceed")].copy()
 
         # ───────────── Submissions by team member ─────────────────────────────
         # REMOVED 2026-06-05: chart + leaderboard moved to Section 1, directly
@@ -2003,14 +2008,21 @@ if _show_sec("4"):
                 st.info("No contributors recorded yet.")
 
         # ───────────── Lead & Sub Applicant partners ──────────────────────────
-        # An applicant cell can list MULTIPLE partners who applied jointly on the SAME grant,
-        # separated by ";" or "," (e.g. "Example Country Team; Example Sibling Team"). We split them, canonicalise
-        # the deploying org's own name (the org / Example Country Team → the full "Example Country Team", while a
-        # distinct sibling like "Example Sibling Team" is left alone), and DE-DUP per RFP so each partner is
-        # counted once per grant (not once per submission — only the `submissions` sum tells how
-        # many times a grant was submitted).
+        # Over the PROCEED RFPs (activity_rows), each applicant cell can list MULTIPLE partners
+        # who applied jointly on the SAME grant, separated by ";" or "," (e.g. "Example Country Team;
+        # Example Sibling Team"). We split them → one count each, canonicalise the deploying org's own name
+        # (the org / Example Country Team → the full "Example Country Team", while a distinct sibling like "the org
+        # Mali" is left alone), and DE-DUP per RFP → the number of distinct lead/sub applicants
+        # per Proceed RFP. BLANK cells and the literal "N/A" (Not Applicable — a real, distinct
+        # value) are BOTH dropped: neither is an applicant, so neither belongs on the chart.
         if _show("s4_partners"):
             st.markdown("##### Lead & Sub Applicant partners")
+        _NA_VALUES = {"n/a", "na", "not applicable", "none", "nil", "tbd", "-", "—", "nan"}
+        # Legal-entity suffixes that follow a COMMA inside ONE org name ("Attune Media Labs,
+        # Inc.") — these must NOT be treated as a second applicant when splitting on ",".
+        _LEGAL_SUFFIX = re.compile(
+            r"^(inc|llc|l\.l\.c|ltd|co|corp|pbc|gmbh|s\.?a|plc|llp|pte|bv|ag|nv|"
+            r"limited|incorporated|company)\.?$", re.I)
         _org_full = (settings.get_org_name() or "").strip()
         _org_short = (settings.get_org_short() or "").strip()
         _org_full_key = re.sub(r"\s+", " ", _org_full.replace("-", " ")).strip().lower()
@@ -2020,8 +2032,8 @@ if _show_sec("4"):
 
         def _norm_org(raw) -> str:
             s = re.sub(r"\s+", " ", str(raw or "").replace("-", " ")).strip()
-            if not s:
-                return ""
+            if not s or s.strip().lower() in _NA_VALUES:
+                return ""                          # blank OR "N/A"/"Not Applicable" → drop
             low = s.lower()
             if _org_short and low == _org_short.lower():
                 return _org_full or s              # bare short name → canonical full name
@@ -2032,18 +2044,25 @@ if _show_sec("4"):
             return s                               # distinct org (e.g. Example Sibling Team) untouched
 
         def _split_orgs(v) -> list[str]:
-            return sorted({o for o in (_norm_org(p) for p in re.split(r"[;,]", str(v or ""))) if o})
+            merged: list[str] = []
+            for p in re.split(r"[;,]", str(v or "")):
+                p = p.strip()
+                if not p:
+                    continue
+                if merged and _LEGAL_SUFFIX.match(p):
+                    merged[-1] = f"{merged[-1]}, {p}"   # re-attach "Inc." to the prior name
+                else:
+                    merged.append(p)
+            return sorted({o for o in (_norm_org(p) for p in merged) if o})
 
         ap_l, ap_r = st.columns(2)
-        for col_name, col_label, container, empty_label in [
-            ("lead_applicant", "Lead applicant", ap_l, None),
-            ("sub_applicant",  "Sub applicant",  ap_r, "No Sub-applicant"),
+        for col_name, col_label, container in [
+            ("lead_applicant", "Lead applicant", ap_l),
+            ("sub_applicant",  "Sub applicant",  ap_r),
         ]:
             if _show("s4_partners") and col_name in activity_rows.columns:
                 _rows = activity_rows[[col_name]].copy()
-                _rows["_orgs"] = _rows[col_name].apply(_split_orgs)
-                if empty_label:                    # empty sub-applicant → a labelled bucket
-                    _rows["_orgs"] = _rows["_orgs"].apply(lambda lst: lst or [empty_label])
+                _rows["_orgs"] = _rows[col_name].apply(_split_orgs)   # blank/N/A already dropped
                 _rows = _rows.explode("_orgs").dropna(subset=["_orgs"])
                 _rows = _rows[_rows["_orgs"].astype(str).str.strip() != ""]
                 counts = (_rows["_orgs"].value_counts().head(10)
@@ -2052,7 +2071,7 @@ if _show_sec("4"):
                     if not counts.empty:
                         fig = px.bar(
                             counts, x="RFPs", y=col_label, orientation="h",
-                            title=f"{col_label} — top 10", text="RFPs",
+                            title=f"{col_label} — top 10 (Proceed RFPs)", text="RFPs",
                         )
                         fig.update_layout(
                             height=max(250, 30 * len(counts) + 60),
@@ -2302,7 +2321,7 @@ if _show_sec("5"):
                     "Secured (USD)": _sg["_sec"],
                     "Donor decision": (_sg["donor_decision"].fillna("").astype(str).str.strip()
                                        .replace("", "Under Review")),
-                    "Subs": _sg["_subs"],
+                    "Submissions": _sg["_subs"],
                     "Submitted": pd.to_datetime(_sg["date_completed"], errors="coerce").dt.date,
                 }).sort_values("Requested (USD)", ascending=False)
                 st.dataframe(
@@ -2314,10 +2333,10 @@ if _show_sec("5"):
                         "Secured (USD)": st.column_config.NumberColumn(
                             "Secured (USD)", format="$%,.0f"),
                         "Donor decision": st.column_config.TextColumn("Donor decision"),
-                        "Subs": st.column_config.NumberColumn(
-                            "Subs", format="%d",
-                            help="Donor-side submissions for this RFP (an RFP can be "
-                                 "submitted more than once)."),
+                        "Submissions": st.column_config.NumberColumn(
+                            "Submissions", format="%d",
+                            help="Number of donor-side submissions for this RFP "
+                                 "(an RFP can be submitted more than once)."),
                     },
                 )
 
