@@ -296,6 +296,27 @@ def _series_to_usd(amount_col: pd.Series, currency_col: pd.Series | None) -> pd.
 sb = get_client()
 
 
+# ---------------------------------------------------------------------------
+# Single source of truth for "submitted to a donor" — MUST match the Applied
+# Funding + Summary pages, else the Report won't reconcile with them. A row is
+# submitted when Progress = Completed OR it carries a real donor decision
+# (Approved / Under Review / Not Approved). Using progress=Completed alone
+# undercounts and lets Approved exceed Submitted (win-rate > 100%).
+# ---------------------------------------------------------------------------
+_SUBMITTED_DECISIONS = {"approved", "under review", "not approved"}
+
+
+def _submitted_mask(df: pd.DataFrame) -> pd.Series:
+    """Boolean Series: True where the RFP has been submitted to a donor."""
+    if df is None or df.empty:
+        return pd.Series([], dtype=bool)
+    ps = df.get("progress_status")
+    dd = df.get("donor_decision")
+    ps = (ps if ps is not None else pd.Series("", index=df.index)).fillna("").astype(str).str.strip().str.lower()
+    dd = (dd if dd is not None else pd.Series("", index=df.index)).fillna("").astype(str).str.strip().str.lower()
+    return ps.eq("completed") | dd.isin(_SUBMITTED_DECISIONS)
+
+
 def _scope_key() -> str:
     """Cache-key discriminator for the @st.cache_data loaders below. Their cache is
     PROCESS-GLOBAL (shared across all sessions), but the rows they load are tenant-scoped
@@ -651,7 +672,8 @@ def _load_rfps(_scope: str) -> pd.DataFrame:
     # rendered as $200,000 instead of $266,000. If you add a new
     # monetary field, add its companion currency column here too.
     res = sb.table("rfp_submissions").select(
-        "uid,source,opportunity_title,funding_agency,submitted_at,search_date,"
+        "uid,source,opportunity_title,brief_description,funding_agency,"
+        "submitted_at,search_date,"
         "submitted_by,submitted_by_email,"
         "call_submission_deadline,date_completed,decision_date,date_of_approval,"
         "decision,auto_recommendation,donor_decision,progress_status,stage,"
@@ -1405,7 +1427,9 @@ if _show_sec("1"):
                     progress_str = str(r.get("progress_status") or "").lower()
                     donor_str = str(r.get("donor_decision") or "").lower()
                     is_proceed = decision_str.startswith("proceed")
-                    is_submitted = progress_str == "completed"
+                    # Shared app-wide "submitted": Completed OR a donor decision recorded.
+                    is_submitted = (progress_str == "completed"
+                                    or donor_str in _SUBMITTED_DECISIONS)
                     is_approved = donor_str == "approved"
                     for kw in stems_in_row:
                         _kw_rows.append({
@@ -1529,14 +1553,22 @@ if _show_sec("2"):
         unique_all = rfps_all[~rfps_all["is_duplicate"]].copy()
         in_period = unique_all[unique_all["_discovered_in_period"]]
 
-        # All-time current pipeline state — what the user actually wants
+        # All-time current pipeline state — what the user actually wants.
+        # Funnel stages are NESTED subsets so they can never invert:
+        #   Total ⊇ Proceed ⊇ Submitted ⊇ Approved.
         total_all = int(len(unique_all))
-        proceed_all = int(unique_all["decision"].fillna("").str.lower().str.startswith("proceed").sum())
-        park_all = int((unique_all["decision"].fillna("").str.lower() == "park").sum())
-        decline_all = int((unique_all["decision"].fillna("").str.lower() == "decline").sum())
+        _dec_all = unique_all["decision"].fillna("").str.lower()
+        proceed_df_all = unique_all[_dec_all.str.startswith("proceed")]
+        proceed_all = int(len(proceed_df_all))
+        park_all = int((_dec_all == "park").sum())
+        decline_all = int((_dec_all == "decline").sum())
         no_decision_all = total_all - (proceed_all + park_all + decline_all)
-        submitted_all = int((unique_all["progress_status"].fillna("").str.lower() == "completed").sum())
-        approved_all = int((unique_all["donor_decision"].fillna("").str.lower() == "approved").sum())
+        # Submitted = submitted-per-app-def WITHIN the Proceed track; Approved = the
+        # approved subset OF those submitted — guarantees Approved ≤ Submitted ≤ Proceed.
+        _sub_proc = proceed_df_all[_submitted_mask(proceed_df_all)]
+        submitted_all = int(len(_sub_proc))
+        approved_all = int((_sub_proc["donor_decision"].fillna("").str.lower()
+                            == "approved").sum())
 
         # Period-restricted: how many RFPs were *discovered* in this window
         discovered_in_period = int(len(in_period))
@@ -1836,13 +1868,9 @@ if _show_sec("4"):
         # stacked Submitted/Unsubmitted views.
 
         # ───────────── Helpers for stacked Submitted / Unsubmitted bars ───────
-        # An RFP counts as "Submitted" when progress_status = Completed
-        # (matches the same definition used by Section 5's submission KPI).
-        # Anything else (Not Started / In Progress / Discontinued / Missed /
-        # blank) goes into "Unsubmitted".
-        def _is_submitted(ps_val) -> bool:
-            return str(ps_val or "").strip().lower() == "completed"
-
+        # "Submitted" uses the shared app-wide definition (Completed OR a donor decision) —
+        # computed per RFP via _submitted_mask before exploding names, so it matches every
+        # other page. Everything else goes into "Unsubmitted".
         def _stacked_chart_df(name_value_pairs: pd.DataFrame,
                               name_col: str) -> pd.DataFrame:
             """Build a tidy DataFrame ready for px.bar(barmode='stack').
@@ -1884,14 +1912,17 @@ if _show_sec("4"):
         if _show("s4_leads"):
             st.markdown("##### Proposal Leads")
         if _show("s4_leads") and "proposal_lead" in activity_rows.columns:
-            lead_rows = activity_rows[["proposal_lead", "progress_status"]].copy()
-            lead_rows["_members"] = lead_rows["proposal_lead"].apply(split_and_normalize_names)
+            lead_rows = activity_rows[
+                ["proposal_lead", "progress_status", "donor_decision"]].copy()
+            lead_rows["is_submitted"] = _submitted_mask(lead_rows).to_numpy()
+            # Dedupe names PER ROW (set) so one RFP never counts a person twice.
+            lead_rows["_members"] = lead_rows["proposal_lead"].apply(
+                lambda v: sorted(set(split_and_normalize_names(v))))
             lead_rows = lead_rows.explode("_members").dropna(subset=["_members"])
             lead_rows = lead_rows[lead_rows["_members"] != ""]
             if not lead_rows.empty:
                 disp = first_name_display_map(lead_rows["_members"])
                 lead_rows["display"] = lead_rows["_members"].map(disp).fillna(lead_rows["_members"])
-                lead_rows["is_submitted"] = lead_rows["progress_status"].apply(_is_submitted)
                 stacked = _stacked_chart_df(
                     lead_rows[["display", "is_submitted"]],
                     "display",
@@ -1929,14 +1960,17 @@ if _show_sec("4"):
         if _show("s4_contrib"):
             st.markdown("##### Contributors")
         if _show("s4_contrib") and "contributors" in activity_rows.columns:
-            contribs = activity_rows[["contributors", "progress_status"]].copy()
-            contribs["_members"] = contribs["contributors"].apply(split_and_normalize_names)
+            contribs = activity_rows[
+                ["contributors", "progress_status", "donor_decision"]].copy()
+            contribs["is_submitted"] = _submitted_mask(contribs).to_numpy()
+            # Dedupe per RFP so a person listed twice in one contributors array counts once.
+            contribs["_members"] = contribs["contributors"].apply(
+                lambda v: sorted(set(split_and_normalize_names(v))))
             contribs = contribs.explode("_members").dropna(subset=["_members"])
             contribs = contribs[contribs["_members"] != ""]
             if not contribs.empty:
                 disp = first_name_display_map(contribs["_members"])
                 contribs["display"] = contribs["_members"].map(disp).fillna(contribs["_members"])
-                contribs["is_submitted"] = contribs["progress_status"].apply(_is_submitted)
                 stacked = _stacked_chart_df(
                     contribs[["display", "is_submitted"]],
                     "display",
@@ -2028,17 +2062,20 @@ if _show_sec("5"):
         st.info("No RFPs in the database yet.")
     else:
         unique = rfps_all[~rfps_all["is_duplicate"]]
-        # All-time submitted / approved — Section 5 KPIs reflect current
-        # pipeline state across every stored RFP (regardless of when discovered).
-        submitted_period = unique[unique["progress_status"].fillna("").str.lower() == "completed"]
-        approved_period = unique[unique["donor_decision"].fillna("").str.lower() == "approved"]
+        # All-time submitted / approved — Section 5 KPIs reflect current pipeline state
+        # across every stored RFP. Submitted uses the SHARED app-wide definition (Completed
+        # OR a donor decision), and Approved is a strict SUBSET of Submitted, so win rate is
+        # bounded at 100% and reconciles with the Applied Funding + Summary pages.
+        submitted_period = unique[_submitted_mask(unique).to_numpy()]
+        approved_period = submitted_period[
+            submitted_period["donor_decision"].fillna("").str.lower() == "approved"]
 
         n_submitted = int(len(submitted_period))
         n_approved = int(len(approved_period))
         win_rate = (n_approved / n_submitted * 100) if n_submitted > 0 else 0.0
 
         # --- FX conversion to USD ---
-        # `amount_secured` pairs with `currency_secured`; `estimated_value`
+        # `amount_secured` pairs with `currency_secured`; `call_award_value`
         # pairs with `currency`. Each row converts at its own rate via
         # dropdowns.usd_rate(), so a mixed-currency pipeline rolls up cleanly.
         if "amount_secured" in approved_period.columns and not approved_period.empty:
@@ -2079,13 +2116,15 @@ if _show_sec("5"):
 
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Submitted", n_submitted,
-                  help="RFPs where progress_status = Completed within the period.")
+                  help="All-time: RFPs submitted to a donor (Progress = Completed OR a "
+                       "donor decision recorded).")
         k2.metric("Approved", n_approved,
-                  help="RFPs where donor_decision = Approved within the period.")
+                  help="All-time: submitted RFPs with donor_decision = Approved "
+                       "(a subset of Submitted).")
         k3.metric("Win rate", f"{win_rate:.1f}%" if n_submitted else "—",
-                  help="Approved ÷ Submitted (period). Shows '—' with no submissions.")
+                  help="Approved ÷ Submitted (all-time). Bounded at 100%. '—' with no submissions.")
         k4.metric("USD secured", f"${amt_secured:,.0f}",
-                  help="Sum of amount_secured for approved RFPs in period, "
+                  help="All-time: sum of amount_secured for approved RFPs, "
                        "converted row-by-row to USD via the FX rates in "
                        "Admin → Settings (or config/dropdowns.yaml fallback). "
                        "Rows missing a currency are treated as USD.")
@@ -2138,7 +2177,7 @@ if _show_sec("5"):
         st.markdown(
             f"**Pipeline value (Proceed track):** ${amt_pipeline:,.0f} USD across "
             f"{int((unique['decision'].fillna('').str.lower().str.startswith('proceed')).sum())} "
-            f"RFPs — sum of `estimated_value` converted row-by-row from each "
+            f"RFPs — sum of `call_award_value` converted row-by-row from each "
             f"RFP's native currency."
         )
 
@@ -2226,9 +2265,9 @@ if _show_sec("5"):
         proceeded = unique[
             unique["decision"].fillna("").str.lower().str.startswith("proceed")
         ]
-        submitted_conv = proceeded[
-            proceeded["progress_status"].fillna("").str.lower() == "completed"
-        ]
+        # Submitted = the shared app-wide definition (Completed OR a donor decision),
+        # so Proceeded→Submitted reconciles with the funnel and Applied Funding page.
+        submitted_conv = proceeded[_submitted_mask(proceeded).to_numpy()]
         approved_conv = submitted_conv[
             submitted_conv["donor_decision"].fillna("").str.lower() == "approved"
         ]
