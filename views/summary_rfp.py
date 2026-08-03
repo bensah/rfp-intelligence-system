@@ -546,18 +546,21 @@ with ec2:
 with ec3:
     st.markdown("**Donor Decision Status (Proceed)**")
     if not proceed_df.empty:
-        # Exact counts over the deduplicated PROCEED pipeline only. Lead with SUBMITTED
-        # (what's actually gone to a donor) rather than Not-submitted. A row is Submitted when
-        # its Progress = Completed OR it carries a real donor decision; a Completed-but-
-        # undecided row counts as Under Review (submitted, awaiting the donor) so the three
-        # decision rows sum exactly to Submitted.
+        # Counts over the deduplicated PROCEED pipeline only, weighted by SUBMISSIONS (an RFP
+        # submitted to a donor more than once counts once per submission — same basis as the
+        # "Total Submitted RFPs" KPI and the Report). Lead with SUBMITTED (what's actually gone
+        # to a donor). A row is Submitted when its Progress = Completed OR it carries a real
+        # donor decision; a Completed-but-undecided row counts as Under Review (submitted,
+        # awaiting the donor) so the three decision rows sum exactly to Submitted.
         _dd = proceed_df["donor_decision"].fillna("").str.strip().str.lower()
         _ps = proceed_df["progress_status"].fillna("").str.strip().str.lower()
         _completed = _ps.eq("completed")
-        approved = int(_dd.eq("approved").sum())
-        not_approved = int(_dd.eq("not approved").sum())
-        under_review = int((_dd.eq("under review")
-                            | (_completed & ~_dd.isin({"approved", "not approved"}))).sum())
+        _subs = proceed_df["_submissions"]              # donor-side submissions per RFP (>=1)
+        _ur_mask = (_dd.eq("under review")
+                    | (_completed & ~_dd.isin({"approved", "not approved"})))
+        approved = int(_subs[_dd.eq("approved")].sum())
+        not_approved = int(_subs[_dd.eq("not approved")].sum())
+        under_review = int(_subs[_ur_mask].sum())
         submitted = approved + under_review + not_approved
         dd_counts = pd.DataFrame({
             "Decision": ["Submitted", "Approved", "Under Review", "Not Approved"],
