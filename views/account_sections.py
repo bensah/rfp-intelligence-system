@@ -15,6 +15,7 @@ dict (+ a Supabase client where it writes), so the calling page just does:
 from __future__ import annotations
 
 import difflib
+import os
 import re
 import secrets
 import string
@@ -31,9 +32,9 @@ from core.geographies import COUNTRIES
 from db.supabase_client import service_client
 
 # App-owner / Super User contact for account & data requests (permanent deletion,
-# reactivating a suspended org). Temporary personal address — single source of truth,
-# also surfaced on the Help page.
-ADMIN_CONTACT_EMAIL = "nsah.ben03@gmail.com"
+# reactivating a suspended org). Single source of truth (also surfaced on the Help page);
+# set ADMIN_CONTACT_EMAIL in the environment to override the placeholder.
+ADMIN_CONTACT_EMAIL = os.environ.get("ADMIN_CONTACT_EMAIL", "admin@example.org")
 
 # Sentinel option in the "Assign to tenant" picker: creates a personal ('individual'
 # kind) tenant for the user instead of an organization. Individual tenants are PUBLIC —
