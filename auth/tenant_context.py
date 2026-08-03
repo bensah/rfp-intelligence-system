@@ -327,13 +327,37 @@ def tenant_store(tenant_id: str | None = None) -> tuple[Any, str] | None:
         return None
 
 
+def _platform_home_membership() -> dict[str, Any] | None:
+    """Resolve the platform (super console) tenant DIRECTLY via the service client, so a
+    super_user always has a deterministic home even when the platform membership was
+    dropped from active_memberships() — e.g. its tenant row is pending/blacklisted, its
+    membership row isn't 'active', or the embed lost `is_platform`. Prefers is_platform,
+    then slug 'rfpis'. Returns a membership-shaped dict (role forced to super_user) or None
+    if no platform tenant exists. Best-effort: degrades if the is_platform column is absent."""
+    for col, val in (("is_platform", True), ("slug", "rfpis")):
+        try:
+            rows = (service_client().table("tenants")
+                    .select("id, name, slug, is_platform")
+                    .eq(col, val).limit(1).execute().data or [])
+        except Exception:
+            rows = []
+        if rows:
+            t = rows[0]
+            return {"tenant_id": t.get("id"), "name": t.get("name"),
+                    "slug": t.get("slug"), "role": "super_user",
+                    "is_platform": True, "is_developer": False}
+    return None
+
+
 def _default_membership(user: dict, mems: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Pick the membership to auto-select for THIS session, or None to leave the user
     tenant-less (onboarding / future picker):
       * exactly one active membership → that one;
-      * super_user with several → their platform HOME tenant (flagged `is_platform`, else
-        slug 'rfpis', else a name starting with "RFPIS"), else the first (name-ordered)
-        so they always land somewhere rather than tenant-less;
+      * super_user with several → their platform HOME tenant: first any membership flagged
+        `is_platform` / slug 'rfpis' / name starting "RFPIS"; if none of their memberships
+        qualifies (the platform membership was filtered out), resolve the platform tenant
+        DIRECTLY via the service client so they never silently land in an alphabetical
+        non-platform tenant; only if that too fails, the first (name-ordered);
       * anyone else with several → their remembered choice (users.last_tenant_id) if it's
         still an active membership, else the first (name-ordered). They always land in a
         SCOPED session and switch from the header dropdown (R3) — no tenant-less fail-open."""
@@ -348,6 +372,13 @@ def _default_membership(user: dict, mems: list[dict[str, Any]]) -> dict[str, Any
             home = next((m for m in mems if pred(m)), None)
             if home is not None:
                 return home
+        # No membership qualified — the platform membership was likely filtered out by
+        # active_memberships() (pending/blacklisted tenant, non-active membership row, or a
+        # lost is_platform embed). Resolve it directly so the super never falls through to
+        # an alphabetical non-platform tenant (the old "lands in Example Country Team" bug).
+        direct = _platform_home_membership()
+        if direct is not None:
+            return direct
         return sorted(mems, key=lambda m: (m.get("name") or "").lower())[0]
     # Non-super with >1 membership (R3): remembered tenant if still valid, else first.
     _last = user.get("last_tenant_id")
