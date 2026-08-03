@@ -679,7 +679,7 @@ def _load_rfps(_scope: str) -> pd.DataFrame:
         "call_submission_deadline,date_completed,decision_date,date_of_approval,"
         "decision,auto_recommendation,donor_decision,progress_status,stage,"
         "alignment_score,call_award_value,currency,"
-        "amount_requested,amount_secured,currency_secured,"
+        "amount_requested,amount_secured,currency_secured,submissions,"
         "call_geographic_scope,call_domain_areas,decision_overridden_by,"
         "proposal_lead,contributors,reviewers,"
         "lead_applicant,sub_applicant,"
