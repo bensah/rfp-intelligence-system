@@ -5,10 +5,11 @@ console) home. The old code tried is_platform / slug 'rfpis' / name-startswith '
 AMONG their memberships, then fell back to the alphabetically-first membership — so when
 the platform membership was filtered out of active_memberships() (pending/blacklisted
 tenant, non-active membership row, or a lost is_platform embed), the super deterministically
-landed in the alphabetically-first NON-platform tenant (the "lands in Example Country Team" bug).
+landed in the alphabetically-first NON-platform tenant.
 
 The safeguard resolves the platform tenant DIRECTLY (service client) before the alphabetical
-fallback. These tests patch that resolver so they stay pure/offline.
+fallback. These tests patch that resolver so they stay pure/offline. Tenant names/ids below
+are generic fixtures, not real tenants.
 
 Run:  python -m unittest tests.test_tenant_landing_safeguard
 """
@@ -28,56 +29,57 @@ from auth import tenant_context as tc    # noqa: E402
 _SUPER = {"role": "super_user"}
 _USER = {"role": "collaborator"}
 
-# Two non-platform memberships, alphabetical first = "Example Country Team".
-_ALPHA = {"tenant_id": "28b17088", "name": "Example Country Team", "slug": "Example Country Team",
-         "role": "admin", "is_platform": False}
-_Example Partner = {"tenant_id": "df584f3e", "name": "Example Partner Co", "slug": "Example Partner",
-           "role": "admin", "is_platform": False}
-_PLATFORM_MEM = {"tenant_id": "13d79b44", "name": "RFPIS APP", "slug": "rfpis",
+# Two non-platform memberships; "Alpha Team" sorts alphabetically before "Bravo Team", so
+# the alphabetical fallback deterministically returns Alpha (the bug this guards against).
+_ALPHA = {"tenant_id": "t-alpha", "name": "Alpha Team", "slug": "alpha",
+          "role": "admin", "is_platform": False}
+_BRAVO = {"tenant_id": "t-bravo", "name": "Bravo Team", "slug": "bravo",
+          "role": "admin", "is_platform": False}
+_PLATFORM_MEM = {"tenant_id": "t-platform", "name": "Platform Home", "slug": "rfpis",
                  "role": "super_user", "is_platform": True}
-_PLATFORM_DIRECT = {"tenant_id": "13d79b44", "name": "RFPIS APP", "slug": "rfpis",
+_PLATFORM_DIRECT = {"tenant_id": "t-platform", "name": "Platform Home", "slug": "rfpis",
                     "role": "super_user", "is_platform": True, "is_developer": False}
 
 
 class LandingSafeguardTests(unittest.TestCase):
     def test_super_multi_no_platform_resolves_directly(self):
         # THE BUG FIX: platform membership absent from mems → resolve it directly,
-        # NOT the alphabetically-first Example Country Team.
+        # NOT the alphabetically-first non-platform tenant.
         with mock.patch.object(tc, "_platform_home_membership", return_value=_PLATFORM_DIRECT):
-            chosen = tc._default_membership(_SUPER, [_ALPHA, _Example Partner])
-        self.assertEqual(chosen["tenant_id"], "13d79b44")
+            chosen = tc._default_membership(_SUPER, [_ALPHA, _BRAVO])
+        self.assertEqual(chosen["tenant_id"], "t-platform")
         self.assertTrue(chosen["is_platform"])
 
     def test_super_multi_with_platform_membership_used_without_direct_lookup(self):
         # Platform membership present → return it; the direct resolver must NOT be needed.
         with mock.patch.object(tc, "_platform_home_membership",
                                side_effect=AssertionError("should not be called")):
-            chosen = tc._default_membership(_SUPER, [_ALPHA, _PLATFORM_MEM, _Example Partner])
-        self.assertEqual(chosen["tenant_id"], "13d79b44")
+            chosen = tc._default_membership(_SUPER, [_ALPHA, _PLATFORM_MEM, _BRAVO])
+        self.assertEqual(chosen["tenant_id"], "t-platform")
 
     def test_super_multi_direct_none_falls_back_to_alphabetical(self):
         # No platform anywhere → graceful alphabetical fallback (never tenant-less).
         with mock.patch.object(tc, "_platform_home_membership", return_value=None):
-            chosen = tc._default_membership(_SUPER, [_Example Partner, _ALPHA])
-        self.assertEqual(chosen["name"], "Example Country Team")   # alphabetical first
+            chosen = tc._default_membership(_SUPER, [_BRAVO, _ALPHA])
+        self.assertEqual(chosen["name"], "Alpha Team")   # alphabetical first
 
     def test_single_membership_unchanged(self):
-        # The common case (both current supers): exactly one membership → that one, and the
-        # direct resolver is never consulted.
+        # The common case: exactly one membership → that one, and the direct resolver is
+        # never consulted.
         with mock.patch.object(tc, "_platform_home_membership",
                                side_effect=AssertionError("should not be called")):
-            self.assertEqual(tc._default_membership(_SUPER, [_Example Partner])["tenant_id"], "df584f3e")
-            self.assertEqual(tc._default_membership(_USER, [_ALPHA])["tenant_id"], "28b17088")
+            self.assertEqual(tc._default_membership(_SUPER, [_BRAVO])["tenant_id"], "t-bravo")
+            self.assertEqual(tc._default_membership(_USER, [_ALPHA])["tenant_id"], "t-alpha")
 
     def test_nonsuper_multi_prefers_remembered_then_alphabetical(self):
         # Non-super path is untouched by the safeguard.
         with mock.patch.object(tc, "_platform_home_membership",
                                side_effect=AssertionError("should not be called")):
-            remembered = tc._default_membership({**_USER, "last_tenant_id": "df584f3e"},
-                                                [_ALPHA, _Example Partner])
-            self.assertEqual(remembered["tenant_id"], "df584f3e")
-            first = tc._default_membership(_USER, [_Example Partner, _ALPHA])
-            self.assertEqual(first["name"], "Example Country Team")
+            remembered = tc._default_membership({**_USER, "last_tenant_id": "t-bravo"},
+                                                [_ALPHA, _BRAVO])
+            self.assertEqual(remembered["tenant_id"], "t-bravo")
+            first = tc._default_membership(_USER, [_BRAVO, _ALPHA])
+            self.assertEqual(first["name"], "Alpha Team")
 
     def test_no_memberships_returns_none(self):
         self.assertIsNone(tc._default_membership(_SUPER, []))
@@ -86,14 +88,14 @@ class LandingSafeguardTests(unittest.TestCase):
         # The direct resolver: is_platform=True hit → membership-shaped dict, role forced super.
         fake_exec = mock.Mock()
         fake_exec.execute.return_value = mock.Mock(
-            data=[{"id": "13d79b44", "name": "RFPIS APP", "slug": "rfpis", "is_platform": True}])
+            data=[{"id": "t-platform", "name": "Platform Home", "slug": "rfpis", "is_platform": True}])
         chain = mock.Mock()
         chain.select.return_value.eq.return_value.limit.return_value = fake_exec
         fake_client = mock.Mock()
         fake_client.table.return_value = chain
         with mock.patch.object(tc, "service_client", return_value=fake_client):
             out = tc._platform_home_membership()
-        self.assertEqual(out["tenant_id"], "13d79b44")
+        self.assertEqual(out["tenant_id"], "t-platform")
         self.assertEqual(out["role"], "super_user")
         self.assertTrue(out["is_platform"])
 
