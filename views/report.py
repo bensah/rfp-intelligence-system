@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from datetime import date, datetime, timedelta
 
 import numpy as np
@@ -2002,21 +2003,51 @@ if _show_sec("4"):
                 st.info("No contributors recorded yet.")
 
         # ───────────── Lead & Sub Applicant partners ──────────────────────────
+        # An applicant cell can list MULTIPLE partners who applied jointly on the SAME grant,
+        # separated by ";" or "," (e.g. "CHAI Cameroon; CHAI Mali"). We split them, canonicalise
+        # the deploying org's own name (CHAI / CHAI-Cameroon → the full "CHAI Cameroon", while a
+        # distinct sibling like "CHAI Mali" is left alone), and DE-DUP per RFP so each partner is
+        # counted once per grant (not once per submission — only the `submissions` sum tells how
+        # many times a grant was submitted).
         if _show("s4_partners"):
             st.markdown("##### Lead & Sub Applicant partners")
+        _org_full = (settings.get_org_name() or "").strip()
+        _org_short = (settings.get_org_short() or "").strip()
+        _org_full_key = re.sub(r"\s+", " ", _org_full.replace("-", " ")).strip().lower()
+        # The bare acronym = the org's first word ("CHAI Cameroon" → "CHAI"). A bare "CHAI"
+        # rolls up to the full name; a qualified sibling ("CHAI Mali", two tokens) does NOT.
+        _org_first = _org_full.split()[0].lower() if _org_full else ""
+
+        def _norm_org(raw) -> str:
+            s = re.sub(r"\s+", " ", str(raw or "").replace("-", " ")).strip()
+            if not s:
+                return ""
+            low = s.lower()
+            if _org_short and low == _org_short.lower():
+                return _org_full or s              # bare short name → canonical full name
+            if _org_full and low == _org_full_key:
+                return _org_full                   # variant/hyphen/case → canonical casing
+            if _org_first and low == _org_first:
+                return _org_full                   # bare acronym "CHAI" → "CHAI Cameroon"
+            return s                               # distinct org (e.g. CHAI Mali) untouched
+
+        def _split_orgs(v) -> list[str]:
+            return sorted({o for o in (_norm_org(p) for p in re.split(r"[;,]", str(v or ""))) if o})
+
         ap_l, ap_r = st.columns(2)
-        for col_name, col_label, container in [
-            ("lead_applicant", "Lead applicant", ap_l),
-            ("sub_applicant",  "Sub applicant",  ap_r),
+        for col_name, col_label, container, empty_label in [
+            ("lead_applicant", "Lead applicant", ap_l, None),
+            ("sub_applicant",  "Sub applicant",  ap_r, "No Sub-applicant"),
         ]:
             if _show("s4_partners") and col_name in activity_rows.columns:
-                counts = (
-                    activity_rows[col_name].dropna()
-                    .pipe(lambda s: s[s.astype(str).str.strip() != ""])
-                    .value_counts().head(10)
-                    .reset_index()
-                    .rename(columns={col_name: col_label, "count": "RFPs"})
-                )
+                _rows = activity_rows[[col_name]].copy()
+                _rows["_orgs"] = _rows[col_name].apply(_split_orgs)
+                if empty_label:                    # empty sub-applicant → a labelled bucket
+                    _rows["_orgs"] = _rows["_orgs"].apply(lambda lst: lst or [empty_label])
+                _rows = _rows.explode("_orgs").dropna(subset=["_orgs"])
+                _rows = _rows[_rows["_orgs"].astype(str).str.strip() != ""]
+                counts = (_rows["_orgs"].value_counts().head(10)
+                          .rename_axis(col_label).reset_index(name="RFPs"))
                 with container:
                     if not counts.empty:
                         fig = px.bar(
@@ -2062,72 +2093,71 @@ if _show_sec("5"):
         st.info("No RFPs in the database yet.")
     else:
         unique = rfps_all[~rfps_all["is_duplicate"]]
-        # All-time submitted / approved — Section 5 KPIs reflect current pipeline state
-        # across every stored RFP. Submitted uses the SHARED app-wide definition (Completed
-        # OR a donor decision), and Approved is a strict SUBSET of Submitted, so win rate is
-        # bounded at 100% and reconciles with the Applied Funding + Summary pages.
-        submitted_period = unique[_submitted_mask(unique).to_numpy()]
-        approved_period = submitted_period[
-            submitted_period["donor_decision"].fillna("").str.lower() == "approved"]
+        _dec_l = unique["decision"].fillna("").str.lower()
+        proceed_track = unique[_dec_l.str.startswith("proceed")]
 
-        n_submitted = int(len(submitted_period))
+        # SUBMITTED GRANTS = sum of donor-side SUBMISSION EVENTS over Proceed rows whose
+        # Progress = Completed (an RFP's `submissions` column can be >1 when it was submitted
+        # to a donor more than once). So 8 completed RFPs where one carried 2 submissions = 9.
+        _pc = proceed_track[
+            proceed_track["progress_status"].fillna("").str.lower().eq("completed")].copy()
+        _subs = (_pc["submissions"].fillna(1).astype(int) if "submissions" in _pc.columns
+                 else pd.Series(1, index=_pc.index, dtype=int))
+        n_submitted = int(_subs.sum())
+        approved_period = _pc[_pc["donor_decision"].fillna("").str.lower() == "approved"]
         n_approved = int(len(approved_period))
         win_rate = (n_approved / n_submitted * 100) if n_submitted > 0 else 0.0
 
-        # --- FX conversion to USD ---
-        # `amount_secured` pairs with `currency_secured`; `call_award_value`
-        # pairs with `currency`. Each row converts at its own rate via
-        # dropdowns.usd_rate(), so a mixed-currency pipeline rolls up cleanly.
-        if "amount_secured" in approved_period.columns and not approved_period.empty:
-            approved_usd = _series_to_usd(
-                approved_period["amount_secured"],
-                approved_period.get("currency_secured", pd.Series(dtype=str)),
-            )
-            amt_secured = float(approved_usd.sum())
-            # Count rows that have a non-zero amount but no usable currency
-            # — these silently default to USD and skew the rollup.
-            if not approved_period.empty:
-                no_cur = approved_period[
-                    approved_period["amount_secured"].fillna(0) > 0
-                ].get("currency_secured", pd.Series(dtype=str)).fillna("").str.strip()
-                n_missing_secured_cur = int((no_cur == "").sum())
-            else:
-                n_missing_secured_cur = 0
-        else:
-            approved_usd = pd.Series(dtype=float)
-            amt_secured = 0.0
-            n_missing_secured_cur = 0
+        # --- FX conversion to USD (per-field currency) ------------------------
+        # Outcome amounts over the SUBMITTED-with-a-donor-decision set (matches the
+        # Requested-vs-Secured chart below): Secured = amount_secured on Approved; Unsecured =
+        # amount_requested on Not-Approved; Requested = amount_requested across the set.
+        usd_view = unique.copy()
+        usd_view["req_usd"] = _series_to_usd(
+            usd_view["amount_requested"], usd_view.get("currency", pd.Series(dtype=str)))
+        usd_view["sec_usd"] = _series_to_usd(
+            usd_view["amount_secured"], usd_view.get("currency_secured", pd.Series(dtype=str)))
+        _ddl = usd_view["donor_decision"].fillna("").str.strip().str.lower()
+        outcome_df = usd_view[_ddl.isin({"approved", "under review", "not approved"})].copy()
+        _od = outcome_df["donor_decision"].str.strip().str.lower()
+        total_req = float(outcome_df["req_usd"].sum())
+        amt_secured = float(outcome_df.loc[_od.eq("approved"), "sec_usd"].sum())
+        total_unsec = float(outcome_df.loc[_od.eq("not approved"), "req_usd"].sum())
+        sec_ratio = (amt_secured / total_req * 100) if total_req > 0 else 0.0
+        # rows with an amount but no currency (silently treated as USD) — transparency badge.
+        _sec_nocur = outcome_df[(_od.eq("approved")) & (outcome_df["amount_secured"].fillna(0) > 0)]
+        n_missing_secured_cur = int(
+            _sec_nocur.get("currency_secured", pd.Series(dtype=str)).fillna("").str.strip().eq("").sum())
 
-        proceed_track = unique[unique["decision"].fillna("").str.lower()
-                               .str.startswith("proceed")]
+        # Pipeline value (Proceed track, call_award_value)
         if not proceed_track.empty:
-            pipeline_usd = _series_to_usd(
+            amt_pipeline = float(_series_to_usd(
                 proceed_track["call_award_value"],
-                proceed_track.get("currency", pd.Series(dtype=str)),
-            )
-            amt_pipeline = float(pipeline_usd.sum())
-            no_pipe_cur = proceed_track[
+                proceed_track.get("currency", pd.Series(dtype=str))).sum())
+            n_missing_pipe_cur = int(proceed_track[
                 proceed_track["call_award_value"].fillna(0) > 0
-            ].get("currency", pd.Series(dtype=str)).fillna("").str.strip()
-            n_missing_pipe_cur = int((no_pipe_cur == "").sum())
+            ].get("currency", pd.Series(dtype=str)).fillna("").str.strip().eq("").sum())
         else:
             amt_pipeline = 0.0
             n_missing_pipe_cur = 0
 
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Submitted", n_submitted,
-                  help="All-time: RFPs submitted to a donor (Progress = Completed OR a "
-                       "donor decision recorded).")
+        # Consolidated KPI cards — counts on top, amounts below (no duplicate secured tile).
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Submitted grants", n_submitted,
+                  help="Sum of donor-side submissions on Proceed RFPs whose Progress = "
+                       "Completed (an RFP can be submitted to a donor more than once).")
         k2.metric("Approved", n_approved,
-                  help="All-time: submitted RFPs with donor_decision = Approved "
-                       "(a subset of Submitted).")
+                  help="Submitted (Proceed + Completed) RFPs with donor_decision = Approved.")
         k3.metric("Win rate", f"{win_rate:.1f}%" if n_submitted else "—",
-                  help="Approved ÷ Submitted (all-time). Bounded at 100%. '—' with no submissions.")
-        k4.metric("USD secured", f"${amt_secured:,.0f}",
-                  help="All-time: sum of amount_secured for approved RFPs, "
-                       "converted row-by-row to USD via the FX rates in "
-                       "Admin → Settings (or config/dropdowns.yaml fallback). "
-                       "Rows missing a currency are treated as USD.")
+                  help="Approved ÷ Submitted grants. '—' with no submissions.")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Requested (USD)", f"${total_req:,.0f}")
+        m2.metric("Total Secured (USD)", f"${amt_secured:,.0f}",
+                  help="amount_secured on Approved RFPs, row-by-row to USD via the FX rates "
+                       "in Admin → Settings.")
+        m3.metric("Total Unsecured (USD)", f"${total_unsec:,.0f}",
+                  help="amount_requested on Not-Approved (declined) RFPs.")
+        m4.metric("Secured ÷ Requested", f"{sec_ratio:.1f}%")
 
         if n_missing_secured_cur or n_missing_pipe_cur:
             st.warning(
@@ -2158,21 +2188,7 @@ if _show_sec("5"):
                                   xaxis=_fmt_bucket_ticks(bucket_mode))
                 st.plotly_chart(fig, width='stretch')
 
-        if _show("s5_grants") and not grants.empty:
-            with st.expander("Active grants pipeline (all-time)", expanded=False):
-                gcols = [c for c in
-                         ["grant_id", "donor_title", "status", "award_date",
-                          "end_date", "report_due_date", "owner"]
-                         if c in grants.columns]
-                st.dataframe(
-                    grants[gcols].rename(columns={
-                        "grant_id": "Grant ID", "donor_title": "Donor / title",
-                        "status": "Status", "award_date": "Awarded",
-                        "end_date": "Ends", "report_due_date": "Next report",
-                        "owner": "Owner",
-                    }),
-                    width='stretch', hide_index=True,
-                )
+        # (The "Submitted Grants" table was moved to the END of this section — see below.)
 
         st.markdown(
             f"**Pipeline value (Proceed track):** ${amt_pipeline:,.0f} USD across "
@@ -2182,27 +2198,13 @@ if _show_sec("5"):
         )
 
         # ───────────── Amount Requested vs Amount Secured (relocated from §4) ─
-        # Lives in Section 5 because Requested vs Secured IS the outcome
-        # story — what we asked for vs what we got. Scatter shows per-RFP
-        # detail; the three KPI tiles roll up the same data in aggregate.
+        # The signed outcome view — the aggregate amounts are in the KPI cards above; this
+        # chart shows the per-RFP secured (▲) vs unsecured/declined (▼) picture.
         if _show("s5_reqsec"):
             st.markdown("##### Amount Requested vs Amount Secured (USD)")
         if _show("s5_reqsec") and {"amount_requested", "amount_secured"} <= set(unique.columns):
-            usd_view = unique.copy()
-            usd_view["req_usd"] = _series_to_usd(
-                usd_view["amount_requested"],
-                usd_view.get("currency", pd.Series(dtype=str)),
-            )
-            usd_view["sec_usd"] = _series_to_usd(
-                usd_view["amount_secured"],
-                usd_view.get("currency_secured", pd.Series(dtype=str)),
-            )
-            # Only SUBMITTED RFPs (a donor decision exists) have a secured/unsecured outcome.
-            _ddv = usd_view["donor_decision"].fillna("").str.strip().str.lower()
-            out_df = usd_view[
-                _ddv.isin({"approved", "under review", "not approved"})
-                & ((usd_view["req_usd"] > 0) | (usd_view["sec_usd"] > 0))
-            ].copy()
+            out_df = outcome_df[(outcome_df["req_usd"] > 0)
+                                | (outcome_df["sec_usd"] > 0)].copy()
             if not out_df.empty:
                 _d = out_df["donor_decision"].str.strip().str.lower()
                 # SIGNED outcome so the axis itself tells the story:
@@ -2236,22 +2238,13 @@ if _show_sec("5"):
                                 "signed_usd": False, "label": False},
                 )
                 fig_amt.add_hline(y=0, line_color="#334155", line_width=1)
-                fig_amt.update_layout(height=430, margin=dict(t=40, b=110),
-                                      xaxis_tickangle=-40,
-                                      legend=dict(orientation="h", y=-0.35))
+                # Legend TOP-RIGHT (inside the plot) so it doesn't collide with the angled
+                # x-axis labels at the bottom.
+                fig_amt.update_layout(
+                    height=430, margin=dict(t=40, b=120), xaxis_tickangle=-40,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                xanchor="right", x=1, title_text=""))
                 st.plotly_chart(fig_amt, width='stretch')
-
-                total_req = float(out_df["req_usd"].sum())
-                total_sec = float(out_df.loc[_d.eq("approved"), "sec_usd"].sum())
-                total_unsec = float(out_df.loc[_d.eq("not approved"), "req_usd"].sum())
-                t1, t2, t3, t4 = st.columns(4)
-                t1.metric("Total Requested (USD)", f"${total_req:,.0f}")
-                t2.metric("Total Secured (USD)", f"${total_sec:,.0f}")
-                t3.metric("Total Unsecured (USD)", f"${total_unsec:,.0f}",
-                          help="Requested amount on Not-Approved (declined) RFPs — shown "
-                               "below the zero line in red.")
-                pct = (total_sec / total_req * 100) if total_req > 0 else 0
-                t4.metric("Secured ÷ Requested", f"{pct:.1f}%")
             else:
                 st.info("No submitted RFPs with monetary amounts recorded yet.")
 
@@ -2281,6 +2274,52 @@ if _show_sec("5"):
                        help="Win rate among submitted proposals.")
             cv3.metric("End-to-end (Proceed → Approved)",
                        f"{(len(approved_conv)/len(proceeded)*100):.1f}%" if len(proceeded) else "—")
+
+        # ───────────── Submitted Grants (was "Active grants pipeline") ────────
+        # The proposals we've actually submitted — Proceed RFPs whose Progress = Completed —
+        # with what we requested, what's secured, and the donor's decision. Replaces the old
+        # active_grants table (whose reporting "Status" was stale/invalid, and whose Next
+        # report / Owner columns aren't needed here). Not collapsible; the closing table of
+        # the results story.
+        if _show("s5_grants"):
+            st.markdown("##### Submitted Grants")
+            st.caption("Every grant we've submitted (Proceed RFPs with Progress = "
+                       "Completed) — requested amount and the donor's decision.")
+            if _pc.empty:
+                st.info("No submitted grants yet.")
+            else:
+                _sg = _pc.copy()
+                _sg["_req"] = _series_to_usd(
+                    _sg["amount_requested"], _sg.get("currency", pd.Series(dtype=str)))
+                _sg["_sec"] = _series_to_usd(
+                    _sg["amount_secured"], _sg.get("currency_secured", pd.Series(dtype=str)))
+                _sg["_subs"] = (_sg["submissions"].fillna(1).astype(int)
+                                if "submissions" in _sg.columns else 1)
+                _tbl = pd.DataFrame({
+                    "Grant": _sg["opportunity_title"].fillna("(untitled)").astype(str).str.slice(0, 70),
+                    "Funder": _sg["funding_agency"].fillna("—"),
+                    "Requested (USD)": _sg["_req"],
+                    "Secured (USD)": _sg["_sec"],
+                    "Donor decision": (_sg["donor_decision"].fillna("").astype(str).str.strip()
+                                       .replace("", "Under Review")),
+                    "Subs": _sg["_subs"],
+                    "Submitted": pd.to_datetime(_sg["date_completed"], errors="coerce").dt.date,
+                }).sort_values("Requested (USD)", ascending=False)
+                st.dataframe(
+                    _tbl, width='stretch', hide_index=True,
+                    column_config={
+                        "Grant": st.column_config.TextColumn("Grant", width="large"),
+                        "Requested (USD)": st.column_config.NumberColumn(
+                            "Requested (USD)", format="$%,.0f"),
+                        "Secured (USD)": st.column_config.NumberColumn(
+                            "Secured (USD)", format="$%,.0f"),
+                        "Donor decision": st.column_config.TextColumn("Donor decision"),
+                        "Subs": st.column_config.NumberColumn(
+                            "Subs", format="%d",
+                            help="Donor-side submissions for this RFP (an RFP can be "
+                                 "submitted more than once)."),
+                    },
+                )
 
     st.divider()
 
