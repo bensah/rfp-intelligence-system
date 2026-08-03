@@ -68,7 +68,7 @@ def last_scan_skipped() -> int:
 HTTP_TIMEOUT = 15
 USER_AGENT = (
     "Mozilla/5.0 (compatible; RFPIS/1.0; "
-    "+contact: nsah.ben03@gmail.com)"
+    f"+contact: {os.environ.get('SCRAPER_CONTACT_EMAIL', 'contact@example.org')})"
 )
 
 # Health-relevant keyword filter applied to candidate titles + descriptions.

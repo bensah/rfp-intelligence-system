@@ -2064,10 +2064,10 @@ if _show_sec("4"):
 
         # ───────────── Lead & Sub Applicant partners ──────────────────────────
         # Over the PROCEED RFPs (activity_rows), each applicant cell can list MULTIPLE partners
-        # who applied jointly on the SAME grant, separated by ";" or "," (e.g. "CHAI Cameroon;
-        # CHAI Mali"). We split them → one count each, canonicalise the deploying org's own name
-        # (CHAI / CHAI-Cameroon → the full "CHAI Cameroon", while a distinct sibling like "CHAI
-        # Mali" is left alone), and DE-DUP per RFP → the number of distinct lead/sub applicants
+        # who applied jointly on the SAME grant, separated by ";" or "," (e.g. "Org North;
+        # Org South"). We split them → one count each, canonicalise the deploying org's own name
+        # (its short form / hyphenated variant → its full canonical name, while a distinct
+        # sibling org is left alone), and DE-DUP per RFP → the number of distinct lead/sub applicants
         # per Proceed RFP. BLANK cells and the literal "N/A" (Not Applicable — a real, distinct
         # value) are BOTH dropped: neither is an applicant, so neither belongs on the chart.
         if _show("s4_partners"):
@@ -2081,8 +2081,8 @@ if _show_sec("4"):
         _org_full = (settings.get_org_name() or "").strip()
         _org_short = (settings.get_org_short() or "").strip()
         _org_full_key = re.sub(r"\s+", " ", _org_full.replace("-", " ")).strip().lower()
-        # The bare acronym = the org's first word ("CHAI Cameroon" → "CHAI"). A bare "CHAI"
-        # rolls up to the full name; a qualified sibling ("CHAI Mali", two tokens) does NOT.
+        # The bare acronym = the org's first word (the full name's leading token). A bare
+        # acronym rolls up to the full name; a qualified sibling (two tokens) does NOT.
         _org_first = _org_full.split()[0].lower() if _org_full else ""
 
         def _norm_org(raw) -> str:
@@ -2095,8 +2095,8 @@ if _show_sec("4"):
             if _org_full and low == _org_full_key:
                 return _org_full                   # variant/hyphen/case → canonical casing
             if _org_first and low == _org_first:
-                return _org_full                   # bare acronym "CHAI" → "CHAI Cameroon"
-            return s                               # distinct org (e.g. CHAI Mali) untouched
+                return _org_full                   # bare acronym → canonical full name
+            return s                               # distinct sibling org untouched
 
         def _split_orgs(v) -> list[str]:
             merged: list[str] = []
