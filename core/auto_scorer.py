@@ -2531,6 +2531,19 @@ def auto_score(
                 _donor_row = _match_donor(_fa, fuzzy=False)
         except Exception:
             _donor_row = None
+        # Fold in any CALL-level compliance the RFP itself states (e.g. an HQ-geography
+        # restriction that lives in the funding call, NOT donor intel) so the SHARED scorer
+        # applies it everywhere — Records / Screen / Report / stored decision — not only the
+        # Review page (which did this merge on its own). Mirrors review_rfp's merge.
+        try:
+            import json as _json_cf
+            _cf = candidate.get("call_compliance_flags")
+            if isinstance(_cf, str) and _cf.strip():
+                _cf = _json_cf.loads(_cf)
+            if isinstance(_cf, dict) and _cf:
+                _donor_row = criteria_derive._merge_rfp_compliance(_donor_row, _cf)
+        except Exception:
+            pass
         _derived = criteria_derive.derive_criteria(
             candidate, _orgp.get_profile(), _donor_row, _settings.get_org(), policies)
         for _k, _lbl in _derived.items():
