@@ -1576,10 +1576,9 @@ if _show_sec("2"):
 
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Total unique RFPs", total_all,
-                  delta=f"{discovered_in_period} discovered in period",
-                  delta_color="off",
-                  help="All non-duplicate rows across every source "
-                       "(auto-scanned, manually submitted, Excel migration).")
+                  help=f"All non-duplicate rows across every source (auto-scanned, "
+                       f"manually submitted, Excel migration). {discovered_in_period} "
+                       f"discovered in the active period.")
         k2.metric("Proceed", proceed_all,
                   help="Decision = Proceed. The actionable pipeline.")
         k3.metric("Park", park_all,
@@ -1595,19 +1594,43 @@ if _show_sec("2"):
                 + "  ·  ".join(f"`{k}` {v}" for k, v in src_counts.items())
             )
 
-        funnel_data = pd.DataFrame({
-            "stage": ["Discovered (all-time)", "Proceed-track", "Submitted", "Approved"],
-            "count": [total_all, proceed_all, submitted_all, approved_all],
-        })
+        _STAGES = ["Discovered (all-time)", "Proceed-track", "Submitted", "Approved"]
+        _FUNNEL_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#22c55e"]
+
+        # COUNT funnel — how many RFPs make it through each stage.
         fig_funnel = go.Figure(go.Funnel(
-            y=funnel_data["stage"], x=funnel_data["count"],
-            textinfo="value+percent initial",
-            marker={"color": ["#3b82f6", "#10b981", "#f59e0b", "#22c55e"]},
+            y=_STAGES, x=[total_all, proceed_all, submitted_all, approved_all],
+            textinfo="value+percent initial", marker={"color": _FUNNEL_COLORS},
         ))
-        fig_funnel.update_layout(height=320, margin=dict(t=20, b=10),
-                                 title="Conversion funnel — all stored RFPs")
+        fig_funnel.update_layout(height=340, margin=dict(t=40, b=10),
+                                 title="Conversion funnel — counts")
+
+        # VALUE funnel — the $ at each stage. Each stage uses the most meaningful amount:
+        #   Discovered  → Σ call_award_value across ALL unique RFPs (Proceed + Park + Decline)
+        #   Proceed     → Σ call_award_value across the Proceed track
+        #   Submitted   → Σ amount_requested (Estimated Value) across the submitted set
+        #   Approved    → Σ amount_secured across the approved subset (what we actually won)
+        _appr = _sub_proc[_sub_proc["donor_decision"].fillna("").str.lower() == "approved"]
+        _disc_v = float(_series_to_usd(
+            unique_all["call_award_value"], unique_all.get("currency", pd.Series(dtype=str))).sum())
+        _proc_v = float(_series_to_usd(
+            proceed_df_all["call_award_value"], proceed_df_all.get("currency", pd.Series(dtype=str))).sum())
+        _sub_v = float(_series_to_usd(
+            _sub_proc["amount_requested"], _sub_proc.get("currency", pd.Series(dtype=str))).sum())
+        _appr_v = float(_series_to_usd(
+            _appr["amount_secured"], _appr.get("currency_secured", pd.Series(dtype=str))).sum())
+        fig_funnel_v = go.Figure(go.Funnel(
+            y=_STAGES, x=[_disc_v, _proc_v, _sub_v, _appr_v],
+            texttemplate="$%{x:,.0f}", marker={"color": _FUNNEL_COLORS},
+        ))
+        fig_funnel_v.update_layout(height=340, margin=dict(t=40, b=10),
+                                   title="Conversion funnel — value (USD)")
         if _show("s2_funnel"):
-            st.plotly_chart(fig_funnel, width='stretch')
+            _fc1, _fc2 = st.columns(2)
+            _fc1.plotly_chart(fig_funnel, width='stretch')
+            _fc2.plotly_chart(fig_funnel_v, width='stretch')
+            st.caption("Value funnel: Discovered / Proceed = estimated award value; Submitted "
+                       "= amount requested; Approved = amount secured.")
         # Decision-distribution chart used to live here; moved to Section 3
         # since "where decisions land" belongs with the Reviews & Decisions
         # narrative, not the funnel.
@@ -1647,9 +1670,17 @@ if _show_sec("2"):
                     .value_counts().reindex(_order, fill_value=0)
                     .rename_axis("Status").reset_index(name="RFPs")
                 )
+                # Traffic-light semantics: Not Started (red) → In Progress (amber) →
+                # Completed (green); Discontinued / Missed are muted greys.
+                _PS_COLORS = {
+                    "Not Started": "#ef4444", "In Progress": "#eab308",
+                    "Completed": "#1e8e3e", "Discontinued": "#9ca3af",
+                    "Missed": "#6b7280",
+                }
                 fig_ps = px.bar(ps, x="Status", y="RFPs", text="RFPs",
                                 title="Progress status — Proceed RFPs", color="Status",
-                                category_orders={"Status": _order})
+                                category_orders={"Status": _order},
+                                color_discrete_map=_PS_COLORS)
                 fig_ps.update_layout(height=300, showlegend=False,
                                      margin=dict(t=40, b=10), xaxis_title=None)
                 st.plotly_chart(fig_ps, width='stretch')
