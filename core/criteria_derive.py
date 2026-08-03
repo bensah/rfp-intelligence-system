@@ -1358,17 +1358,28 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
                           score=(1.0 if (org_ent and org_ent == ent_req) else 0.0),
                           hard=True))
 
-    # --- C. HQ country — HQ in one of the required countries ------------------
-    # Canonicalize BOTH sides (US == U.S. == United States) so a mere spelling/format
-    # variant of the same country never fails this HARD gate (which auto-Declines).
-    hq_req = [h.lower() for h in _as_list(donor.get("donor_hq_country_required"))]
-    detected = bool(hq_req and "any" not in hq_req)
+    # --- C. HQ country — the applicant must be HEADQUARTERED in a required country OR
+    # REGION. REGION-AWARE: a requirement stated as a region (e.g. "Sub-Saharan Africa") is
+    # expanded to its member countries (via geo.expand inside _covers), so an org HQ'd in
+    # Cameroon PASSES while one HQ'd in the United States FAILS — the IDRC/ANeSA case
+    # ("Organizations headquartered outside sub-Saharan Africa are also not eligible").
+    # Both sides go through geo expansion, so a spelling/format variant (US == U.S. ==
+    # United States) never mis-fires this HARD gate (which auto-Declines).
+    #
+    # IMPORTANT: this reads the org's HEADQUARTERS country (org_hq_country), NOT its
+    # operating country — Example Country Team OPERATES in Cameroon but is HQ'd in the United
+    # States, so org_hq_country must be set to "United States" for this gate to disqualify
+    # it. The fallback to org_country is only for orgs whose HQ == primary country.
+    hq_req = [h for h in _as_list(donor.get("donor_hq_country_required"))
+              if str(h).strip() and str(h).strip().lower() != "any"]
+    detected = bool(hq_req)
     ohq = str(os.get("org_hq_country") or os.get("org_country") or "").strip()
-    _ohq_canon = _geo.canonical_geo(ohq)
-    _hq_req_canon = {_geo.canonical_geo(h) for h in hq_req if h != "any"}
+    # Canonicalize BOTH sides first (SSA / sub-saharan → "Sub-Saharan Africa"; US / U.S. →
+    # "United States") so a synonym or format variant still region-expands via _covers.
+    _req_canon = [_geo.canonical_geo(h) for h in hq_req]
+    _hq_ok = bool(ohq) and _covers(_req_canon, [_geo.canonical_geo(ohq)])
     items.append(_qfactor("donor_hq_country", "HQ country", active=detected,
-                          score=(1.0 if (_ohq_canon and _ohq_canon in _hq_req_canon)
-                                 else 0.0), hard=True))
+                          score=(1.0 if _hq_ok else 0.0), hard=True))
 
     # --- D. Registration region — GEO-SCOPE PROXY (owner 2026-06-29). Active when the
     #    donor states a region, when it explicitly says "Any" (a real pass), OR via the
