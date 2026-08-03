@@ -68,7 +68,7 @@ class BaselinePolicyTests(unittest.TestCase):
         self.assertEqual(elig, [])                  # region-only respected — not collapsed
         self.assertEqual(broad, ["Sub-Saharan Africa"])
 
-    def test_single_tenant_no_policy_keeps_chai_defaults(self):
+    def test_single_tenant_no_policy_keeps_org_defaults(self):
         P._is_scoped_tenant = lambda: False
         P.get_setting = lambda key: None
         elig, _ = self._geo(P.get_policies())
