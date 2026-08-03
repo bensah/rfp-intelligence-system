@@ -7,8 +7,10 @@ Mirrors the Excel `Year-to-date RFP Summary Dashboard` sheet with sections:
   D. Periodic Reflection         — Weekly / Monthly / Quarterly + Annual reflection
   E. Partner Engagement KRs      — KR2.2 / KR2.3 / KR2.4 cards
 
-All deduplicated. Year sourced from app_settings (Admin > Settings).
-Week / Month / Quarter selectable via dropdowns at the top of Section D.
+All deduplicated. Section A (snapshot) counts every decision; sections B–D reflect the
+**Proceed pipeline ONLY** (Park/Decline are excluded — they never get submitted). Year
+sourced from app_settings (Admin > Settings). Week / Month / Quarter selectable via
+dropdowns at the top of Section D.
 """
 from __future__ import annotations
 
@@ -433,6 +435,7 @@ st.divider()
 # C. Proposal Development Status  (was E. Status & urgency)
 # =============================================================================
 st.subheader("C · Proposal development status")
+st.caption("Deduplicated **Proceed** RFPs only — Park / Decline are excluded.")
 
 # Validation alerts — donor_decision vs progress_status consistency
 SUBMITTED_DECISIONS = {"approved", "under review", "not approved"}
@@ -444,8 +447,9 @@ PRE_SUBMIT_PROGRESS = {"", "not started", "in progress", "discontinued",
                        "missed", "missing"}
 POST_SUBMIT_PROGRESS = {"completed"}  # "Completed" = submitted to donor
 
+# Only the Proceed pipeline is in scope for this section (Park/Decline never get submitted).
 alerts: list[tuple[str, str]] = []
-for _, r in unique.iterrows():
+for _, r in proceed_df.iterrows():
     dd_raw = _safe_str(r.get("donor_decision")).strip()
     dd = dd_raw.lower() or "not submitted"
     ps_raw = _safe_str(r.get("progress_status")).strip()
@@ -534,27 +538,30 @@ with ec2:
         st.caption("—")
 
 with ec3:
-    st.markdown("**Donor Decision Status**")
-    # Case-normalise stored values to the canonical dropdown labels
-    _DD_CANONICAL = {
-        "approved":       "Approved",
-        "under review":   "Under Review",
-        "not approved":   "Not Approved",
-        "not submitted":  "Not submitted",
-        "":               "Not submitted",
-    }
-    def _canon_dd(v):
-        s = _safe_str(v).strip().lower()
-        return _DD_CANONICAL.get(s, "Not submitted")
-
-    dd_counts = (
-        unique["donor_decision"].apply(_canon_dd)
-        .value_counts()
-        .reindex(["Approved", "Under Review", "Not Approved", "Not submitted"], fill_value=0)
-        .reset_index()
-    )
-    dd_counts.columns = ["Decision", "Count"]
-    st.dataframe(dd_counts, hide_index=True, width='stretch')
+    st.markdown("**Donor Decision Status (Proceed)**")
+    if not proceed_df.empty:
+        # Exact counts over the deduplicated PROCEED pipeline only. Lead with SUBMITTED
+        # (what's actually gone to a donor) rather than Not-submitted. A row is Submitted when
+        # its Progress = Completed OR it carries a real donor decision; a Completed-but-
+        # undecided row counts as Under Review (submitted, awaiting the donor) so the three
+        # decision rows sum exactly to Submitted.
+        _dd = proceed_df["donor_decision"].fillna("").str.strip().str.lower()
+        _ps = proceed_df["progress_status"].fillna("").str.strip().str.lower()
+        _completed = _ps.eq("completed")
+        approved = int(_dd.eq("approved").sum())
+        not_approved = int(_dd.eq("not approved").sum())
+        under_review = int((_dd.eq("under review")
+                            | (_completed & ~_dd.isin({"approved", "not approved"}))).sum())
+        submitted = approved + under_review + not_approved
+        dd_counts = pd.DataFrame({
+            "Decision": ["Submitted", "Approved", "Under Review", "Not Approved"],
+            "Count": [submitted, approved, under_review, not_approved],
+        })
+        st.dataframe(dd_counts, hide_index=True, width='stretch')
+        st.caption(f"_{int(len(proceed_df))} Proceed RFPs (deduplicated) · "
+                   f"{submitted} submitted to a donor._")
+    else:
+        st.caption("—")
 
 st.divider()
 
@@ -767,14 +774,15 @@ st.markdown("---")
 # --- Annual reflection (merged into Periodic Reflection) ---
 st.markdown("**Annual reflection**")
 
-# `unique` is already YTD-filtered by submitted_at. We don't double-filter on
-# date_completed / date_of_approval because some rows have those dates blank;
-# the YTD scope is sufficient for "this year".
-completed_mask = unique["progress_status"].fillna("").str.strip().str.lower().eq("completed")
-submitted_df = unique[completed_mask].copy()
+# Proceed pipeline only (deduplicated) — Park/Decline never reach submission/award.
+# `proceed_df` is already YTD-filtered by submitted_at. We don't double-filter on
+# date_completed / date_of_approval because some rows have those dates blank; the YTD
+# scope is sufficient for "this year".
+completed_mask = proceed_df["progress_status"].fillna("").str.strip().str.lower().eq("completed")
+submitted_df = proceed_df[completed_mask].copy()
 
-approved_mask = unique["donor_decision"].fillna("").str.strip().str.lower().eq("approved")
-approved_year = unique[approved_mask].copy()
+approved_mask = proceed_df["donor_decision"].fillna("").str.strip().str.lower().eq("approved")
+approved_year = proceed_df[approved_mask].copy()
 
 # Total Submitted = sum of Submissions across completed rows (counts donor-side
 # submission EVENTS — multi-submit rows count multiple times).
