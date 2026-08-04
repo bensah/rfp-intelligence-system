@@ -430,9 +430,21 @@ st.markdown("**Eligibility criteria**  "
 # criterion's collapsible card and the gauge all read the same numbers.
 _OR_KEYS = {"funder_relationship"}   # geographic_fit is now a single tiered component
 _FMARK = {True: ("✓", "#1a7f37"), False: ("✗", "#c0392b"), None: ("?", "#8a6d00")}
+# Persisted HUMAN component verdicts (migration 087). Merged over the derived breakdown
+# so a reviewer's answer beats the inference — the derivation reads org profile / donor
+# intel / call text and can be wrong or stale; a human who read the call is authoritative.
+_overrides = row.get("criteria_component_overrides")
+if isinstance(_overrides, str):
+    try:
+        _overrides = _json.loads(_overrides or "{}")
+    except Exception:
+        _overrides = {}
+if not isinstance(_overrides, dict):
+    _overrides = {}
 try:
     _is_fatal, _trigger = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set)
-    _bd = _cderive.factor_breakdown(row, _org_prof, _donor_eff, _org_set)
+    _bd = _cderive.factor_breakdown(row, _org_prof, _donor_eff, _org_set,
+                                    overrides=_overrides)
 except Exception:
     _is_fatal, _trigger, _bd = False, None, {}
 
@@ -509,12 +521,18 @@ def _factor_html(ckey: str) -> str:
             suffix = (" <span style='color:#aaa'>(no restriction — defaults to pass)</span>"
                       if f.get("default") else "")
         lock = " 🔒" if f.get("fatal") else ""
+        # A reviewer's saved verdict beats the derivation — say so, so nobody wonders why
+        # the card disagrees with the underlying profile/donor data.
+        human = (" <span style='color:#1a7f37;font-size:0.72rem'>· set by reviewer</span>"
+                 if f.get("_override") else "")
         out.append(f"<div style='font-size:0.82rem;margin:2px 0'>"
                    f"<span style='color:{col};font-weight:700'>{sym}</span> "
-                   f"{_esc(f['name'])}{lock}{suffix}</div>")
+                   f"{_esc(f['name'])}{lock}{suffix}{human}</div>")
     out.append("<div style='color:#aaa;font-size:0.72rem;margin-top:6px'>"
                "✓ met · ✗ failed · ? Not sure (not stated — excluded) · ○ alt-route · "
-               "🔒 fatal gate (failing it auto-Declines)</div>")
+               "🔒 fatal gate (failing it auto-Declines) · "
+               "<span style='color:#1a7f37'>set by reviewer</span> = human verdict, "
+               "overrides the system</div>")
     return "".join(out)
 
 
@@ -787,8 +805,11 @@ with grid_col:
                 # before a scoring fix would otherwise freeze a stale label beside a live
                 # count (e.g. Funding quality "Moderate" next to 4/4 · 100%). EDIT mode
                 # still loads the saved value (above) so a reviewer resumes their work.
-                current = _coerce_elig(_derived.get(key) or _baseline_val(key), key)
-                edited_values[key] = current   # derived value feeds the live gauge
+                # Human edits WIN: _baseline_val returns the saved value on a reviewed
+                # row (else the live derivation), so the label can't silently disagree with
+                # the reviewer's verdict shown in the component panel below.
+                current = _coerce_elig(_baseline_val(key), key)
+                edited_values[key] = current   # feeds the live gauge
                 _act = [f for f in (_bd.get(key) or []) if f.get("active", True)]
                 if key in ("qualification", "capacity", "cofinancing"):
                     # MUST-1 / MUST-3 / MUST-5 ratio = Σ component scores ÷ activated
@@ -1103,6 +1124,14 @@ else:
             "decision_overridden_by": user.get("email"),
             "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
         }
+        # Persist ONLY the components the reviewer actually touched, merged over anything
+        # saved before, so the derivation still drives everything else (migration 087).
+        _new_ov = {k: dict(v) for k, v in (_overrides or {}).items() if isinstance(v, dict)}
+        for _k in CRITERIA:
+            if st.session_state.get(_dirty_key(row["uid"], _k)):
+                _new_ov.setdefault(_k, {}).update(_component_scores.get(_k) or {})
+        if _new_ov:
+            update["criteria_component_overrides"] = _new_ov
         sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
         # Donor-list-backed components (e.g. "Authorized signatory (this donor)") are
         # DERIVED from the org profile, so saving the RFP alone can't change them. Push the
