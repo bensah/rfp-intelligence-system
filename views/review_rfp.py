@@ -38,7 +38,7 @@ sb = get_client()
 year = settings.get_year()
 st.markdown(
     f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
-    f"margin:0.15rem 0 0.5rem;'>Weekly Triage Pipeline ({year})</h2>",
+    f"margin:0.15rem 0 0.5rem;'>Weekly Reviewing ({year})</h2>",
     unsafe_allow_html=True,
 )
 
@@ -638,15 +638,43 @@ def _crit_label_color(lbl: str) -> str:
     return {2: "#1a7f37", 1: "#b8860b", 0: "#c0392b"}.get(criterion_score(lbl), "#777")
 
 
-def _mk_snap(qk: str):
-    """Callback factory — snap a component box to 0 / 0.5 / 1 on change."""
+def _apply_component_writethrough(comp_scores: dict, donor_eff: dict | None,
+                                  rfp_row: dict, by_email: str | None) -> list[str]:
+    """Push donor-list-backed component verdicts back into the ORG PROFILE so the fix is
+    durable and the derivation agrees on the next render (see core.criteria_writethrough:
+    these components read a profile donor list, so saving the RFP alone changes nothing).
+    Returns human-readable notes; empty = nothing changed, nothing written."""
+    from core import criteria_writethrough as _cwt
+    prof = _orgp.get_profile()
+    changes, notes = _cwt.plan_writethrough(
+        comp_scores, prof, donor_eff, rfp_row, _cderive._canonical_donor_match)
+    if changes:
+        prof.update(changes)
+        _orgp.set_profile(prof, updated_by=by_email)
+    return notes
+
+
+def _dirty_key(uid: str, key: str) -> str:
+    """Session flag: the reviewer has actually edited a component of this criterion."""
+    return f"qdirty_{uid}_{key}"
+
+
+def _mk_snap(qk: str, dirty_key: str | None = None):
+    """Callback factory — snap a component box to 0 / 0.5 / 1 on change.
+
+    Also marks the criterion DIRTY. Streamlit fires on_change ONLY for a genuine user
+    interaction, so this is the reliable signal that the reviewer actually touched a
+    component (as opposed to the editor merely re-rendering with derived defaults)."""
     def _cb():
         st.session_state[qk] = _snap(st.session_state.get(qk, 0.0))
+        if dirty_key:
+            st.session_state[dirty_key] = True
     return _cb
 
 
 def _item_score_editor(uid: str, key: str, items: list[dict], opts: list[str],
-                       current: str, rule) -> str:
+                       current: str, rule, *, reviewed: bool = False,
+                       collect: dict | None = None) -> str:
     """EDIT-mode composite criterion. The classification is CALCULATED from the ACTIVE
     component scores (0/0.5/1) and shown INLINE next to the criterion title — bold and
     colour-coded — with NO dropdown; the user edits the component numbers and the label
@@ -669,6 +697,16 @@ def _item_score_editor(uid: str, key: str, items: list[dict], opts: list[str],
         scores.append(sc)
         by_key[str(it.get("key"))] = sc
     lbl = rule(scores, by_key)
+    if collect is not None:
+        collect[key] = dict(by_key)      # Save reads these for org-profile write-through
+    # DON'T SILENTLY REVERT A HUMAN VERDICT. The components always re-seed from the LIVE
+    # derivation, so simply opening the editor on a reviewed row and pressing Save used to
+    # recompute the label from derived values and overwrite the reviewer's saved answer
+    # (and with it alignment_score / auto_recommendation) without anyone touching a thing.
+    # Keep the stored label until the reviewer actually edits a component (_dirty_key is
+    # set from the on_change callback, which only fires on real interaction).
+    if reviewed and current and not st.session_state.get(_dirty_key(uid, key)):
+        lbl = current
     st.markdown(
         f"<div style='font-size:0.95rem;margin:0.15rem 0 0.1rem'>"
         f"<span style='font-weight:700'>{_esc(LABELS[key])}</span>&nbsp; → &nbsp;"
@@ -690,7 +728,8 @@ def _item_score_editor(uid: str, key: str, items: list[dict], opts: list[str],
             c2.number_input(
                 it.get("name") or ik, min_value=0.0, max_value=1.0, step=0.5,
                 value=_factor_score(it),
-                key=qk, on_change=_mk_snap(qk), format="%.1f", label_visibility="collapsed")
+                key=qk, on_change=_mk_snap(qk, _dirty_key(uid, key)),
+                format="%.1f", label_visibility="collapsed")
         else:
             c2.number_input(                       # empty/disabled until activated
                 it.get("name") or ik, min_value=0.0, max_value=1.0, step=0.5, value=0.0,
@@ -707,6 +746,9 @@ with grid_col:
                    "each criterion below, then Save._")
     g1, g2 = st.columns(2)
     edited_values: dict[str, str] = {}
+    # Per-component scores captured during render, so Save can WRITE THROUGH the ones
+    # backed by an org-profile field (see _WRITE_THROUGH below).
+    _component_scores: dict[str, dict[str, float]] = {}
     for i, key in enumerate(CRITERIA):
         target = g1 if i < 5 else g2
         # SINGLE SOURCE OF TRUTH: in VIEW mode the ONE live derivation (_derived,
@@ -733,7 +775,8 @@ with grid_col:
                 if key in _RULES:
                     _items = _bd.get(key) or []     # ALL components (active + inactive)
                     edited_values[key] = _item_score_editor(
-                        row["uid"], key, _items, opts, current, _RULES[key])
+                        row["uid"], key, _items, opts, current, _RULES[key],
+                        reviewed=_reviewed, collect=_component_scores)
                 else:
                     idx = opts.index(current) if current in opts else 0
                     edited_values[key] = st.selectbox(
@@ -1061,6 +1104,18 @@ else:
             "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
         }
         sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
+        # Donor-list-backed components (e.g. "Authorized signatory (this donor)") are
+        # DERIVED from the org profile, so saving the RFP alone can't change them. Push the
+        # reviewer's verdict into the profile field it reads from, or the component silently
+        # reverts on the next render.
+        try:
+            _wt_notes = _apply_component_writethrough(
+                _component_scores, _donor_eff, row, user.get("email"))
+            if _wt_notes:
+                st.success("Org profile updated — " + "; ".join(_wt_notes) + ".")
+                st.cache_data.clear()          # profile feeds cached derivations
+        except Exception as _wexc:
+            st.warning(f"Saved the RFP, but couldn't update the org profile: {_wexc}")
         # ML Phase 1/3 — capture the human decision as a labeled signal (this Review
         # screen is a second decision path alongside Records). Dedup in log_decision
         # keeps one current label per record across both paths.
