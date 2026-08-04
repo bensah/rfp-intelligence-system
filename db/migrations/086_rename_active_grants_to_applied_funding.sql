@@ -11,11 +11,14 @@
 -- names (Postgres does not rename indexes/constraints/policies/triggers when a table is
 -- renamed, and the UI rename only caught a couple of them).
 --
--- Fully IDEMPOTENT and GUARDED: every step is a no-op if it was already applied, so this
--- is safe to run against the live DB (where the table rename is already done) or a fresh
--- build (where the old migrations created `active_grants`). Column names are UNCHANGED.
+-- Fully IDEMPOTENT and GUARDED: every step is a no-op if already applied. Safe to run against
+-- the live DB (table + column are already renamed; only the leftover legacy OBJECT names —
+-- indexes/constraints/policies/triggers — still need tidying) AND on a fresh replay (the
+-- historical migrations now create applied_funding / funding_id directly, so every guard
+-- below is false and this migration is a pure no-op there).
 
--- 1) Table (no-op on live; renames on a fresh replay where 067 created active_grants).
+-- 1) Table (no-op now — live is already applied_funding and a fresh replay creates it
+--    directly; kept for any DB still carrying the legacy name).
 do $$
 begin
   if exists (select 1 from pg_class where relname = 'active_grants' and relkind = 'r') then
