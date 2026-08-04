@@ -138,7 +138,10 @@ def _full_text(candidate: dict[str, Any]) -> str:
             candidate.get("opportunity_title") or "",
             candidate.get("brief_description") or "",
             " ".join(candidate.get("call_geographic_scope") or []),
-            candidate.get("focus_theme") or "",
+            # focus_theme is DELIBERATELY EXCLUDED: it is a label this app mints itself
+            # (auto_score stamps category_full(...)), so gating on it let the system confirm
+            # its own guess — e.g. a procurement tender classified "Cross-cutting (Health)"
+            # then satisfied a health-theme gate on the word inside that label.
             candidate.get("funding_agency") or "",
         ])
     )
@@ -1924,6 +1927,25 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
             return False, "type: recognition prize (not a proposal call)"
         if (candidate.get("opportunity_type") or "").strip().lower() == "announcement":
             return False, "not-an-rfp: forthcoming / announcement (not open yet)"
+        # OPPORTUNITY-TYPE OPT-OUT. Buying goods (a UNGM tender) or selling billable days
+        # (an AfDB consultancy EOI) is not a funding call a grant-seeking org can pursue.
+        # This gate never used to fire: opportunity_type was NULL on everything except EU
+        # F&T rows, and the only check above tests == "announcement". FAIL-CLOSED on the
+        # DETECTED type when the column is empty, so a NULL can't skip the gate.
+        _otype = (candidate.get("opportunity_type") or "").strip()
+        if not _otype:
+            try:
+                from core.type_detect import detect_opportunity_type as _dot
+                _otype = _dot(candidate) or ""
+            except Exception:
+                _otype = ""
+        if _otype:
+            from core.type_detect import OPPORTUNITY_TYPE_EXCLUSIONS as _OTX
+            _flag = _OTX.get(_otype)
+            # Default True for each excluded class — a grant pipeline never wants them;
+            # a tenant can re-admit one by setting its exclusion flag False.
+            if _flag and (policies.get("exclusions") or {}).get(_flag, True):
+                return False, f"type: {_otype.lower()} (not a funding call for this org)"
     rejected, reason = feasibility_hard_reject(candidate, policies)
     if geo_org_gates and rejected:
         return False, f"feasibility: {reason}"

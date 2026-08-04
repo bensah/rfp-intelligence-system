@@ -34,9 +34,14 @@ _POLICY = {
 }
 
 
-def _screen(scope, *, donor_geo=None, brief="Supply of medical equipment.",
+def _screen(scope, *, donor_geo=None, brief="Grant funding for health systems.",
             llm_adjudicate=True):
-    cand = {"opportunity_title": "RFQ", "opportunity_link": "https://x.org/rfq",
+    # NOTE: deliberately a GRANT call. This fixture used to be an "RFQ" for "Supply of
+    # medical equipment" — which is a procurement notice, so once the opportunity-type
+    # opt-out landed it was (correctly) rejected on TYPE before the geography gate ran,
+    # and these geo assertions started failing for the wrong reason. Type rejection is
+    # covered separately in tests/test_opportunity_type_gate.py.
+    cand = {"opportunity_title": "RFP", "opportunity_link": "https://x.org/rfp",
             "brief_description": brief, "call_geographic_scope": scope, "_page_text": brief}
     if donor_geo is not None:
         cand["_donor_geo"] = donor_geo
