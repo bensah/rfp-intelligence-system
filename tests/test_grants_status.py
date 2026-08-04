@@ -1,4 +1,4 @@
-"""Regression tests for the Active Grants overhaul helpers.
+"""Regression tests for the Applied Funding overhaul helpers.
 
 Covers the two PURE pieces:
   * core.pipeline.deadline_status — once SUBMITTED, a passed deadline reads as an outcome
@@ -6,7 +6,7 @@ Covers the two PURE pieces:
     semantics.
   * core.permissions.can_edit_status — any authenticated tenant member may edit statuses.
 
-The Active Grants membership rule (a Completed-but-undecided grant enters Active Grants,
+The Applied Funding membership rule (a Completed-but-undecided grant enters Applied Funding,
 bucketed Under Review) lives inline in app_pages/grants.py (a Streamlit page); its logic is
 asserted here in miniature to lock the intent.
 

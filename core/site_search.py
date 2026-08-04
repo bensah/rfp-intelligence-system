@@ -28,7 +28,7 @@ _NAV: list[tuple[str, str, str, bool]] = [
     ("Pipelines · Tracking", "tracking pipeline stage progress proposal",
      "app_pages/pipelines.py", False),
     ("Pipelines · Summary", "summary stats overview", "app_pages/pipelines.py", False),
-    ("Grants", "active grants awarded won reporting deadlines",
+    ("Grants", "applied funding awarded won reporting deadlines",
      "app_pages/grants.py", False),
     ("Actions", "meetings engagements pending follow ups todo tasks check-ins",
      "app_pages/actions.py", False),

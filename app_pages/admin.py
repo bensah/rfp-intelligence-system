@@ -390,24 +390,24 @@ with tab_data:
                 ],
                 "caption": "All fields Excel-managed; edits here are overwritten by next sync if the same row exists in Excel.",
             },
-            "Active Grants": {
+            "Applied Funding": {
                 "table": "applied_funding",
                 "order_col": "report_due_date",
-                "table_cols": ["grant_id", "donor_title", "award_date", "end_date",
+                "table_cols": ["funding_id", "donor_title", "award_date", "end_date",
                                "status", "owner", "report_type", "report_due_date",
                                "source"],
                 "col_labels": {
-                    "grant_id": "Grant ID", "donor_title": "Donor",
+                    "funding_id": "Grant ID", "donor_title": "Donor",
                     "award_date": "Awarded", "end_date": "Ends",
                     "status": "Status", "owner": "Owner",
                     "report_type": "Report", "report_due_date": "Report due",
                     "source": "Source",
                 },
                 "date_cols": ["award_date", "end_date", "report_due_date", "submitted_date"],
-                "search_cols": ["grant_id", "donor_title", "owner", "remarks"],
+                "search_cols": ["funding_id", "donor_title", "owner", "remarks"],
                 "advanced_filters": ["owner", "status", "report_type", "source"],
                 "edit_fields": [
-                    ("grant_id",        "text", "Grant ID *"),
+                    ("funding_id",        "text", "Grant ID *"),
                     ("donor_title",     "text", "Donor"),
                     ("form_id_link",    "text", "Linked RFP form ID"),
                     ("award_date",      "date", "Award date"),
@@ -419,7 +419,7 @@ with tab_data:
                     ("owner",           "text", "Owner"),
                     ("remarks",         "area", "Remarks"),
                 ],
-                "caption": "Keyed on `grant_id`. Re-sync OVERWRITES matching rows from Excel.",
+                "caption": "Keyed on `funding_id`. Re-sync OVERWRITES matching rows from Excel.",
             },
             "Narrative Logs": {
                 "table": "narrative_logs",
