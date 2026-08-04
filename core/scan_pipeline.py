@@ -286,6 +286,7 @@ def _build_merge_payload(
         "focus_theme": candidate.get("focus_theme"),
         "notes": candidate.get("notes"),
     }
+    conflicts: dict[str, Any] = {}
     for field in _SCRAPE_MANAGED_FIELDS + _SCRAPE_STRUCTURED_FIELDS:
         new_val = candidate_normalized.get(field)
         old_val = existing_row.get(field)
@@ -293,6 +294,13 @@ def _build_merge_payload(
             continue
         if _is_blank(old_val):
             payload[field] = new_val
+        elif str(new_val).strip() != str(old_val).strip():
+            # CONTRADICTION. The stored value WINS (a human may have curated it, and an
+            # earlier scrape of the live page is not automatically worse than a later one),
+            # but silently discarding the difference hid real changes — a funder moving a
+            # deadline or restating an award size. Record it for human review instead.
+            conflicts[field] = {"kept": old_val, "incoming": new_val,
+                                "seen_at": datetime.now(timezone.utc).isoformat()}
 
     # Refresh auto-scoring only when the existing row has no alignment_score
     # (the human hasn't reviewed it). If the existing description was empty
@@ -315,14 +323,34 @@ def _build_merge_payload(
             if field in scored:
                 payload[field] = scored[field]
 
-    # Always refresh search_date — useful for "last seen" diagnostics.
-    payload["search_date"] = datetime.now(timezone.utc).isoformat()
+    # search_date is the FIRST-discovery date and is IMMUTABLE — a rescan must never
+    # rewrite history (it used to, so months-old rows all showed today and every
+    # search->submission cycle-time metric was wrong). "Last seen" gets its own column.
+    payload["last_seen_at"] = datetime.now(timezone.utc).isoformat()
+    if _is_blank(existing_row.get("search_date")):
+        payload["search_date"] = payload["last_seen_at"]     # backfill only if never set
+    if conflicts:
+        # Merge over anything already flagged so earlier unreviewed conflicts aren't lost.
+        prior = existing_row.get("merge_conflicts")
+        if isinstance(prior, str):
+            try:
+                import json as _cj
+                prior = _cj.loads(prior or "{}")
+            except Exception:
+                prior = {}
+        payload["merge_conflicts"] = {**(prior if isinstance(prior, dict) else {}), **conflicts}
     return payload
 
 
+# Bookkeeping written on EVERY rescan match — a payload carrying only these changed nothing
+# the user cares about, so the run must not report it as an update.
+_MERGE_BOOKKEEPING = {"search_date", "last_seen_at"}
+
+
 def _payload_meaningful(payload: dict[str, Any]) -> bool:
-    """A merge payload that only updates search_date is a no-op for the user."""
-    return any(k != "search_date" for k in payload.keys())
+    """A merge payload that only stamps last-seen bookkeeping is a no-op for the user.
+    A recorded CONTRADICTION (merge_conflicts) IS meaningful — it needs human review."""
+    return any(k not in _MERGE_BOOKKEEPING for k in payload.keys())
 
 
 def ingest_candidates(
@@ -707,7 +735,7 @@ def ingest_candidates(
             log.info(
                 "merge update: %s — filled %d field(s) on %s",
                 cand["opportunity_title"][:60],
-                len([k for k in payload if k != "search_date"]),
+                len([k for k in payload if k not in _MERGE_BOOKKEEPING]),
                 match_uid,
             )
             continue
