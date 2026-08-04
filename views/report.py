@@ -1185,7 +1185,15 @@ if _show_sec("1"):
         from auth.tenant_context import multitenant_enabled as _mte
         if _mte():
             from core import analytics as _an
-            _d = _an.system_discovery_stats()
+
+            # Cached: this rollup paginates scan_logs and counts the shared store, and the
+            # Report page re-runs it on EVERY widget interaction. It's system-wide (not
+            # tenant-scoped), so one shared 60s entry is correct.
+            @st.cache_data(ttl=60, show_spinner=False)
+            def _system_discovery_cached() -> dict:
+                return _an.system_discovery_stats()
+
+            _d = _system_discovery_cached()
             with st.container(border=True):
                 st.markdown("🌐 **System-wide discovery** — the shared catalog every "
                             "tenant screens (not your tenant's activity)")
