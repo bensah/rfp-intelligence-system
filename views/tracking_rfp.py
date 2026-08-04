@@ -562,5 +562,5 @@ if _vb.button("👁 View", type="primary", width='stretch'):
     _view_rfp(row)
 # if _eb2.button("✏ Edit (Role / Stage / Lead)", width='stretch'):
 #     _edit_tracking(row)
-if _eb1.button("✏️ Edit full details", type="primary", width='stretch'):
+if _eb1.button("✏️ Edit RFP", type="primary", width='stretch'):
     render_rfp_editor(row, sb=sb, user=user, is_admin=is_admin)
