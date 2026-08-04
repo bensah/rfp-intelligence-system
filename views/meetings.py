@@ -119,7 +119,7 @@ r1, r2, r3, r4 = st.columns(4)
 r1.metric("Meeting date", mon_date.strftime("%a %d %b %Y"))
 r2.metric("Note-taker", _short_name((rota_row or {}).get("note_taker")))
 r3.metric("RFP presenter", _short_name((rota_row or {}).get("rfp_presenter")))
-r4.metric("Chair", _short_name((rota_row or {}).get("meeting_orgr")))
+r4.metric("Chair", _short_name((rota_row or {}).get("meeting_chair")))
 
 
 # -----------------------------------------------------------------------------
