@@ -619,6 +619,7 @@ def _srcreg_edit_dialog(r: dict, email) -> None:
         }
         if source_registry.update_row(host, f, by=email):
             _flash_set("srcreg", ("✅ Verified & saved " if verify else "💾 Saved ") + host)
+            st.cache_data.clear()          # registry rows are cached — show the write
             st.rerun()
         else:
             st.error("Save failed — the DB rejected the write (column/RLS). Nothing changed.")
@@ -688,7 +689,14 @@ def _render_source_registry(user: dict) -> None:
                 else:
                     st.warning(msg)
 
-    rows = source_registry.list_rows()
+    # Cached: this is a developer-only tab body, but st.tabs() runs it on EVERY rerun of the
+    # Settings page — so an uncached fetch (~2.5s for the full registry) was charged to every
+    # widget interaction, even when the Sources tab wasn't the one being looked at.
+    @st.cache_data(ttl=30, show_spinner=False)
+    def _registry_rows_cached() -> list[dict]:
+        return source_registry.list_rows()
+
+    rows = _registry_rows_cached()
     if not rows:
         st.info("Registry is empty. It fills during a scan — or seed it now:\n\n"
                 "`python scripts/backfill_source_registry.py --commit`")
@@ -764,11 +772,13 @@ def _render_source_registry(user: dict) -> None:
         _flash_set("srcreg", f"✅ Catalogue: {len(res['added'])} added · "
                    f"{len(res.get('updated', []))} updated"
                    + (f" · {len(_sk)} skipped (not confirmed primary)" if _sk else ""))
+        st.cache_data.clear()
         st.rerun()
     if bd.button(f"🗑 Delete ({len(_selhosts)})", key="srcreg_del_sel",
                  disabled=not _selhosts, width='stretch'):
         source_registry.delete_hosts(_selhosts)
         _flash_set("srcreg", f"🗑 Deleted {len(_selhosts)} host(s).")
+        st.cache_data.clear()
         st.rerun()
     if bm.button(f"✓ Verify ({len(_selhosts)})", key="srcreg_ver_sel",
                  disabled=not _selhosts, width='stretch',
@@ -776,6 +786,7 @@ def _render_source_registry(user: dict) -> None:
         _n = sum(1 for h in _selhosts
                  if source_registry.update_row(h, {"status": "confirmed"}, by=email))
         _flash_set("srcreg", f"✅ Marked {_n} host(s) verified.")
+        st.cache_data.clear()
         st.rerun()
 
     # ── Reconcile registry ↔ Catalogue (verified sources only). Pushes every
