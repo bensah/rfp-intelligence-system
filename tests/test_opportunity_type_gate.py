@@ -161,5 +161,40 @@ class ThemeSelfConfirmationTests(unittest.TestCase):
             "Pooled procurement and price negotiation for essential medicines access."))
 
 
+class PortalNameNoiseTests(unittest.TestCase):
+    """ROOT FIX: a portal's NAME must not be read as the call's type.
+
+    Every Horizon / EDCTP3 GRANT topic lives under ec.europa.eu/info/funding-tenders/..., and
+    the bare 'tender' rule matched that path substring — so every EU grant call was detected
+    as solicitation 'Tender' + instrument 'Contract'. A live dry-run showed that mislabel
+    would have excluded 36 legitimate calls (incl. EUR 88.9M EDCTP3 awards) once the
+    opportunity-type gate started reading it."""
+
+    EU = {"opportunity_title": "Global collaboration action for the development of TB drugs",
+          "brief_description": "grant funding",
+          "opportunity_link": "https://ec.europa.eu/info/funding-tenders/opportunities/"
+                              "portal/screen/opportunities/topic-details/x"}
+
+    def test_eu_portal_path_is_not_a_tender(self):
+        from core.type_detect import detect_solicitation, detect_instrument
+        self.assertNotEqual(detect_solicitation(self.EU), "Tender")
+        self.assertNotEqual(detect_instrument(self.EU), "Contract")
+
+    def test_eu_portal_call_is_a_funding_call(self):
+        self.assertEqual(detect_opportunity_type(self.EU), "Grant/funding call")
+
+    def test_a_real_tender_is_still_detected(self):
+        real = {"opportunity_title": "Invitation to tender for cleaning services",
+                "opportunity_link": "https://council.gov/tenders/123"}
+        from core.type_detect import detect_solicitation
+        self.assertEqual(detect_solicitation(real), "Tender")
+        self.assertEqual(detect_opportunity_type(real), "Procurement")
+
+    def test_denoise_only_touches_the_portal_marker(self):
+        from core.type_detect import _denoise
+        self.assertNotIn("tender", _denoise("x/funding-tenders/y"))
+        self.assertIn("tender", _denoise("invitation to tender"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

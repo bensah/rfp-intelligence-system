@@ -51,6 +51,28 @@ default_week = review_week_label()
 if default_week not in all_weeks:
     all_weeks = [default_week] + all_weeks
 
+# DEEP LINK — /pipelines?uid=<uid> opens that RFP directly (used by the past-deadline nudge
+# on Submit, so the user doesn't have to hunt for the row they just created). The picker is
+# week-scoped, so we set the week from the row itself; applied once per uid so the reviewer
+# can still navigate away afterwards.
+_deep_uid = (st.query_params.get("uid") or "").strip()
+if _deep_uid and st.session_state.get("_deep_uid_applied") != _deep_uid:
+    try:
+        _dr = (get_client().table("rfp_submissions").select("uid,review_week")
+               .eq("uid", _deep_uid).limit(1).execute().data or [])
+        if _dr:
+            _dwk = (_dr[0].get("review_week") or "").strip()
+            if _dwk:
+                if _dwk not in all_weeks:
+                    all_weeks = [_dwk] + all_weeks      # keep an out-of-range week selectable
+                st.session_state["review_rfp_week"] = _dwk
+            st.session_state["review_rfp_selected_uid"] = _deep_uid
+        else:
+            st.warning(f"Couldn't find RFP `{_deep_uid}` — it may have been deleted.")
+    except Exception:
+        pass
+    st.session_state["_deep_uid_applied"] = _deep_uid
+
 # Week selector + RFP selector on the same row, with year inline.
 @st.cache_data(ttl=30)
 def _fetch(week: str) -> pd.DataFrame:
