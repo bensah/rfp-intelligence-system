@@ -464,7 +464,7 @@ def map_schedule_row(row: list[Any]) -> Optional[dict[str, Any]]:
         "call_date": cdate,
         "note_taker": _txt(c(3)),
         "rfp_presenter": _txt(c(4)),
-        "meeting_orgr": _txt(c(5)),
+        "meeting_chair": _txt(c(5)),
     }
 
 
