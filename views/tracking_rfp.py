@@ -358,7 +358,7 @@ with st.container(border=True):
 # Browse table — all active Proceed RFPs YTD (click to swap selection)
 # -----------------------------------------------------------------------------
 st.markdown("")
-st.subheader(f"All active Proceed RFPs ({len(df)})")
+st.subheader(f"All Active Proceed RFPs ({len(df)})")
 st.caption(
     "Click any row to load it into the card above. Columns: UID · Funder · Title · "
     "Role · Deadline · Days · Stage · Progress · Lead(s) · USD value."
@@ -558,9 +558,9 @@ def _view_rfp(r: dict) -> None:
 
 
 _vb, _eb1, _eb2, _ebsp = st.columns([2, 2, 2, 2])
-if _vb.button("👁 View full details", type="primary", width='stretch'):
+if _vb.button("👁 View", type="primary", width='stretch'):
     _view_rfp(row)
-if _eb1.button("✏ Edit (Role / Stage / Lead)", width='stretch'):
-    _edit_tracking(row)
-if _eb2.button("✏️ Edit full details", type="primary", width='stretch'):
+# if _eb2.button("✏ Edit (Role / Stage / Lead)", width='stretch'):
+#     _edit_tracking(row)
+if _eb1.button("✏️ Edit full details", type="primary", width='stretch'):
     render_rfp_editor(row, sb=sb, user=user, is_admin=is_admin)
