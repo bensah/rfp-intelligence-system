@@ -171,7 +171,7 @@ create index if not exists engagement_logs_date_idx on engagement_logs(engagemen
 -- =========================================================================
 create table if not exists applied_funding (
     id                  uuid primary key default gen_random_uuid(),
-    grant_id            text not null,
+    funding_id            text not null,
     donor_title         text,
     form_id_link        text,
     award_date          date,

@@ -39,7 +39,7 @@ do $$
 declare
   t text;
   tables text[] := array[
-    'active_grants',
+    'applied_funding',
     'app_settings',
     'donor_contacts',
     'donor_intel',

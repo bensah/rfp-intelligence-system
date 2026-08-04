@@ -1,4 +1,8 @@
--- Migration 086 — rename table active_grants -> applied_funding
+-- Migration 086 — rename table active_grants -> applied_funding (+ column grant_id -> funding_id)
+--
+-- NOTE: this migration intentionally still NAMES the legacy `active_grants*` objects — it is
+-- the transition step, and its guards must match the live legacy names to rename them. Every
+-- other .sql now uses applied_funding / funding_id.
 --
 -- The table holds SUBMITTED / applied funding records (grant applications and their
 -- reporting status), so "applied_funding" reflects the data far better than the legacy
@@ -19,6 +23,18 @@ begin
   end if;
 end $$;
 
+-- 1b) Column grant_id -> funding_id: a row here is a funding APPLICATION / opportunity, not
+--     an active grant the org is running. Renaming it keeps that distinction clear (and
+--     leaves room to add an actual active-grants table later). The unique constraint follows
+--     the column automatically. No-op if already renamed.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_name = 'applied_funding' and column_name = 'grant_id') then
+    alter table applied_funding rename column grant_id to funding_id;
+  end if;
+end $$;
+
 -- 2) Indexes (ALTER INDEX IF EXISTS is a clean no-op when the name is already updated).
 alter index if exists active_grants_form_id_idx rename to applied_funding_form_id_idx;
 alter index if exists active_grants_due_idx     rename to applied_funding_due_idx;
@@ -30,7 +46,7 @@ begin
   if exists (select 1 from pg_constraint where conname = 'active_grants_grant_id_key'
              and conrelid = 'applied_funding'::regclass) then
     alter table applied_funding rename constraint active_grants_grant_id_key
-      to applied_funding_grant_id_key;
+      to applied_funding_funding_id_key;
   end if;
   if exists (select 1 from pg_constraint where conname = 'active_grants_tenant_id_fkey'
              and conrelid = 'applied_funding'::regclass) then

@@ -63,7 +63,7 @@ with _main:
             ps = _ps_col.fillna("").astype(str).str.strip().str.lower()
             # ACTIVE = Approved OR Under Review OR submitted-to-donor (progress=Completed).
             # A row marked Progress=Completed on Tracking LEAVES Tracking (it's submitted),
-            # so it must ENTER Active Grants even if its donor_decision is still blank —
+            # so it must ENTER Applied Funding even if its donor_decision is still blank —
             # otherwise it falls into the gap between the two pages (count stuck low). A
             # Completed-but-undecided grant is bucketed as Under Review (awaiting the donor).
             # Not Approved / Discontinued correctly stay OUT.
@@ -292,9 +292,9 @@ with _main:
             linked = linked.sort_values("updated_at", ascending=False)
         st.warning(
             f"⚠ {len(linked)} applied_funding rows match this RFP (`form_id_link = {uid}`). "
-            f"Displaying the most-recently-updated one (grant_id "
-            f"`{linked.iloc[0].get('grant_id') or '?'}`). Clean up duplicates via "
-            f"**Admin → Data → Active Grants**."
+            f"Displaying the most-recently-updated one (funding_id "
+            f"`{linked.iloc[0].get('funding_id') or '?'}`). Clean up duplicates via "
+            f"**Admin → Data → Applied Funding**."
         )
 
     if not linked.empty:
@@ -307,7 +307,7 @@ with _main:
         rep1, rep2, rep3, rep4, rep5 = st.columns(5)
         # Markdown rather than st.metric so long text values (e.g. "Not Started")
         # are not truncated to "Comp…" by the metric component's narrow width.
-        rep1.markdown(f"**Grant ID**  \n{_fmt(g.get('grant_id'))}")
+        rep1.markdown(f"**Grant ID**  \n{_fmt(g.get('funding_id'))}")
         rep2.markdown(f"**Report type**  \n{'N/A' if _rep_na else _fmt(g.get('report_type'))}")
         rep3.markdown(f"**Report status**  \n{_fmt(g.get('status'))}")
         rep4.markdown(f"**Due**  \n{'N/A' if _rep_na else _fmt(g.get('report_due_date'))}")

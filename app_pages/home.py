@@ -206,7 +206,7 @@ with _main:
     CARDS = [
         ("Pipelines", "app_pages/pipelines.py", "📚", "Screen → Review → Tracking → Summary",
          "Friday-scan + manual submissions through the full lifecycle: 4 tabs (Screen, Review, Tracking, Summary)."),
-        ("Grants", "app_pages/grants.py", "💼", "Active Grants",
+        ("Grants", "app_pages/grants.py", "💼", "Applied Funding",
          "Grants under donor review or already awarded, with reporting deadlines."),
         ("Actions", "app_pages/actions.py", "🗒️", "Team check-ins + Engagements",
          "Three tabs — weekly meeting notes, donor engagement touchpoints, and pending follow-ups."),
