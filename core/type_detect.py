@@ -208,6 +208,29 @@ def synonym_hint(axis: str = "solicitation") -> str:
     return " · ".join(f"{t} = {', '.join(ps)}" for t, ps in syn.items())
 
 
+# Portal NAMES that contain a type word but say nothing about the call. The big one is the
+# EU "Funding & Tenders" portal: every Horizon / EDCTP3 GRANT topic lives under
+# ec.europa.eu/info/funding-tenders/..., and the bare "tender" rule matched that path
+# substring — so every EU grant call was detected as solicitation "Tender" + instrument
+# "Contract". That mislabel then fed the opportunity-type gate, the RFP editor and the
+# source registry. Rewrite the portal marker to the part that IS meaningful ("funding")
+# before matching, so the path can still contribute a grant signal but not a tender one.
+_PORTAL_NOISE = (
+    ("funding-tenders", "funding"), ("funding_tenders", "funding"),
+    ("funding-and-tenders", "funding"), ("funding-tender", "funding"),
+    ("tenders-portal", "portal"), ("fundingandtenders", "funding"),
+)
+
+
+def _denoise(blob: str) -> str:
+    """Neutralise portal names whose own wording would be read as a call type."""
+    out = (blob or "").lower()
+    for bad, good in _PORTAL_NOISE:
+        if bad in out:
+            out = out.replace(bad, good)
+    return out
+
+
 def _match(blob: str, rules: list[tuple[str, str]]) -> str | None:
     # Leading space so the " acronym" rules also match a start-of-string acronym
     # (e.g. "NOFO: …", "CFA for …").
@@ -225,7 +248,7 @@ def detect_solicitation(candidate: dict[str, Any]) -> str | None:
     blob = (f"{candidate.get('opportunity_title') or ''} "
             f"{candidate.get('brief_description') or ''} "
             f"{candidate.get('opportunity_link') or ''}")
-    return _match(blob, _SOLICITATION_RULES)
+    return _match(_denoise(blob), _SOLICITATION_RULES)
 
 
 def detect_instrument(candidate: dict[str, Any]) -> str | None:
@@ -236,7 +259,7 @@ def detect_instrument(candidate: dict[str, Any]) -> str | None:
           or candidate.get("funding_type") or "")
     blob = (f"{fi} {candidate.get('opportunity_title') or ''} "
             f"{candidate.get('opportunity_link') or ''}")
-    return _match(blob, _INSTRUMENT_RULES)
+    return _match(_denoise(blob), _INSTRUMENT_RULES)
 
 
 def detect_opportunity_type(candidate: dict[str, Any]) -> str | None:
@@ -256,10 +279,15 @@ def detect_opportunity_type(candidate: dict[str, Any]) -> str | None:
 
     Returns None when nothing is recognisable, so callers can decide how to fail."""
     blob = " ".join([
-        str(candidate.get("opportunity_title") or ""),
+        str(candidate.get("opportunity_title") or candidate.get("opportunity_name") or ""),
         str(candidate.get("brief_description") or ""),
     ]).lower()
-    link = str(candidate.get("opportunity_link") or "").lower()
+    # Accept EITHER field name: screened rows (rfp_submissions) call it opportunity_link,
+    # shared-catalog rows (extracted_solicitations) call it opportunity_url. Reading only
+    # one silently blanked the host signal for half the callers — and the host is the
+    # strongest, language-independent evidence we have.
+    link = str(candidate.get("opportunity_link")
+               or candidate.get("opportunity_url") or "").lower()
 
     if any(h in link for h in _PROCUREMENT_HOSTS):
         return "Procurement"

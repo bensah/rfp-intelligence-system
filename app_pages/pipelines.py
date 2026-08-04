@@ -42,6 +42,23 @@ with _rail:
 
 with _main:
 
+    # FOCUSED SINGLE-RFP MODE — /pipelines?uid=<uid>. st.tabs cannot be selected
+    # programmatically, so a deep link that only preselected the row would still land the
+    # user on the Screen tab hunting for it. When a uid is present we render the Review
+    # view on its own instead: the link opens exactly that RFP, in the normal read-only
+    # view, with its existing Update Decision / Edit RFP buttons.
+    _focus_uid = (st.query_params.get("uid") or "").strip()
+    if _focus_uid:
+        _b1, _b2 = st.columns([1, 4])
+        if _b1.button("← All pipelines", key="pipelines_exit_focus"):
+            st.query_params.pop("uid", None)
+            st.session_state.pop("_deep_uid_applied", None)
+            st.rerun()
+        _b2.caption(f"Showing one RFP (`{_focus_uid}`) — use **← All pipelines** for the "
+                    "full Screen / Review / Tracking / Summary view.")
+        render_view("review_rfp")
+        st.stop()
+
     tab_screen, tab_review, tab_tracking, tab_summary = st.tabs(
         ["Screen", "Review", "Tracking", "Summary"]
     )
