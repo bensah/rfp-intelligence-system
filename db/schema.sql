@@ -167,9 +167,9 @@ create table if not exists engagement_logs (
 create index if not exists engagement_logs_date_idx on engagement_logs(engagement_date);
 
 -- =========================================================================
--- active_grants  (KR2.3 reporting deadlines for awarded grants)
+-- applied_funding  (KR2.3 reporting deadlines for awarded grants)
 -- =========================================================================
-create table if not exists active_grants (
+create table if not exists applied_funding (
     id                  uuid primary key default gen_random_uuid(),
     grant_id            text not null,
     donor_title         text,
@@ -186,8 +186,8 @@ create table if not exists active_grants (
     updated_at          timestamptz not null default now()
 );
 
-create index if not exists active_grants_form_id_idx on active_grants(form_id_link);
-create index if not exists active_grants_due_idx     on active_grants(report_due_date);
+create index if not exists applied_funding_form_id_idx on applied_funding(form_id_link);
+create index if not exists applied_funding_due_idx     on applied_funding(report_due_date);
 
 -- =========================================================================
 -- narrative_logs  (KR2.4 country narrative versions)
@@ -262,9 +262,9 @@ create trigger rfp_submissions_updated_at
     before update on rfp_submissions
     for each row execute function set_updated_at();
 
-drop trigger if exists active_grants_updated_at on active_grants;
-create trigger active_grants_updated_at
-    before update on active_grants
+drop trigger if exists applied_funding_updated_at on applied_funding;
+create trigger applied_funding_updated_at
+    before update on applied_funding
     for each row execute function set_updated_at();
 
 drop trigger if exists donor_sources_updated_at on donor_sources;

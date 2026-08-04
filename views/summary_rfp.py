@@ -140,7 +140,7 @@ def _kpi(label: str, value, helper: str | None = None) -> None:
 def _fetch(year: int):
     sbc = get_client()
     rfps = clean_df(pd.DataFrame(sbc.table("rfp_submissions").select("*").execute().data or []))
-    grants = clean_df(pd.DataFrame(sbc.table("active_grants").select("*").execute().data or []))
+    grants = clean_df(pd.DataFrame(sbc.table("applied_funding").select("*").execute().data or []))
     engagements = clean_df(pd.DataFrame(sbc.table("engagement_logs").select("*").execute().data or []))
     narratives = clean_df(pd.DataFrame(sbc.table("narrative_logs").select("*").execute().data or []))
     meetings = clean_df(pd.DataFrame(sbc.table("meeting_logs").select("*").execute().data or []))
@@ -898,7 +898,7 @@ with kr2:
         st.caption("KR2.3 — Missed Reporting Deadlines (this quarter)")
         st.markdown(f"**Target:** 0 missed")
         _kpi("", f"{missed_reports} missed — {miss_status}")
-        st.caption("_Source: active_grants.report_due_date, submitted_date_")
+        st.caption("_Source: applied_funding.report_due_date, submitted_date_")
 
 # KR2.3 — Reports Due Next 30 Days (forward-look)
 due_30 = 0
@@ -915,7 +915,7 @@ with kr3:
         st.caption("KR2.3 — Reports Due Next 30 Days (forward-look)")
         st.markdown("**Forward-looking workload**")
         _kpi("", "None due in next 30 days" if due_30 == 0 else f"{due_30} due in next 30 days")
-        st.caption("_Source: active_grants.report_due_date, submitted_date_")
+        st.caption("_Source: applied_funding.report_due_date, submitted_date_")
 
 # KR2.4 — Country Narrative Status in selected quarter
 narr_text = "— select quarter —"

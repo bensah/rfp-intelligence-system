@@ -37,7 +37,7 @@ TABLE_TS: dict[str, list[str]] = {
     "meeting_logs": ["created_at"],
     "meeting_schedule": ["created_at"],
     "engagement_logs": ["created_at"],
-    "active_grants": ["updated_at", "created_at"],
+    "applied_funding": ["updated_at", "created_at"],
     "narrative_logs": ["created_at"],
     "donor_sources": ["updated_at", "created_at"],
     "donor_intel": ["updated_at"],
