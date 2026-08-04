@@ -185,6 +185,28 @@ _MEDITERRANEAN = ["Albania", "Algeria", "Bosnia and Herzegovina", "Croatia",
                   "Palestine", "Slovenia", "Spain", "Syria", "Tunisia", "Türkiye"]
 
 _REGION_MEMBERS.update({
+    # African regional ECONOMIC BLOCS. Without these a scope like ["COMESA"] was an
+    # unrecognised token, so the geography gate couldn't tell it apart from a global call
+    # and admitted it — COMESA does NOT include Cameroon (which is CEMAC/ECCAS), so a
+    # COMESA-only call is out of scope for a Cameroon org. Listing the members makes the
+    # existing membership test do the right thing instead of guessing.
+    "comesa": ["Burundi", "Comoros", "Congo (DRC)", "Djibouti", "Egypt", "Eritrea",
+               "Eswatini", "Ethiopia", "Kenya", "Libya", "Madagascar", "Malawi",
+               "Mauritius", "Rwanda", "Seychelles", "Somalia", "Sudan", "Tunisia",
+               "Uganda", "Zambia", "Zimbabwe"],
+    "ecowas": ["Benin", "Burkina Faso", "Cabo Verde", "Côte d'Ivoire", "Gambia", "Ghana",
+               "Guinea", "Guinea-Bissau", "Liberia", "Mali", "Niger", "Nigeria",
+               "Senegal", "Sierra Leone", "Togo"],
+    "cemac": ["Cameroon", "Central African Republic", "Chad", "Congo (Republic)",
+              "Equatorial Guinea", "Gabon"],
+    "eccas": ["Angola", "Burundi", "Cameroon", "Central African Republic", "Chad",
+              "Congo (DRC)", "Congo (Republic)", "Equatorial Guinea", "Gabon",
+              "Rwanda", "São Tomé and Príncipe"],
+    "eac": ["Burundi", "Congo (DRC)", "Kenya", "Rwanda", "Somalia", "South Sudan",
+            "Tanzania", "Uganda"],
+    "sadc": ["Angola", "Botswana", "Comoros", "Congo (DRC)", "Eswatini", "Lesotho",
+             "Madagascar", "Malawi", "Mauritius", "Mozambique", "Namibia", "Seychelles",
+             "South Africa", "Tanzania", "Zambia", "Zimbabwe"],
     "europe": _EUROPE,
     "european union": _EU,
     "northern europe": ["Denmark", "Estonia", "Finland", "Iceland", "Ireland",

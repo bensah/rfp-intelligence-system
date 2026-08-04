@@ -188,11 +188,17 @@ PROGRAM_AREA_KEYWORDS: dict[str, list[str]] = {
         "strategic purchasing", "domestic resource mobilization",
     ],
     # ---- Cross-cutting -----------------------------------------------------
+    # HEALTH market shaping. The bare commerce words ("procurement", "supply chain",
+    # "market access", "pricing") were REMOVED: every tender on earth contains them, so a
+    # UNOPS goods notice or an AfDB trade EOI classified as Cross-cutting — which
+    # CATEGORY_FULL maps to "Cross-cutting (Health)" — and a procurement notice ended up
+    # labelled a health opportunity precisely BECAUSE it was procurement. Only
+    # health-qualified phrases remain.
     "Cross-cutting - Market Shaping": [
-        "market shaping", "market access",
-        "pricing", "price negotiation",
-        "procurement", "pooled procurement",
-        "supply chain", "commodity security",
+        "market shaping", "health market",
+        "price negotiation", "volume guarantee",
+        "pooled procurement", "commodity security",
+        "health supply chain", "medical supply chain",
         "demand forecasting",
         "local manufacturing", "regional manufacturing",
         "medicines access", "essential medicines",
