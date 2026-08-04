@@ -666,6 +666,26 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
                     print(f"  (seen-ledger record skipped: {_e})")
             print(f"  rfp_submissions: {len(_new)} inserted · {_upd} updated from "
                   "Excel (non-null cells; blanks preserved)")
+            # BACKDATED INTAKE CHECK — a proposal entered months after it went to the donor
+            # arrives with a deadline already in the past. Unless the row records a
+            # submission, scoring reads it as "not enough time" (PREFER-9 ✗) and it looks
+            # like a missed opportunity. Surface those rows so they can be corrected.
+            try:
+                from core.criteria_derive import needs_submission_check
+                _stale = [r for r in rfp_rows if needs_submission_check(r)]
+                if _stale:
+                    print(f"  ⚠ {len(_stale)} row(s) have a PAST deadline but are not marked "
+                          "submitted — if these were already sent to the donor, set Progress "
+                          "status = Completed (or record the donor decision) so scoring "
+                          "doesn't penalise them as 'not enough time':")
+                    for _r in _stale[:10]:
+                        print(f"      {_r.get('uid')} · deadline "
+                              f"{_r.get('call_submission_deadline')} · progress "
+                              f"{_r.get('progress_status') or '(blank)'}")
+                    if len(_stale) > 10:
+                        print(f"      … and {len(_stale) - 10} more")
+            except Exception as _sexc:
+                print(f"  (backdated-intake check skipped: {_sexc})")
 
     # --- Seed source_registry from the Opportunity Link column. Adds only NEW
     # hosts (deduped against the existing registry), as status='pending' so Bernard
