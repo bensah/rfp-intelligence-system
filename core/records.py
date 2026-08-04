@@ -189,3 +189,63 @@ def drop_concluded(df):
         return out.copy()
     except Exception:
         return df
+
+
+# ---------------------------------------------------------------------------
+# Submission weighting
+# ---------------------------------------------------------------------------
+# An RFP can be submitted to a donor MORE THAN ONCE (rfp_submissions.submissions).
+# Counting rows therefore under-reports every submission-derived indicator: an RFP submitted
+# twice and now under review is TWO applications under review, not one. Every count over
+# submitted RFPs — Total Submitted, Approved, Under Review, Not Approved, win rate — must use
+# this weight so the whole app tells the same story.
+#
+#   weight = submissions (>=1) when the row has actually been SUBMITTED, else 0.
+#
+# "Submitted" is the app-wide rule (progress_status = Completed, OR a real donor decision —
+# a donor can only decide on a proposal it received, OR a recorded submission date), so a
+# backdated import whose progress_status was never set still counts. A row that was never
+# submitted contributes 0, never a phantom application.
+_SUBMITTED_DECISIONS_W = {"approved", "under review", "not approved"}
+
+
+def submission_weight(row) -> int:
+    """Donor-side submissions this row represents: N if submitted, else 0."""
+    get = row.get if hasattr(row, "get") else (lambda k, d=None: getattr(row, k, d))
+    ps = str(get("progress_status") or "").strip().lower()
+    dd = str(get("donor_decision") or "").strip().lower()
+    submitted = (ps == "completed" or dd in _SUBMITTED_DECISIONS_W
+                 or bool(str(get("date_completed") or "").strip()))
+    if not submitted:
+        return 0
+    n = get("submissions")
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 1
+    return max(1, n)
+
+
+def submission_weights(df):
+    """Vectorised `submission_weight` → an int Series aligned to `df` (0 for an empty df)."""
+    import pandas as _pd
+    if df is None or len(df) == 0:
+        return _pd.Series(dtype="int64")
+    return df.apply(submission_weight, axis=1).astype("int64")
+
+
+def requested_currency(row):
+    """The currency the REQUEST was made in.
+
+    `amount_requested` is what WE asked the donor for; `currency` is the unit the CALL was
+    advertised in (the Estimated Value). They are NOT the same thing — a Canadian call can
+    be advertised in CAD while the budget submitted is in USD. Converting the request with
+    the call's currency silently mis-states it (CAD-rating a USD 715,400 request produced
+    "$509,530 USD" on the Grants page).
+
+    The editor captures the submission/award currency once, as `currency_secured` (labelled
+    simply "Currency" — it governs BOTH the requested and the secured amount). Falls back to
+    `currency` for legacy rows saved before that field was populated."""
+    get = row.get if hasattr(row, "get") else (lambda k, d=None: getattr(row, k, d))
+    cur = str(get("currency_secured") or "").strip()
+    return cur or (get("currency") or "")
