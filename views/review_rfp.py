@@ -391,7 +391,7 @@ if _seed_sentinel not in st.session_state:
     st.session_state[f"rat_{row['uid']}"] = _safe_str(row.get("decision_note"))
     st.session_state[_seed_sentinel] = True
 
-# VIEW-FIRST: everything is read-only until the reviewer clicks "Edit RFP".
+# VIEW-FIRST: everything is read-only until the reviewer clicks "Update Decision".
 # Save / Cancel appear only in edit mode; saving returns to the plain display.
 _edit_key = f"_review_edit_{row['uid']}"
 edit_mode = can_edit and bool(st.session_state.get(_edit_key))
@@ -420,7 +420,7 @@ def _crit_badge(label_val) -> str:
 # the seed block, so BOTH view and edit baseline the criteria from the DERIVED
 # values and the two screens always show the same numbers.)
 
-# Header only — the Edit RFP toggle lives on the "Rate this RFP" row at the
+# Header only — the Update Decision toggle lives on the "Rate this RFP" row at the
 # bottom of the screen (Save / Cancel appear in the Team-decision section).
 st.markdown("**Eligibility criteria**  "
             + ("_— editing; Save or Cancel below_"
@@ -1014,18 +1014,19 @@ if not edit_mode:
         unsafe_allow_html=True,
     )
     if can_edit:
-        # Breathing room between the decision card and the Edit RFP button.
+        # Breathing room between the decision card and the Update Decision button.
         st.markdown("<div style='margin-top:18px'></div>", unsafe_allow_html=True)
-        # Edit RFP sits in the EXACT position Save changes occupies in edit mode
-        # (first column of the same [1,1,3] row) — click Edit → Save/Cancel appear
-        # here; Save → back to this Edit button.
+        # "Update Decision" sits in the EXACT position Save changes occupies in edit mode
+        # (first column of the same [1,1,3] row) — click it → Save/Cancel appear
+        # here; Save → back to this button. It scores the criteria and records the team
+        # verdict; "Edit RFP" beside it opens the full field-level editor.
         be1, _be2, _be3 = st.columns([1, 1, 3])
-        if be1.button("✏ Edit RFP", type="primary", width='stretch',
+        if be1.button("✏ Update Decision", type="primary", width='stretch',
                       key=f"edit_rfp_{row['uid']}",
-                      help="Edit the eligibility criteria and record the team decision"):
+                      help="Score the eligibility criteria and record the team decision"):
             st.session_state[_edit_key] = True
             st.rerun()
-        if _be2.button("✏️ Edit full details", type="primary", width='stretch',
+        if _be2.button("✏️ Edit RFP", type="primary", width='stretch',
                        key=f"edit_full_{row['uid']}",
                        help="Open the shared full-RFP editor (all fields)"):
             render_rfp_editor(row, sb=sb, user=user, is_admin=is_admin)
