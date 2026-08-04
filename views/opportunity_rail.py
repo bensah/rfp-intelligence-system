@@ -37,6 +37,77 @@ def _load_pipeline(scope_key: str) -> list[dict]:
         return []
 
 
+_CATALOG_FIELDS = ("uid,opportunity_name,opportunity_url,funder_name,deadline,"
+                   "grant_amount,currency,call_geographic_scope,call_domain_areas,"
+                   "focus_themes,brief_description,solicitation_type,instrument_type,"
+                   "opportunity_type,date_posted")
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_catalog() -> list[dict]:
+    """The SHARED extracted catalog — every call the crawl found, whether or not it passed
+    THIS tenant's gate. Deliberately org-agnostic and not tenant-scoped: it is the pool the
+    Featured card ranks, which is what makes a screening miss recoverable."""
+    try:
+        from db.supabase_client import service_client
+        return (service_client().table("extracted_solicitations").select(_CATALOG_FIELDS)
+                .order("scraped_at", desc=True).limit(1200).execute().data or [])
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _tenant_prefs(scope_key: str) -> dict:
+    """What this tenant SAYS it wants (configured policy) plus what it actually DOES
+    (funders engaged, programme areas pursued). Behaviour is the honest signal — a tenant's
+    themes list goes stale, their submission history doesn't."""
+    prefs: dict = {}
+    try:
+        from core.policies import get_policies
+        pol = get_policies() or {}
+        countries = (pol.get("countries") or {})
+        prefs["countries"] = countries.get("eligible") or []
+        prefs["broad_terms"] = countries.get("broad_terms") or []
+        _th = pol.get("themes")
+        prefs["themes"] = (_th.get("required_any") if isinstance(_th, dict) else _th) or []
+    except Exception:
+        pass
+    try:
+        from core import org_profile as _orgp
+        prof = _orgp.get_profile() or {}
+        prefs["known_funders"] = list(prof.get("org_engaged_donors") or []) +                                  list(prof.get("org_active_donors") or [])
+    except Exception:
+        prefs.setdefault("known_funders", [])
+    # Behaviour: areas they actually pursued + funders they actually applied to.
+    try:
+        rows = (get_client().table("rfp_submissions")
+                .select("funding_agency,call_domain_areas,decision")
+                .limit(800).execute().data or [])
+        areas, funders = [], []
+        for r in rows:
+            if str(r.get("decision") or "").lower().startswith("proceed"):
+                funders.append(r.get("funding_agency"))
+                areas.extend(r.get("call_domain_areas") or [])
+        prefs["pursued_areas"] = [a for a in areas if a]
+        prefs["known_funders"] = (prefs.get("known_funders") or []) + [f for f in funders if f]
+    except Exception:
+        pass
+    return prefs
+
+
+@st.cache_data(ttl=45, show_spinner=False)
+def _pipeline_links(scope_key: str) -> list[str]:
+    """Normalised links already in this tenant's pipeline — so Featured never repeats
+    something they can already see in Review."""
+    try:
+        rows = (get_client().table("rfp_submissions").select("opportunity_link")
+                .limit(2000).execute().data or [])
+        return [str(r.get("opportunity_link") or "").strip().lower().rstrip("/")
+                for r in rows if r.get("opportunity_link")]
+    except Exception:
+        return []
+
+
 def _fmt_amount(amount: float, currency: str) -> str:
     if not amount or amount <= 0:
         return ""
@@ -75,6 +146,10 @@ def _render_item(item: dict) -> None:
         line += f"  ·  [↗]({item['link']})"
     if line:
         st.caption(line)
+    # A FEATURED item must justify itself — it wasn't screened into this pipeline, so
+    # without a reason it reads as noise rather than a recovered miss.
+    if item.get("_why"):
+        st.caption(f":green[**Why:** {item['_why']}]")
 
 
 def _card(title: str, help_txt: str, items: list[dict], empty: str) -> None:
@@ -120,3 +195,16 @@ def render_opportunity_rail() -> None:
           groups["top_matches"], "No strong matches yet.")
     _card("✨ Also Interesting", "Fresh calls that aren't a match but are worth a look.",
           groups["other"], "Nothing else new right now.")
+
+    # FEATURED — ranked from the SHARED catalog, not this tenant's pipeline, so a call that
+    # screening dropped (or never reached) is still discoverable by a human.
+    try:
+        _featured = _feed.featured(
+            _load_catalog(), _tenant_prefs(f"t:{scope}"),
+            seen_keys=set(_pipeline_links(f"t:{scope}")))
+    except Exception:
+        _featured = []
+    _card("🎯 Featured for you",
+          "Ranked from the whole catalog against your geography, programme areas and the "
+          "funders you work with — including calls your screening didn't pick up.",
+          _featured, "Nothing to feature yet — run an extraction.")
