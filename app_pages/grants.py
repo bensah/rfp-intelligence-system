@@ -11,7 +11,7 @@ Layout:
   3. Applications by funder (paginated at 10 rows/page)
 
 Source of truth: `rfp_submissions.donor_decision` (which mirrors the Excel "Donor Decision
-Status" column). The `active_grants` table provides the reporting status / type / due date /
+Status" column). The `applied_funding` table provides the reporting status / type / due date /
 owner, edited via the editor's Reporting tab.
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ with _main:
                              .eq("is_duplicate", False)).data or []
             )
             grants = clean_df(pd.DataFrame(
-                safe_execute(sbc.table("active_grants").select("*")).data or []))
+                safe_execute(sbc.table("applied_funding").select("*")).data or []))
         except Exception as exc:
             st.warning(f"Couldn't load grants data right now (network issue): {exc}")
             return pd.DataFrame(), pd.DataFrame()
@@ -282,7 +282,7 @@ with _main:
     dc4.markdown(f"**Geographic Scope**  \n{_geo_str}")
     dc4.markdown(f"**Secured**  \n${(r.get('_usd_secured') or 0):,.0f} USD")
 
-    # Linked active_grants row — for reporting status. If MULTIPLE rows share
+    # Linked applied_funding row — for reporting status. If MULTIPLE rows share
     # the same form_id_link (data-quality glitch from prior syncs), pick the
     # most-recently-updated one and warn — that explains "the displayed status
     # doesn't match what I edited" reports.
@@ -291,7 +291,7 @@ with _main:
         if "updated_at" in linked.columns:
             linked = linked.sort_values("updated_at", ascending=False)
         st.warning(
-            f"⚠ {len(linked)} active_grants rows match this RFP (`form_id_link = {uid}`). "
+            f"⚠ {len(linked)} applied_funding rows match this RFP (`form_id_link = {uid}`). "
             f"Displaying the most-recently-updated one (grant_id "
             f"`{linked.iloc[0].get('grant_id') or '?'}`). Clean up duplicates via "
             f"**Admin → Data → Active Grants**."
@@ -319,7 +319,7 @@ with _main:
             rep5.markdown(f"**Days to due**  \n{delta:+d}")
         else:
             rep5.markdown("**Days to due**  \n—")
-        # Fall back to the rfp's date_completed when active_grants.submitted_date
+        # Fall back to the rfp's date_completed when applied_funding.submitted_date
         # is empty — they refer to the same event (when the deploying org submitted).
         submitted_date = _fmt(g.get("submitted_date"))
         if submitted_date == "—":
@@ -330,7 +330,7 @@ with _main:
         st.caption(f"Submitted: **{submitted_date}** · Owner: **{owner}**{cap_extra}")
     else:
         st.caption(
-            "_No matching row in active_grants table yet — fill in Grant ID, Report Type, "
+            "_No matching row in applied_funding table yet — fill in Grant ID, Report Type, "
             "Report Due Date, Status, and Owner via the Excel `Active_Grants_Log` sheet "
             "or via the Admin tools._"
         )
@@ -356,7 +356,7 @@ with _main:
     # ── Edit this application (open to ANY tenant member) ───────────────────────
     # Pick an application above and edit the WHOLE record in ONE pop-up — status, progress,
     # applicants (Lead/Sub), Date Submitted, Amount Requested/Secured, AND reporting (report
-    # status/type/due/owner → active_grants). Reuses the shared editor; the Application tab is
+    # status/type/due/owner → applied_funding). Reuses the shared editor; the Application tab is
     # hidden here (it belongs on Review) and a Reporting tab is shown so reporting is edited in
     # the same place. Delete inside stays admin-only. Setting donor_decision keeps/moves the
     # application between buckets on save.

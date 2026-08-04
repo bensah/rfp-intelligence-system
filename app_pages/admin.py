@@ -171,7 +171,7 @@ def _render_maintenance(sb, user) -> None:
                 st.error(f"Clear failed: {exc}")
 
         st.markdown("**Wipe Excel-imported rows** — legacy cleanup for the (now-deactivated) "
-                    "Excel sync: deletes `meeting_logs` (all) and `active_grants` where "
+                    "Excel sync: deletes `meeting_logs` (all) and `applied_funding` where "
                     "`source='migration'`.")
         wc1, wc2 = st.columns(2)
         if wc1.button("🗑 Wipe meeting_logs", disabled=not _ok, key="maint_wipe_ml"):
@@ -183,7 +183,7 @@ def _render_maintenance(sb, user) -> None:
                 st.error(f"Wipe failed: {exc}")
         if wc2.button("🗑 Wipe migration grants", disabled=not _ok, key="maint_wipe_ag"):
             try:
-                res = (sb.table("active_grants").delete()
+                res = (sb.table("applied_funding").delete()
                        .eq("source", "migration").execute())
                 st.success(f"Deleted **{len(res.data or [])}** migration grant row(s).")
             except Exception as exc:
@@ -391,7 +391,7 @@ with tab_data:
                 "caption": "All fields Excel-managed; edits here are overwritten by next sync if the same row exists in Excel.",
             },
             "Active Grants": {
-                "table": "active_grants",
+                "table": "applied_funding",
                 "order_col": "report_due_date",
                 "table_cols": ["grant_id", "donor_title", "award_date", "end_date",
                                "status", "owner", "report_type", "report_due_date",
@@ -594,7 +594,7 @@ with tab_data:
                     if isinstance(date_range, tuple) and len(date_range) == 2:
                         lo, hi = date_range
                         series = pd.to_datetime(df[primary_date], errors="coerce").dt.date
-                        # Keep rows with NULL dates — otherwise active_grants
+                        # Keep rows with NULL dates — otherwise applied_funding
                         # entries that haven't been awarded yet get hidden,
                         # and the user can't see/manage them.
                         mask &= series.between(lo, hi) | series.isna()

@@ -184,7 +184,7 @@ Indexes: review_week, decision, submission_deadline, funding_agency, is_duplicat
 **`org_profile` JSON** (`core/org_profile.DEFAULT_PROFILE`): `founding_year`, `legal_type`, `donor_registrations[]`, `countries_registered[]`, `annual_budget_usd`, `largest_grant_usd`, `domains[]`, `priority_areas[]`, `countries_of_operation[]`, `trusted_partners[]`, `trusted_for_profit_partners[]`, `trusted_academic_institutions[]`, `cofinancing_capacity`(none/limited/moderate/strong), `funder_history[]`, `proposal_languages[]`.
 
 ### 6.5 Other tables (in `db/schema.sql`)
-`users`, `meeting_logs`, `meeting_schedule`, `engagement_logs`, `active_grants`, `narrative_logs`, `donor_sources` (curated per-donor listing URLs for targeted scraping: donor_name/donor_code/rfp_listing_url/scrape_method/selectors), `scan_logs` (one row per source per run).
+`users`, `meeting_logs`, `meeting_schedule`, `engagement_logs`, `applied_funding`, `narrative_logs`, `donor_sources` (curated per-donor listing URLs for targeted scraping: donor_name/donor_code/rfp_listing_url/scrape_method/selectors), `scan_logs` (one row per source per run).
 
 ---
 
