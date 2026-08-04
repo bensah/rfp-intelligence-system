@@ -191,6 +191,9 @@ _ORG_DEFAULTS = {
 # -----------------------------------------------------------------------------
 _ORG_CACHE: dict[Optional[str], tuple[float, dict[str, str]]] = {}
 _ORG_TTL = 30.0
+# Same row, different column: tenants.org_identity, read by get_org_logo() in the header on
+# every render. Shares _ORG_TTL and is cleared by _clear_org_cache().
+_IDENT_CACHE: dict[str, tuple[float, dict]] = {}
 
 
 def _tenant_ctx(tenant_id: Optional[str] = None):
@@ -205,6 +208,7 @@ def _tenant_ctx(tenant_id: Optional[str] = None):
 
 def _clear_org_cache() -> None:
     _ORG_CACHE.clear()
+    _IDENT_CACHE.clear()
 
 
 def get_org(tenant_id: Optional[str] = None) -> dict[str, str]:
@@ -314,16 +318,28 @@ def set_org(fields: dict[str, str], updated_by: Optional[str] = None,
 # install that already pasted a hosted URL keeps working without re-upload.
 # -----------------------------------------------------------------------------
 def _read_tenant_identity(client, tid) -> Optional[dict]:
-    """The tenant's org_identity blob, or None on any error (missing column, etc.)."""
+    """The tenant's org_identity blob, or None on any error (missing column, etc.).
+
+    CACHED (30s, same TTL as _ORG_CACHE): get_org_logo() calls this on EVERY page render
+    via the app header, re-reading the very `tenants` row get_org() already caches — one
+    wasted ~0.35s round-trip on every page and every widget interaction. Both writers
+    (_write_tenant_identity, _clear_org_cache) invalidate it. Returns a COPY so a caller
+    mutating the blob can't poison the cache."""
+    key = str(tid)
+    hit = _IDENT_CACHE.get(key)
+    if hit is not None and _now() - hit[0] < _ORG_TTL:
+        return dict(hit[1]) if isinstance(hit[1], dict) else hit[1]
     try:
         rows = (client.table("tenants").select("org_identity")
                 .eq("id", tid).limit(1).execute().data or [])
     except Exception:
-        return None
+        return None                     # transient error → don't cache the failure
     if not rows:
         return None
     v = rows[0].get("org_identity")
-    return v if isinstance(v, dict) else {}
+    out = v if isinstance(v, dict) else {}
+    _IDENT_CACHE[key] = (_now(), out)
+    return dict(out)
 
 
 def _write_tenant_identity(client, tid, ident: dict) -> bool:
