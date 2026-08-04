@@ -106,14 +106,15 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
         except (TypeError, ValueError):
             return 0.0
 
-    def _opt(label, key, options, current):
+    def _opt(label, key, options, current, help=None):
         opts = ["—"] + list(options)
         if _is_blank(current):
             current = None
         elif current not in opts:
             opts.append(current)
         idx = opts.index(current) if current in opts else 0
-        return st.selectbox(label, opts, index=idx, key=f"edit_{key}_{row['uid']}")
+        return st.selectbox(label, opts, index=idx, key=f"edit_{key}_{row['uid']}",
+                            help=help)
 
     def _multi_options(predefined: list, current):
         """Merge predefined options with any stored values not yet in the list."""
@@ -393,10 +394,17 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
                                   value=_num(row.get("amount_secured")), key=f"e_sec_{row['uid']}")
         c3, c4 = st.columns(2)
         with c3:
+            # ONE currency for the money WE handle — it governs BOTH "Amount requested" and
+            # "Amount secured". Distinct from the Opportunity tab's `currency`, which is the
+            # unit the CALL was advertised in (its Estimated Value): a Canadian call can be
+            # advertised in CAD while the budget we submit is in USD. Relabelled from
+            # "Currency secured" because it is no longer secured-only.
             cur_sec = _opt(
-                "Currency secured", "cursec",
+                "Currency", "cursec",
                 [c["code"] for c in dropdowns.load().get("currencies", [])],
                 row.get("currency_secured"),
+                help="Currency of the amounts on this tab (requested and secured). The "
+                     "call's own advertised currency lives on the Opportunity tab.",
             )
         po = c4.text_input("Donor program officer", value=_str(row.get("donor_program_officer")), key=f"e_po_{row['uid']}")
         c5, c6 = st.columns(2)
