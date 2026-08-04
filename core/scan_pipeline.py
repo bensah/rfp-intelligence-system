@@ -515,6 +515,11 @@ def ingest_candidates(
                                      or type_detect.detect_solicitation(cand))
         cand["instrument_type"] = (cand.get("instrument_type")
                                    or type_detect.detect_instrument(cand))
+        # The coarse pursuit class the eligibility gate opts out of (procurement /
+        # consultancy / …). Nothing populated this before, so the gate's type opt-out
+        # never fired and goods tenders reached grant pipelines.
+        cand["opportunity_type"] = (cand.get("opportunity_type")
+                                    or type_detect.detect_opportunity_type(cand))
         # Deadline backstop: if the scraper captured no deadline, run the
         # confidence-gated extractor on the page text. A HIGH/MEDIUM date lets the
         # gate reject expired calls that would otherwise slip through (the scraper

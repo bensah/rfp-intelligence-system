@@ -183,13 +183,33 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
                                      key=f"e_applyurl_{row['uid']}",
                                      help="Where applicants actually submit (if different "
                                           "from the opportunity link).")
+        # The three type axes are CONTROLLED vocabularies, not free text — same lists the
+        # Sources → Verify Registry screen uses (core.type_detect), so a value typed here
+        # can't drift from the one the scanner detects or the eligibility gate reads.
+        # A blank stays blank ("" first) rather than being forced to a wrong value.
+        from core.type_detect import (OPPORTUNITY_TYPES, SOLICITATION_TYPES,
+                                      INSTRUMENT_TYPES)
+
+        def _type_select(col, label, current, options, key, help_txt):
+            opts = [""] + list(options)
+            cur = _str(current).strip()
+            if cur and cur not in opts:          # legacy free-text value — keep it visible
+                opts.append(cur)
+            return col.selectbox(label, opts, index=opts.index(cur) if cur in opts else 0,
+                                 key=key, help=help_txt)
+
         c_cls1, c_cls2, c_cls3 = st.columns(3)
-        otype_in = c_cls1.text_input("Opportunity type", value=_str(row.get("opportunity_type")),
-                                     key=f"e_otype_{row['uid']}")
-        stype_in = c_cls2.text_input("Solicitation type", value=_str(row.get("solicitation_type")),
-                                     key=f"e_stype_{row['uid']}")
-        itype_in = c_cls3.text_input("Instrument type", value=_str(row.get("instrument_type")),
-                                     key=f"e_itype_{row['uid']}")
+        otype_in = _type_select(
+            c_cls1, "Opportunity type", row.get("opportunity_type"), OPPORTUNITY_TYPES,
+            f"e_otype_{row['uid']}",
+            "What pursuing this IS. Procurement / Consultancy / Training / Loan are "
+            "excluded by the eligibility gate for a grant-seeking org.")
+        stype_in = _type_select(
+            c_cls2, "Solicitation type", row.get("solicitation_type"), SOLICITATION_TYPES,
+            f"e_stype_{row['uid']}", "How the call is announced / applied to.")
+        itype_in = _type_select(
+            c_cls3, "Instrument type", row.get("instrument_type"), INSTRUMENT_TYPES,
+            f"e_itype_{row['uid']}", "The contract if awarded.")
         notes_in = st.text_area("Notes", value=_str(row.get("notes")), height=80,
                                 key=f"e_notes_{row['uid']}",
                                 help="Free-form internal notes on this opportunity.")
