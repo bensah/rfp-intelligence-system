@@ -30,7 +30,7 @@ declare
   _t      text;
   _tables text[] := array[
     'rfp_submissions','meeting_logs','meeting_schedule',
-    'engagement_logs','active_grants','narrative_logs'];
+    'engagement_logs','applied_funding','narrative_logs'];
   _has_src boolean;
   _has_tid boolean;
   _n bigint;

@@ -521,7 +521,7 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
         # Invariant: Progress = "Completed" means the proposal was SUBMITTED to the donor,
         # so a donor decision is now pending. If the user marked Completed but left the
         # donor decision blank/Not submitted, default it to "Under Review" — otherwise the
-        # row leaves Tracking (Completed) yet never enters Active Grants (which keys off
+        # row leaves Tracking (Completed) yet never enters Applied Funding (which keys off
         # donor_decision), the exact gap that hid the lead-poisoning grant.
         if str(update.get("progress_status") or "").strip().lower() == "completed" \
                 and str(update.get("donor_decision") or "").strip().lower() in ("", "not submitted"):
@@ -539,15 +539,15 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
                 "remarks": _val(rep_remarks_in),
             }
             try:
-                if _ag_row and _ag_row.get("grant_id"):
+                if _ag_row and _ag_row.get("funding_id"):
                     sb.table("applied_funding").update(_rep_payload).eq(
-                        "grant_id", _ag_row.get("grant_id")).execute()
+                        "funding_id", _ag_row.get("funding_id")).execute()
                 elif any(v for v in _rep_payload.values()):
-                    # No reporting row yet — create one keyed to this grant. grant_id is NOT
+                    # No reporting row yet — create one keyed to this grant. funding_id is NOT
                     # NULL, so seed it from the uid; form_id_link ties it back to the RFP.
                     sb.table("applied_funding").insert({
                         **_rep_payload,
-                        "grant_id": f"G-{row.get('uid')}",
+                        "funding_id": f"G-{row.get('uid')}",
                         "form_id_link": row.get("uid"),
                         "donor_title": row.get("opportunity_title"),
                     }).execute()

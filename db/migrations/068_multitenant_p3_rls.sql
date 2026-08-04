@@ -67,7 +67,7 @@ declare
   _pol record;
   _scoped text[] := array[
     'rfp_submissions','meeting_logs','meeting_schedule','engagement_logs',
-    'active_grants','narrative_logs','scan_decisions','donor_contacts'];
+    'applied_funding','narrative_logs','scan_decisions','donor_contacts'];
 begin
   foreach _t in array _scoped loop
     if to_regclass(_t) is null then
@@ -106,7 +106,7 @@ commit;
 -- ROLLBACK — instantly re-open access if the tenant claim isn't flowing:
 --   do $$ declare _t text; _pol record;
 --     _scoped text[] := array['rfp_submissions','meeting_logs','meeting_schedule',
---       'engagement_logs','active_grants','narrative_logs','scan_decisions','donor_contacts'];
+--       'engagement_logs','applied_funding','narrative_logs','scan_decisions','donor_contacts'];
 --   begin foreach _t in array _scoped loop
 --     execute format('drop trigger if exists %I on %I', 'stamp_tenant_'||_t, _t);
 --     for _pol in select policyname from pg_policies where tablename=_t loop

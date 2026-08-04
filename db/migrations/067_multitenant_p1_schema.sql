@@ -17,7 +17,7 @@
 --           donor_source_seeds, source_registry, rfp_seen, scan_blacklist,
 --           scan_logs, users, password_reset_requests, app_settings.
 --   SCOPED  (tenant_id):    rfp_submissions, meeting_logs, meeting_schedule,
---           engagement_logs, active_grants, narrative_logs, scan_decisions,
+--           engagement_logs, applied_funding, narrative_logs, scan_decisions,
 --           donor_contacts.
 --   ^ donor_contacts + donor_intel + scan_decisions are the debatable calls —
 --     confirm before running (see the PR description).
@@ -83,7 +83,7 @@ declare
   _t   text;
   _scoped text[] := array[
     'rfp_submissions','meeting_logs','meeting_schedule','engagement_logs',
-    'active_grants','narrative_logs','scan_decisions','donor_contacts'
+    'applied_funding','narrative_logs','scan_decisions','donor_contacts'
   ];
 begin
   select id into _tid from tenants where name = 'the sample country team';
@@ -108,7 +108,7 @@ commit;
 -- ROLLBACK (if ever needed — no data is lost; tenant_id is purely additive):
 --   do $$ declare _t text; begin
 --     foreach _t in array array['rfp_submissions','meeting_logs','meeting_schedule',
---       'engagement_logs','active_grants','narrative_logs','scan_decisions','donor_contacts']
+--       'engagement_logs','applied_funding','narrative_logs','scan_decisions','donor_contacts']
 --     loop execute format('alter table %I drop column if exists tenant_id', _t); end loop;
 --   end $$;
 --   drop table if exists tenant_memberships;
