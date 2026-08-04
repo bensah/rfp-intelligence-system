@@ -44,7 +44,7 @@ today = date.today()
 
 st.markdown(
     f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
-    f"margin:0.15rem 0 0.5rem;'>YTD Proceed Pipeline ({year})</h2>"
+    f"margin:0.15rem 0 0.5rem;'>Year-to-Date Tracking ({year})</h2>"
     # Compact metric-value font so long values (e.g. '€1,500,000') fit the card.
     "<style>[data-testid='stMetricValue']{font-size:1.4rem;line-height:1.2;"
     "white-space:normal;overflow:visible;}</style>",
