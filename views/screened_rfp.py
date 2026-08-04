@@ -39,7 +39,7 @@ _hl, _hspacer, _h_submit, _h_scan = st.columns([4.4, 1.2, 1.5, 1.6],
 with _hl:
     st.markdown(
         f"<h2 style='font-size:1.55rem;font-weight:700;color:#334155;"
-        f"margin:0.15rem 0 0.5rem;'>Weekly Screening Pipeline ({year})</h2>",
+        f"margin:0.15rem 0 0.5rem;'>Weekly Screening ({year})</h2>",
         unsafe_allow_html=True,
     )
 with _h_submit:
