@@ -57,7 +57,7 @@ declare
   _bad text := '';
   _scoped text[] := array[
     'rfp_submissions','meeting_logs','meeting_schedule','engagement_logs',
-    'active_grants','narrative_logs','scan_decisions','donor_contacts','rfp_seen'];
+    'applied_funding','narrative_logs','scan_decisions','donor_contacts','rfp_seen'];
 begin
   foreach _t in array _scoped loop
     if to_regclass(_t) is null then
@@ -96,13 +96,13 @@ declare
   _pol record;
   _all text[] := array[
     'rfp_submissions','meeting_logs','meeting_schedule','engagement_logs',
-    'active_grants','narrative_logs','scan_decisions','donor_contacts','rfp_seen'];
+    'applied_funding','narrative_logs','scan_decisions','donor_contacts','rfp_seen'];
   -- Reads on these ALSO expose active 'individual' (public) tenants' rows to everyone —
   -- must mirror db.supabase_client._PUBLIC_VISIBLE_TABLES. EXCLUDES scan_decisions
   -- (per-tenant ML data) and rfp_seen (per-tenant tombstones).
   _public_visible text[] := array[
     'rfp_submissions','meeting_logs','meeting_schedule','engagement_logs',
-    'active_grants','narrative_logs','donor_contacts'];
+    'applied_funding','narrative_logs','donor_contacts'];
   _has_kind boolean := exists(
     select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'tenants' and column_name = 'kind');
@@ -153,7 +153,7 @@ commit;
 -- ROLLBACK — instantly re-open access if the tenant claim isn't flowing:
 --   do $$ declare _t text; _pol record;
 --     _scoped text[] := array['rfp_submissions','meeting_logs','meeting_schedule',
---       'engagement_logs','active_grants','narrative_logs','scan_decisions',
+--       'engagement_logs','applied_funding','narrative_logs','scan_decisions',
 --       'donor_contacts','rfp_seen'];
 --   begin foreach _t in array _scoped loop
 --     execute format('drop trigger if exists %I on %I', 'stamp_tenant_'||_t, _t);

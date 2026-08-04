@@ -783,7 +783,7 @@ _REPORT_SECTIONS = [
     ]),
     ("5", "5 · Our results", [
         ("s5_cumusd", "Cumulative USD secured"),
-        ("s5_grants", "Active grants pipeline"),
+        ("s5_grants", "Applied Funding pipeline"),
         ("s5_reqsec", "Requested vs secured"),
         ("s5_conv",   "Conversion rates"),
     ]),
@@ -1076,7 +1076,7 @@ def _build_excel_export() -> bytes:
             ("Unique RFPs (period)", int(len(rfps_period[~rfps_period["is_duplicate"]])) if not rfps_period.empty else 0),
             ("Meeting items",       int(len(meetings))),
             ("Engagement entries",  int(len(engagements))),
-            ("Active grants",       int(len(grants))),
+            ("Applied Funding",       int(len(grants))),
             ("",                    ""),
             ("FX policy",
              "Monetary values converted row-by-row to USD via FX rates in "
@@ -1106,7 +1106,7 @@ def _build_excel_export() -> bytes:
                 writer, sheet_name="Engagement logs", index=False)
         if not grants.empty:
             _safe_for_excel(grants).to_excel(
-                writer, sheet_name="Active grants", index=False)
+                writer, sheet_name="Applied Funding", index=False)
     buf.seek(0)
     return buf.getvalue()
 
@@ -2349,7 +2349,7 @@ if _show_sec("5"):
             cv3.metric("End-to-end (Proceed → Approved)",
                        f"{(len(approved_conv)/len(proceeded)*100):.1f}%" if len(proceeded) else "—")
 
-        # ───────────── Submitted Grants (was "Active grants pipeline") ────────
+        # ───────────── Submitted Grants (was "Applied Funding pipeline") ────────
         # The proposals we've actually submitted — Proceed RFPs whose Progress = Completed —
         # with what we requested, what's secured, and the donor's decision. Replaces the old
         # applied_funding table (whose reporting "Status" was stale/invalid, and whose Next

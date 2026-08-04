@@ -413,7 +413,7 @@ def map_active_grant_row(row: list[Any]) -> Optional[dict[str, Any]]:
     if not gid:
         return None
     return {
-        "grant_id": gid,
+        "funding_id": gid,
         "donor_title": _txt(c(3)),
         "form_id_link": _txt(c(4)),
         "award_date": _date(c(5)),
@@ -823,29 +823,29 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
         ],
     )
 
-    # --- applied_funding — keyed on grant_id. Delete stale migration rows
+    # --- applied_funding — keyed on funding_id. Delete stale migration rows
     # FIRST (rows that existed in a prior sync but disappeared from Excel
     # — without this they linger forever and pollute the per-grant view).
     # App-added rows (source='app') are preserved.
     print("[Active_Grants_Log -> applied_funding]")
     g_rows = [r for row in _rows(wb["Active_Grants_Log"], header_row=6) if (r := map_active_grant_row(row))]
-    current_grant_ids = [r["grant_id"] for r in g_rows if r.get("grant_id")]
+    current_funding_ids = [r["funding_id"] for r in g_rows if r.get("funding_id")]
     if not dry_run:
-        # Delete migration rows whose grant_id is no longer in Excel.
+        # Delete migration rows whose funding_id is no longer in Excel.
         existing_migration = (
             sb.table("applied_funding")
-            .select("grant_id")
+            .select("funding_id")
             .eq("source", "migration")
             .execute()
             .data
             or []
         )
-        existing_mig_ids = {r["grant_id"] for r in existing_migration if r.get("grant_id")}
-        stale_ids = sorted(existing_mig_ids - set(current_grant_ids))
+        existing_mig_ids = {r["funding_id"] for r in existing_migration if r.get("funding_id")}
+        stale_ids = sorted(existing_mig_ids - set(current_funding_ids))
         if stale_ids:
-            sb.table("applied_funding").delete().in_("grant_id", stale_ids).execute()
+            sb.table("applied_funding").delete().in_("funding_id", stale_ids).execute()
             print(f"  applied_funding: deleted {len(stale_ids)} stale migration row(s): {stale_ids}")
-    upsert("applied_funding", g_rows, conflict_key="grant_id")
+    upsert("applied_funding", g_rows, conflict_key="funding_id")
 
     # --- narrative_logs — merge by external_id
     print("[Narrative_Log -> narrative_logs]")
