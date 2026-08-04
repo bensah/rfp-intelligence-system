@@ -730,7 +730,7 @@ def _load_engagements(_scope: str, start_iso: str | None, end_iso: str | None) -
 
 @st.cache_data(ttl=120)
 def _load_grants(_scope: str) -> pd.DataFrame:
-    res = sb.table("active_grants").select("*").limit(10000).execute()
+    res = sb.table("applied_funding").select("*").limit(10000).execute()
     df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty:
         for c in ("award_date", "end_date", "submitted_date", "report_due_date"):
@@ -2352,7 +2352,7 @@ if _show_sec("5"):
         # ───────────── Submitted Grants (was "Active grants pipeline") ────────
         # The proposals we've actually submitted — Proceed RFPs whose Progress = Completed —
         # with what we requested, what's secured, and the donor's decision. Replaces the old
-        # active_grants table (whose reporting "Status" was stale/invalid, and whose Next
+        # applied_funding table (whose reporting "Status" was stale/invalid, and whose Next
         # report / Owner columns aren't needed here). Not collapsible; the closing table of
         # the results story.
         if _show("s5_grants"):

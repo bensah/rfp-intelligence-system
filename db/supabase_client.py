@@ -167,7 +167,7 @@ def service_client() -> Client:
 # sync with migration 067's _SCOPED_TABLES.
 _TENANT_SCOPED_TABLES = {
     "rfp_submissions", "meeting_logs", "meeting_schedule", "engagement_logs",
-    "active_grants", "narrative_logs", "scan_decisions", "donor_contacts",
+    "applied_funding", "narrative_logs", "scan_decisions", "donor_contacts",
     # The de-dup tombstone ledger is per-tenant too (migration 076) — otherwise the
     # per-tenant screening loop would let the first tenant's tombstones suppress the
     # same call for every later tenant.
@@ -186,7 +186,7 @@ _TENANT_SCOPED_TABLES = {
 # and scan_decisions (per-tenant ML training data). Writes are never broadened.
 _PUBLIC_VISIBLE_TABLES = {
     "rfp_submissions", "meeting_logs", "meeting_schedule", "engagement_logs",
-    "active_grants", "narrative_logs", "donor_contacts",
+    "applied_funding", "narrative_logs", "donor_contacts",
 }
 
 

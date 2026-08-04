@@ -823,17 +823,17 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
         ],
     )
 
-    # --- active_grants — keyed on grant_id. Delete stale migration rows
+    # --- applied_funding — keyed on grant_id. Delete stale migration rows
     # FIRST (rows that existed in a prior sync but disappeared from Excel
     # — without this they linger forever and pollute the per-grant view).
     # App-added rows (source='app') are preserved.
-    print("[Active_Grants_Log -> active_grants]")
+    print("[Active_Grants_Log -> applied_funding]")
     g_rows = [r for row in _rows(wb["Active_Grants_Log"], header_row=6) if (r := map_active_grant_row(row))]
     current_grant_ids = [r["grant_id"] for r in g_rows if r.get("grant_id")]
     if not dry_run:
         # Delete migration rows whose grant_id is no longer in Excel.
         existing_migration = (
-            sb.table("active_grants")
+            sb.table("applied_funding")
             .select("grant_id")
             .eq("source", "migration")
             .execute()
@@ -843,9 +843,9 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
         existing_mig_ids = {r["grant_id"] for r in existing_migration if r.get("grant_id")}
         stale_ids = sorted(existing_mig_ids - set(current_grant_ids))
         if stale_ids:
-            sb.table("active_grants").delete().in_("grant_id", stale_ids).execute()
-            print(f"  active_grants: deleted {len(stale_ids)} stale migration row(s): {stale_ids}")
-    upsert("active_grants", g_rows, conflict_key="grant_id")
+            sb.table("applied_funding").delete().in_("grant_id", stale_ids).execute()
+            print(f"  applied_funding: deleted {len(stale_ids)} stale migration row(s): {stale_ids}")
+    upsert("applied_funding", g_rows, conflict_key="grant_id")
 
     # --- narrative_logs — merge by external_id
     print("[Narrative_Log -> narrative_logs]")

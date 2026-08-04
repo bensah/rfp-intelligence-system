@@ -31,7 +31,7 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
     `show_application` — the auto-synthesised Application detail tab (how-to-apply,
     eligibility specifics, compliance, checklist). Useful when reviewing an RFP; hidden on
     the Applied Funding page to keep the grant editor lean.
-    `show_reporting` — a Reporting tab that reads/writes the linked active_grants row
+    `show_reporting` — a Reporting tab that reads/writes the linked applied_funding row
     (report status/type/due/owner/remarks). Shown only on the Applied Funding page so grant
     reporting is edited in ONE place (no separate control)."""
     st.markdown(f"**`{row['uid']}`** — {row.get('opportunity_title') if isinstance(row.get('opportunity_title'), str) else ''}")
@@ -62,12 +62,12 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
     if show_reporting:
         tab_report = _tabs[_ti]; _ti += 1
 
-    # Reporting comes from the linked active_grants row (Excel Active_Grants_Log). Look it up
+    # Reporting comes from the linked applied_funding row (Excel Active_Grants_Log). Look it up
     # once so the Reporting tab can prefill; None when this RFP has no reporting record yet.
     _ag_row = None
     if show_reporting:
         try:
-            _ag = (sb.table("active_grants").select("*")
+            _ag = (sb.table("applied_funding").select("*")
                    .eq("form_id_link", row.get("uid")).limit(1).execute().data or [])
             _ag_row = _ag[0] if _ag else None
         except Exception:
@@ -383,7 +383,7 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
             checklist_in = st.text_area("Application checklist", value=checklist_in,
                                         height=90, key=f"e_checklist_{row['uid']}")
 
-    # Reporting — the linked active_grants row (written on save when this tab is shown).
+    # Reporting — the linked applied_funding row (written on save when this tab is shown).
     rep_status_in = rep_type_in = rep_owner_in = rep_remarks_in = None
     rep_due_in = None
     if show_reporting and tab_report is not None:
@@ -527,7 +527,7 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
                 and str(update.get("donor_decision") or "").strip().lower() in ("", "not submitted"):
             update["donor_decision"] = "Under Review"
         sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
-        # Reporting → active_grants (only when the Reporting tab was shown). Update the linked
+        # Reporting → applied_funding (only when the Reporting tab was shown). Update the linked
         # row if it exists; otherwise create one when the user entered any reporting value.
         if show_reporting:
             _rep_payload = {
@@ -540,12 +540,12 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
             }
             try:
                 if _ag_row and _ag_row.get("grant_id"):
-                    sb.table("active_grants").update(_rep_payload).eq(
+                    sb.table("applied_funding").update(_rep_payload).eq(
                         "grant_id", _ag_row.get("grant_id")).execute()
                 elif any(v for v in _rep_payload.values()):
                     # No reporting row yet — create one keyed to this grant. grant_id is NOT
                     # NULL, so seed it from the uid; form_id_link ties it back to the RFP.
-                    sb.table("active_grants").insert({
+                    sb.table("applied_funding").insert({
                         **_rep_payload,
                         "grant_id": f"G-{row.get('uid')}",
                         "form_id_link": row.get("uid"),
