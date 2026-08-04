@@ -22,35 +22,69 @@ from __future__ import annotations
 import re
 from datetime import date
 
-import streamlit as st
-
 _ERAPI = "https://open.er-api.com/v6/latest/{base}"
 
 
 # ---------------------------------------------------------------------------
 # Live rate
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=21600, show_spinner=False)  # 6h — intraday drift is immaterial
+# Rate cache — deliberately a MODULE-level TTL dict, NOT @st.cache_data.
+#
+# This is a blocking OUTBOUND HTTP call that sits inside the per-row scoring path
+# (criteria_derive._usd → dropdowns.usd_rate → here), so it is charged once per distinct
+# currency on every screen that scores rows. It used to be an @st.cache_data(ttl=6h), but
+# the app calls st.cache_data.clear() in ~37 places (after any write, registry edit, sync,
+# …) — and EVERY one of those wiped the FX cache too, so the next page render re-fetched
+# every currency over the network: measured ~1.7s each, up to the 12s timeout if the API
+# stalls, which is minutes on a data-heavy page. A module cache is immune to those clears
+# and is shared by every session in the process.
+_RATE_CACHE: dict[str, tuple[float, tuple[float | None, str | None]]] = {}
+_RATE_TTL = 21600.0        # 6h — intraday drift is immaterial
+_FAIL_TTL = 900.0          # 15min — don't hammer the API for a currency it doesn't know
+_HTTP_TIMEOUT = 4.0        # a page render must never hang on a third-party API
+
+# Free-typed currency cells ("Euro €", "USD $", "GBP £") normalise to a bare first token,
+# which can be a non-ISO word. Map the common ones so we don't burn a network round-trip
+# (and a failure) on a code the API will never recognise.
+_ALIAS = {"EURO": "EUR", "EUROS": "EUR", "POUND": "GBP", "POUNDS": "GBP",
+          "STERLING": "GBP", "DOLLAR": "USD", "DOLLARS": "USD", "US": "USD",
+          "USDOLLAR": "USD", "FCFA": "XAF", "CFA": "XAF", "RAND": "ZAR",
+          "NAIRA": "NGN", "SHILLING": "KES", "KRONE": "DKK", "KRONER": "DKK"}
+
+
 def _erapi_rate(currency: str) -> tuple[float | None, str | None]:
-    """USD per 1 unit of `currency`, plus the rate's date. (None, None) on fail."""
+    """USD per 1 unit of `currency`, plus the rate's date. (None, None) on fail.
+
+    Cached 6h in-process (failures 15min) and hard-timeboxed, so scoring a page of rows
+    never blocks on the FX API."""
+    import time as _time
     cur = (currency or "").strip().upper()
+    cur = _ALIAS.get(cur, cur)
     if not cur or cur == "USD":
         return (1.0, date.today().isoformat())
+    if not cur.isalpha() or len(cur) != 3:
+        return (None, None)          # not an ISO code — never worth a network call
+    hit = _RATE_CACHE.get(cur)
+    if hit is not None:
+        _ttl = _RATE_TTL if hit[1][0] is not None else _FAIL_TTL
+        if (_time.monotonic() - hit[0]) < _ttl:
+            return hit[1]
+    out: tuple[float | None, str | None] = (None, None)
     try:
         import httpx
-        r = httpx.get(_ERAPI.format(base=cur), timeout=12.0)
-        if r.status_code != 200:
-            return (None, None)
-        j = r.json()
-        if j.get("result") != "success":
-            return (None, None)
-        usd = (j.get("rates") or {}).get("USD")
-        if not usd:
-            return (None, None)
-        rdate = (j.get("time_last_update_utc") or "")[:16] or date.today().isoformat()
-        return (float(usd), rdate)
+        r = httpx.get(_ERAPI.format(base=cur), timeout=_HTTP_TIMEOUT)
+        if r.status_code == 200:
+            j = r.json()
+            if j.get("result") == "success":
+                usd = (j.get("rates") or {}).get("USD")
+                if usd:
+                    rdate = ((j.get("time_last_update_utc") or "")[:16]
+                             or date.today().isoformat())
+                    out = (float(usd), rdate)
     except Exception:
-        return (None, None)
+        out = (None, None)           # network error → negative-cached briefly, then retried
+    _RATE_CACHE[cur] = (_time.monotonic(), out)
+    return out
 
 
 def to_usd(amount, currency, on_date: str | None = None) -> dict:
