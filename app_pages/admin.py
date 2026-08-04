@@ -1555,14 +1555,10 @@ with tab_scan:
     # ----- History (split): Extraction runs (the crawl) vs Found-matches runs --
     from core.scan_pipeline import MATCH_RUN_LABEL
     st.markdown("---")
-    res = (
-        sb.table("scan_logs")
-        .select("*")
-        .order("scan_date", desc=True)
-        .limit(500)
-        .execute()
-    )
-    logs = clean_df(pd.DataFrame(res.data or []))
+    # Reuse the rows already fetched above (`_all_logs`) instead of re-running the identical
+    # scan_logs select — it is the same query, and Streamlit re-runs this whole tab body on
+    # every widget interaction, so the duplicate cost a round-trip (~0.35s) every click.
+    logs = clean_df(pd.DataFrame(_all_logs or []))
     if not logs.empty and "triggered_by" in logs.columns:
         logs["triggered_by"] = (
             logs["triggered_by"].fillna("").astype(str).map(_pretty_trigger)

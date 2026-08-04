@@ -242,6 +242,8 @@ def render_my_profile(user: dict, sb) -> None:
                         try:
                             service_client().table("tenant_memberships").delete().eq(
                                 "user_id", _uid).execute()
+                            from auth import tenant_context as _tc_inv
+                            _tc_inv.clear_membership_cache(_uid)
                         except Exception:
                             pass
                     service_client().table("users").delete().eq("email", _email).execute()
@@ -500,6 +502,7 @@ def _render_add_tenant(user: dict, svc, *, is_super: bool) -> None:
                 svc.table("tenant_memberships").insert({
                     "tenant_id": _tid, "user_id": user.get("id"),
                     "role": "admin", "status": "active", "decided_at": _now}).execute()
+                _tc.clear_membership_cache(user.get("id"))
             except Exception:
                 pass
         st.session_state.pop("add_tenant_name", None)
@@ -1094,6 +1097,7 @@ def render_manage_users(user: dict, sb) -> None:
                                 "status": "active",
                                 "decided_at": datetime.now(timezone.utc).isoformat(),
                             }).execute()
+                            tc.clear_membership_cache(new_uid)
                         except Exception as _mexc:
                             st.warning(f"User created, but tenant assignment failed: {_mexc}")
             except Exception as exc:

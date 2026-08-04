@@ -25,9 +25,27 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from typing import Any
 
 from core.settings import get_setting, set_setting
+
+# get_profile() is the app's hottest read: it runs on Entity/Screen/Review/Records/Org-setup,
+# TWICE per call inside policies.get_policies(), and several times PER ROW during live
+# scoring — each one previously a fresh `tenants.org_profile` round-trip (~0.35s). Cache the
+# RAW OVERLAY per tenant for a few seconds; the merge onto DEFAULT_PROFILE still happens on
+# every call so callers keep getting their own mutable dict (the Org-setup editor mutates the
+# result — handing out a shared merged object would let one caller poison the cache).
+# Mirrors the module-cache pattern in core/settings.py. set_profile() invalidates.
+_PROFILE_CACHE: dict[str, tuple[float, Any]] = {}
+_PROFILE_TTL = 30.0
+
+
+def _clear_profile_cache(tid: str | None = None) -> None:
+    if tid is None:
+        _PROFILE_CACHE.clear()
+    else:
+        _PROFILE_CACHE.pop(str(tid), None)
 
 ORG_PROFILE_KEY = "org_profile"
 
@@ -275,13 +293,22 @@ def get_profile(tenant_id: str | None = None) -> dict[str, Any]:
     store = _tenant_store(tenant_id)
     if store is not None:
         client, tid = store
-        try:
-            rows = (client.table("tenants").select("org_profile")
-                    .eq("id", tid).limit(1).execute().data or [])
-            if rows:
-                overlay = _coerce_overlay(rows[0].get("org_profile"))
-        except Exception:
-            overlay = None
+        # Keyed on the RESOLVED tid (not the tenant_id argument) so get_profile() and
+        # get_profile(tid) share one entry. A cached None/{} is a valid result and is
+        # honoured — an org with no profile yet shouldn't re-query every call either.
+        _key = str(tid)
+        _hit = _PROFILE_CACHE.get(_key)
+        if _hit is not None and (time.monotonic() - _hit[0]) < _PROFILE_TTL:
+            overlay = _hit[1]
+        else:
+            try:
+                rows = (client.table("tenants").select("org_profile")
+                        .eq("id", tid).limit(1).execute().data or [])
+                if rows:
+                    overlay = _coerce_overlay(rows[0].get("org_profile"))
+                _PROFILE_CACHE[_key] = (time.monotonic(), overlay)
+            except Exception:
+                overlay = None      # transient error → do NOT cache the failure
     if overlay is None and store is None:
         overlay = _coerce_overlay(get_setting(ORG_PROFILE_KEY))
     if not overlay:
@@ -305,8 +332,10 @@ def set_profile(profile: dict[str, Any], updated_by: str | None = None,
             raise RuntimeError(
                 f"tenants.org_profile update for {tid} affected 0 rows — the write did "
                 "not persist (check RLS / that SUPABASE_KEY is the service-role key).")
+        _clear_profile_cache(tid)         # next read must see the just-saved profile
         return
     set_setting(ORG_PROFILE_KEY, json.dumps(profile, indent=2), updated_by=updated_by)
+    _clear_profile_cache()
 
 
 def reset_to_defaults(updated_by: str | None = None) -> None:

@@ -122,6 +122,20 @@ def _resolve_user_id(user: dict) -> Optional[str]:
         return None
 
 
+_MEMBERSHIP_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_MEMBERSHIP_TTL = 30.0
+
+
+def clear_membership_cache(user_id: str | None = None) -> None:
+    """Drop cached memberships — call after ANY tenant_membership write (join, approve,
+    add-to-tenant, remove) so the next render re-reads the true rows. No arg = clear all
+    (use when the affected user isn't the acting one)."""
+    if user_id is None:
+        _MEMBERSHIP_CACHE.clear()
+    else:
+        _MEMBERSHIP_CACHE.pop(str(user_id), None)
+
+
 def active_memberships(user_id: str | None) -> list[dict[str, Any]]:
     """The user's ACTIVE memberships → [{tenant_id, name, slug, role, is_platform}]
     (best-effort).
@@ -133,6 +147,15 @@ def active_memberships(user_id: str | None) -> list[dict[str, Any]]:
     072), so it never hard-fails on ordering."""
     if not user_id:
         return []
+    # CACHED (short TTL): this fires up to 3x per render — ensure_tenant_context() on login
+    # refresh, the header tenant switcher (which must query BEFORE it can know the user has
+    # <2 memberships and skip rendering), and the Accounts tab. Each was a separate ~0.35s
+    # round-trip on every widget interaction. Every membership write calls
+    # clear_membership_cache(), so a join/approve/remove is reflected immediately.
+    _key = str(user_id)
+    _hit = _MEMBERSHIP_CACHE.get(_key)
+    if _hit is not None and (time.time() - _hit[0]) < _MEMBERSHIP_TTL:
+        return [dict(m) for m in _hit[1]]
     rows = None
     # Every variant MUST embed `status` — it is the SOLE runtime guard that drops
     # blacklisted/pending tenants below (RLS gates only on tenant_id, not status). `status`
@@ -162,6 +185,7 @@ def active_memberships(user_id: str | None) -> list[dict[str, Any]]:
                     "name": (t or {}).get("name"), "slug": (t or {}).get("slug"),
                     "role": r.get("role"), "is_platform": bool((t or {}).get("is_platform")),
                     "is_developer": bool((t or {}).get("is_developer"))})
+    _MEMBERSHIP_CACHE[_key] = (time.time(), [dict(m) for m in out])
     return out
 
 
