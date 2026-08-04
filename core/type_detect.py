@@ -26,6 +26,52 @@ INSTRUMENT_TYPES = [
     "Prize/Award", "Fellowship", "Scholarship", "Seed fund", "In-kind/TA",
     "Other",
 ]
+# WHAT PURSUING THIS ACTUALLY IS — the coarse class the eligibility gate opts out of.
+# Distinct from SOLICITATION (how it's announced) and INSTRUMENT (the resulting contract):
+# a "Tender/ITB" solicitation for a "Contract" instrument is a Procurement, which a
+# grant-seeking org never wants. Also the vocabulary behind the Opportunity type dropdown.
+OPPORTUNITY_TYPES = [
+    "Grant/funding call", "Procurement", "Consultancy", "Training", "Loan",
+    "Prize/Challenge", "Announcement", "Other",
+]
+# Classes the gate rejects by default for a grant-seeking org (each honours its own
+# policies['exclusions'] flag — see core/auto_scorer.is_eligible).
+OPPORTUNITY_TYPE_EXCLUSIONS = {
+    "Procurement": "reject_procurement",
+    "Consultancy": "reject_consultancies",
+    "Training": "reject_training_only",
+    "Loan": "reject_loans",
+}
+
+# Hosts that ONLY ever carry procurement/tender notices — the strongest possible signal,
+# and language-independent (the UNGM notice that leaked was in Spanish, so no English label
+# matched). Keyed on opportunity_link.
+_PROCUREMENT_HOSTS = (
+    "ungm.org", "tenders.un.org", "procurement-notices.undp.org",
+    "wbgeprocure", "procnotices", "ted.europa.eu", "devbusiness.un.org",
+)
+# Tender/consultancy labels INCLUDING the non-English forms our sources actually publish.
+_PROCUREMENT_LABELS = (
+    "invitation to bid", "invitation to tender", "request for quotation",
+    "request for tender", "procurement notice", "prior information notice",
+    "adquisición", "adquisicion", "licitación", "licitacion", "convocatoria a licitación",
+    "appel d'offres", "avis d'appel d'offres", "appel à concurrence",
+)
+# GRANT portals that carry funding calls even though their name/URL contains the word
+# "tender". The EU "Funding & Tenders" portal is the big one: its URL path
+# (ec.europa.eu/info/funding-tenders/...) makes detect_solicitation label a Horizon/EDCTP3
+# grant call "Tender"/"Contract", which would then be thrown out as procurement. A dry-run
+# over live data caught exactly that — legitimate EDCTP3 calls (€88.9M) misfiled. On these
+# hosts a tender-shaped solicitation is NOT evidence of procurement.
+_GRANT_PORTAL_HOSTS = (
+    "ec.europa.eu/info/funding-tenders", "funding-tenders.ec.europa.eu",
+    "grants.gov", "ukri.org", "nih.gov", "nihr.ac.uk", "wellcome.org",
+)
+_CONSULTANCY_LABELS = (
+    "expression of interest for consult", "request for expressions of interest",
+    "consulting services", "consultancy services", "individual consultant",
+    "terms of reference", "services de consultant", "consultoría", "consultoria",
+)
 
 # Longest / most-specific phrases first.
 _SOLICITATION_RULES: list[tuple[str, str]] = [
@@ -191,3 +237,50 @@ def detect_instrument(candidate: dict[str, Any]) -> str | None:
     blob = (f"{fi} {candidate.get('opportunity_title') or ''} "
             f"{candidate.get('opportunity_link') or ''}")
     return _match(blob, _INSTRUMENT_RULES)
+
+
+def detect_opportunity_type(candidate: dict[str, Any]) -> str | None:
+    """What pursuing this opportunity actually IS (Grant/funding call · Procurement ·
+    Consultancy · Training · Loan · Prize/Challenge · Announcement).
+
+    Nothing populated `opportunity_type` before this (only the EU F&T scanner did), so the
+    eligibility gate's type opt-out never fired and buying-goods tenders / consultancy EOIs
+    reached grant pipelines. Signals, strongest first:
+
+      1. HOST — ungm.org & friends only ever carry procurement notices. Language-independent,
+         which matters: the tender that leaked was in Spanish, so no English label matched.
+      2. TITLE/BODY LABELS — including Spanish/French forms our sources actually publish.
+      3. The already-detected SOLICITATION family (Tender/Bid/ITB/RFQ/Procurement notice)
+         and INSTRUMENT (Loan, Prize/Award) — reuses type_detect's own vocabulary rather
+         than inventing a second one.
+
+    Returns None when nothing is recognisable, so callers can decide how to fail."""
+    blob = " ".join([
+        str(candidate.get("opportunity_title") or ""),
+        str(candidate.get("brief_description") or ""),
+    ]).lower()
+    link = str(candidate.get("opportunity_link") or "").lower()
+
+    if any(h in link for h in _PROCUREMENT_HOSTS):
+        return "Procurement"
+    if any(lbl in blob for lbl in _PROCUREMENT_LABELS):
+        return "Procurement"
+    if any(lbl in blob for lbl in _CONSULTANCY_LABELS):
+        return "Consultancy"
+
+    sol = candidate.get("solicitation_type") or detect_solicitation(candidate)
+    inst = candidate.get("instrument_type") or detect_instrument(candidate)
+    on_grant_portal = any(h in link for h in _GRANT_PORTAL_HOSTS)
+    if sol in SOLICITATION_GROUPS[2] and not on_grant_portal:
+        return "Procurement"                     # Tender/Bid/ITB/Procurement notice/RFQ
+    if on_grant_portal:
+        return "Grant/funding call"              # a funding portal's calls ARE funding calls
+    if inst == "Loan":
+        return "Loan"
+    if inst == "Prize/Award" or sol == "Challenge":
+        return "Prize/Challenge"
+    if inst in ("Grant", "Cooperative Agreement", "Seed fund") or sol in SOLICITATION_GROUPS[0]:
+        return "Grant/funding call"
+    if sol in SOLICITATION_GROUPS[1]:            # EOI/LOI/CfCN — a funding call unless the
+        return "Grant/funding call"              # consultancy labels above already caught it
+    return None
