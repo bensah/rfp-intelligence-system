@@ -193,6 +193,7 @@ def _request_join(uid: str, tenant_id: str, name: str) -> None:
             sb.table("tenant_memberships").insert({
                 "tenant_id": tenant_id, "user_id": uid,
                 "role": "collaborator", "status": "pending"}).execute()
+            tc.clear_membership_cache(uid)
             st.success(f"✅ Request sent to join **{name}**. Awaiting admin approval.")
         st.rerun()
     except Exception as exc:
@@ -222,6 +223,7 @@ def _create_tenant(user: dict, uid: str, name: str) -> None:
         tid = created[0]["id"]
         sb.table("tenant_memberships").insert({
             "tenant_id": tid, "user_id": uid, "role": "admin", "status": "active"}).execute()
+        tc.clear_membership_cache(uid)
         # switch this session into the new tenant (mints the tenant JWT)
         tc.set_active_tenant(user, tid, role="admin", name=name)
         st.success(f"✅ Created **{name}** — you're its admin. Finish your organization "

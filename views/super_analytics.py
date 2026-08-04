@@ -11,6 +11,29 @@ import streamlit as st
 
 from core import analytics, permissions
 
+# These three rollups are the most expensive block on the Settings page: tenant_activity()
+# alone issues 2 round-trips PER TENANT (an N+1 in core/analytics.py), and Streamlit re-runs
+# every tab body on EVERY widget interaction — so an uncached render cost ~15 sequential
+# queries. Caching them collapses that to one fetch per minute.
+#
+# NOTE: deliberately NOT keyed on tenant. These are CROSS-tenant platform rollups read via
+# the service client and shown to the super_user only, so a single shared entry is correct —
+# do not "fix" this by adding a tenant discriminator. Writes that change the rollup (tenant
+# approval, etc.) already call st.cache_data.clear().
+@st.cache_data(ttl=60, show_spinner=False)
+def _tenant_activity_cached() -> list[dict]:
+    return analytics.tenant_activity()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _user_stats_cached() -> dict:
+    return analytics.user_stats()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _discovery_stats_cached() -> dict:
+    return analytics.system_discovery_stats()
+
 
 def render_super_analytics(user: dict) -> None:
     if not permissions.is_super_user(user):
@@ -21,9 +44,9 @@ def render_super_analytics(user: dict) -> None:
     st.caption("Cross-tenant platform overview — tenants, users and shared discovery. "
                "Super User only; numbers span every tenant.")
 
-    tenants = analytics.tenant_activity()
-    users = analytics.user_stats()
-    disc = analytics.system_discovery_stats()
+    tenants = _tenant_activity_cached()
+    users = _user_stats_cached()
+    disc = _discovery_stats_cached()
 
     # ── KPI tiles ────────────────────────────────────────────────────────
     k = st.columns(4)
