@@ -397,6 +397,22 @@ def render_submit_form(
         st.error(f"Submit failed: {exc}")
         return
 
+    # BACKDATED INTAKE — the deadline has already passed. That usually means this proposal
+    # went to the donor a while ago, but with nothing marking it submitted the scorer reads
+    # it as "not enough time" (PREFER-9 ✗) and it looks like a missed opportunity. Prompt
+    # for the one field that fixes it; _is_completed() then counter-validates the component.
+    try:
+        from core.criteria_derive import needs_submission_check
+        if needs_submission_check(row):
+            st.warning(
+                "⏰ This call's deadline has already passed. If you **already submitted** "
+                "to the donor, open the RFP and set **Progress status = Completed** (or "
+                "record the donor decision, e.g. *Under review*). Otherwise the bid-effort "
+                "score treats it as 'not enough time' and it reads as a missed opportunity."
+            )
+    except Exception:
+        pass
+
     # Share to the GLOBAL opportunity pool so EVERY tenant's "My Eligible Funding" scan
     # can match this call against its own preferences — a user's submission thus becomes
     # available to all users, screened per-tenant. The submitter already has their own

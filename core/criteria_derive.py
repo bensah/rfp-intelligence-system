@@ -1107,10 +1107,45 @@ def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) 
     return "None"
 
 
+# A donor decision only exists once the proposal is IN — so any of these proves submission
+# just as well as Progress = Completed. Mirrors the app-wide SUBMITTED rule used by the
+# Report/Summary (views/report.py::_submitted_mask); keep the two in sync.
+_SUBMITTED_DONOR_DECISIONS = {"approved", "under review", "not approved"}
+
+
 def _is_completed(rfp: dict) -> bool:
-    """The submission is already in (Progress status = Completed), so deadline runway
-    is moot — it was clearly submitted on time."""
-    return str(rfp.get("progress_status") or "").strip().lower() == "completed"
+    """The submission is already IN, so deadline runway is moot — it was submitted.
+
+    Counts ANY durable proof of submission, not just Progress = Completed:
+      * progress_status == Completed;
+      * a real donor decision (approved / under review / not approved) — a donor can only
+        decide on a proposal it received;
+      * a recorded submission date (date_completed).
+    This matters for BACKDATED intake: an RFP entered via Excel or the submission form
+    months AFTER it went to the donor arrives with a deadline already in the past. Keying
+    only on progress_status scored those as "not enough time" (PREFER-9 ✗) even though they
+    were submitted on time — see the app-wide rule in views/report.py::_submitted_mask."""
+    if str(rfp.get("progress_status") or "").strip().lower() == "completed":
+        return True
+    if str(rfp.get("donor_decision") or "").strip().lower() in _SUBMITTED_DONOR_DECISIONS:
+        return True
+    return bool(str(rfp.get("date_completed") or "").strip())
+
+
+def needs_submission_check(rfp: dict) -> bool:
+    """True when an RFP's deadline has ALREADY PASSED but nothing records a submission.
+
+    BACKDATED INTAKE: proposals entered via Excel or the in-app form months after they went
+    to the donor arrive with a past deadline. If the row isn't marked submitted, scoring
+    reads it as "not enough time" (PREFER-9 ✗) and it looks like a missed opportunity —
+    when in reality it was submitted on time and may be under review. The intake surfaces
+    call this so the user can confirm: set Progress = Completed, or record the donor
+    decision, and the time component counter-validates automatically (see _is_completed).
+    """
+    if _is_completed(rfp):
+        return False
+    days = days_until(rfp.get("call_submission_deadline"))
+    return days is not None and days < 0
 
 
 def derive_bid_effort(rfp: dict, org_settings: dict | None = None) -> str | None:
