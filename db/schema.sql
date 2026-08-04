@@ -142,7 +142,7 @@ create table if not exists meeting_schedule (
     call_date       date unique not null,
     note_taker      text,
     rfp_presenter   text,
-    meeting_orgr   text,
+    meeting_chair   text,
     created_at      timestamptz not null default now()
 );
 
