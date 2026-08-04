@@ -43,12 +43,29 @@ def system_discovery_stats() -> dict[str, Any]:
     no tenant_id (the Friday --extract-only crawl); TENANT-specific screening runs are
     excluded. Also the shared extracted-catalog size."""
     out = {"runs": 0, "found": 0, "rejected": 0, "catalog": 0, "last_run": None}
-    try:
-        rows = (_svc().table("scan_logs")
-                .select("scan_date,rfps_found,rfps_new,rfps_rejected,tenant_id,triggered_by")
-                .order("scan_date", desc=True).limit(5000).execute().data or [])
-    except Exception:
-        rows = []
+    # Filter to SYSTEM runs (tenant_id IS NULL) SERVER-side, and PAGINATE.
+    # Previously this fetched `.limit(5000)` unfiltered and dropped tenant rows in Python.
+    # Two problems: (1) PostgREST caps a response at 1000 rows, so `limit(5000)` silently
+    # returned only the newest 1000 and the totals were UNDER-COUNTED; (2) it shipped every
+    # tenant row across the wire just to discard it (measured 1.66s vs 0.35s filtered).
+    # Paginating keeps the totals correct as scan_logs grows.
+    rows: list[dict] = []
+    _page, _start = 1000, 0
+    while True:
+        try:
+            chunk = (_svc().table("scan_logs")
+                     .select("scan_date,rfps_found,rfps_new,rfps_rejected,tenant_id,triggered_by")
+                     .is_("tenant_id", "null")
+                     .order("scan_date", desc=True)
+                     .range(_start, _start + _page - 1).execute().data or [])
+        except Exception:
+            break
+        rows.extend(chunk)
+        if len(chunk) < _page:
+            break
+        _start += _page
+        if _start >= 50_000:            # hard stop; never spin forever
+            break
     seen_runs = set()
     for r in rows:
         if r.get("tenant_id"):
