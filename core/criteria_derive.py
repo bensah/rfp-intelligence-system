@@ -1775,16 +1775,52 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     return False, None
 
 
+def apply_component_overrides(breakdown: dict[str, list[dict]],
+                              overrides: dict | None) -> dict[str, list[dict]]:
+    """Merge HUMAN component verdicts on top of the derived breakdown, in place.
+
+    `overrides` is {criterion_key: {component_key: score}} as persisted on
+    rfp_submissions.criteria_component_overrides. A reviewer's verdict WINS over the
+    derivation — the derivation is an inference from org profile / donor intel / call text
+    and can be wrong or stale, whereas a human who has read the call is authoritative.
+    Overridden factors are stamped `_override: True` so the UI can show who decided.
+
+    An override on an INACTIVE component also ACTIVATES it: if a reviewer scores something
+    the call didn't visibly impose, they're asserting it applies."""
+    if not overrides or not isinstance(overrides, dict):
+        return breakdown
+    for crit, comps in overrides.items():
+        if not isinstance(comps, dict):
+            continue
+        for it in breakdown.get(crit) or []:
+            if str(it.get("key")) not in comps:
+                continue
+            try:
+                sc = float(comps[str(it.get("key"))])
+            except (TypeError, ValueError):
+                continue
+            sc = max(0.0, min(1.0, sc))
+            it["score"] = sc
+            it["met"] = True if sc >= 1.0 else (False if sc <= 0.0 else None)
+            it["active"] = True
+            it["_override"] = True
+    return breakdown
+
+
 def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = None,
                      org_settings: dict | None = None,
-                     rfp_compliance: dict | None = None) -> dict[str, list[dict]]:
+                     rfp_compliance: dict | None = None,
+                     overrides: dict | None = None) -> dict[str, list[dict]]:
     """Per-criterion sub-factor lists for the Review per-criterion cards — for ALL
     9 criteria. Each factor carries `active` (whether THIS call/donor imposes it):
     inactive factors are KEPT so the card can show them as "? Not applicable", and
-    they're excluded from the won/total denominator (see core.criteria_factors)."""
+    they're excluded from the won/total denominator (see core.criteria_factors).
+
+    `overrides` — persisted human component verdicts, applied LAST so they win over the
+    derivation (see apply_component_overrides)."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
-    return {
+    out = {
         "qualification": qualification_factors(org, rfp, eff, org_settings),
         "strategic_fit": _strategic_factors(org, rfp, donor),
         "capacity": _capacity_factors(org, rfp, eff, org_settings),
@@ -1795,3 +1831,4 @@ def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = No
         "competitiveness": _competitiveness_factors(org, rfp, eff, org_settings),
         "bid_effort": _bid_effort_factors(rfp, org_settings),
     }
+    return apply_component_overrides(out, overrides)
