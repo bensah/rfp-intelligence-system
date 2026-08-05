@@ -94,3 +94,32 @@ class RequestedCurrencyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ExcelSubmissionsImportTests(unittest.TestCase):
+    """`_int(get("Submissions")) or 1` corrupted the import: Python treats 0 as falsy, so
+    every Excel 0 (an RFP never submitted) became 1 — putting a phantom submission on 242
+    rows. The sheet's value is authoritative and must survive verbatim, 0 included."""
+
+    def setUp(self):
+        import sys as _s
+        _sp = os.path.join(_ROOT, "scripts")
+        if _sp not in _s.path:
+            _s.path.insert(0, _sp)
+        from migrate_excel import _submissions_value
+        self.f = _submissions_value
+
+    def test_zero_survives_the_import(self):
+        self.assertEqual(self.f(0, "Not Started"), 0)
+        self.assertEqual(self.f("0", "Discontinued"), 0)
+
+    def test_counts_are_preserved_verbatim(self):
+        self.assertEqual(self.f(1, "Completed"), 1)
+        self.assertEqual(self.f(2, "Completed"), 2)      # the twice-submitted RFP
+
+    def test_blank_falls_back_to_the_progress_status(self):
+        self.assertEqual(self.f(None, "Completed"), 1)
+        self.assertEqual(self.f("", "Not Started"), 0)
+
+    def test_never_negative(self):
+        self.assertEqual(self.f(-3, "Completed"), 0)
