@@ -372,17 +372,6 @@ with cc2:
             f"{int(tier_counts.get(PROB_LABEL_MED, 0))} Medium · "
             f"{int(tier_counts.get(PROB_LABEL_LOW, 0))} Low_"
         )
-        # Show the per-RFP scores so it's obvious where each row lands
-        with st.expander("See per-RFP score → tier mapping", expanded=False):
-            tier_df = proceed_df[["uid", "opportunity_title", "alignment_score", "_tier"]].copy()
-            tier_df["alignment_score"] = tier_df["alignment_score"].fillna(0).round(1)
-            tier_df = tier_df.sort_values("alignment_score", ascending=False).rename(columns={
-                "uid": "UID",
-                "opportunity_title": "Title",
-                "alignment_score": "Score",
-                "_tier": "Tier",
-            })
-            st.dataframe(tier_df, hide_index=True, width='stretch')
     else:
         st.caption("_No Proceed RFPs._")
 
@@ -399,6 +388,34 @@ with cc3:
               fmt="$%{x:,.0f}", inside=True)
     else:
         st.caption("_No Proceed RFPs._")
+
+# Per-RFP score → tier mapping. Rendered at FULL PAGE WIDTH, outside the three chart
+# columns: it used to live inside the Probability-Tier column, so the table was squeezed
+# into a third of the page and the Title/Score/Tier columns needed horizontal scrolling.
+# Still collapsed by default — it's supporting detail, not part of the at-a-glance row.
+if not proceed_df.empty:
+    with st.expander("See per-RFP score → tier mapping", expanded=False):
+        if "_tier" not in proceed_df.columns:
+            proceed_df["_tier"] = proceed_df["alignment_score"].apply(_tier_of)
+        tier_df = proceed_df[["uid", "opportunity_title", "alignment_score", "_tier"]].copy()
+        tier_df["alignment_score"] = tier_df["alignment_score"].fillna(0).round(1)
+        tier_df = tier_df.sort_values("alignment_score", ascending=False).rename(columns={
+            "uid": "UID",
+            "opportunity_title": "Title",
+            "alignment_score": "Score",
+            "_tier": "Tier",
+        })
+        st.dataframe(
+            tier_df, hide_index=True, width='stretch',
+            column_config={
+                # Give the title the slack — it's the column that was being cut off.
+                "UID": st.column_config.TextColumn("UID", width="small"),
+                "Title": st.column_config.TextColumn("Title", width="large"),
+                "Score": st.column_config.NumberColumn("Score", format="%.1f",
+                                                       width="small"),
+                "Tier": st.column_config.TextColumn("Tier", width="small"),
+            },
+        )
 
 st.divider()
 
