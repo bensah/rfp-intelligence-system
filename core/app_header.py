@@ -582,10 +582,39 @@ _GLOBAL_CSS = f"""
       margin-left: 0 !important;
       visibility: hidden !important;
     }}
+    /* The ONLY way back to page navigation on a phone, so it has to be visible and
+       tappable. It was positioned at top:0.4rem — INSIDE the fixed app bar's
+       {THEME_HEADER_H} band — with no z-index, so the bar (z-index 1000000) painted over
+       it and the menu was simply unreachable on mobile. Pin it just BELOW the bar, above
+       everything else, and give it a solid chip so it reads as a control on any
+       background. Deliberately ONLY the EXPAND button: the collapse button lives INSIDE
+       the sidebar, so pinning it here too would float a second chip over the content
+       whenever the overlay is open. */
     [data-testid="stExpandSidebarButton"] {{
       visibility: visible !important;
-      top: 0.4rem !important;
-      left: 0.4rem !important;
+      display: flex !important;
+      opacity: 1 !important;
+      position: fixed !important;
+      top: calc({THEME_HEADER_H} + 0.35rem) !important;
+      left: 0.5rem !important;
+      z-index: 1000002 !important;          /* ABOVE the fixed top bar (1000000) */
+      /* WHITE chip, not green: a later rule in this same block draws the hamburger as
+         ::after content in navy and, being later, its colour wins over anything set
+         here. White + a green hairline keeps that navy glyph readable and matches the
+         card styling used elsewhere. */
+      background: #ffffff !important;
+      border: 1px solid {THEME_PRIMARY} !important;
+      border-radius: 8px !important;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22) !important;
+      width: 2.4rem !important;
+      height: 2.4rem !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }}
+    /* The nav overlay must clear the bar too, or its first link hides behind it. */
+    section[data-testid="stSidebar"][aria-expanded="true"] {{
+      z-index: 1000003 !important;
+      visibility: visible !important;
     }}
 
     /* Wide tables scroll inside their own box. */
