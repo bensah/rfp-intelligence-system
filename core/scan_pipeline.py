@@ -889,6 +889,37 @@ def ingest_candidates(
                         (row.get("opportunity_title") or "")[:60])
             except Exception as _exc:
                 log.debug("llm_synthesis skipped: %s", _exc)
+        # ── RE-GATE AFTER ENRICHMENT ──────────────────────────────────────────
+        # The gate ran on the SCRAPED candidate. Synthesis (and the deep-read above) can
+        # then LEARN gate-relevant facts the listing never showed — the geographic scope,
+        # the programme areas, a fuller brief. A row whose true scope only appears at this
+        # point was admitted on evidence that no longer reflects it: that is how a
+        # Honduras-only tender reached a Cameroon pipeline (its scope was learned AFTER
+        # the gate and never re-checked). Re-run the SAME gate on the enriched row and drop
+        # it if it no longer qualifies. Only fires when enrichment actually changed a
+        # gate-relevant field, so a normal row costs nothing.
+        if not extract_only:
+            _gate_fields = ("call_geographic_scope", "call_domain_areas",
+                            "brief_description", "opportunity_type", "focus_theme")
+            _enriched = {k: row.get(k) for k in _gate_fields
+                         if row.get(k) not in (None, "", [], cand.get(k))}
+            if _enriched:
+                _recheck = {**cand, **_enriched}
+                try:
+                    _ok2, _why2 = is_eligible(_recheck, policies, geo_org_gates=True,
+                                              theme_gate=True,
+                                              llm_adjudicate=llm_adjudicate)
+                except Exception as _rexc:
+                    _ok2, _why2 = True, ""        # never let a re-gate error drop a row
+                    log.debug("re-gate after enrichment skipped: %s", _rexc)
+                if not _ok2:
+                    rejected += 1
+                    log.info("reject (post-enrichment): %s — %s",
+                             (cand.get("opportunity_title") or "")[:60], _why2)
+                    _reject_records.append({**_recheck,
+                                            "_reject_reason": f"post-enrichment: {_why2}"})
+                    continue
+
         if not dry_run:
             try:
                 from db.supabase_client import safe_execute

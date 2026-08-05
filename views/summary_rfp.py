@@ -27,7 +27,8 @@ from core.pipeline import (
     days_to_deadline, deadline_status, prob_tier, usd_value,
 )
 from core.review_week import all_weeks_for_year, monday_from_week_label
-from core.records import clean_df
+from core.records import (clean_df, submission_weights as _submission_weights,
+                          requested_currency as _requested_currency)
 from db.supabase_client import get_client
 
 # auth handled by wrapper page
@@ -63,6 +64,16 @@ st.markdown(
 # -----------------------------------------------------------------------------
 # Defensive helpers — used everywhere date / string conversions happen
 # -----------------------------------------------------------------------------
+def _is_blank_amt(v) -> bool:
+    """True when an amount cell holds nothing usable (None / NaN / '')."""
+    if v is None or v == "":
+        return True
+    try:
+        return bool(pd.isna(v))
+    except (TypeError, ValueError):
+        return False
+
+
 def _safe_date(v):
     """Always returns a python date or None. Never NaT, Timestamp, or np.datetime64."""
     if v is None:
@@ -166,8 +177,15 @@ def _fetch(year: int):
             except (TypeError, ValueError):
                 amt = r.get("call_award_value")
             return amt
+        # The REQUEST converts with the currency we submitted in (see
+        # core.records.requested_currency); only the Estimated-Value fallback belongs to the
+        # call's own currency, so pick the unit that matches whichever amount we used.
         rfps["_requested_usd"] = rfps.apply(
-            lambda r: usd_value(_req_amt(r), r.get("currency")), axis=1
+            lambda r: usd_value(
+                _req_amt(r),
+                _requested_currency(r) if not _is_blank_amt(r.get("amount_requested"))
+                else r.get("currency")),
+            axis=1,
         )
 
         rfps["_date_completed"] = rfps["date_completed"].apply(_safe_date)
@@ -175,10 +193,11 @@ def _fetch(year: int):
         rfps["_search_date"] = rfps["search_date"].apply(_safe_date)
         rfps["_deadline_date"] = rfps["call_submission_deadline"].apply(_safe_date)
         # Submissions count (defaults to 1 if column missing or null)
-        if "submissions" in rfps.columns:
-            rfps["_submissions"] = rfps["submissions"].fillna(1).astype(int)
-        else:
-            rfps["_submissions"] = 1
+        # Shared rule (core.records.submission_weights): N submissions for a row that was
+        # actually SUBMITTED, 0 otherwise — so a never-submitted row can't contribute a
+        # phantom application to any decision bucket. Same weight the Grants page uses, so
+        # the two pages can't tell different stories.
+        rfps["_submissions"] = _submission_weights(rfps)
     return rfps, grants, engagements, narratives, meetings
 
 
@@ -353,17 +372,6 @@ with cc2:
             f"{int(tier_counts.get(PROB_LABEL_MED, 0))} Medium · "
             f"{int(tier_counts.get(PROB_LABEL_LOW, 0))} Low_"
         )
-        # Show the per-RFP scores so it's obvious where each row lands
-        with st.expander("See per-RFP score → tier mapping", expanded=False):
-            tier_df = proceed_df[["uid", "opportunity_title", "alignment_score", "_tier"]].copy()
-            tier_df["alignment_score"] = tier_df["alignment_score"].fillna(0).round(1)
-            tier_df = tier_df.sort_values("alignment_score", ascending=False).rename(columns={
-                "uid": "UID",
-                "opportunity_title": "Title",
-                "alignment_score": "Score",
-                "_tier": "Tier",
-            })
-            st.dataframe(tier_df, hide_index=True, width='stretch')
     else:
         st.caption("_No Proceed RFPs._")
 
@@ -380,6 +388,34 @@ with cc3:
               fmt="$%{x:,.0f}", inside=True)
     else:
         st.caption("_No Proceed RFPs._")
+
+# Per-RFP score → tier mapping. Rendered at FULL PAGE WIDTH, outside the three chart
+# columns: it used to live inside the Probability-Tier column, so the table was squeezed
+# into a third of the page and the Title/Score/Tier columns needed horizontal scrolling.
+# Still collapsed by default — it's supporting detail, not part of the at-a-glance row.
+if not proceed_df.empty:
+    with st.expander("See per-RFP score → tier mapping", expanded=False):
+        if "_tier" not in proceed_df.columns:
+            proceed_df["_tier"] = proceed_df["alignment_score"].apply(_tier_of)
+        tier_df = proceed_df[["uid", "opportunity_title", "alignment_score", "_tier"]].copy()
+        tier_df["alignment_score"] = tier_df["alignment_score"].fillna(0).round(1)
+        tier_df = tier_df.sort_values("alignment_score", ascending=False).rename(columns={
+            "uid": "UID",
+            "opportunity_title": "Title",
+            "alignment_score": "Score",
+            "_tier": "Tier",
+        })
+        st.dataframe(
+            tier_df, hide_index=True, width='stretch',
+            column_config={
+                # Give the title the slack — it's the column that was being cut off.
+                "UID": st.column_config.TextColumn("UID", width="small"),
+                "Title": st.column_config.TextColumn("Title", width="large"),
+                "Score": st.column_config.NumberColumn("Score", format="%.1f",
+                                                       width="small"),
+                "Tier": st.column_config.TextColumn("Tier", width="small"),
+            },
+        )
 
 st.divider()
 

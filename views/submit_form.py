@@ -404,12 +404,18 @@ def render_submit_form(
     try:
         from core.criteria_derive import needs_submission_check
         if needs_submission_check(row):
+            # Deep link straight to this RFP (focused Review view, which carries the
+            # Update Decision / Edit RFP buttons) — the fix is two clicks away instead of
+            # a hunt through the pipeline for a row that was just created.
+            _open = f"/pipelines?uid={row['uid']}"
             st.warning(
                 "⏰ This call's deadline has already passed. If you **already submitted** "
                 "to the donor, open the RFP and set **Progress status = Completed** (or "
                 "record the donor decision, e.g. *Under review*). Otherwise the bid-effort "
                 "score treats it as 'not enough time' and it reads as a missed opportunity."
             )
+            st.link_button(f"🔗 Open {row['uid']} to fix this", _open,
+                           type="primary", use_container_width=False)
     except Exception:
         pass
 

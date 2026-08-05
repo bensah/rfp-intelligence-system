@@ -13,6 +13,7 @@ are expected to gate the button that opens this dialog to editors.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timezone
 
 import pandas as pd
@@ -105,14 +106,15 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
         except (TypeError, ValueError):
             return 0.0
 
-    def _opt(label, key, options, current):
+    def _opt(label, key, options, current, help=None):
         opts = ["—"] + list(options)
         if _is_blank(current):
             current = None
         elif current not in opts:
             opts.append(current)
         idx = opts.index(current) if current in opts else 0
-        return st.selectbox(label, opts, index=idx, key=f"edit_{key}_{row['uid']}")
+        return st.selectbox(label, opts, index=idx, key=f"edit_{key}_{row['uid']}",
+                            help=help)
 
     def _multi_options(predefined: list, current):
         """Merge predefined options with any stored values not yet in the list."""
@@ -342,9 +344,25 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
         lead = _team_single("Proposal lead", "lead", row.get("proposal_lead"))
         contribs = _team_multi("Contributors", "contrib", row.get("contributors"))
         reviewers = _team_multi("Reviewers", "rev", row.get("reviewers"))
-        support = _team_multi(
-            "Support", "supp", row.get("support_roles"),
-            help="e.g. tech / finance / compliance")
+        # Support is a set of FUNCTIONS the proposal needs (Technical / Finance /
+        # Compliance / …), not people — its DB column is support_roles and the Excel column
+        # is "Support (e.g. tech/finance/compliance)". It was wired to _team_multi, so the
+        # dropdown offered the staff roster instead. Controlled vocabulary, same list the
+        # Excel workbook and MS Form use, with the existing values preserved.
+        _supp_opts = dropdowns.get("support_roles") or []
+        _supp_cur_raw = row.get("support_roles")
+        _supp_cur = ([str(v).strip() for v in _supp_cur_raw]
+                     if isinstance(_supp_cur_raw, (list, tuple))
+                     else [v.strip() for v in re.split(r"[;,]", str(_supp_cur_raw or ""))
+                           if v.strip() and v.strip().lower() not in ("nan", "none")])
+        # Keep any legacy free-text value selectable rather than silently dropping it.
+        _supp_all = list(_supp_opts) + [v for v in _supp_cur if v not in _supp_opts]
+        support = st.multiselect(
+            "Support", _supp_all, default=[v for v in _supp_cur if v in _supp_all],
+            key=f"e_supp_{row['uid']}",
+            help="Functions this proposal needs — e.g. technical, finance, compliance. "
+                 "Not people; name individuals under Contributors / Reviewers.")
+        support = support or None
 
     with tab_award:
         # Submission facts (what we asked for / when we submitted) sit alongside the award
@@ -376,10 +394,17 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
                                   value=_num(row.get("amount_secured")), key=f"e_sec_{row['uid']}")
         c3, c4 = st.columns(2)
         with c3:
+            # ONE currency for the money WE handle — it governs BOTH "Amount requested" and
+            # "Amount secured". Distinct from the Opportunity tab's `currency`, which is the
+            # unit the CALL was advertised in (its Estimated Value): a Canadian call can be
+            # advertised in CAD while the budget we submit is in USD. Relabelled from
+            # "Currency secured" because it is no longer secured-only.
             cur_sec = _opt(
-                "Currency secured", "cursec",
+                "Currency", "cursec",
                 [c["code"] for c in dropdowns.load().get("currencies", [])],
                 row.get("currency_secured"),
+                help="Currency of the amounts on this tab (requested and secured). The "
+                     "call's own advertised currency lives on the Opportunity tab.",
             )
         po = c4.text_input("Donor program officer", value=_str(row.get("donor_program_officer")), key=f"e_po_{row['uid']}")
         c5, c6 = st.columns(2)
