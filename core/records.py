@@ -200,29 +200,34 @@ def drop_concluded(df):
 # submitted RFPs — Total Submitted, Approved, Under Review, Not Approved, win rate — must use
 # this weight so the whole app tells the same story.
 #
-#   weight = submissions (>=1) when the row has actually been SUBMITTED, else 0.
+#   weight = (Progress == Completed) * Submissions[N]
 #
-# "Submitted" is the app-wide rule (progress_status = Completed, OR a real donor decision —
-# a donor can only decide on a proposal it received, OR a recorded submission date), so a
-# backdated import whose progress_status was never set still counts. A row that was never
-# submitted contributes 0, never a phantom application.
-_SUBMITTED_DECISIONS_W = {"approved", "under review", "not approved"}
+# Progress = Completed is the ONLY thing that opens the gate, and Submissions counts from 1
+# upwards once it does. Nothing else qualifies a row: an earlier version also accepted a
+# donor decision or a recorded submission date as proof of submission, which sounded
+# harmless but resurrected a phantom 1 on precisely the rows migration 089 reset to 0 (a
+# donor_decision set while Progress is still "Not Started" would have counted as one
+# application). Keep this the owner's formula, exactly.
+#
+# NOTE: this is deliberately NARROWER than criteria_derive._is_completed, which DOES treat a
+# donor decision as proof of submission. That one answers "was this proposal submitted on
+# time?" for PREFER-9 bid effort — a question about history. This one answers "how many
+# applications does this row contribute to a count?" — a question about the ledger, where a
+# row that isn't marked Completed must not inflate the totals.
 
 
 def submission_weight(row) -> int:
-    """Donor-side submissions this row represents: N if submitted, else 0."""
+    """Donor-side submissions this row contributes: N when Progress = Completed, else 0."""
     get = row.get if hasattr(row, "get") else (lambda k, d=None: getattr(row, k, d))
-    ps = str(get("progress_status") or "").strip().lower()
-    dd = str(get("donor_decision") or "").strip().lower()
-    submitted = (ps == "completed" or dd in _SUBMITTED_DECISIONS_W
-                 or bool(str(get("date_completed") or "").strip()))
-    if not submitted:
+    if str(get("progress_status") or "").strip().lower() != "completed":
         return 0
     n = get("submissions")
     try:
         n = int(n)
     except (TypeError, ValueError):
         n = 1
+    # A Completed row counts at least once — "Submissions naturally start counting from 1+
+    # if Progress = Completed" — which is also the floor migration 089 enforces in the data.
     return max(1, n)
 
 
