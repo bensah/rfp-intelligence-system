@@ -2195,8 +2195,12 @@ if _show_sec("5"):
         # Requested-vs-Secured chart below): Secured = amount_secured on Approved; Unsecured =
         # amount_requested on Not-Approved; Requested = amount_requested across the set.
         usd_view = unique.copy()
+        # The REQUEST converts with the currency WE submitted in (currency_secured), not
+        # the call's advertised currency — see core.records.requested_currency.
         usd_view["req_usd"] = _series_to_usd(
-            usd_view["amount_requested"], usd_view.get("currency", pd.Series(dtype=str)))
+            usd_view["amount_requested"],
+            usd_view.get("currency_secured", pd.Series(dtype=str)).fillna("")
+            .replace("", pd.NA).fillna(usd_view.get("currency", pd.Series(dtype=str))))
         usd_view["sec_usd"] = _series_to_usd(
             usd_view["amount_secured"], usd_view.get("currency_secured", pd.Series(dtype=str)))
         _ddl = usd_view["donor_decision"].fillna("").str.strip().str.lower()

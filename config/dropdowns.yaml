@@ -101,6 +101,23 @@ funding_window: [One-off, Rolling]
 
 applicant_role: [Prime, Sub, Technical]
 
+# Support FUNCTIONS a proposal needs — NOT people. The Edit-RFP "Support" field writes
+# rfp_submissions.support_roles, whose live values are functions ("Technical",
+# "Technical;Finance;Research Ethics"), and whose Excel column is
+# "Support ( e.g. tech/finance/compliance)". It was wired to the team roster by mistake, so
+# the dropdown offered staff names. Same vocabulary for the Excel workbook, the MS Form and
+# the app, so the three stay consistent.
+support_roles:
+  - Technical
+  - Finance
+  - Compliance
+  - Legal
+  - Research Ethics
+  - Partner
+  - Communications
+  - Monitoring & Evaluation
+  - Other
+
 time_to_award: ["<=3 months", "3-6 months", ">=6 months"]
 
 submission_format:

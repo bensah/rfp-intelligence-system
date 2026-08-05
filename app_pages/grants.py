@@ -22,7 +22,9 @@ import pandas as pd
 import streamlit as st
 
 from core.pipeline import usd_value
-from core.records import clean_record, clean_df
+from core.records import (clean_record, clean_df,
+                          submission_weights as _submission_weights,
+                          requested_currency as _requested_currency)
 from db.supabase_client import get_client, safe_execute
 
 sb = get_client()
@@ -84,8 +86,11 @@ with _main:
                                        .str.strip())
             _needs_ur = _completed & ~dd.isin({"approved", "under review", "not approved"})
             rfps.loc[_needs_ur, "_status_display"] = "Under Review"
+            # Convert the REQUEST with the currency WE submitted in (currency_secured,
+            # labelled just "Currency" in the editor) — NOT the call's advertised currency.
+            # CAD-rating a USD 715,400 request rendered it as "$509,530 USD".
             rfps["_usd_requested"] = rfps.apply(
-                lambda r: usd_value(r.get("amount_requested"), r.get("currency")), axis=1
+                lambda r: usd_value(r.get("amount_requested"), _requested_currency(r)), axis=1
             )
             rfps["_usd_secured"] = rfps.apply(
                 lambda r: usd_value(r.get("amount_secured"), r.get("currency_secured")), axis=1
@@ -111,10 +116,16 @@ with _main:
     # -----------------------------------------------------------------------------
     # KPIs
     # -----------------------------------------------------------------------------
-    total_submitted = int(len(active))
-    approved = int(active["_approved"].sum())
-    pending = int(active["_pending"].sum())
-    not_approved = int(active["_not_approved"].sum())
+    # SUBMISSION-WEIGHTED counts. An RFP submitted to a donor twice is TWO applications, so
+    # counting rows under-reports every one of these. `_subs` is 0 for a row that was never
+    # submitted and N for one that was, so the same weight drives the total, each decision
+    # bucket and the win rate — they can't drift apart.
+    active = active.copy()
+    active["_subs"] = _submission_weights(active)
+    total_submitted = int(active["_subs"].sum())
+    approved = int(active.loc[active["_approved"], "_subs"].sum())
+    pending = int(active.loc[active["_pending"], "_subs"].sum())
+    not_approved = int(active.loc[active["_not_approved"], "_subs"].sum())
     total_requested = float(active["_usd_requested"].sum())
     total_secured = float(active.loc[active["_approved"], "_usd_secured"].sum())
     # Unsecured = requested amount tied to declined (Not Approved) applications — funding lost.
@@ -278,9 +289,28 @@ with _main:
     dc2.markdown(f"**Lead Applicant**  \n{_lead_display}")
     dc2.markdown(f"**Donor Decision Date**  \n{_donor_decision_date}")
     dc3.markdown(f"**Sub Applicant**  \n{_sub_display}")
-    dc3.markdown(f"**Requested**  \n${(r.get('_usd_requested') or 0):,.0f} USD")
+    # Show the amount AS ENTERED beside the USD conversion. Displaying only the converted
+    # figure made this page look like it disagreed with the editor: a CAD 715,400 request
+    # rendered as "$509,530 USD" with nothing saying it had been converted.
+    def _amt_md(label, usd, native, cur):
+        cur = str(cur or "").strip()
+        out = f"**{label}**  \n${(usd or 0):,.0f} USD"
+        try:
+            nat = float(native)
+        except (TypeError, ValueError):
+            nat = None
+        if nat and cur and cur.upper().replace("$", "").strip() not in ("USD", ""):
+            out += ("  \n<span style='color:#64748b;font-size:.78rem'>"
+                    f"entered: {nat:,.0f} {cur}</span>")
+        return out
+
+    dc3.markdown(_amt_md("Requested", r.get("_usd_requested"),
+                         r.get("amount_requested"), r.get("currency")),
+                 unsafe_allow_html=True)
     dc4.markdown(f"**Geographic Scope**  \n{_geo_str}")
-    dc4.markdown(f"**Secured**  \n${(r.get('_usd_secured') or 0):,.0f} USD")
+    dc4.markdown(_amt_md("Secured", r.get("_usd_secured"),
+                         r.get("amount_secured"), r.get("currency_secured")),
+                 unsafe_allow_html=True)
 
     # Linked applied_funding row — for reporting status. If MULTIPLE rows share
     # the same form_id_link (data-quality glitch from prior syncs), pick the

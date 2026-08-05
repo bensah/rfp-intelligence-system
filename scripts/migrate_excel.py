@@ -103,6 +103,20 @@ def _int(v: Any) -> Optional[int]:
     return int(n) if n is not None else None
 
 
+def _submissions_value(raw: Any, progress: Any) -> int:
+    """Donor-side submissions for one RFP.
+
+    0 when the RFP was never submitted; 1+ once Progress = Completed (an RFP submitted to the
+    funding portal twice carries 2). The sheet's value is authoritative and is preserved
+    EXACTLY — including 0, which the previous `_int(...) or 1` silently turned into 1 because
+    Python treats 0 as falsy. Only a genuinely blank cell falls back, and then to whatever the
+    progress status implies."""
+    n = _int(raw)
+    if n is not None:
+        return max(0, n)
+    return 1 if str(progress or "").strip().lower() == "completed" else 0
+
+
 def _bool_yes(v: Any) -> bool:
     return _txt(v) is not None and str(v).strip().lower() in {"yes", "y", "true", "1"}
 
@@ -232,7 +246,12 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
         "progress_status": _txt(get("Progress Status")),
         "amount_requested": _num(get("Amount Requested")),
         "date_completed": _date(get("Date Completed")),
-        "submissions": _int(get("Submissions")) or 1,
+        # `or 1` CORRUPTED the data: Python treats 0 as falsy, so every Excel 0 (an RFP that
+        # was never submitted) became 1 on import, inflating every submission-derived count.
+        # Submissions counts donor-side submissions for a SUBMITTED RFP: 0 when it was never
+        # submitted, 1+ once Progress = Completed. Preserve the sheet's value exactly; only a
+        # BLANK cell falls back, and then to 1/0 depending on whether it was completed.
+        "submissions": _submissions_value(get("Submissions"), get("Progress Status")),
         "donor_decision": _txt(get("Donor Decision Status", "Donor Decision")),
         "next_action": _txt(get("Next Action")),
         "assigned_to": _txt(get("Assigned To")),

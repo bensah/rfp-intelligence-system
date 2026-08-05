@@ -189,3 +189,68 @@ def drop_concluded(df):
         return out.copy()
     except Exception:
         return df
+
+
+# ---------------------------------------------------------------------------
+# Submission weighting
+# ---------------------------------------------------------------------------
+# An RFP can be submitted to a donor MORE THAN ONCE (rfp_submissions.submissions).
+# Counting rows therefore under-reports every submission-derived indicator: an RFP submitted
+# twice and now under review is TWO applications under review, not one. Every count over
+# submitted RFPs — Total Submitted, Approved, Under Review, Not Approved, win rate — must use
+# this weight so the whole app tells the same story.
+#
+#   weight = (Progress == Completed) * Submissions[N]
+#
+# Progress = Completed is the ONLY thing that opens the gate, and Submissions counts from 1
+# upwards once it does. Nothing else qualifies a row: an earlier version also accepted a
+# donor decision or a recorded submission date as proof of submission, which sounded
+# harmless but resurrected a phantom 1 on precisely the rows migration 089 reset to 0 (a
+# donor_decision set while Progress is still "Not Started" would have counted as one
+# application). Keep this the owner's formula, exactly.
+#
+# NOTE: this is deliberately NARROWER than criteria_derive._is_completed, which DOES treat a
+# donor decision as proof of submission. That one answers "was this proposal submitted on
+# time?" for PREFER-9 bid effort — a question about history. This one answers "how many
+# applications does this row contribute to a count?" — a question about the ledger, where a
+# row that isn't marked Completed must not inflate the totals.
+
+
+def submission_weight(row) -> int:
+    """Donor-side submissions this row contributes: N when Progress = Completed, else 0."""
+    get = row.get if hasattr(row, "get") else (lambda k, d=None: getattr(row, k, d))
+    if str(get("progress_status") or "").strip().lower() != "completed":
+        return 0
+    n = get("submissions")
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 1
+    # A Completed row counts at least once — "Submissions naturally start counting from 1+
+    # if Progress = Completed" — which is also the floor migration 089 enforces in the data.
+    return max(1, n)
+
+
+def submission_weights(df):
+    """Vectorised `submission_weight` → an int Series aligned to `df` (0 for an empty df)."""
+    import pandas as _pd
+    if df is None or len(df) == 0:
+        return _pd.Series(dtype="int64")
+    return df.apply(submission_weight, axis=1).astype("int64")
+
+
+def requested_currency(row):
+    """The currency the REQUEST was made in.
+
+    `amount_requested` is what WE asked the donor for; `currency` is the unit the CALL was
+    advertised in (the Estimated Value). They are NOT the same thing — a Canadian call can
+    be advertised in CAD while the budget submitted is in USD. Converting the request with
+    the call's currency silently mis-states it (CAD-rating a USD 715,400 request produced
+    "$509,530 USD" on the Grants page).
+
+    The editor captures the submission/award currency once, as `currency_secured` (labelled
+    simply "Currency" — it governs BOTH the requested and the secured amount). Falls back to
+    `currency` for legacy rows saved before that field was populated."""
+    get = row.get if hasattr(row, "get") else (lambda k, d=None: getattr(row, k, d))
+    cur = str(get("currency_secured") or "").strip()
+    return cur or (get("currency") or "")
