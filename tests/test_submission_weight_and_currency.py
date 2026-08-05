@@ -39,14 +39,24 @@ class SubmissionWeightTests(unittest.TestCase):
             self.assertEqual(
                 submission_weight({"progress_status": ps, "submissions": 5}), 0, repr(ps))
 
-    def test_a_donor_decision_proves_submission(self):
-        # Backdated intake often never sets progress_status, but a donor can only decide on
-        # a proposal it received — so the row IS submitted.
+    def test_only_progress_completed_opens_the_gate(self):
+        # A donor decision (or a recorded date) does NOT qualify a row on its own. An earlier
+        # version accepted them, which would have resurrected a phantom 1 on exactly the rows
+        # migration 089 reset to 0 — e.g. donor_decision set while Progress is "Not Started".
         for dd in ("Approved", "Under Review", "Not Approved"):
-            self.assertEqual(submission_weight({"donor_decision": dd, "submissions": 3}), 3, dd)
+            self.assertEqual(
+                submission_weight({"progress_status": "Not Started",
+                                   "donor_decision": dd, "submissions": 0}), 0, dd)
+        self.assertEqual(submission_weight({"date_completed": "2026-04-03"}), 0)
 
-    def test_a_recorded_submission_date_proves_submission(self):
-        self.assertEqual(submission_weight({"date_completed": "2026-04-03"}), 1)
+    def test_bad_data_cannot_leak_through_the_gate(self):
+        # submissions > 0 on a non-Completed row is corrupt; the multiplier still zeroes it.
+        self.assertEqual(
+            submission_weight({"progress_status": "Not Started", "submissions": 5}), 0)
+
+    def test_a_completed_row_counts_at_least_once(self):
+        self.assertEqual(
+            submission_weight({"progress_status": "Completed", "submissions": 0}), 1)
 
     def test_not_submitted_decision_does_not_count(self):
         self.assertEqual(
