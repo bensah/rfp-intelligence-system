@@ -594,6 +594,18 @@ def _covers_scope(countries: Any, scope: Any) -> bool:
     return bool(_is_inclusive_geo(sc))
 
 
+def _country_overlap(countries: Any, scope: Any) -> bool:
+    """A REAL country/region overlap — the org actually sits inside the stated scope.
+    Distinct from `_covers_scope`, which ALSO passes on an inclusive tier
+    ("Global / worldwide", LMIC) that is open to everyone regardless of footprint. Used
+    to explain WHICH route matched, so the card never claims we are "based in scope"
+    when the only thing that matched was an open-to-anyone tier."""
+    cs, sc = list(countries or []), _as_list(scope)
+    if not cs or not sc:
+        return False
+    return bool(set(_geo.expand(cs)) & set(_geo.expand(sc)))
+
+
 def _geo_partner_in_scope(org: dict, scope: Any) -> bool:
     """A qualifying affiliated partner (Academic/NGO/For-profit · Implementing/
     Collaborator) located within the call/donor scope."""
@@ -644,11 +656,25 @@ def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
     registered = org.get("org_registered_countries") or []
     operation = org.get("org_operating_countries") or []
     if _covers_scope(registered, scope) or (scope_us and org_us):
+        # SAY WHICH ROUTE actually matched. `_covers_scope` passes either on a real
+        # country overlap OR on an inclusive tier (Global / LMIC / …), and the card used
+        # to claim "registered / based in scope" for both. On a call scoped
+        # ["Bangladesh", "Global / worldwide"] against an org registered in Cameroon and
+        # Mali that reads as a flat falsehood — the country overlap is empty; only the
+        # open-to-anyone tier matched (owner 2026-08-06).
         return {"active": True, "score": 1.0, "label": "Yes, our own presence",
-                "scope": scope, "via": "registered / based in scope"}
+                "scope": scope,
+                "via": ("registered / based in scope"
+                        if (_country_overlap(registered, scope) or (scope_us and org_us))
+                        else "call is open to any country — no overlap with our own "
+                             "registered countries")}
     if _covers_scope(operation, scope) or _geo_partner_in_scope(org, scope):
         return {"active": True, "score": 0.5, "label": "Yes, via a partner", "scope": scope,
-                "via": "operating country / affiliated partner in scope"}
+                "via": ("operating country / affiliated partner in scope"
+                        if (_country_overlap(operation, scope)
+                            or _geo_partner_in_scope(org, scope))
+                        else "call is open to any country — no overlap with our own "
+                             "operating countries")}
     return {"active": True, "score": 0.0, "label": "No presence there", "scope": scope,
             "via": ""}
 
