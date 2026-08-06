@@ -105,6 +105,56 @@ class RatioTests(unittest.TestCase):
             self.assertEqual(self._ratio(_dl(days), TEAM)[1], 2, days)
 
 
+class TimeTierNameTests(unittest.TestCase):
+    """The component name must state the tier THIS call reached. It used to carry the
+    static "(>14d full · 7-14d partial)" on every row — advertising two bands, hiding
+    the third (<7d = 0), and saying nothing about the call in front of you."""
+
+    def _time(self, rfp):
+        return {f["key"]: f for f in CD._bid_effort_factors(rfp, TEAM)}["bid_time"]
+
+    def test_ample_reads_full_and_scores_one(self):
+        t = self._time(_dl(30))
+        self.assertEqual(t["name"], "Time before the deadline (>14d full)")
+        self.assertEqual(t["score"], 1.0)
+        self.assertEqual(CD.component_mark(t)[0], "✓")
+
+    def test_tight_reads_partial_and_scores_a_half(self):
+        t = self._time(_dl(10))
+        self.assertEqual(t["name"], "Time before the deadline (7-14d partial)")
+        self.assertEqual(t["score"], 0.5)
+        self.assertEqual(CD.component_mark(t)[0], "◐")
+
+    def test_the_third_tier_is_now_visible_and_scores_zero(self):
+        t = self._time(_dl(2))
+        self.assertEqual(t["name"], "Time before the deadline (<7d extremely tight)")
+        self.assertEqual(t["score"], 0.0)
+        self.assertEqual(CD.component_mark(t)[0], "✗")
+
+    def test_the_tier_boundaries_are_inclusive_as_documented(self):
+        self.assertIn("(>14d full)", self._time(_dl(15))["name"])       # >14
+        self.assertIn("(7-14d partial)", self._time(_dl(14))["name"])   # 14 is partial
+        self.assertIn("(7-14d partial)", self._time(_dl(7))["name"])    # 7 is partial
+        self.assertIn("extremely tight", self._time(_dl(6))["name"])    # 6 is tight
+        self.assertIn("extremely tight", self._time(_dl(0))["name"])    # due today
+
+    def test_a_passed_deadline_is_not_called_extremely_tight(self):
+        t = self._time(_dl(-5))
+        self.assertEqual(t["name"], "Time before the deadline (deadline has passed)")
+        self.assertEqual(t["score"], 0.0)
+
+    def test_no_deadline_advertises_no_tier_at_all(self):
+        t = self._time(NO_DEADLINE)
+        self.assertEqual(t["name"], "Time before the deadline")
+        self.assertNotIn("14d", t["name"])
+        self.assertFalse(t["active"])
+
+    def test_a_completed_submission_keeps_its_own_name(self):
+        t = self._time({**_dl(-30), "progress_status": "Completed"})
+        self.assertEqual(t["name"], "Submitted on time (already completed)")
+        self.assertEqual(t["score"], 1.0)
+
+
 class RealDeadlinesStillScoreTests(unittest.TestCase):
     """Excluding UNKNOWN time must not stop a KNOWN tight deadline from biting."""
 
