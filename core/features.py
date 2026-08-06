@@ -55,8 +55,10 @@ _COMPONENT_KEYS: tuple[str, ...] = (
     "individual_pi", "prior_beneficiary",
     # MUST-2 strategic_fit
     "strat_fitness",
-    # MUST-3 capacity ("org_stage" retired as a scored component 2026-07-20 — kept here
-    # for feature-order stability per the append-only contract; now always None.)
+    # MUST-3 capacity. RETIRED as standalone components but kept here for feature-order
+    # stability per the append-only contract (now always None): "org_stage" (2026-07-20,
+    # folded into experience) and "budget_ceiling"/"grant_ceiling"/"award_absorption"
+    # (2026-08-06, folded into the "financial_capacity" composite appended at the end).
     "org_stage", "budget_ceiling", "grant_ceiling", "experience", "award_absorption",
     # MUST-4 geographic_fit
     "geo_presence",
@@ -74,6 +76,11 @@ _COMPONENT_KEYS: tuple[str, ...] = (
     "comp_grassroots", "comp_multi", "comp_hq",
     # PREFER-9 bid_effort
     "bid_time", "bid_team",
+    # --- APPENDED 2026-08-06 (never insert above this line: the stored model's
+    # feature_names contract is positional) ---
+    # MUST-3 capacity — the value-related composite that replaced budget_ceiling /
+    # grant_ceiling / award_absorption.
+    "financial_capacity",
 )
 COMPONENT_FEATURE_NAMES: tuple[str, ...] = tuple(f"cmp_{k}" for k in _COMPONENT_KEYS)
 
