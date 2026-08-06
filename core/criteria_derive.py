@@ -1883,17 +1883,20 @@ def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dic
     components (see core.scorer._SCORE_MAP / review_rfp._bid_rule), so a business-dev
     team can lift a tight (0.5) deadline to a partial PREFER-9.
 
-    NO DEADLINE CAPTURED → the time component is a permissive DEFAULT PASS (score 1,
-    `default=True`, rendered "no restriction — defaults to pass"), the same convention
-    MUST-5 sam_uei and MUST-3 experience already use for a requirement nobody imposed.
-    It was previously excluded (active=False), which left the criterion label and the
-    won/total ratio computed over DIFFERENT component sets: with no BD team the label
-    read "Ample time, but no dedicated team" (score 1 = 50%) beside a ratio of 0/1 = 0%,
-    because the ratio counted only the team. Defaulting the pass keeps both sides over
-    the same two components, so label and ratio reconcile in every case."""
+    NO DEADLINE CAPTURED → the time component is EXCLUDED: "?", active=False, out of the
+    denominator. There was nothing to judge, so it must not be scored in EITHER
+    direction, and PREFER-9 rests on the one component that IS measurable — the BD team
+    — giving a denominator of 1 (owner 2026-08-06).
+
+    A permissive default pass (✓ "no restriction") was tried here and REJECTED: it reads
+    as a positive finding about time on a call whose deadline was never captured, which
+    is the same overclaim as the "Not enough time" it replaced, just in the opposite
+    direction. Excluding it is the same treatment every other unstated component gets.
+    The consequence is accepted deliberately: with NO BD team the label
+    ("Ample time, but no dedicated team", worth 50%) sits beside a 0/1 ratio, because a
+    fixed 6-label scale has no wording for "team missing, time unknown"."""
     osx = org_settings or {}
     bd = str(osx.get("org_has_bd_team", "false")).lower() == "true"
-    time_default = False
     if _is_completed(rfp):
         # Already submitted → the time gate was met; show it as full, not "not enough".
         time_name, time_score, time_active = "Submitted on time (already completed)", 1.0, True
@@ -1901,8 +1904,7 @@ def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dic
         days = days_until(rfp.get("call_submission_deadline"))
         time_name = "Time before the deadline (>14d full · 7-14d partial)"
         if days is None:
-            time_name = "Time before the deadline (no deadline stated by this call)"
-            time_score, time_active, time_default = 1.0, True, True
+            time_score, time_active = None, False      # nothing to judge → "?" excluded
         elif days > BID_EFFORT_AMPLE_DAYS:            # > 14 days
             time_score, time_active = 1.0, True
         elif days >= BID_EFFORT_TIGHT_DAYS:           # 7-14 days
@@ -1912,11 +1914,8 @@ def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dic
     # met is the legacy tri-state for read-mode cards: 1.0→✓ · 0.0→✗ · 0.5/None→?
     time_met = (None if time_score is None
                 else True if time_score >= 1.0 else False if time_score <= 0.0 else None)
-    time = _factor("bid_time", time_name, "R", time_met,
-                   active=time_active, score=time_score)
-    time["default"] = time_default
     return [
-        time,
+        _factor("bid_time", time_name, "R", time_met, active=time_active, score=time_score),
         _factor("bid_team", "Has a business-development team", "G", bool(bd), active=True),
     ]
 
