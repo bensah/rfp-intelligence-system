@@ -81,6 +81,10 @@ _COMPONENT_KEYS: tuple[str, ...] = (
     # MUST-3 capacity — the value-related composite that replaced budget_ceiling /
     # grant_ceiling / award_absorption.
     "financial_capacity",
+    # MUST-5 — the explicit "nothing was imposed, so this is a full pass" component that
+    # replaced the always-active sam_uei permissive default. Active ONLY when no real
+    # compliance/co-financing requirement was detected.
+    "compliance_all_clear",
 )
 COMPONENT_FEATURE_NAMES: tuple[str, ...] = tuple(f"cmp_{k}" for k in _COMPONENT_KEYS)
 

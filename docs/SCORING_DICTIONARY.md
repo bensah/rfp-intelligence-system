@@ -68,7 +68,7 @@ routes to review, not a zero. Internal keys in parentheses.
 | MUST 2 | **Strategic fit** (`strategic_fit`) | Strongly aligns (2) · Limited priority (1) · Off-strategy (0) · Not sure (→1) | ONE component — best-matched theme's priority band (min of org-band, call-band) across the org's graded `program_area_ratings` ∩ the donor/RFP priorities. No call/org theme data → Not sure. |
 | MUST 3 | **Implementation capacity** (`capacity`) | Yes, comfortably (2) · Yes, but a stretch (1) · No, beyond us (0) · Not sure (→1) | **2 components (reworked 2026-08-06):** **financial capacity** = one 0–1 composite over the value checks that are determinable — award-absorption (realistic ask `min(award, funding_target_max)` vs `largest_grant_usd`, **stretched** by years/stage/#grants) + the 🔒 annual-budget and prior-grant **ceilings**; and **experience** — org maturity vs the call's years bar *or* stage restriction, **default-pass when neither is stated**. The ceilings remain auto-Decline gates, checked on the sub-parts (the composite mean can hide a failed one). See §5 for the full breakdown. |
 | MUST 4 | **Geographic fit** (`geographic_fit`) | Yes, our own presence (2) · Yes, via a partner (1) · No presence there (0) · Not sure (→1) | ONE tiered component. Scope = call ∪ donor (with **US-only / grants.gov** inference → United States). `countries_registered` ∩ scope → own presence; operating country / qualifying partner → via partner; inclusive tiers (LMIC/global) credited. 🔒 **No reach → fatal (auto-Decline)**. No scope at all → Not sure. |
-| MUST 5 | **Cofinancing & compliance** (`cofinancing`) | Yes, none required (2) · Partial, with effort (1) · No, required (0) · Not sure (→1) | **Compliance hub** (see §2). ONE soft component — co-financing/pre-finance capacity (0/0.5/1); the rest are hard 0/1 gates active only when the donor/call imposes them. **No fatal gate** — every gate is acquirable before the deadline, so an unmet one lowers the score / Parks (never auto-Declines). Nothing imposed → Not sure. |
+| MUST 5 | **Cofinancing & compliance** (`cofinancing`) | Yes, none required (2) · Partial, with effort (1) · No, required (0) · Not sure (→1) | **Compliance hub** (see §2). ONE soft component — co-financing/pre-finance capacity (0/0.5/1); the rest are hard 0/1 gates active only when the donor/call imposes them. **No fatal gate** — every gate is acquirable before the deadline, so an unmet one lowers the score / Parks (never auto-Declines). **Nothing imposed → the `compliance_all_clear` component = 1/1, a full pass shown alone** (2026-08-06); SAM/UEI is excluded outside US-federal calls. |
 | PREFER 6 | **Funding quality** (`funding_quality`) | High (2) · Moderate (1) · Low (0) · Not sure (→1) | **Mean of the MET active components** — floor/ceiling/value-stated + duration (see §7). An **unstated duration is excluded** (its absence neither helps nor hurts), so all *stated* components met → **High**. Falls back to the award-size band vs `funding_target_low/mid/max` when the org set no targets. No award value → Not sure. |
 | PREFER 7 | **Donor relationship** (`funder_relationship`) | Current/past grantee (2) · Some contact (1) · None (0) · Not sure (→1) | 3 OR-tiers (best wins): past grantee of this donor (`funder_history`) → grantee; **donor engaged** (`engaged_donors` — prior contact, no funding yet) **or** shared collaborator **or** registered on their portal → "Some contact". Donor matching is canonical-key (acronym ⇄ full name). |
 | PREFER 8 | **Competitiveness** (`competitiveness`) | Strong (2) · Moderate (1) · Weak (0) · Not sure (→1) | Org edge: **track record** = `band(min(org domain rating, donor priority))` in the call's area · age/incumbency · portal familiarity · **funding-route access** · **multi-country** (`multi_country_encouraged` ↔ org MCO) · **HQ-country match** (positive-only; funder country inferred from donor HQ → call → award currency). |
@@ -85,16 +85,40 @@ criterion scores **value 1 (Park)** so an unknown is reviewed, not penalised.
 
 `derive_cofinancing` emits a component per requirement, **active only when the donor/call
 imposes it**. Gate over active components: any 0 → **No, required**; any 0.5 → **Partial,
-with effort**; all 1 → **Yes, none required**. **No active component → "Not sure" (Park).**
+with effort**; all 1 → **Yes, none required**.
 **MUST 5 has NO fatal gate (2026-07-05)** — every gate below is acquirable before the
 deadline, so an unmet one lowers the score / Parks; it never auto-Declines. (Funding route
 and funding-platform registration were moved to **PREFER 8**.)
+
+> **2026-08-06 — the all-clear, and SAM/UEI scoping.** These are **strict eligibility
+> rules that exist only when the call or donor intel states them**, so:
+>
+> * **SAM.gov/UEI is EXCLUDED** unless the call is US-federal *or* the donor explicitly
+>   demands it. It used to be emitted as an always-active *permissive pass* — and because
+>   it was the only unconditionally-active component, MUST-5's active set was never empty.
+>   A call that imposed **nothing at all** therefore read **"Yes, fully met · 1/1 · 100%"**,
+>   certified by a default pass on a rule the funder never made. **83% of the live
+>   pipeline (211/253 rows) sat in exactly that state.**
+> * **Nothing stated → one explicit component**, `compliance_all_clear` ("All compliance &
+>   co-financing requirements met"), scoring **1/1**, and the Review card shows it
+>   **alone** — the greyed "not stated by this call" rows are hidden, since they are noise
+>   once the answer is "nothing was imposed". Still a **full pass**: a strong-fit RFP must
+>   not be eliminated over data the funder never published.
+> * **One or more stated → those alone form the denominator.** Hard gates, no middle
+>   ground: org holds it → 1, doesn't → 0. The all-clear retires automatically, including
+>   after a human override activates a requirement the derivation didn't see
+>   (`_settle_all_clear`, re-run inside `factor_breakdown`).
+>
+> **Bid Strength is unchanged by this** — verified across all 253 live rows, 0 label
+> changes. A 1.0 component can never flip the any-0 / any-0.5 gate, so removing the
+> SAM/UEI pass moves no score; it only stops it padding the numerator *and* denominator.
+> 42 rows now show an honest ratio (e.g. `2/3 → 1/2`).
 
 | Component (active when…) | Satisfied by (org) | Type |
 |---|---|---|
 | Co-financing / pre-finance — `cost_sharing_match_required`, `min_cofinancing_secured_pct`, `prefinance_required=reimbursement_only`, or RFP cost-share | `cofinancing_capacity` (strong/moderate→1 · limited→0.5 · none→0) | soft |
 | Audited financials / Audit report — `audited_financials_required` / `audit_report_required` | `has_audited_financials` / `has_audit_report` | hard |
-| SAM.gov/UEI — **US-federal (grants.gov) call only**, or `sam_uei_registration_required` | `org_has_sam_uei` (or a SAM registration). **For every other donor it's a permissive pass (value 1, "no restriction")** | hard |
+| SAM.gov/UEI — **US-federal (grants.gov) call only**, or `sam_uei_registration_required` | `org_has_sam_uei` (or a SAM registration). **For every other funder it is EXCLUDED entirely** (2026-08-06) — out of the denominator, not a free pass inside it | hard |
 | Tax-exempt — `tax_exempt_status_required` | `org_tax_exempt` | hard |
 | Safeguarding policy — `safeguarding_policy_required` | `has_safeguarding_policy` | hard |
 | Authorized signatory — `authorized_signatory_signoff_required` / `welcome_registration_required` | this call's donor ∈ `authorized_signatory_donors` (canonical-key matched) | hard |
@@ -258,7 +282,8 @@ unless noted; 🔒 marks a fatal gate (failing it auto-Declines).
 |---|---|---|
 | `cofinance` | Co-financing / pre-finance (soft) | Cost-share/match/prefinance imposed; `cofinancing_capacity` strong/mod→1 · limited→0.5 · none→0 |
 | `audited_financials` / `audit_report` | Audited financials / Audit report | Donor requires; org holds it |
-| `sam_uei` | SAM.gov / UEI | **US-federal call only** (else permissive pass = 1); org holds SAM |
+| `sam_uei` | SAM.gov / UEI | **US-federal call only** (or donor demands it); else **excluded** (2026-08-06 — was a permissive pass = 1); org holds SAM |
+| `compliance_all_clear` | **All compliance & co-financing requirements met** | Active **only when no other component is** — the explicit "nothing was imposed, so this is a full pass" row (= 1). Shown alone; the greyed rows are hidden. Retires the moment any real requirement is detected or a reviewer overrides one in |
 | `tax_exempt` | Tax-exempt status | Donor requires; `org_tax_exempt` |
 | `safeguarding` | Safeguarding / PSEA policy | Donor requires; org holds it |
 | `partner_mou` / `govt_mou` / `govt_endorsement` / `local_board` | MOUs / endorsement / local board | Donor requires each; org holds it |

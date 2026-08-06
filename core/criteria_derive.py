@@ -970,15 +970,17 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
         items.append(_qfactor(key, name, active=active,
                               score=(1.0 if ok else 0.0), hard=True))
 
-    # SAM.gov / UEI registration applies ONLY to US-federal (grants.gov) calls (or a donor
-    # that explicitly demands it). For every other donor it's irrelevant → a permissive
-    # pass (score 1, "no restriction"), NOT a 'Not sure' that drags the criterion down.
-    if _need("donor_sam_uei_registration_required") or _is_us_federal(rfp):
-        items.append(_qfactor("sam_uei", "SAM.gov / UEI registration",
-                              active=True, score=(1.0 if _sam_ok else 0.0), hard=True))
-    else:
-        items.append(_qfactor("sam_uei", "SAM.gov / UEI registration",
-                              active=True, score=1.0, hard=False, default=True))
+    # SAM.gov / UEI registration applies ONLY to US-federal (grants.gov) calls, or to a
+    # donor that explicitly demands it. For EVERY other funder it is simply irrelevant, so
+    # it is EXCLUDED (owner 2026-08-06) — it must not sit in the denominator at all.
+    # It used to be emitted as an ACTIVE permissive pass (score 1). Because it was the
+    # only always-active component, MUST-5's active set was never empty, so a call that
+    # imposed nothing whatsoever still read "Yes, fully met · 1/1 · 100%" — full MUST-5
+    # weight toward Proceed, certified by a default pass on a rule the funder never made.
+    items.append(_qfactor("sam_uei", "SAM.gov / UEI registration",
+                          active=bool(_need("donor_sam_uei_registration_required")
+                                      or _is_us_federal(rfp)),
+                          score=(1.0 if _sam_ok else 0.0), hard=True))
 
     # Authorized-signatory — matched to the org's list of donors it has ALREADY
     # obtained an authorized signatory from (not a generic checkbox).
@@ -1002,6 +1004,37 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     # gate is acquirable before the deadline → none is fatal.
     for it in items:
         it["fatal"] = False
+
+    # THE ALL-CLEAR (owner 2026-08-06). MUST-5 components are strict eligibility rules,
+    # and they only exist when the call or donor intel states them. When NOTHING is
+    # stated the honest answer is a full pass — we must not eliminate a strong-fit RFP
+    # over data the funder never published — but that pass has to be VISIBLE as one
+    # thing, not implied by a permissive default hiding among eleven greyed rows. So a
+    # single explicit component carries it, and the Review card shows it alone.
+    ac = _qfactor("compliance_all_clear",
+                  "All compliance & co-financing requirements met",
+                  active=False, score=None, hard=False)
+    ac["fatal"] = False
+    ac["_detail"] = ("no compliance or co-financing requirement stated by this call "
+                     "or donor intel")
+    items.append(ac)
+    return _settle_all_clear(items)
+
+
+def _settle_all_clear(items: list[dict]) -> list[dict]:
+    """The MUST-5 all-clear default stands ONLY while nothing else is active.
+
+    Re-run AFTER human overrides: `apply_component_overrides` can activate a real
+    requirement a reviewer says applies, and the default must then retire rather than sit
+    beside it inflating the denominator. A reviewer who scored the all-clear row itself
+    is left alone — their verdict wins, as everywhere else."""
+    ac = next((i for i in items if i.get("key") == "compliance_all_clear"), None)
+    if ac is None or ac.get("_override"):
+        return items
+    if any(i.get("active") for i in items if i.get("key") != "compliance_all_clear"):
+        ac["active"], ac["score"], ac["met"] = False, None, None
+    else:
+        ac["active"], ac["score"], ac["met"] = True, 1.0, True
     return items
 
 
@@ -2015,7 +2048,8 @@ def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = No
     they're excluded from the won/total denominator (see core.criteria_factors).
 
     `overrides` — persisted human component verdicts, applied LAST so they win over the
-    derivation (see apply_component_overrides)."""
+    derivation (see apply_component_overrides). MUST-5's all-clear default is then
+    re-settled, since an override can activate a requirement the derivation didn't see."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     out = {
@@ -2029,4 +2063,6 @@ def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = No
         "competitiveness": _competitiveness_factors(org, rfp, eff, org_settings),
         "bid_effort": _bid_effort_factors(rfp, org_settings),
     }
-    return apply_component_overrides(out, overrides)
+    out = apply_component_overrides(out, overrides)
+    _settle_all_clear(out["cofinancing"])
+    return out

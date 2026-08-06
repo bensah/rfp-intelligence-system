@@ -326,9 +326,12 @@ class FeatureContractTests(unittest.TestCase):
             self.assertIn(k, N, k)
         self.assertLess(N.index("cmp_budget_ceiling"), N.index("cmp_geo_presence"))
 
-    def test_the_composite_is_appended_last(self):
+    def test_the_composite_was_appended_not_inserted(self):
+        # NOT "is last" — later reworks append their own keys behind it. The durable
+        # invariant is that it sits after every ORIGINAL key, so no existing feature
+        # position shifted.
         from core.features import COMPONENT_FEATURE_NAMES as N
-        self.assertEqual(N[-1], "cmp_financial_capacity")
+        self.assertGreater(N.index("cmp_financial_capacity"), N.index("cmp_bid_team"))
 
 
 class LLMExtractionTests(unittest.TestCase):
