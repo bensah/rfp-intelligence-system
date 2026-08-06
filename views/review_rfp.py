@@ -529,6 +529,11 @@ def _factor_html(ckey: str) -> str:
         _l2 = (f"<div style='font-size:0.78rem;color:#666;margin:2px 0'>"
                f"Call/donor scope: {_esc(_scope) if _scope else '—'}</div>")
         return _l1 + _l2
+    # MUST-5 all-clear: when the call/donor imposed nothing, that single row IS the
+    # answer and the eleven greyed "not stated by this call" rows beneath it are noise.
+    # Show them only once a real requirement has been detected (owner 2026-08-06).
+    if any(f.get("key") == "compliance_all_clear" and f.get("active") for f in facts):
+        facts = [f for f in facts if f.get("active")]
     is_or = ckey in _OR_KEYS
     any_met = any(f["met"] is True for f in facts if f.get("active", True))
     out = []
