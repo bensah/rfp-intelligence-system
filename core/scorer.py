@@ -190,7 +190,16 @@ def default_response(key: str, stored) -> str:
         return str(stored)
     sc = criterion_score(stored)
     if sc is None:
-        return "Not sure" if "Not sure" in opts else opts[-1]
+        if "Not sure" in opts:
+            return "Not sure"
+        # This criterion has no "Not sure" in its vocabulary (only bid_effort). Do NOT
+        # fall back to opts[-1] — the list is ordered best→worst, so that made an
+        # UNDETERMINABLE criterion assert the single most damaging verdict and score 0.
+        # For bid_effort that turned "we never captured a deadline" into "Not enough
+        # time, no team", which then fed the gauge and the auto-decision. Prefer the
+        # Park midpoint (score 1); the best option only if the scale has no midpoint.
+        mid = [o for o in opts if criterion_score(o) == 1]
+        return mid[0] if mid else opts[0]
     for o in opts:
         if criterion_score(o) == sc:
             return o
