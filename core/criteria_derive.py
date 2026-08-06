@@ -1295,10 +1295,32 @@ def needs_submission_check(rfp: dict) -> bool:
     return days is not None and days < 0
 
 
-def derive_bid_effort(rfp: dict, org_settings: dict | None = None) -> str | None:
+# Sentinel days-to-deadline meaning "the time axis was not measured, so it must not
+# penalise" — used when the call was already submitted (the deadline WAS met) and when
+# no deadline was ever captured (nothing to miss).
+_TIME_NOT_MEASURED = 10_000
+
+
+def derive_bid_effort(rfp: dict, org_settings: dict | None = None) -> str:
+    """PREFER-9 label — NEVER None.
+
+    An unknown deadline means the time axis could not be MEASURED, not that time ran
+    out. Returning None left the Review card with no derived value, and
+    `scorer.default_response` then fell back to the LAST option in the criterion's
+    list — which for bid_effort (the one criterion with no "Not sure" option) is the
+    WORST one, "Not enough time, no team". So a call whose deadline was simply never
+    extracted scored 0 on PREFER-9 and showed a red badge, while its own component
+    panel showed the time check EXCLUDED and the BD team MET (1/1 · 100%). That is not
+    cosmetic: the 0 fed the Bid Strength gauge and the Proceed/Park/Decline suggestion.
+
+    Unmeasured time is now EXCLUDED rather than failed — exactly what the Review
+    editor's own rule already did (views.review_rfp._bid_rule: "inactive (no deadline)
+    → assume ample"), so VIEW mode can no longer disagree with EDIT mode, and the label
+    is driven by the resources axis alone."""
     bd = str((org_settings or {}).get("org_has_bd_team", "false")).lower() == "true"
-    # Already submitted (Completed) → treat time as ample (it was met), don't penalise.
-    days = 10_000 if _is_completed(rfp) else days_until(rfp.get("call_submission_deadline"))
+    days = days_until(rfp.get("call_submission_deadline"))
+    if _is_completed(rfp) or days is None:
+        days = _TIME_NOT_MEASURED
     return bid_effort_label(days, bd)
 
 
@@ -1859,9 +1881,19 @@ def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dic
     Time is a 3-TIER score, not a yes/no: >14d = 1.0 (ample) · 7-14d = 0.5 (tight) ·
     <7d = 0.0 (not enough). PREFER-9's classification is the BANDED AVERAGE of the two
     components (see core.scorer._SCORE_MAP / review_rfp._bid_rule), so a business-dev
-    team can lift a tight (0.5) deadline to a partial PREFER-9."""
+    team can lift a tight (0.5) deadline to a partial PREFER-9.
+
+    NO DEADLINE CAPTURED → the time component is a permissive DEFAULT PASS (score 1,
+    `default=True`, rendered "no restriction — defaults to pass"), the same convention
+    MUST-5 sam_uei and MUST-3 experience already use for a requirement nobody imposed.
+    It was previously excluded (active=False), which left the criterion label and the
+    won/total ratio computed over DIFFERENT component sets: with no BD team the label
+    read "Ample time, but no dedicated team" (score 1 = 50%) beside a ratio of 0/1 = 0%,
+    because the ratio counted only the team. Defaulting the pass keeps both sides over
+    the same two components, so label and ratio reconcile in every case."""
     osx = org_settings or {}
     bd = str(osx.get("org_has_bd_team", "false")).lower() == "true"
+    time_default = False
     if _is_completed(rfp):
         # Already submitted → the time gate was met; show it as full, not "not enough".
         time_name, time_score, time_active = "Submitted on time (already completed)", 1.0, True
@@ -1869,7 +1901,8 @@ def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dic
         days = days_until(rfp.get("call_submission_deadline"))
         time_name = "Time before the deadline (>14d full · 7-14d partial)"
         if days is None:
-            time_score, time_active = None, False
+            time_name = "Time before the deadline (no deadline stated by this call)"
+            time_score, time_active, time_default = 1.0, True, True
         elif days > BID_EFFORT_AMPLE_DAYS:            # > 14 days
             time_score, time_active = 1.0, True
         elif days >= BID_EFFORT_TIGHT_DAYS:           # 7-14 days
@@ -1879,8 +1912,11 @@ def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dic
     # met is the legacy tri-state for read-mode cards: 1.0→✓ · 0.0→✗ · 0.5/None→?
     time_met = (None if time_score is None
                 else True if time_score >= 1.0 else False if time_score <= 0.0 else None)
+    time = _factor("bid_time", time_name, "R", time_met,
+                   active=time_active, score=time_score)
+    time["default"] = time_default
     return [
-        _factor("bid_time", time_name, "R", time_met, active=time_active, score=time_score),
+        time,
         _factor("bid_team", "Has a business-development team", "G", bool(bd), active=True),
     ]
 
