@@ -451,7 +451,14 @@ st.markdown("**Eligibility criteria**  "
 # Fatal verdict + factor breakdown — computed ONCE here (single source) so each
 # criterion's collapsible card and the gauge all read the same numbers.
 _OR_KEYS = {"funder_relationship"}   # geographic_fit is now a single tiered component
-_FMARK = {True: ("✓", "#1a7f37"), False: ("✗", "#c0392b"), None: ("?", "#8a6d00")}
+# Component verdict symbol — SCORE-driven, and shared with the factor model so the
+# symbol and the score can't drift apart. "?" means UNDETERMINED (the call stated
+# nothing → excluded from the count); a MEASURED partial (0.5, e.g. a partial priority
+# match) gets ◐ instead, because "we don't know" and "we know, and it's halfway" are
+# different answers. Applies to EVERY criterion, not just MUST-2 (owner 2026-08-06).
+# See core.criteria_derive.component_mark.
+_mark = _cderive.component_mark
+
 # Persisted HUMAN component verdicts (migration 087). Merged over the derived breakdown
 # so a reviewer's answer beats the inference — the derivation reads org profile / donor
 # intel / call text and can be wrong or stale; a human who read the call is authoritative.
@@ -473,9 +480,10 @@ except Exception:
 
 def _factor_html(ckey: str) -> str:
     """Component pass/fail rows for ONE criterion — the body of its collapsible
-    card. Shows EVERY sub-factor: ✓ met · ✗ failed · ? uncertain · ? not-applicable
-    (greyed, not required by this call → excluded from the denominator). OR-criteria
-    show the satisfied path ✓ and the unused alternatives as neutral ○."""
+    card. Shows EVERY sub-factor: ✓ met · ◐ partly met (measured, between pass and
+    fail) · ✗ failed · ? not-applicable (greyed, not required by this call → excluded
+    from the denominator). OR-criteria show the satisfied path ✓ and the unused
+    alternatives as neutral ○."""
     facts = _bd.get(ckey) or []
     if not facts:
         return "<span style='color:#999;font-size:0.82rem'>No sub-factors.</span>"
@@ -489,7 +497,7 @@ def _factor_html(ckey: str) -> str:
                     "funder strategy / theme data stated.</span>")
         _it = _a[0]
         _sc = _it.get("score") or 0
-        _sym, _col = _FMARK.get(_it.get("met"), ("?", "#8a6d00"))
+        _sym, _col = _mark(_it)
         _bl = {1.0: "strong priority match", 0.5: "partial priority match",
                0.0: "off-strategy"}.get(_sc, str(_sc))
         _l1 = (f"<div style='font-size:0.82rem;margin:2px 0'>"
@@ -508,7 +516,7 @@ def _factor_html(ckey: str) -> str:
             return ("<span style='color:#8a6d00;font-size:0.82rem'>? Not sure — no "
                     "geographic scope stated by the call/donor.</span>")
         _sc = _it.get("score") or 0
-        _sym, _col = _FMARK.get(_it.get("met"), ("?", "#8a6d00"))
+        _sym, _col = _mark(_it)
         _lbl = {1.0: "Yes, our own presence", 0.5: "Yes, via a partner"}.get(
             _sc, "No presence there")
         _via = _it.get("_via") or ""
@@ -529,17 +537,15 @@ def _factor_html(ckey: str) -> str:
             sym, col, suffix = "?", "#b8860b", (" <span style='color:#aaa'>"
                 "(Not sure — not stated by this call; excluded from the count)</span>")
         elif f.get("_detail") is not None:
-            # Graded component (e.g. track record): band symbol + ratio detail, never
-            # the bare "?" — a real score, not an undetermined one.
-            _gsc = f.get("score") or 0.0
-            sym, col = (("✓", "#1a7f37") if _gsc >= 1.0 else
-                        ("◐", "#b8860b") if _gsc >= 0.5 else ("✗", "#c0392b"))
+            # Graded component (track record, financial capacity, experience bar):
+            # band symbol + the measurement behind it.
+            sym, col = _mark(f)
             suffix = f" <span style='color:#888'>— {_esc(f['_detail'])}</span>"
         elif is_or and any_met and f["met"] is not True:
             sym, col, suffix = "○", "#999", (" <span style='color:#aaa'>"
                 "(alternative route — not needed)</span>")
         else:
-            sym, col = _FMARK[f["met"]]
+            sym, col = _mark(f)
             suffix = (" <span style='color:#aaa'>(no restriction — defaults to pass)</span>"
                       if f.get("default") else "")
         lock = " 🔒" if f.get("fatal") else ""
@@ -551,7 +557,8 @@ def _factor_html(ckey: str) -> str:
                    f"<span style='color:{col};font-weight:700'>{sym}</span> "
                    f"{_esc(f['name'])}{lock}{suffix}{human}</div>")
     out.append("<div style='color:#aaa;font-size:0.72rem;margin-top:6px'>"
-               "✓ met · ✗ failed · ? Not sure (not stated — excluded) · ○ alt-route · "
+               "✓ met · ◐ partly met (measured, between pass and fail) · ✗ failed · "
+               "? Not sure (not stated — excluded) · ○ alt-route · "
                "🔒 fatal gate (failing it auto-Declines) · "
                "<span style='color:#1a7f37'>set by reviewer</span> = human verdict, "
                "overrides the system</div>")
