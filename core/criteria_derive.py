@@ -1902,14 +1902,28 @@ def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dic
         time_name, time_score, time_active = "Submitted on time (already completed)", 1.0, True
     else:
         days = days_until(rfp.get("call_submission_deadline"))
-        time_name = "Time before the deadline (>14d full · 7-14d partial)"
+        # The component NAME states the tier actually reached, not the whole scale. A
+        # static "(>14d full · 7-14d partial)" advertised two bands on every row, hiding
+        # the third (<7d = 0) and telling a reader nothing about THIS call (owner
+        # 2026-08-06).
+        time_name = "Time before the deadline"
         if days is None:
             time_score, time_active = None, False      # nothing to judge → "?" excluded
         elif days > BID_EFFORT_AMPLE_DAYS:            # > 14 days
+            time_name += " (>14d full)"
             time_score, time_active = 1.0, True
         elif days >= BID_EFFORT_TIGHT_DAYS:           # 7-14 days
+            time_name += " (7-14d partial)"
             time_score, time_active = 0.5, True
-        else:                                          # < 7 days
+        elif days >= 0:                                # < 7 days
+            time_name += " (<7d extremely tight)"
+            time_score, time_active = 0.0, True
+        else:
+            # Past due. Scores 0 like any <7d row, but must not be CALLED "extremely
+            # tight" — there is no time left at all. (Past-deadline calls are caught
+            # upstream and don't reach the dashboard; this keeps the row honest if one
+            # ever does.)
+            time_name += " (deadline has passed)"
             time_score, time_active = 0.0, True
     # met is the legacy tri-state for read-mode cards: 1.0→✓ · 0.0→✗ · 0.5/None→?
     time_met = (None if time_score is None
