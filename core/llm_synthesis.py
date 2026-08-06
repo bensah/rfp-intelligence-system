@@ -399,10 +399,12 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "prior_beneficiary_rule ('eligible' if prior grantees are welcome; "
         "'ineligible_current' if CURRENT grantees are barred; 'ineligible_previous' if "
         "PAST grantees are barred; 'ineligible_any' if both); "
-        "experience_required ('significant' if the call seeks orgs with substantial / "
-        "long / deep / extensive experience in the domain; 'moderate' if it seeks "
-        "demonstrated / relevant prior experience; OMIT if it welcomes early-stage / "
-        "startups / any applicant); "
+        "experience_required (a BARE NUMBER OF YEARS — e.g. '3' — when the call states "
+        "an explicit minimum, such as 'at least 3 years' or 'no less than 5 years since "
+        "creation'; else 'significant' if it seeks orgs with substantial / long / deep / "
+        "extensive experience in the domain; 'moderate' if it seeks demonstrated / "
+        "relevant prior experience; OMIT if it welcomes early-stage / startups / any "
+        "applicant); "
         "org_stage_required ('early-stage' ONLY if the call funds early-stage / startups / "
         "new organisations EXCLUSIVELY; 'established' ONLY if it requires established orgs; "
         "OMIT if open to any stage). Ground every value in the text; never infer.\n"
@@ -517,6 +519,14 @@ def _sanitize_must1(d: dict) -> dict:
         v = str(d.get(key) or "").strip().lower()
         if v in allowed:
             clean[key] = v
+    # `experience_required` ALSO accepts an explicit minimum age the call states ("no
+    # less than 3 years since creation") — kept verbatim as a number of years so MUST-3
+    # scores the bar as written instead of rounding it into significant/moderate.
+    if "experience_required" not in clean:
+        m = re.match(r"^(\d{1,2})\s*\+?\s*(?:years?|yrs?)?$",
+                     str(d.get("experience_required") or "").strip().lower())
+        if m and 1 <= int(m.group(1)) <= 50:
+            clean["experience_required"] = m.group(1)
     hq = str(d.get("donor_hq_country_required") or "").strip()
     if hq and len(hq) <= 60:
         clean["donor_hq_country_required"] = hq
