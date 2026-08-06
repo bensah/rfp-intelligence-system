@@ -53,19 +53,20 @@ class TheReportedCaseTests(unittest.TestCase):
         self.assertNotIn("Not enough time", label)
         self.assertEqual(criterion_score(label), 2)      # matches the panel's 1/1 · 100%
 
-    def test_the_badge_now_agrees_with_the_component_panel(self):
-        # Panel: time EXCLUDED (inactive), team MET → ratio 1/1 = 100%.
-        facts = {f["key"]: f for f in CD._bid_effort_factors(NO_DEADLINE, TEAM)}
-        self.assertFalse(facts["bid_time"]["active"])
-        self.assertTrue(facts["bid_team"]["met"])
-        measured = [f for f in facts.values()
-                    if f.get("active", True) and (f.get("score") is not None
-                                                  or f.get("met") is not None)]
-        num = sum(f["score"] if f.get("score") is not None else (1.0 if f["met"] else 0.0)
-                  for f in measured)
-        self.assertEqual((num, len(measured)), (1.0, 1))          # the displayed 1/1
-        # ...and the label must be worth the same 100%, not 0.
-        self.assertEqual(criterion_score(CD.derive_bid_effort(NO_DEADLINE, TEAM)), 2)
+    def test_an_uncaptured_deadline_is_a_default_pass_not_an_exclusion(self):
+        # Excluding it left the LABEL and the RATIO over different component sets (see
+        # the ratio test below). A requirement nobody imposed is a permissive default
+        # pass here, exactly as MUST-5 sam_uei and MUST-3 experience already do.
+        time = {f["key"]: f for f in CD._bid_effort_factors(NO_DEADLINE, TEAM)}["bid_time"]
+        self.assertTrue(time["active"])
+        self.assertEqual(time["score"], 1.0)
+        self.assertTrue(time["default"])                  # renders "(no restriction)"
+        self.assertIn("no deadline stated", time["name"])
+
+    def test_a_real_deadline_is_never_marked_default(self):
+        for days in (30, 10, 2, -5):
+            time = {f["key"]: f for f in CD._bid_effort_factors(_dl(days), TEAM)}["bid_time"]
+            self.assertFalse(time.get("default"), days)
 
     def test_no_deadline_and_no_team_reports_the_team_gap_only(self):
         label = CD.derive_bid_effort(NO_DEADLINE, NO_TEAM)
@@ -78,6 +79,66 @@ class TheReportedCaseTests(unittest.TestCase):
                     {"call_submission_deadline": "not-a-date"}):
             for st in (TEAM, NO_TEAM, {}, None):
                 self.assertIsNotNone(CD.derive_bid_effort(rfp, st), (rfp, st))
+
+
+class LabelAndRatioReconcileTests(unittest.TestCase):
+    """The badge and the "won/total · pct" beside it must be two views of the SAME
+    components. Making derive_bid_effort total was not enough on its own: while the time
+    component stayed EXCLUDED, a no-deadline + no-team row showed the label "Ample time,
+    but no dedicated team" (score 1 → 50%) next to a ratio of 0/1 = 0%, because the ratio
+    counted only the team. Both sides now span the same two components."""
+
+    @staticmethod
+    def _ratio(rfp, settings):
+        """Mirror of the VIEW-mode generic ratio branch (views/review_rfp.py ~857-870)."""
+        act = [f for f in CD._bid_effort_factors(rfp, settings) if f.get("active", True)]
+        meas = [f for f in act
+                if f.get("score") is not None or f.get("met") is not None]
+        num = sum(f["score"] if f.get("score") is not None else (1.0 if f["met"] else 0.0)
+                  for f in meas)
+        return (num / len(meas)) if meas else None
+
+    CASES = [("no deadline", {}), ("30d", _dl(30)), ("10d", _dl(10)), ("2d", _dl(2)),
+             ("past due", _dl(-5)),
+             ("completed", {**_dl(-30), "progress_status": "Completed"})]
+
+    def test_a_higher_ratio_never_yields_a_worse_label(self):
+        # NOT exact equality — a 6-label scale is banded onto 3 criterion points, so
+        # "Tight but doable, with a team" is worth 1 at a ratio of 0.75 by design. The
+        # invariant that must hold is monotonicity: the badge may never get worse as the
+        # percentage beside it gets better.
+        pairs = [(self._ratio(rfp, st), criterion_score(CD.derive_bid_effort(rfp, st)),
+                  f"{name}/{st['org_has_bd_team']}")
+                 for name, rfp in self.CASES for st in (TEAM, NO_TEAM)]
+        for lo, hi in ((a, b) for a in pairs for b in pairs):
+            if lo[0] < hi[0]:
+                self.assertLessEqual(lo[1], hi[1], f"{lo[2]} ({lo[0]:.2f}) vs "
+                                                   f"{hi[2]} ({hi[0]:.2f})")
+
+    def test_an_uncaptured_deadline_now_lands_where_ample_time_lands(self):
+        # THE RECONCILIATION: with time excluded, no-deadline rows sat at ratio 0.00/0.50
+        # while their label scored 1/2 — a different denominator from the label's own
+        # component set. They now sit exactly where the equivalent ">14 days" rows sit.
+        for st in (TEAM, NO_TEAM):
+            self.assertEqual(self._ratio(NO_DEADLINE, st), self._ratio(_dl(30), st), st)
+            self.assertEqual(CD.derive_bid_effort(NO_DEADLINE, st),
+                             CD.derive_bid_effort(_dl(30), st), st)
+
+    def test_the_reported_card_reads_100_percent(self):
+        self.assertEqual(self._ratio(NO_DEADLINE, TEAM), 1.0)
+        self.assertEqual(criterion_score(CD.derive_bid_effort(NO_DEADLINE, TEAM)), 2)
+
+    def test_no_deadline_and_no_team_is_a_coherent_half(self):
+        # Was 0.00 beside a label worth 50%; now 0.50 beside a label worth 50%.
+        self.assertEqual(self._ratio(NO_DEADLINE, NO_TEAM), 0.5)
+        self.assertEqual(criterion_score(CD.derive_bid_effort(NO_DEADLINE, NO_TEAM)), 1)
+
+    def test_both_components_are_always_counted(self):
+        # The denominator must not silently shrink — that was the divergence.
+        for name, rfp in self.CASES:
+            for st in (TEAM, NO_TEAM):
+                act = [f for f in CD._bid_effort_factors(rfp, st) if f.get("active", True)]
+                self.assertEqual(len(act), 2, f"{name}/{st}")
 
 
 class RealDeadlinesStillScoreTests(unittest.TestCase):
