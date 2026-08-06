@@ -283,11 +283,20 @@ def strategic_bid_strength(org: dict, rfp: dict,
     return matched, total, best
 
 
-# --- MUST-3 IMPLEMENTATION CAPACITY (rework 2026-06-28; owner spec) -----------
-# Composite of up to 4 components: Annual-budget ceiling · Prior-grant ceiling
-# (these two MOVED here from MUST-1) · Experience requirement (call-LLM-detected) ·
-# Award-absorption (can the org deliver THIS award size). ("Org stage" was retired
-# 2026-07-20 as redundant with Experience — see capacity_factors.)
+# --- MUST-3 IMPLEMENTATION CAPACITY (rework 2026-08-06; owner spec) -----------
+# TWO components (was four):
+#   1. Financial capacity for this award — a COMPOSITE of every VALUE-related check
+#      (award absorption + the donor's annual-budget / prior-grant ceilings). All three
+#      answer one question — "is this award the right SIZE for us?" — and all three need
+#      the call's award value, so when extraction misses that value they ALL go blank at
+#      once and MUST-3 reads as three separate unknowns instead of one. As one 0-1
+#      component the criterion degrades honestly: it scores over whichever value checks
+#      ARE determinable, and stays 0-1 even when only one of them is.
+#   2. Experience requirement — org maturity vs the bar the call sets, DEFAULT-PASS when
+#      neither the call nor donor intel states one (a call silent on experience is open
+#      to a start-up and an established org alike).
+# ("Org stage" was retired 2026-07-20 as a standalone component; the stage RESTRICTION a
+# call can impose is now scored inside Experience — see _experience_factor.)
 def _org_years(org: dict) -> int | None:
     """Years the org has existed (from founding_year), or None if unknown."""
     from datetime import date as _date
@@ -295,16 +304,53 @@ def _org_years(org: dict) -> int | None:
     return (_date.today().year - int(fy)) if (fy and fy >= 1900) else None
 
 
+# An explicit minimum age/experience a call can state ("no less than 3 years since
+# creation") — kept as a NUMBER of years rather than flattened into the coarse
+# significant/moderate band, so the bar is scored as written.
+_EXP_YEARS_RE = re.compile(r"^(\d{1,2})\s*\+?\s*(?:y|yr|yrs|year|years)?$")
+
+
 def _experience_required_years(donor: dict) -> int | None:
-    """Required years of experience the CALL signals (LLM-detected, field
-    `experience_required`): 'significant'-type language → 10+, subtler → 5+.
-    None (not imposed / wants early-stage / any) → component disabled."""
+    """Years of experience the CALL/donor requires (LLM-detected, `experience_required`).
+    A bare number ('3', '5+', '10 years') is taken literally; otherwise the graded
+    vocabulary maps 'significant'-type language → 10+ and subtler wording → 5+.
+    None = no years bar imposed (welcomes early-stage / any applicant)."""
     lvl = str(donor.get("experience_required") or "").strip().lower()
-    if lvl in ("significant", "extensive", "strong", "high", "deep", "10", "10+"):
+    if not lvl:
+        return None
+    m = _EXP_YEARS_RE.match(lvl)
+    if m:
+        n = int(m.group(1))
+        return n if 1 <= n <= 50 else None
+    if lvl in ("significant", "extensive", "strong", "high", "deep"):
         return 10
-    if lvl in ("moderate", "some", "subtle", "relevant", "demonstrated", "5", "5+"):
+    if lvl in ("moderate", "some", "subtle", "relevant", "demonstrated"):
         return 5
     return None
+
+
+# Org-maturity vocabulary — both sides (org profile `org_stage`, call/donor
+# `org_stage_required`) describe the same two poles with different words.
+_EARLY_STAGE_WORDS = {"early-stage", "early stage", "earlystage", "early",
+                      "start-up", "startup", "new", "emerging", "young", "nascent"}
+_ESTABLISHED_WORDS = {"established", "mature", "experienced", "long-standing"}
+
+
+def _stage_token(v: Any) -> str | None:
+    """Maturity wording → 'early' | 'established' | None (unknown / not restricted)."""
+    s = str(v or "").strip().lower()
+    if s in _EARLY_STAGE_WORDS:
+        return "early"
+    if s in _ESTABLISHED_WORDS:
+        return "established"
+    return None
+
+
+def _money(v: Any) -> str:
+    try:
+        return f"${float(v):,.0f}"
+    except (TypeError, ValueError):
+        return "—"
 
 
 def _award_absorption_score(org: dict, rfp: dict) -> float | None:
@@ -348,71 +394,150 @@ def _award_absorption_score(org: dict, rfp: dict) -> float | None:
     return 0.0
 
 
+def _capacity_value_parts(org: dict, rfp: dict, donor: dict) -> list[dict]:
+    """The VALUE-related sub-checks behind the Financial-capacity composite, as
+    {key, name, score, hard, detail}. Only DETERMINABLE checks are returned — a ceiling
+    the call never states, or an absorption the org has no facts for, is simply absent
+    and neither helps nor hurts. `hard` = a structural ceiling: exceeding it is an
+    ineligibility the org cannot shrink before the deadline (drives fatal_decline).
+
+    The two directions are deliberately opposite and both belong here:
+      · ABSORPTION asks whether we are big enough to deliver this award (the common
+        case — a large annually-managed budget is evidence we can carry it);
+      · the CEILINGS ask whether we are too big for this fund (the rare case — a window
+        reserved for organisations below a stated size)."""
+    parts: list[dict] = []
+    mab = _num(donor.get("donor_max_annual_budget"))
+    if mab:
+        ob = _num(org.get("org_annual_budget")) or 0.0
+        parts.append({"key": "budget_ceiling", "name": "Annual-budget ceiling",
+                      "score": 1.0 if ob <= mab else 0.0, "hard": True,
+                      "detail": f"our {_money(ob)} annual budget vs the call's "
+                                f"{_money(mab)} ceiling"})
+    mpg = _num(donor.get("donor_max_prior_grant"))
+    if mpg:
+        og = _num(org.get("org_largest_grant")) or 0.0
+        parts.append({"key": "grant_ceiling", "name": "Prior-grant ceiling",
+                      "score": 1.0 if og <= mpg else 0.0, "hard": True,
+                      "detail": f"our {_money(og)} largest grant vs the call's "
+                                f"{_money(mpg)} ceiling"})
+    aa = _award_absorption_score(org, rfp)
+    if aa is not None:
+        parts.append({"key": "award_absorption", "name": "Can absorb the award size",
+                      "score": aa, "hard": False,
+                      "detail": {1.0: "within our proven capacity",
+                                 0.5: "a credible stretch"}.get(
+                                     aa, "beyond our proven capacity")})
+    return parts
+
+
+def _financial_capacity_factor(org: dict, rfp: dict, donor: dict) -> dict:
+    """MUST-3 component 1 — the value-related checks rolled into ONE 0-1 score (their
+    mean over whichever are determinable). Inactive only when NOTHING about the money is
+    knowable: the call states no award value and imposes no ceiling."""
+    parts = _capacity_value_parts(org, rfp, donor)
+    it = _qfactor("financial_capacity", "Financial capacity for this award",
+                  active=bool(parts), hard=False,
+                  score=(sum(p["score"] for p in parts) / len(parts)) if parts else None)
+    it["_parts"] = parts
+    # 🔒 only when a real structural ceiling is in play — a soft absorption stretch is
+    # not an auto-Decline and must not wear the fatal-gate padlock.
+    it["fatal"] = any(p["hard"] for p in parts)
+    if parts:
+        it["_detail"] = " · ".join(f"{p['name']}: {p['detail']}" for p in parts)
+    return it
+
+
+def _experience_factor(org: dict, donor: dict) -> dict:
+    """MUST-3 component 2 — ALWAYS ACTIVE (owner 2026-08-06).
+
+    A call that says nothing about maturity is open to a start-up and to an established
+    organisation alike, so SILENCE IS A PASS (score 1, flagged `default` so the card reads
+    "no restriction — defaults to pass") rather than a 'Not sure' that drags the criterion
+    to Park on a requirement nobody imposed. A bar is scored only when the call, or donor
+    intel, actually states one:
+      · YEARS bar (`experience_required`) — meets it → 1 · within 2 years → 0.5 · else 0
+      · STAGE bar (`org_stage_required`)  — the call restricts to early-stage OR to
+        established organisations. This is the direction that was previously extracted
+        but never scored: a window reserved for young organisations must score an
+        established applicant 0, not wave it through.
+    Both stated → the WEAKER governs (a bar is a bar)."""
+    req_yrs = _experience_required_years(donor)
+    req_stage = _stage_token(donor.get("org_stage_required"))
+    if req_yrs is None and req_stage is None:
+        it = _qfactor("experience", "Experience requirement", active=True,
+                      score=1.0, hard=False, default=True)
+        it["fatal"] = False
+        return it
+    yrs = _org_years(org)
+    stage = _stage_token(org.get("org_stage"))
+    scores: list[float] = []
+    bits: list[str] = []
+    if req_yrs is not None:
+        if yrs is not None:
+            sc = 1.0 if yrs >= req_yrs else (0.5 if yrs >= req_yrs - 2 else 0.0)
+            bits.append(f"{yrs}y since founding vs the call's {req_yrs}y bar")
+        elif stage == "established":
+            sc = 1.0 if req_yrs <= 10 else 0.5
+            bits.append(f"an established org vs the call's {req_yrs}y bar "
+                        f"(our founding year is unrecorded)")
+        elif stage == "early":
+            sc = 0.0 if req_yrs >= 5 else 1.0
+            bits.append(f"an early-stage org vs the call's {req_yrs}y bar "
+                        f"(our founding year is unrecorded)")
+        else:
+            sc = 0.5
+            bits.append(f"the call asks for {req_yrs}y; our founding year is unrecorded")
+        scores.append(sc)
+    if req_stage is not None:
+        want = "early-stage" if req_stage == "early" else "established"
+        if stage is None:
+            sc = 0.5
+            bits.append(f"the call is for {want} orgs; our stage is unrecorded")
+        elif stage == req_stage:
+            sc = 1.0
+            bits.append(f"the call is for {want} orgs, and so are we")
+        else:
+            sc = 0.0
+            bits.append(f"the call is for {want} orgs only; we are "
+                        f"{'early-stage' if stage == 'early' else 'established'}")
+        scores.append(sc)
+    it = _qfactor("experience", "Experience requirement", active=True,
+                  score=min(scores), hard=False)
+    it["_detail"] = " · ".join(bits)
+    it["fatal"] = False
+    return it
+
+
 def capacity_factors(org: dict, rfp: dict, donor: dict | None = None,
                      org_settings: dict | None = None) -> list[dict]:
-    """MUST-3 components — ACTIVE-ONLY (owner 2026-06-29b). A component is active only
-    when the call/donor imposes it (budget ceiling / grant ceiling / experience) OR
-    it's determinable from org+call (award-absorption). Undetected → 'Not sure'
-    (excluded). HARD: budget/grant ceilings (unknown org value → 0 → pass). SOFT:
-    experience, award-absorption. No active component → derive returns 'Not sure'
-    (Park). ("Org stage" retired 2026-07-20 — redundant with Experience.)"""
+    """MUST-3 components (owner 2026-08-06): Financial capacity for this award (the
+    value-related composite) + Experience requirement (default-pass when unstated)."""
     org = org or {}
     donor = donor or {}
-    items: list[dict] = []
-
-    # 1. (RETIRED 2026-07-20) "Org stage" was redundant with "Experience requirement" —
-    #    both matched org maturity against the call's bar (stage-category vs years). Per
-    #    owner, keep ONE maturity component (experience) and drop org-stage as a scored
-    #    component. The org's stage still informs MUST-3 via the award-absorption STRETCH
-    #    (_award_absorption_score), and org age still scores the PREFER-8 competitiveness
-    #    edge ("Established (10+ years)") — those are different roles, not a capacity gate.
-
-    # 2. Annual-budget ceiling — active only when the donor states it (unknown org
-    #    budget → 0 → pass below the ceiling).
-    mab = _num(donor.get("donor_max_annual_budget"))
-    items.append(_qfactor("budget_ceiling", "Annual-budget ceiling", active=bool(mab),
-                          score=(1.0 if (_num(org.get("org_annual_budget")) or 0.0) <= (mab or 0)
-                                 else 0.0), hard=True))
-
-    # 3. Prior-grant ceiling — active only when the donor states it.
-    mpg = _num(donor.get("donor_max_prior_grant"))
-    items.append(_qfactor("grant_ceiling", "Prior-grant ceiling", active=bool(mpg),
-                          score=(1.0 if (_num(org.get("org_largest_grant")) or 0.0) <= (mpg or 0)
-                                 else 0.0), hard=True))
-
-    # 4. Experience requirement — active only when the call requires it (LLM-detected).
-    #    ≥N→1 · within 2y→0.5 · else 0 · unknown founding year→0.5.
-    req = _experience_required_years(donor)
-    yrs = _org_years(org)
-    sc = (0.5 if yrs is None else
-          1.0 if (req and yrs >= req) else 0.5 if (req and yrs >= req - 2) else 0.0)
-    items.append(_qfactor("experience", f"Experience ≥ {req}y" if req else "Experience requirement",
-                          active=req is not None, score=sc, hard=False))
-
-    # 5. Award-absorption — active when the award size IS determinable (call states a
-    #    value AND the org has capacity facts); else Not sure.
-    aa = _award_absorption_score(org, rfp)
-    items.append(_qfactor("award_absorption", "Can absorb the award size",
-                          active=aa is not None, score=aa if aa is not None else 0.0,
-                          hard=False))
-    return items
+    return [_financial_capacity_factor(org, rfp, donor),
+            _experience_factor(org, donor)]
 
 
 def derive_capacity(org: dict, rfp: dict, donor: dict | None = None,
                     org_settings: dict | None = None,
                     rfp_compliance: dict | None = None) -> str | None:
-    """MUST-3 label (gate logic like MUST-1): any active component 0 → 'No, beyond
-    us'; any 0.5 → 'Yes, but a stretch'; all 1 → 'Yes, comfortably'; nothing active
-    → None ('Not sure')."""
-    items = [x for x in capacity_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
-        if x["active"] and x["score"] is not None]
-    if not items:
+    """MUST-3 label over the two components. A HARD ceiling the org EXCEEDS is
+    structural → 'No, beyond us' whatever the rest says (it can be masked inside the
+    composite mean, so it is checked directly); otherwise the weakest active component
+    governs: any 0 → 'No, beyond us' · any partial → 'Yes, but a stretch' · all 1 →
+    'Yes, comfortably'. Nothing active → 'Not sure'."""
+    eff = _merge_rfp_compliance(donor, rfp_compliance)
+    if any(p["hard"] and p["score"] <= 0.0
+           for p in _capacity_value_parts(org or {}, rfp, eff)):
+        return "No, beyond us"
+    scores = [x["score"] for x in capacity_factors(org, rfp, eff, org_settings)
+              if x["active"] and x["score"] is not None]
+    if not scores:
         return "Not sure"
-    scores = [x["score"] for x in items]
     if any(s <= 0.0 for s in scores):
         return "No, beyond us"
-    if any(s == 0.5 for s in scores):
+    if any(s < 1.0 for s in scores):
         return "Yes, but a stretch"
     return "Yes, comfortably"
 
@@ -644,6 +769,28 @@ def _qfactor(key: str, name: str, *, active: bool, score: float | None,
     return {"key": key, "name": name, "source": source, "active": bool(active),
             "score": sc, "hard": bool(hard), "met": met, "fatal": True,
             "default": bool(default)}
+
+
+# Component verdict symbols — SCORE-driven, and defined HERE (next to the `met`
+# derivation above) so the two can't drift apart. `met` is a tri-state that collapses
+# EVERY partial score to None, so a UI keying its symbol off `met` alone renders a
+# measured 0.5 — a real partial match against real data — with the same "?" as a
+# component nothing was ever known about. Those mean opposite things to a reviewer, so
+# they get different symbols: ◐ is the middle ground between ✓ and ✗ (owner 2026-08-06).
+MARK_MET = ("✓", "#1a7f37")
+MARK_PARTIAL = ("◐", "#b8860b")
+MARK_FAILED = ("✗", "#c0392b")
+MARK_UNKNOWN = ("?", "#8a6d00")
+
+
+def component_mark(factor: dict) -> tuple[str, str]:
+    """(symbol, colour) for one component factor — from its SCORE whenever it has one,
+    falling back to the `met` tri-state only when nothing was measurable."""
+    sc = factor.get("score")
+    if sc is None:
+        return {True: MARK_MET, False: MARK_FAILED}.get(factor.get("met"), MARK_UNKNOWN)
+    sc = float(sc)
+    return MARK_MET if sc >= 1.0 else (MARK_FAILED if sc <= 0.0 else MARK_PARTIAL)
 
 
 # --- MUST-5 COFINANCING & COMPLIANCE helpers (rework 2026-06-29; owner spec) ---
@@ -1533,7 +1680,7 @@ def _geo_factors(org: dict, rfp: dict, org_settings: dict | None = None,
 
 def _capacity_factors(org: dict, rfp: dict, donor: dict | None = None,
                       org_settings: dict | None = None) -> list[dict]:
-    """MUST-3 sub-factors = the 5 capacity components (see capacity_factors)."""
+    """MUST-3 sub-factors = the 2 capacity components (see capacity_factors)."""
     return capacity_factors(org, rfp, donor, org_settings)
 
 
@@ -1760,12 +1907,14 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     # A hard gate here would auto-Decline and HIDE otherwise-strong calls from the review
     # queue. Its heavy composite weight already pushes an off-strategy call to Park/Decline
     # by overall strength, so it stays reviewable — matching the "see & review all" model.
-    # MUST-3 — a HARD, ACTIVE capacity ceiling the org exceeds (annual-budget / prior-grant
+    # MUST-3 — a HARD capacity ceiling the org exceeds (annual-budget / prior-grant
     # ceiling) is a structural ineligibility the org cannot shrink before the deadline.
-    # (Soft MUST-3 items — experience / award-absorption — are NOT gates.)
-    for f in capacity_factors(org, rfp, eff, org_settings):
-        if f.get("active") and f.get("hard") and f.get("met") is False:
-            return True, f["name"]
+    # Read from the composite's SUB-PARTS: the presented component is the mean of the
+    # value checks, so a failed ceiling can average away to a passing-looking 0.5.
+    # (Soft items — experience / award-absorption — are NOT gates.)
+    for p in _capacity_value_parts(org, rfp, eff):
+        if p["hard"] and p["score"] <= 0.0:
+            return True, p["name"]
     # MUST-4 — no geographic reach (own presence or a partner in the call's scope).
     if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
         return True, "Geographic reach (no presence or partner)"

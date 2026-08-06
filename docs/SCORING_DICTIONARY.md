@@ -42,6 +42,14 @@
 > identity; the budget/prior-grant ceilings live in **MUST 3**; MUST 5 is the
 > compliance hub. PREFER 7 = **Donor relationship**.
 
+> **2026-08-06 — component symbols on the Review card.** `✓` met · `◐` **partly met**
+> (measured, between pass and fail) · `✗` failed · `?` **Not sure** (not stated by this
+> call → excluded from the denominator) · `○` alternative route not needed · `🔒` fatal
+> gate. `◐` was introduced because `?` was doing two jobs: a component we *measured* at
+> 0.5 — real data, a partial match — rendered identically to one we knew nothing about.
+> The symbol now follows the **score**, not the `met` tri-state (which collapses every
+> partial to `None`). Single source: `core.criteria_derive.component_mark`.
+
 Each opportunity is judged on **org × donor × RFP** — the deploying org's profile
 (Settings → Org profile), the funder's intelligence record (`donor_intel`), and the
 specific call (the scraped/extracted RFP).
@@ -58,7 +66,7 @@ routes to review, not a zero. Internal keys in parentheses.
 |---|---|---|---|
 | MUST 1 | **Legal status & qualification** (`qualification`) | Yes, fully (2) · Mostly, one item unclear (1) · No, not eligible (0) · Not sure (→1) | **Legal IDENTITY, up to 6 items (🔒 fatal):** legal type admitted · entity type · HQ country · **registration** (explicit rule, or the call's geo-scope as a proxy) · individual-PI · **prior-beneficiary** (active only when the donor states a rule → org must be in `funder_history`/`active_donors`). Active items only; any active item explicitly failed → **auto-Decline**. No active item → Not sure. |
 | MUST 2 | **Strategic fit** (`strategic_fit`) | Strongly aligns (2) · Limited priority (1) · Off-strategy (0) · Not sure (→1) | ONE component — best-matched theme's priority band (min of org-band, call-band) across the org's graded `program_area_ratings` ∩ the donor/RFP priorities. No call/org theme data → Not sure. |
-| MUST 3 | **Implementation capacity** (`capacity`) | Yes, comfortably (2) · Yes, but a stretch (1) · No, beyond us (0) · Not sure (→1) | Up to 4 components: **annual-budget ceiling · prior-grant ceiling** (moved here from MUST 1) · **experience** (call-stated years) · **award-absorption** = realistic ask `min(award, funding_target_max)` vs `largest_grant_usd` **stretched** by experience/stage/#grants. Each active only when stated/determinable. *("Org stage" retired 2026-07-20 — redundant with Experience; org stage still feeds the award-absorption stretch and the PREFER-8 age edge.)* |
+| MUST 3 | **Implementation capacity** (`capacity`) | Yes, comfortably (2) · Yes, but a stretch (1) · No, beyond us (0) · Not sure (→1) | **2 components (reworked 2026-08-06):** **financial capacity** = one 0–1 composite over the value checks that are determinable — award-absorption (realistic ask `min(award, funding_target_max)` vs `largest_grant_usd`, **stretched** by years/stage/#grants) + the 🔒 annual-budget and prior-grant **ceilings**; and **experience** — org maturity vs the call's years bar *or* stage restriction, **default-pass when neither is stated**. The ceilings remain auto-Decline gates, checked on the sub-parts (the composite mean can hide a failed one). See §5 for the full breakdown. |
 | MUST 4 | **Geographic fit** (`geographic_fit`) | Yes, our own presence (2) · Yes, via a partner (1) · No presence there (0) · Not sure (→1) | ONE tiered component. Scope = call ∪ donor (with **US-only / grants.gov** inference → United States). `countries_registered` ∩ scope → own presence; operating country / qualifying partner → via partner; inclusive tiers (LMIC/global) credited. 🔒 **No reach → fatal (auto-Decline)**. No scope at all → Not sure. |
 | MUST 5 | **Cofinancing & compliance** (`cofinancing`) | Yes, none required (2) · Partial, with effort (1) · No, required (0) · Not sure (→1) | **Compliance hub** (see §2). ONE soft component — co-financing/pre-finance capacity (0/0.5/1); the rest are hard 0/1 gates active only when the donor/call imposes them. **No fatal gate** — every gate is acquirable before the deadline, so an unmet one lowers the score / Parks (never auto-Declines). Nothing imposed → Not sure. |
 | PREFER 6 | **Funding quality** (`funding_quality`) | High (2) · Moderate (1) · Low (0) · Not sure (→1) | **Mean of the MET active components** — floor/ceiling/value-stated + duration (see §7). An **unstated duration is excluded** (its absence neither helps nor hurts), so all *stated* components met → **High**. Falls back to the award-size band vs `funding_target_low/mid/max` when the org set no targets. No award value → Not sure. |
@@ -210,14 +218,35 @@ unless noted; 🔒 marks a fatal gate (failing it auto-Declines).
 |---|---|---|
 | `strat_fitness` | Best-matched theme priority | `min(band(org priority), band(call/donor priority))` over shared program areas; no theme data → Not sure |
 
-### MUST 3 · Implementation capacity (`capacity`)
+### MUST 3 · Implementation capacity (`capacity`) — **2 components** (reworked 2026-08-06)
 | Key | Component | Active / scored |
 |---|---|---|
-| ~~`org_stage`~~ | ~~Org stage fit~~ | **Retired 2026-07-20** — redundant with `experience` (both matched org maturity vs the call's bar). Org stage still feeds the award-absorption *stretch* and the PREFER-8 `comp_age` edge. |
-| `budget_ceiling` | Annual-budget ceiling | Donor caps by org budget; org `annual_budget` within it |
-| `grant_ceiling` | Prior-grant ceiling | Donor caps by largest prior grant; org `largest_grant` within it |
-| `experience` | Track-record / experience required | Call states an experience bar |
-| `award_absorption` | Award absorption | Realistic ask `min(award, target_max)` vs `largest_grant`, **stretched** by experience/stage/#grants |
+| `financial_capacity` | **Financial capacity for this award** (composite, soft) | The **mean of whichever value checks are determinable** (below) — active unless *nothing* about the money is knowable. Stays on a 0–1 scale even when only one check applies. |
+| `experience` | Experience requirement (soft) | **Always active.** No bar stated by the call *or* donor intel → **default pass = 1** ("no restriction"). A stated bar is scored; both bars stated → the **weaker** governs. |
+
+**Sub-parts of `financial_capacity`** — not separate components; they are averaged into the one score. All three need the call's award value, so when extraction misses it they blank together rather than showing as three independent unknowns:
+
+| Sub-part | Direction | Scored | 🔒 |
+|---|---|---|---|
+| `award_absorption` | *Are we big enough?* (the common case) | Realistic ask `min(award, target_max)` vs `largest_grant`/`annual_budget`, **stretched ×2–7** by years/stage/#grants: within → 1 · ≤1.5× → 0.5 · beyond → 0 | soft |
+| `budget_ceiling` | *Are we too big?* (rare — a window reserved for small orgs) | Donor states a max annual budget; org `annual_budget` within it | **fatal** |
+| `grant_ceiling` | *Are we too big?* | Donor states a max prior grant; org `largest_grant` within it | **fatal** |
+
+> The two ceilings stay **auto-Decline gates** and are read from the sub-parts directly, *not* from the composite — a failed ceiling averaged with a passing absorption yields 0.5, which would otherwise read as a harmless "stretch". `derive_capacity` and `fatal_decline` both check the hard sub-parts first.
+
+**`experience` scoring** — the bar can arrive two ways, and until 2026-08-06 only the first was scored:
+
+| Bar | Source | Scored |
+|---|---|---|
+| **Years** | `experience_required` — a bare number (`"3"`, `"5+"`) is taken literally ("no less than 3 years since creation"); else `significant`→10y, `moderate`→5y | meets it → 1 · within 2y → 0.5 · else 0. Founding year unrecorded → fall back to `org_stage` (established → 1 · early-stage → 0 when the bar ≥5y · unknown → 0.5) |
+| **Stage** | `org_stage_required` — `early-stage` \| `established`, extracted only when the call *restricts* | same stage → 1 · opposite stage → **0** · org stage unrecorded → 0.5 |
+
+> The stage bar closes a real gap: a fund reserved for **young organisations** now scores an established applicant **0** instead of passing it through. Neither experience bar is fatal — an experience mismatch lowers the score and Parks, it does not auto-Decline.
+
+| Key | Status |
+|---|---|
+| ~~`org_stage`~~ | **Retired 2026-07-20** — its restriction is now scored inside `experience`; org stage still feeds the award-absorption *stretch* and the PREFER-8 `comp_age` edge. |
+| ~~`budget_ceiling`~~ / ~~`grant_ceiling`~~ / ~~`award_absorption`~~ | **Folded into `financial_capacity` 2026-08-06** as sub-parts. Their ML feature slots (`cmp_*`) are retained and always `None`; `cmp_financial_capacity` is appended last (positional feature contract). |
 
 ### MUST 4 · Geographic fit (`geographic_fit`) — 🔒 fatal at 0
 | Key | Component | Active / scored |
