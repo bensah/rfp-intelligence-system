@@ -854,6 +854,14 @@ with grid_col:
                     _won_disp = f"{_sc0:g}"
                     _total = 1 if _act else 0
                     _pct = round(_sc0 * 100)
+                elif key in _OR_KEYS and any(f.get("met") is True for f in _act):
+                    # OR-CRITERION, satisfied. The tiers are ALTERNATIVE ROUTES — the panel
+                    # itself labels the unused ones "(alternative route — not needed)". An
+                    # AND-style mean over all three therefore showed the BEST possible
+                    # outcome as 1/3 · 33%: the denominator counted exactly the rows the
+                    # panel says were not required. One satisfied route IS the whole
+                    # criterion (owner 2026-08-06).
+                    _won_disp, _total, _pct = "1", 1, 100
                 else:
                     # won/total over MEASURABLE components only: an unmeasurable factor
                     # (met=None with no score — can't tell from call OR donor intel) is
