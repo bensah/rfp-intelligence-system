@@ -749,7 +749,7 @@ def _merge_rfp_compliance(donor: dict | None, rfp_compliance: dict | None) -> di
     instead of being flattened to True, but never overwrite a non-blank donor value."""
     eff = dict(donor or {})
     for k, v in (rfp_compliance or {}).items():
-        if not v:
+        if not v or _explicitly_not_imposed(v):
             continue
         col = _eff_column(k)
         if col in _RFP_VALUED_KEYS:
@@ -758,6 +758,27 @@ def _merge_rfp_compliance(donor: dict | None, rfp_compliance: dict | None) -> di
         else:
             eff[col] = True
     return eff
+
+
+# A call can state that a requirement does NOT apply. The merge used to coerce EVERY
+# non-empty value to True — and every one of these strings is truthy in Python — so
+# "audited financials: not required" ACTIVATED a hard MUST-5 gate and scored it 0.
+# Nothing sanitises the model's free-text here (only the MUST-1 enums are checked), so a
+# single such emission both failed the call and, via donor_enrich, wrote "yes" into the
+# donor record and poisoned that funder for every future call.
+_NOT_IMPOSED = frozenset({
+    "no", "false", "0", "n/a", "na", "none", "nil", "never", "absent",
+    "not required", "not_required", "not applicable", "not_applicable",
+    "not stated", "not specified", "unspecified", "unknown", "not mentioned",
+})
+
+
+def _explicitly_not_imposed(v: Any) -> bool:
+    """True when a call/donor flag SAYS the requirement does not apply. Booleans are
+    left to normal truthiness — only text is interpreted."""
+    if isinstance(v, bool):
+        return False
+    return str(v).strip().lower() in _NOT_IMPOSED
 
 
 # --- factor model (shared by derivation + the Review pass/fail panel) --------
@@ -1694,21 +1715,40 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
 
     # (Org stage, annual-budget ceiling, prior-grant ceiling MOVED to MUST-3.)
 
-    # --- F. Prior beneficiary — PRIOR-RELATIONSHIP REQUIRED (owner 2026-06-29). ACTIVE
-    #    ONLY when the donor/call states a prior-beneficiary rule; otherwise NOT
-    #    APPLICABLE (excluded — so a brand-new donor is never auto-declined). When
-    #    active: this donor in the org's prior-funding list (active_donors ∪
-    #    funder_history) → 1, not listed → 0. Verifiable, so no permissive default.
+    # --- F. Repeat-applicant restriction (renamed + corrected 2026-08-07, owner-agreed).
+    #    This is a RESTRICTION on applying again, not a requirement to have applied
+    #    before, and the previous implementation had it exactly backwards: it scored 1
+    #    when the org WAS a prior beneficiary and 0 when it was not, for ALL FOUR rule
+    #    values. So `eligible` — whose own help text is "prior grantees explicitly
+    #    welcome (no penalty)" — auto-DECLINED every org that had not previously been
+    #    funded, and the three `ineligible_*` rules passed exactly the orgs they exist
+    #    to bar.
+    #
+    #    The vocabulary (core.llm_synthesis._MUST1_ENUMS) means:
+    #      eligible            — prior grantees welcome        → no restriction at all
+    #      ineligible_current  — CURRENT grantees may not apply → bars org_active_donors
+    #      ineligible_previous — PAST grantees may not apply    → bars org_funder_history
+    #      ineligible_any      — both are barred
+    #    Blank → not stated → excluded (a brand-new donor is never auto-declined).
+    #
+    #    Named "Repeat-applicant restriction" so it reads as an eligibility rule rather
+    #    than a duplicate of PREFER-7's relationship advantage — they measure the same
+    #    fact for opposite purposes and were being confused for each other.
     rule = str(donor.get("donor_prior_beneficiary_rule") or "").strip().lower()
-    if rule:
-        fa = rfp.get("funding_agency")
-        prior = (_funder_in_history(fa, [d for d in (org.get("org_active_donors") or []) if d])
-                 or _funder_in_history(fa, [d for d in (org.get("org_funder_history") or []) if d]))
-        sc = 1.0 if prior else 0.0
+    current = _canonical_donor_match(org.get("org_active_donors"), donor, rfp)
+    past = _canonical_donor_match(org.get("org_funder_history"), donor, rfp)
+    if rule == "ineligible_current":
+        sc, active_f = (0.0 if current else 1.0), True
+    elif rule == "ineligible_previous":
+        sc, active_f = (0.0 if past else 1.0), True
+    elif rule == "ineligible_any":
+        sc, active_f = (0.0 if (current or past) else 1.0), True
     else:
-        sc = 1.0
-    items.append(_qfactor("prior_beneficiary", "Prior beneficiary (relationship with this donor)",
-                          active=bool(rule), score=sc, hard=True, default=False))
+        # "eligible" states there is NO restriction; blank states nothing at all.
+        # Neither is a test the org can fail, so neither is scored.
+        sc, active_f = None, False
+    items.append(_qfactor("prior_beneficiary", "Repeat-applicant restriction",
+                          active=active_f, score=sc, hard=True, default=False))
 
     return items
 
