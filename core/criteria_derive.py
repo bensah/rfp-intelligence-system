@@ -800,7 +800,7 @@ def _merge_rfp_compliance(donor: dict | None, rfp_compliance: dict | None) -> di
     for k, v in (rfp_compliance or {}).items():
         col = _eff_column(k)
         valued = col in _RFP_VALUED_KEYS
-        if v is None or (isinstance(v, str) and not v.strip()):
+        if v is None or (isinstance(v, str) and not v.strip()) or _call_is_silent(v):
             continue                                  # the call is silent → donor stands
         if _explicitly_not_imposed(v) or (not valued and not v):
             eff[col] = None if valued else False      # the call says it does NOT apply
@@ -809,19 +809,38 @@ def _merge_rfp_compliance(donor: dict | None, rfp_compliance: dict | None) -> di
     return eff
 
 
-# A call can state that a requirement does NOT apply. Every one of these strings is
-# truthy in Python, so coercing "whatever the call said" to True made "audited
-# financials: not required" ACTIVATE a hard MUST-5 gate and score it 0. Nothing
-# sanitises the model's free text here (only the MUST-1 enums are checked), and via
-# donor_enrich a single such emission also wrote "yes" into the donor record — poisoning
-# that funder for every future call. ("0" is deliberately NOT in this set: a VALUED key
-# may legitimately be 0, e.g. a 0% indirect-cost cap; a falsy value on a BOOLEAN key is
-# handled separately above.)
-_NOT_IMPOSED = frozenset({
-    "no", "false", "n/a", "na", "none", "nil", "never", "absent",
+# TWO DIFFERENT THINGS the model can say, and they must not be conflated.
+#
+# (a) The call AFFIRMATIVELY states the requirement does not apply. Under call-first
+#     precedence this CLEARS a donor record asserting it does — the rule in the negative
+#     direction. Every one of these strings is truthy in Python, so coercing "whatever
+#     the call said" to True used to make "audited financials: not required" ACTIVATE a
+#     hard MUST-5 gate and score it 0. Nothing sanitises the model's free text here (only
+#     the MUST-1 enums are checked), and via donor_enrich one such emission also wrote
+#     "yes" into the donor record, poisoning that funder for every future call.
+#     ("0" is deliberately absent: a VALUED key may legitimately be 0, e.g. a 0%
+#     indirect-cost cap; a falsy value on a BOOLEAN key is handled separately above.)
+_CALL_SAYS_NOT_IMPOSED = frozenset({
+    "no", "false", "none", "nil", "never", "absent",
     "not required", "not_required", "not applicable", "not_applicable",
-    "not stated", "not specified", "unspecified", "unknown", "not mentioned",
 })
+# (b) The call SAID NOTHING about it. That is silence, not a statement — donor intel
+#     stands, exactly as when the key is absent altogether. Treating these as an
+#     override would let an extractor's "unknown" wipe a curated donor requirement,
+#     which is the opposite of what call-first means. "n/a" is read as silence rather
+#     than as "not applicable": it is genuinely ambiguous, and leaving the donor record
+#     intact is the conservative direction.
+_CALL_SILENT = frozenset({
+    "not stated", "not specified", "unspecified", "unknown", "not mentioned",
+    "n/a", "na", "tbd", "tbc",
+})
+
+
+def _call_is_silent(v: Any) -> bool:
+    """True when the call did not address the requirement at all."""
+    if isinstance(v, bool):
+        return False
+    return str(v).strip().lower() in _CALL_SILENT
 
 
 def _explicitly_not_imposed(v: Any) -> bool:
@@ -829,7 +848,7 @@ def _explicitly_not_imposed(v: Any) -> bool:
     left to normal truthiness — only text is interpreted."""
     if isinstance(v, bool):
         return False
-    return str(v).strip().lower() in _NOT_IMPOSED
+    return str(v).strip().lower() in _CALL_SAYS_NOT_IMPOSED
 
 
 # --- factor model (shared by derivation + the Review pass/fail panel) --------
