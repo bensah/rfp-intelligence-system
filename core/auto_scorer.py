@@ -2449,28 +2449,78 @@ def _apply_scoring_rules(
     return values
 
 
+# A term preceded by a negator is not a hit. The bags match on plain substrings, so the
+# `cofinancing` negatives fire on their OWN positives: "match required" is inside "no
+# match required", and "cost-share required" is inside "no cost-share required" — and
+# negatives are tested first, so the phrases that mean the requirement is ABSENT scored
+# the criterion 0. Looking back a few characters for a negator fixes both directions
+# (a positive term is equally not a hit in "not fully funded").
+_KW_NEGATOR_RE = re.compile(r"\b(?:no|not|without|never|non|excluding)\s*[-–]?\s*$", re.I)
+_KW_LOOKBACK = 16
+
+
+def _term_hit(term: str, text_lower: str) -> bool:
+    """True when `term` appears in the text and is NOT negated immediately before it."""
+    t = (term or "").strip().lower()
+    if not t:
+        return False
+    start = 0
+    while True:
+        i = text_lower.find(t, start)
+        if i < 0:
+            return False
+        if not _KW_NEGATOR_RE.search(text_lower[max(0, i - _KW_LOOKBACK):i]):
+            return True
+        start = i + 1
+
+
+def _canonical_keyword_label(key: str, want_score: int) -> str:
+    """The criterion's own canonical label worth `want_score` (2 = confirm, 0 = red
+    flag). The bags used to write the bare strings "Yes"/"No", which are in NO
+    criterion's response vocabulary — they only scored at all via criterion_score's
+    legacy fallback, and they displayed as a bare "No" beside a panel full of rich
+    labels. Falls back to the bare word when a criterion has no matching option."""
+    from core.scorer import CRITERION_RESPONSES, criterion_score
+    for opt in CRITERION_RESPONSES.get(key) or []:
+        if criterion_score(opt) == want_score:
+            return opt
+    return "Yes" if want_score == 2 else "No"
+
+
 def _apply_criteria_keywords(values: dict[str, Any], text: str,
                              policies: dict[str, Any]) -> dict[str, Any]:
-    """Crawl keyword ASSIST (supplements the objective derivation).
+    """Crawl keyword ASSIST — a FALLBACK for criteria the derivation could not
+    determine. It never overturns derived evidence.
 
-    Per criterion, against the RFP text:
-      * a NEGATIVE term found → force the criterion to "No" (red flag; for a
-        MUST this screens the RFP out as Decline),
-      * else a POSITIVE term found AND the criterion is still undetermined
-        (None) → set it "Yes".
-    Criteria with no configured terms are left exactly as the derivation set
-    them. Terms live in policies['criteria'][key]{positive,negative}."""
+    Per criterion, against the RFP text, and ONLY while the criterion is still
+    undetermined (None):
+      * a NEGATIVE term found → set the criterion's red-flag label,
+      * else a POSITIVE term found → set its confirming label.
+
+    THE NEGATIVE BRANCH USED TO BE UNGATED and ran FIRST, so a single substring beat
+    the whole org × call × donor derivation. Measured on the live catalog, that turned
+    four TB / malaria drug-discovery calls from a derived "Strongly aligns" into "No"
+    — the bag's `strategic_fit` negatives carry "drug discovery" to exclude basic
+    science, and it fired on calls squarely inside the org's own priority areas, each
+    costing 15 points of Bid Strength. The `cofinancing` negatives contain
+    "cost-share required", a substring of "**no** cost-share required", so the phrase
+    that means the requirement is ABSENT scored the criterion 0.
+
+    Gating it matches what the Settings help text has always promised for the positive
+    terms ("confirms this criterion when it can't be derived") and keeps the
+    admin-configurable feature intact. Terms live in policies['criteria'][key]
+    {positive,negative}; `criteria.feasibility` is a separate hard kill-switch read by
+    _feasibility_kill (not scored here)."""
     if not text:
         return values
     tl = text.lower()
     for key, rule in (policies.get("criteria") or {}).items():
-        if key not in values:
-            continue
-        if any(n and n.lower() in tl for n in (rule.get("negative") or [])):
-            values[key] = "No"
-        elif values.get(key) is None and any(
-                p and p.lower() in tl for p in (rule.get("positive") or [])):
-            values[key] = "Yes"
+        if key not in values or values.get(key) is not None:
+            continue                     # derived evidence wins — never overwrite it
+        if any(_term_hit(n, tl) for n in (rule.get("negative") or [])):
+            values[key] = _canonical_keyword_label(key, 0)
+        elif any(_term_hit(p, tl) for p in (rule.get("positive") or [])):
+            values[key] = _canonical_keyword_label(key, 2)
     return values
 
 
