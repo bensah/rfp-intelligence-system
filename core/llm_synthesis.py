@@ -509,14 +509,32 @@ _MUST1_ENUMS = {
 }
 
 
+def _pick(d: dict, col: str) -> Any:
+    """The model's value for `col`, accepting BOTH the bare key the prompt asks for and
+    the donor_-prefixed column name.
+
+    The prompt (above) instructs the model to emit BARE keys — `entity_type_required`,
+    `registration_region`, `prior_beneficiary_rule`, `requires_pi`, `pi_country_scope`,
+    `hq_country_required` — while this sanitiser read the `donor_`-prefixed column names.
+    Nothing errored; the values were simply dropped. Six of the eight MUST-1 signals never
+    survived, so NO MUST-1 component could ever be activated by what a call actually said
+    — the criterion ran entirely on hand-curated donor intel. Accept both spellings."""
+    bare = col[len("donor_"):] if col.startswith("donor_") else col
+    for k in (col, bare):
+        v = d.get(k)
+        if v not in (None, ""):
+            return v
+    return None
+
+
 def _sanitize_must1(d: dict) -> dict:
     """Keep only valid, grounded MUST-1 requirement keys/values from the LLM output;
     coerce requires_pi to a boolean flag; bound free-text country/region length."""
     clean: dict[str, Any] = {}
-    if str(d.get("donor_requires_pi") or "").strip().lower() in ("yes", "true", "1"):
+    if str(_pick(d, "donor_requires_pi") or "").strip().lower() in ("yes", "true", "1"):
         clean["donor_requires_pi"] = True
     for key, allowed in _MUST1_ENUMS.items():
-        v = str(d.get(key) or "").strip().lower()
+        v = str(_pick(d, key) or "").strip().lower()
         if v in allowed:
             clean[key] = v
     # `experience_required` ALSO accepts an explicit minimum age the call states ("no
@@ -527,10 +545,10 @@ def _sanitize_must1(d: dict) -> dict:
                      str(d.get("experience_required") or "").strip().lower())
         if m and 1 <= int(m.group(1)) <= 50:
             clean["experience_required"] = m.group(1)
-    hq = str(d.get("donor_hq_country_required") or "").strip()
+    hq = str(_pick(d, "donor_hq_country_required") or "").strip()
     if hq and len(hq) <= 60:
         clean["donor_hq_country_required"] = hq
-    rr = d.get("donor_registration_region")
+    rr = _pick(d, "donor_registration_region")
     if isinstance(rr, list):
         rr = ", ".join(str(x).strip() for x in rr if str(x).strip())
     rr = str(rr or "").strip()
