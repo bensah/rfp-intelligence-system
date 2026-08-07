@@ -994,16 +994,31 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     #    signal (match %, secured-cofinancing %, reimbursement-only, or a cost-share
     #    clause in the call). cofinancing_capacity → strong/moderate 1 · limited 0.5 ·
     #    none 0. (cost_share + prefinance were redundant → merged.)
+    #    UNRECORDED capacity is NOT a partial (owner 2026-08-07). The old trailing
+    #    `else 0.5` scored a BLANK org_cofinancing_capacity as "partly able to
+    #    co-finance" — absence presented as a measurement, and the ◐ that produced was
+    #    indistinguishable from a real "limited". Both sides must be known: the
+    #    call/donor has to impose it AND the org has to have recorded its capacity;
+    #    otherwise the component is "Not sure" and stays out of the denominator.
+    #    ("weak"/"no" are legacy spellings; the live vocabulary is
+    #    org_profile.COFINANCING_LEVELS = none | limited | moderate | strong.)
     cap = str(org.get("org_cofinancing_capacity") or "").strip().lower()
-    cap_sc = (1.0 if cap in ("strong", "moderate")
-              else 0.5 if cap == "limited"
-              else 0.0 if cap in ("weak", "none", "no") else 0.5)
-    a_cofin = bool(_need("donor_cost_sharing_match_required", "donor_min_cofinancing_secured_pct",
+    cap_sc = {"strong": 1.0, "moderate": 1.0, "limited": 0.5,
+              "none": 0.0, "weak": 0.0, "no": 0.0}.get(cap)
+    #    `donor_min_cofinancing_secured_pct` is a NUMBER ("20" = 20% must already be
+    #    secured), but it was being tested with `_need` → `_truthy`, which only accepts
+    #    yes/true/required — so a donor stating a real percentage threshold never
+    #    activated this check at all. Any positive figure imposes it.
+    a_cofin = bool(_need("donor_cost_sharing_match_required",
                          "donor_state_party_cofinancing_required")
+                   or _num(donor.get("donor_min_cofinancing_secured_pct"))
                    or str(donor.get("donor_prefinance_required") or "").strip().lower() == "reimbursement_only"
                    or _cost_share_required(rfp))
-    items.append(_qfactor("cofinance", "Co-financing / pre-finance capacity",
-                          active=a_cofin, score=cap_sc, hard=False))
+    cof = _qfactor("cofinance", "Co-financing / pre-finance capacity",
+                   active=bool(a_cofin and cap_sc is not None), score=cap_sc, hard=False)
+    if a_cofin and cap_sc is not None:
+        cof["_detail"] = f"this funder requires money up front; our capacity is '{cap}'"
+    items.append(cof)
 
     # HARD credential gates — ACTIVE only when the donor/call imposes it; then the org
     # must already hold it (else 0). Undetected → Not sure (excluded).
