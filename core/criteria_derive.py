@@ -1161,8 +1161,7 @@ def _registered_on_portal(org: dict, rfp: dict, donor: dict | None) -> bool:
     'familiar with the portal' competitiveness edge (owner 2026-07-20)."""
     d = donor or {}
     # (b) known-funder familiarity — reuse the canonical donor matchers.
-    hist = [h for h in (org.get("org_funder_history") or []) if h]
-    if _funder_in_history(rfp.get("funding_agency"), hist):
+    if _is_past_grantee(org, rfp, d):
         return True
     if (_canonical_donor_match(org.get("org_active_donors"), d, rfp)
             or _canonical_donor_match(org.get("org_engaged_donors"), d, rfp)):
@@ -1205,6 +1204,27 @@ def _shared_collaborator(org: dict, donor: dict | None) -> bool:
     return False
 
 
+def _is_past_grantee(org: dict, rfp: dict, donor: dict | None) -> bool:
+    """THE single "have we been funded by this funder before?" test.
+
+    Canonical FIRST: both sides resolve through donor_intel's canonical key, so an
+    acronym, an alias, a programme brand and the full legal name all land on the same
+    donor. A call published under a programme brand used to miss the funder behind it —
+    "Grand Challenges" never matched an org history holding "Bill & Melinda Gates
+    Foundation", so PREFER-7 reported "not a grantee" for the org's longest-standing
+    funder, and PREFER-8 lost its portal-familiarity edge at the same time.
+
+    The raw-NAME test is kept as a fallback for free-typed funders that are not in the
+    donor catalog at all. Used by PREFER-7 (both the label and the components) and by
+    PREFER-8's portal familiarity, so those three can never disagree about the same
+    fact."""
+    hist = [h for h in (org.get("org_funder_history") or []) if h]
+    if not hist:
+        return False
+    return bool(_canonical_donor_match(hist, donor, rfp)
+                or _funder_in_history(rfp.get("funding_agency"), hist))
+
+
 def _funder_in_history(funding_agency: Any, hist: list[str]) -> bool:
     """True iff the call's funder matches an entry in the org's funder_history.
     Substring match requires BOTH sides ≥4 chars (so a short funder code like
@@ -1242,7 +1262,7 @@ def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) 
     partners/collaborators — OR we're registered on their portal. Else "None"; None
     only when we hold no relationship data."""
     hist = [h for h in (org.get("org_funder_history") or []) if h]
-    if _funder_in_history(rfp.get("funding_agency"), hist):
+    if _is_past_grantee(org, rfp, donor):
         return "Current/past grantee"
     if (_canonical_donor_match(org.get("org_engaged_donors"), donor, rfp)
             or _shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor)):
@@ -1707,8 +1727,16 @@ def _capacity_factors(org: dict, rfp: dict, donor: dict | None = None,
 
 
 def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> list[dict]:
-    grantee = _funder_in_history(rfp.get("funding_agency"),
-                                 [h for h in (org.get("org_funder_history") or []) if h])
+    # Match the funder history CANONICALLY, not by raw name. `_funder_in_history` compares
+    # `rfp.funding_agency` as a STRING, so a call published under a programme brand missed
+    # the funder behind it: "Grand Challenges" never matched an org history holding "Bill &
+    # Melinda Gates Foundation", and PREFER-7 read "not a grantee" for the org's single
+    # longest-standing funder. `_canonical_donor_match` already resolves both sides through
+    # donor_intel's canonical key (acronym ⇄ alias ⇄ full name), which is how MUST-5's
+    # authorized-signatory and PREFER-8's portal checks match the same fact — PREFER-7 was
+    # the odd one out. The raw-name test is KEPT as a fallback for free-typed funders that
+    # are not in the donor catalog at all.
+    grantee = _is_past_grantee(org, rfp, donor)
     contact = bool(_shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor))
     # Donor engaged — we've had prior contact (meetings / concept notes / EOIs) with this
     # call's donor though no funding yet. Matched robustly to org.engaged_donors.
