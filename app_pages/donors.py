@@ -149,6 +149,7 @@ _LABEL_OVERRIDES = {
     "donor_hq_country_required": "Applicant must be HQ'd in",
     "org_stage_required": "Org stage required",
     "donor_max_annual_budget": "Max annual budget (eligibility ceiling)",
+    "donor_indirect_cost_max_pct": "Indirect cost policy (% of project cost) allowed",
     "donor_min_track_record": "Min largest grant managed (floor)",
     "donor_required_partner_type": "Required partner type",
     "donor_required_partner_country": "Required partner country",
@@ -412,6 +413,8 @@ _PROFILE = ["donor_founded", "donor_summary_description", "donor_mission", "dono
             "donor_entity_type_required", "donor_registration_region",
             "donor_requires_pi", "donor_pi_country_scope", "donor_max_prior_grant",
             "donor_prior_beneficiary_rule",
+            # MUST-5 indirect-cost cap (migration 090) — a % of project cost, VALUED.
+            "donor_indirect_cost_max_pct",
             # Conditions on how awarded funds may be used (migration 062) — free text.
             "donor_fund_use_conditions"]
 # Columns kept for backward-compat but no longer surfaced anywhere (not edited,

@@ -276,6 +276,21 @@ def render_org_setup(user, sb, tenant_id=None):
             "Co-financing capacity", _cofin_opts,
             index=_cofin_opts.index(_cofin_cur) if _cofin_cur in _cofin_opts else 1,
             help="Can you meet match / cost-share requirements? (cofinancing).")
+        # MUST-5 indirect cost (#7): our own overhead rate, matched against the maximum
+        # a call/funder reimburses. Blank = not recorded → the component stays "Not sure"
+        # and is excluded from the denominator, never defaulted to a pass.
+        _ic_cur = _prof.get("org_indirect_cost_rate")
+        # value=None keeps BLANK distinct from 0. A blank means "not recorded" -> the
+        # MUST-5 component stays "Not sure" and is excluded from the denominator; a
+        # real 0 means "we recover no overhead", which is a scored answer.
+        indirect_cost_rate = st.number_input(
+            "Indirect cost policy (% of project cost)",
+            min_value=0.0, max_value=100.0, step=0.5,
+            value=float(_ic_cur) if _ic_cur not in (None, "") else None,
+            placeholder="e.g. 15  — leave blank if not set",
+            help="Your negotiated overhead / administrative rate, e.g. 15 for 15%. "
+                 "Matched against the maximum a call or funder reimburses. Blank = not "
+                 "recorded (the check is skipped); 0 = we recover no overhead.")
 
         # Capacity inputs (MUST 3). Labels spell out the DISTINCT meanings — the
         # earlier terse labels let "annual budget" read as "max grant", which
@@ -571,6 +586,8 @@ def render_org_setup(user, sb, tenant_id=None):
                 "org_entity_type": entity_type,
                 "org_founding_year": int(founding_year) or None,
                 "org_cofinancing_capacity": cofin,
+                "org_indirect_cost_rate": (float(indirect_cost_rate)
+                                           if indirect_cost_rate is not None else None),
                 "org_annual_budget": int(annual_budget) or None,
                 "org_largest_grant": int(largest_grant) or None,
                 "org_lowest_grant": int(lowest_grant) or None,
