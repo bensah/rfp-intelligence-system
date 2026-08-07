@@ -84,10 +84,23 @@ class CallSideSurvivesSanitisationTests(unittest.TestCase):
 
     def test_a_call_stated_requirement_now_reaches_the_criterion(self):
         # End to end: the model's bare key → sanitiser → _merge_rfp_compliance → MUST-1.
+        # The org must have RECORDED its entity type for the component to be scored —
+        # absence of org data is "Not sure", not a verdict (action #6). This test is
+        # about the CALL side reaching the criterion, so it supplies the org side.
         flags = _sanitize_must1({"entity_type_required": "grassroot_local"})
         eff = CD._merge_rfp_compliance({}, flags)
         self.assertEqual(eff.get("donor_entity_type_required"), "grassroot_local")
-        item = _by_key(CD.qualification_factors({}, {}, eff, {}))["entity_type"]
+        org = {"org_entity_type": "grassroot_local"}
+        item = _by_key(CD.qualification_factors(org, {}, eff, {}))["entity_type"]
+        self.assertTrue(item["active"], "the call stated it — it must be scored")
+        self.assertEqual(item["score"], 1.0)
+
+    def test_the_call_side_reaches_a_criterion_that_needs_no_org_field(self):
+        # Same end-to-end path, on an item whose activation depends only on the call —
+        # so it holds regardless of what the org profile has recorded.
+        flags = _sanitize_must1({"registration_region": "Sub-Saharan Africa"})
+        eff = CD._merge_rfp_compliance({}, flags)
+        item = _by_key(CD.qualification_factors({}, {}, eff, {}))["local_registration"]
         self.assertTrue(item["active"], "the call stated it — it must be scored")
 
 
