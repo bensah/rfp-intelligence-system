@@ -84,10 +84,20 @@ class CallSideSurvivesSanitisationTests(unittest.TestCase):
 
     def test_a_call_stated_requirement_now_reaches_the_criterion(self):
         # End to end: the model's bare key → sanitiser → _merge_rfp_compliance → MUST-1.
+        # The org must have RECORDED its entity type for the component to be scored —
+        # absence of org data is "Not sure", not a verdict (action #6).
         flags = _sanitize_must1({"entity_type_required": "grassroot_local"})
         eff = CD._merge_rfp_compliance({}, flags)
         self.assertEqual(eff.get("donor_entity_type_required"), "grassroot_local")
-        item = _by_key(CD.qualification_factors({}, {}, eff, {}))["entity_type"]
+        org = {"org_entity_type": "grassroot_local"}
+        item = _by_key(CD.qualification_factors(org, {}, eff, {}))["entity_type"]
+        self.assertTrue(item["active"], "the call stated it — it must be scored")
+        self.assertEqual(item["score"], 1.0)
+
+    def test_the_call_side_reaches_a_criterion_that_needs_no_org_field(self):
+        flags = _sanitize_must1({"registration_region": "Sub-Saharan Africa"})
+        eff = CD._merge_rfp_compliance({}, flags)
+        item = _by_key(CD.qualification_factors({}, {}, eff, {}))["local_registration"]
         self.assertTrue(item["active"], "the call stated it — it must be scored")
 
 
@@ -105,10 +115,22 @@ class NotImposedFlagTests(unittest.TestCase):
             item = _by_key(CD.compliance_factors({}, {}, eff, {}))["audited_financials"]
             self.assertTrue(item["active"], f"{v!r} failed to activate")
 
-    def test_a_negative_does_not_overwrite_a_valued_donor_field(self):
-        eff = CD._merge_rfp_compliance({"donor_registration_region": "Sub-Saharan Africa"},
-                                       {"registration_region": "not stated"})
-        self.assertEqual(eff["donor_registration_region"], "Sub-Saharan Africa")
+    def test_call_SILENCE_does_not_overwrite_a_valued_donor_field(self):
+        # "not stated" / "unknown" mean the call said NOTHING — donor intel stands.
+        # Only an affirmative "not required" clears it (see the test below).
+        for quiet in ("not stated", "unknown", "unspecified", "n/a", "not mentioned"):
+            eff = CD._merge_rfp_compliance(
+                {"donor_registration_region": "Sub-Saharan Africa"},
+                {"registration_region": quiet})
+            self.assertEqual(eff["donor_registration_region"], "Sub-Saharan Africa", quiet)
+
+    def test_an_affirmative_no_from_the_call_DOES_clear_the_donor_record(self):
+        # Call-first precedence in the negative direction.
+        for said_no in ("not required", "not applicable", "none", "no"):
+            eff = CD._merge_rfp_compliance({"donor_audited_financials_required": True},
+                                           {"audited_financials_required": said_no})
+            item = _by_key(CD.compliance_factors({}, {}, eff, {}))["audited_financials"]
+            self.assertFalse(item["active"], said_no)
 
     def test_booleans_are_left_to_normal_truthiness(self):
         self.assertFalse(CD._explicitly_not_imposed(True))

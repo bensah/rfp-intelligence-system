@@ -115,6 +115,9 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "trusted_academic_institutions": [],    # universities / research orgs (free-add, codified)
 
     # --- cofinancing & compliance (MUST 5) ---
+    # MUST-5 indirect cost — our own overhead rate as a % of project cost, matched
+    # against the maximum a call/funder reimburses (see criteria_derive indirect_cost).
+    "org_indirect_cost_rate": None,         # number 0-100, e.g. 15 for 15%
     "org_cofinancing_capacity": "limited",      # none | limited | moderate | strong
     # Hard pre-acquire compliance credentials the org ALREADY holds — each gates a
     # donor requirement of the same name (org lacks it + donor requires it -> 0).

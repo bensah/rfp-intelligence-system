@@ -346,6 +346,26 @@ def _stage_token(v: Any) -> str | None:
     return None
 
 
+def _pct(v: Any) -> float | None:
+    """A percentage-of-project-cost figure → 0-100, or None when unrecorded.
+
+    Accepts 15, "15", "15%", " 15 % ". Deliberately does NOT interpret a fraction:
+    0.15 means fifteen HUNDREDTHS of a percent here, because the field is labelled
+    "% of project cost" on both forms and a silent ×100 would misread a real 0.15%
+    cap. Out-of-range values are rejected rather than clamped — a 500 in this field
+    is bad data, not a 500% overhead."""
+    if v is None or isinstance(v, bool):
+        return None
+    s = str(v).strip().rstrip("%").strip()
+    if not s:
+        return None
+    try:
+        f = float(s)
+    except (TypeError, ValueError):
+        return None
+    return f if 0.0 <= f <= 100.0 else None
+
+
 def _money(v: Any) -> str:
     try:
         return f"${float(v):,.0f}"
@@ -730,6 +750,7 @@ _RFP_VALUED_KEYS = frozenset({
     "donor_requires_pi", "donor_pi_country_scope", "donor_max_prior_grant", "donor_max_annual_budget",
     "donor_hq_country_required", "org_stage_required", "donor_prior_beneficiary_rule",
     "experience_required",                       # MUST-3 experience (call-LLM detected)
+    "donor_indirect_cost_max_pct",               # MUST-5 indirect-cost cap (% of project)
 })
 
 
@@ -756,35 +777,70 @@ def _eff_column(k: str) -> str:
 
 
 def _merge_rfp_compliance(donor: dict | None, rfp_compliance: dict | None) -> dict:
-    """Donor profile augmented with requirements the RFP ITSELF states (LLM-
-    extracted `compliance_flags`) — triangulates donor × RFP so a requirement
-    stated only in the call still drives MUST-1/MUST-5. RFP-true overrides absent
-    donor. VALUED keys keep their actual value (e.g. pi_country_scope='foreign')
-    instead of being flattened to True, but never overwrite a non-blank donor value."""
+    """THE precedence rule for every requirement the model scores (owner 2026-08-07):
+
+        1. the CALL, if it states the requirement — it wins outright on a conflict;
+        2. else DONOR INTEL, as the fallback general guideline;
+        3. else nothing — the component stays "Not sure" and is excluded from the
+           denominator (it is never defaulted to pass OR to fail).
+
+    The call is the specific, current, authoritative statement for THIS opportunity;
+    donor intel is the funder's standing guidance and only fills what the call omits.
+
+    Until now the rule was BACKWARDS for valued keys: `if not eff.get(col)` meant the
+    call's value was written only when the donor field was blank, so a stale donor
+    record beat the call in front of you — a call saying "Sub-Saharan Africa" lost to a
+    donor record saying "United States". A call stating a requirement does NOT apply now
+    also CLEARS a donor record asserting it does, which is the same rule applied in the
+    negative direction.
+
+    (`_geo_scope` already implemented call-first for geography; this brings the
+    compliance side into line, so the whole model follows one rule.)"""
     eff = dict(donor or {})
     for k, v in (rfp_compliance or {}).items():
-        if not v or _explicitly_not_imposed(v):
-            continue
         col = _eff_column(k)
-        if col in _RFP_VALUED_KEYS:
-            if not str(eff.get(col) or "").strip():
-                eff[col] = v
-        else:
-            eff[col] = True
+        valued = col in _RFP_VALUED_KEYS
+        if v is None or (isinstance(v, str) and not v.strip()) or _call_is_silent(v):
+            continue                                  # the call is silent → donor stands
+        if _explicitly_not_imposed(v) or (not valued and not v):
+            eff[col] = None if valued else False      # the call says it does NOT apply
+            continue
+        eff[col] = v if valued else True              # the call imposes it → call wins
     return eff
 
 
-# A call can state that a requirement does NOT apply. The merge used to coerce EVERY
-# non-empty value to True — and every one of these strings is truthy in Python — so
-# "audited financials: not required" ACTIVATED a hard MUST-5 gate and scored it 0.
-# Nothing sanitises the model's free-text here (only the MUST-1 enums are checked), so a
-# single such emission both failed the call and, via donor_enrich, wrote "yes" into the
-# donor record and poisoned that funder for every future call.
-_NOT_IMPOSED = frozenset({
-    "no", "false", "0", "n/a", "na", "none", "nil", "never", "absent",
+# TWO DIFFERENT THINGS the model can say, and they must not be conflated.
+#
+# (a) The call AFFIRMATIVELY states the requirement does not apply. Under call-first
+#     precedence this CLEARS a donor record asserting it does — the rule in the negative
+#     direction. Every one of these strings is truthy in Python, so coercing "whatever
+#     the call said" to True used to make "audited financials: not required" ACTIVATE a
+#     hard MUST-5 gate and score it 0. Nothing sanitises the model's free text here (only
+#     the MUST-1 enums are checked), and via donor_enrich one such emission also wrote
+#     "yes" into the donor record, poisoning that funder for every future call.
+#     ("0" is deliberately absent: a VALUED key may legitimately be 0, e.g. a 0%
+#     indirect-cost cap; a falsy value on a BOOLEAN key is handled separately above.)
+_CALL_SAYS_NOT_IMPOSED = frozenset({
+    "no", "false", "none", "nil", "never", "absent",
     "not required", "not_required", "not applicable", "not_applicable",
-    "not stated", "not specified", "unspecified", "unknown", "not mentioned",
 })
+# (b) The call SAID NOTHING about it. That is silence, not a statement — donor intel
+#     stands, exactly as when the key is absent altogether. Treating these as an
+#     override would let an extractor's "unknown" wipe a curated donor requirement,
+#     which is the opposite of what call-first means. "n/a" is read as silence rather
+#     than as "not applicable": it is genuinely ambiguous, and leaving the donor record
+#     intact is the conservative direction.
+_CALL_SILENT = frozenset({
+    "not stated", "not specified", "unspecified", "unknown", "not mentioned",
+    "n/a", "na", "tbd", "tbc",
+})
+
+
+def _call_is_silent(v: Any) -> bool:
+    """True when the call did not address the requirement at all."""
+    if isinstance(v, bool):
+        return False
+    return str(v).strip().lower() in _CALL_SILENT
 
 
 def _explicitly_not_imposed(v: Any) -> bool:
@@ -792,7 +848,7 @@ def _explicitly_not_imposed(v: Any) -> bool:
     left to normal truthiness — only text is interpreted."""
     if isinstance(v, bool):
         return False
-    return str(v).strip().lower() in _NOT_IMPOSED
+    return str(v).strip().lower() in _CALL_SAYS_NOT_IMPOSED
 
 
 # --- factor model (shared by derivation + the Review pass/fail panel) --------
@@ -1063,6 +1119,28 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
                           active=bool(_need("donor_sam_uei_registration_required")
                                       or _is_us_federal(rfp)),
                           score=(1.0 if _sam_ok else 0.0), hard=True))
+
+    # Indirect-cost policy — the org's own overhead rate vs the maximum this funder
+    # reimburses, as a % of project cost (owner 2026-08-07). Read call-first via
+    # _merge_rfp_compliance: many funders publish a standing rate in their guidelines,
+    # but a specific call can set its own, and then the call governs. A legacy
+    # `indirect_cost_disallowed` flag is the 0% case, which is what finally gives that
+    # long-unused boolean a meaning. ACTIVE only when BOTH sides are known — an
+    # unpublished cap or an unrecorded org rate is "Not sure", never a default pass.
+    cap = _pct(donor.get("donor_indirect_cost_max_pct"))
+    if cap is None and _truthy(donor.get("donor_indirect_cost_disallowed")):
+        cap = 0.0
+    rate = _pct(org.get("org_indirect_cost_rate"))
+    ic = _qfactor("indirect_cost", "Indirect-cost policy",
+                  active=(cap is not None and rate is not None),
+                  score=(1.0 if (cap is not None and rate is not None and rate <= cap)
+                         else 0.0),
+                  hard=False)
+    if cap is not None and rate is not None:
+        ic["_detail"] = (f"our {rate:g}% overhead vs this funder's {cap:g}% cap"
+                         + ("" if rate <= cap else
+                            f" — we would absorb the {rate - cap:g}-point difference"))
+    items.append(ic)
 
     # Authorized-signatory — matched to the org's list of donors it has ALREADY
     # obtained an authorized signatory from (not a generic checkbox).
