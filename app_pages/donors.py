@@ -437,7 +437,7 @@ _ELIG = [
 _FIT = [c for c in _FLAGS if c.endswith("_fit")]
 _REQ = [c for c in _FLAGS if c not in _ELIG and c not in _FIT]
 _FLAG_GROUPS = {
-    "Eligibility & routes": [c for c in _ELIG if c in _FLAGS],
+    "Legal & registration requirements": [c for c in _ELIG if c in _FLAGS],
     "Program-area fit": _FIT,
     "Requirements & compliance": _REQ,
 }
@@ -807,7 +807,7 @@ def _summary_lines(row: dict) -> list[str]:
             lines.append(f"- **{_lbl}:** {_v}")
         lines.append("")
     section("Eligibility & process", [
-        ("Eligibility & routes", flags("Eligibility & routes")),
+        ("Legal & registration requirements", flags("Legal & registration requirements")),
         ("Requirements & compliance", flags("Requirements & compliance")),
         ("Direct local org eligible", _disp(row.get("donor_direct_local_org_eligible"))),
         ("Route status", _disp(row.get("donor_active_route_status"))),
@@ -838,7 +838,7 @@ def _summary_lines(row: dict) -> list[str]:
 
     projects = _past_projects(row)
     if projects:
-        lines.append(f"Track record — funded projects ({len(projects)})")
+        lines.append(f"Past Projects — funded projects ({len(projects)})")
         lines.extend(_project_line(p) for p in projects)
         lines.append("")
 
@@ -1034,7 +1034,7 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
     (t_id, t_about, t_fund, t_scope, t_elig,
      t_track, t_strat, t_contacts) = st.tabs([
         "🏷 Identity", "📖 About & strategy", "💰 Funding", "🎯 Scope & fit",
-        "✅ Eligibility & process", "📚 Track record", "🧭 Strategic guidance",
+        "✅ Eligibility & process", "📚 Past Projects", "🧭 Strategic guidance",
         "📇 Contacts"])
 
     # ── Identity ─────────────────────────────────────────────────────────────
@@ -1231,7 +1231,7 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
     with t_elig:
         edited.update(_checkbox_matrix(
             row, editable=True, key_prefix=f"ed_{ck}",
-            groups=["Eligibility & routes", "Requirements & compliance"]))
+            groups=["Legal & registration requirements", "Requirements & compliance"]))
         st.divider()
         _r1, _r2 = st.columns(2)
         with _r1:
@@ -1280,13 +1280,14 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
             _label("donor_selection_criteria"), row.get("donor_selection_criteria") or "", height=120,
             key=f"selcrit_{ck}", help="Evaluation criteria, relative weights, and what wins.")
 
-        # Hard eligibility conditions → computed Qualification (MUST-1). Each is
-        # checked ONLY when set here; any condition the applicant fails → ineligible.
+        # Standing eligibility conditions this funder publishes. Recorded as the funder
+        # states them; the donor profile must read as donor intelligence, not as the
+        # scoring model (owner 2026-08-07). Each is applied ONLY when set here.
         # (independent_entity_required + welcome_registration_required are yes/no and
         # appear as checkboxes in the Requirements & compliance group above.)
         st.divider()
-        st.markdown("**Hard eligibility conditions** — feed Qualification (MUST-1). "
-                    "Leave blank if the donor doesn't impose them.")
+        st.markdown("**Standing eligibility conditions** — who this funder will fund. "
+                    "Leave blank when the funder's guidelines don't state it.")
         _hs1, _hs2 = st.columns(2)
         with _hs1:
             edited["donor_hq_country_required"] = json.dumps(_multi_with_options(
@@ -1329,14 +1330,14 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
             _label("donor_min_cofinancing_secured_pct"), row.get("donor_min_cofinancing_secured_pct") or "",
             key=f"mincofin_{ck}", help="e.g. '25' — must have ≥25% secured from other sources.")
 
-        # MUST-1 (Legal status & qualification) rework conditions — migration 049.
-        # Each feeds one MUST-1 item; leave blank if the donor doesn't impose it.
+        # Who this funder will contract with. These are donor GUIDELINES, recorded as
+        # the funder states them — the donor profile must read as donor intelligence,
+        # never as the scoring model (owner 2026-08-07: "donor profile should exist as
+        # if we are not going to do any matching"). Leave blank when the funder does not
+        # say. Eligible legal TYPE is captured by the NGO / for-profit checkboxes above.
         st.divider()
-        st.markdown("**MUST-1 identity conditions** (entity type · registration "
-                    "region · individual/PI · prior-grant ceiling · prior-beneficiary "
-                    "rule). Each feeds a MUST-1 item only when set.")
-        # Eligible legal TYPE is captured by the existing NGO / for-profit
-        # eligibility checkboxes above (Eligibility & routes) — not duplicated here.
+        st.markdown("**Who this funder will contract with** — leave any blank when the "
+                    "funder's guidelines don't state it.")
         _ent_opts = ["", "grassroot_local", "multi_country", "individual"]
         _cur_ent = str(row.get("donor_entity_type_required") or "").strip()
         _req_pi_opts = ["", "yes", "no"]
@@ -1394,7 +1395,7 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
                  "ineligible_current = current grantees barred; ineligible_previous = "
                  "past grantees barred; ineligible_any = both.")
 
-    # ── Track record — funded projects (JSON: past_projects_json) ────────────
+    # ── Past Projects — funded projects (JSON: past_projects_json) ──────────
     with t_track:
         st.caption("Funded projects — title, amount, year, country, stage, short "
                    "description, link. Add rows freely.")
@@ -2031,7 +2032,7 @@ def _view_dialog(row: dict) -> None:
         if v:
             _elig_kv.append((_lbl, _col, v))
     _elig_flags = {g: [_label(c) for c in _FLAG_GROUPS.get(g, []) if _yes(row.get(c))]
-                   for g in ("Eligibility & routes", "Requirements & compliance")}
+                   for g in ("Legal & registration requirements", "Requirements & compliance")}
     _elig_notes = _disp(row.get("donor_eligibility_notes"))
     _sel = _disp(row.get("donor_selection_criteria"))
     if any(_elig_flags.values()) or _elig_kv or _elig_notes or _sel:
@@ -2055,11 +2056,11 @@ def _view_dialog(row: dict) -> None:
                 _sub(_label("donor_selection_criteria"))
                 st.markdown(_sel)
 
-    # ── 📚 Track record — funded projects (incl. stage + description) ────────
+    # ── 📚 Past Projects — funded projects (incl. stage + description) ───────
     _projects = _past_projects(row)
     if _projects:
         with st.container(border=True):
-            _sec_header("📚", f"Track record — funded projects ({len(_projects)})")
+            _sec_header("📚", f"Past Projects — funded projects ({len(_projects)})")
             _pdf = pd.DataFrame(_projects)
             _show = [c for c in ["title", "amount", "currency", "year", "country",
                                  "stage", "description", "link"]
