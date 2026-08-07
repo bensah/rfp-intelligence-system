@@ -878,7 +878,11 @@ def render_org_setup(user, sb, tenant_id=None):
                             "Negative terms (red flag → No)",
                             list(rule.get("negative") or []),
                             key=f"pol_neg_{ckey}",
-                            help="Found in the RFP → forces this criterion to No.")
+                            help="Found in the RFP → sets this criterion to No "
+                                 "when it can't be derived. Like the positive terms, "
+                                 "these are a FALLBACK: they never overturn a value "
+                                 "derived from your org profile, the call and donor "
+                                 "intel.")
 
         with pol_tabs[3]:
             from core import web_search as _ws
