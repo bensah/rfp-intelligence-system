@@ -132,17 +132,24 @@ class OrRatioTests(unittest.TestCase):
         facts = CD._relationship_factors(ORG, RFP, BMGF)
         self.assertEqual(self._ratio(facts, True), (1.0, 1))       # was 1/3 · 33%
 
-    def test_an_unsatisfied_or_criterion_still_counts_every_route(self):
+    def test_an_unsatisfied_or_criterion_still_counts_every_active_route(self):
+        # The denominator counts the ACTIVE tiers. "Donor already engaged" is a human
+        # answer (action #10) and is excluded until someone gives one, so an unanswered
+        # row has two active tiers, not three.
         other = {"donor": "Wellcome Trust", "canonical_key": "wellcome_trust"}
-        facts = CD._relationship_factors(ORG, {"funding_agency": "Wellcome Trust"}, other)
-        self.assertEqual(self._ratio(facts, True), (0.0, 3))
+        rfp = {"funding_agency": "Wellcome Trust"}
+        self.assertEqual(self._ratio(CD._relationship_factors(ORG, rfp, other), True),
+                         (0.0, 2))
+        answered = {**rfp, "donor_engaged": "no"}
+        self.assertEqual(self._ratio(CD._relationship_factors(ORG, answered, other), True),
+                         (0.0, 3))
 
     def test_a_non_or_criterion_is_untouched(self):
         # The AND-style mean still counts every route. Two are now met, not one: the
         # shared `_is_past_grantee` also makes PREFER-8's portal-familiarity route true
         # (a known funder implies familiarity with how they take submissions).
         facts = CD._relationship_factors(ORG, RFP, BMGF)
-        self.assertEqual(self._ratio(facts, False), (2.0, 3))
+        self.assertEqual(self._ratio(facts, False), (2.0, 2))
 
 
 if __name__ == "__main__":
