@@ -406,17 +406,23 @@ def _capacity_value_parts(org: dict, rfp: dict, donor: dict) -> list[dict]:
         case — a large annually-managed budget is evidence we can carry it);
       · the CEILINGS ask whether we are too big for this fund (the rare case — a window
         reserved for organisations below a stated size)."""
+    # A ceiling is only DETERMINABLE when the org's own figure is on file. `or 0.0` on a
+    # missing value made an org with no recorded budget PASS a fatal ceiling, and the row
+    # said so out loud: "our $0 annual budget vs the call's $1,000,000 ceiling". That is
+    # absence dressed as a measurement — and in the permissive direction, so it silently
+    # waved through orgs it should have flagged for review. Unknown → not determinable →
+    # the sub-part is simply absent (owner 2026-08-07).
     parts: list[dict] = []
     mab = _num(donor.get("donor_max_annual_budget"))
-    if mab:
-        ob = _num(org.get("org_annual_budget")) or 0.0
+    ob = _num(org.get("org_annual_budget"))
+    if mab and ob:
         parts.append({"key": "budget_ceiling", "name": "Annual-budget ceiling",
                       "score": 1.0 if ob <= mab else 0.0, "hard": True,
                       "detail": f"our {_money(ob)} annual budget vs the call's "
                                 f"{_money(mab)} ceiling"})
     mpg = _num(donor.get("donor_max_prior_grant"))
-    if mpg:
-        og = _num(org.get("org_largest_grant")) or 0.0
+    og = _num(org.get("org_largest_grant"))
+    if mpg and og:
         parts.append({"key": "grant_ceiling", "name": "Prior-grant ceiling",
                       "score": 1.0 if og <= mpg else 0.0, "hard": True,
                       "detail": f"our {_money(og)} largest grant vs the call's "
@@ -643,6 +649,14 @@ def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
     org_us = str((org_settings or {}).get("org_is_us_entity", "")).lower() == "true"
     registered = org.get("org_registered_countries") or []
     operation = org.get("org_operating_countries") or []
+    if not (registered or operation or (org.get("partners") or [])
+            or org.get("trusted_partners") or org_us):
+        # We do not know where WE are. That is an unconfigured org profile, not a
+        # measured absence of reach — and scoring it 0 made MUST-4 a fatal gate that
+        # auto-Declined EVERY scoped call for a tenant who had not yet filled in their
+        # countries. Not determinable → "Not sure" → Park for review (owner 2026-08-07).
+        return {"active": False, "score": None, "label": "Not sure", "scope": scope,
+                "via": "our own registered / operating countries are not recorded"}
     if _covers_scope(registered, scope) or (scope_us and org_us):
         return {"active": True, "score": 1.0, "label": "Yes, our own presence",
                 "scope": scope, "via": "registered / based in scope"}
@@ -963,8 +977,14 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
          bool(org.get("org_has_govt_mou"))),
         ("govt_endorsement", "Govt endorsement letter", _need("donor_govt_endorsement_letter_required"),
          bool(org.get("org_has_govt_endorsement"))),
-        ("local_board", "Local board", _need("donor_local_board_required"),
-         str(os.get("org_has_local_board", "")).lower() == "yes"),
+        # BLANK is the Settings UI's explicit "Unknown — don't apply this gate" (its own
+        # help text says "'Unknown' leaves the gate off"), yet a blank scored 0 on a HARD
+        # gate — the app enforcing a requirement the user had switched off. Active only
+        # once the org has actually answered yes or no (owner 2026-08-07).
+        ("local_board", "Local board",
+         _need("donor_local_board_required")
+         and str(os.get("org_has_local_board", "")).strip().lower() in ("yes", "no"),
+         str(os.get("org_has_local_board", "")).strip().lower() == "yes"),
     ]
     for key, name, active, ok in _hard:
         items.append(_qfactor(key, name, active=active,
@@ -1556,10 +1576,15 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
                           score=(1.0 if admitted else 0.0), hard=True))
 
     # --- B. Entity type -------------------------------------------------------
+    # ACTIVE only when the donor states a requirement AND the org has RECORDED its entity
+    # type. `org_entity_type` defaults to "" — an unset profile field, not a declared
+    # mismatch — and scoring that 0 auto-Declined on a fact nobody had entered. Absence of
+    # ORG data is "Not sure" (excluded); a recorded type that differs is still a real 0.
     ent_req = str(donor.get("donor_entity_type_required") or "").strip().lower()
     org_ent = str(org.get("org_entity_type") or "").strip().lower()
-    items.append(_qfactor("entity_type", "Entity type", active=bool(ent_req),
-                          score=(1.0 if (org_ent and org_ent == ent_req) else 0.0),
+    items.append(_qfactor("entity_type", "Entity type",
+                          active=bool(ent_req and org_ent),
+                          score=(1.0 if org_ent == ent_req else 0.0),
                           hard=True))
 
     # --- C. HQ country — the applicant must be HEADQUARTERED in a required country OR
@@ -1586,14 +1611,26 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     items.append(_qfactor("donor_hq_country", "HQ country", active=detected,
                           score=(1.0 if _hq_ok else 0.0), hard=True))
 
-    # --- D. Registration region — GEO-SCOPE PROXY (owner 2026-06-29). Active when the
-    #    donor states a region, when it explicitly says "Any" (a real pass), OR via the
-    #    call's geographic scope as a proxy. NO region AND no scope → Not sure (excluded).
+    # --- D. Registration region — where the applicant must be INCORPORATED. Active only
+    #    on an EXPLICIT rule: a stated registration region, an explicit "Any" (a real
+    #    pass), or a US-federal call (SAM/UEI + US incorporation is a genuine registration
+    #    requirement, not a geography).
+    #
+    #    The call's GEOGRAPHIC SCOPE is no longer used as a proxy (owner 2026-08-07).
+    #    Where the money is SPENT is not where the applicant must be REGISTERED, and using
+    #    it made this item MUST-4 wearing a legal-eligibility label: executed across eight
+    #    scopes (Cameroon · India · Global · Sub-Saharan Africa · LMIC · Nigeria+Kenya ·
+    #    United States · Bangladesh+Global) against an org registered in Cameroon, item D
+    #    and MUST-4 `geo_presence` agreed 8/8. It carried no independent information, it
+    #    double-counted geography into Bid Strength, and because `fatal_decline` checks
+    #    MUST-1 FIRST the reviewer was told the blocker was "Registration region" when the
+    #    real finding was geographic reach.
+    #
+    #    Geographic reach is NOT lost: MUST-4 still auto-Declines an org with no presence
+    #    or partner in scope — with the correct trigger name.
     reg_req = _as_list(donor.get("donor_registration_region"))
     explicit_any = any(r.lower() == "any" for r in reg_req)
-    region = ([] if explicit_any else
-              (reg_req or _as_list(rfp.get("call_geographic_scope"))
-               or _as_list(donor.get("donor_geographic_scope"))))
+    region = [] if explicit_any else list(reg_req)
     if not region and not explicit_any and _is_us_federal(rfp):
         region = ["United States"]               # US-federal / US-only → must be US-registered
     items.append(_qfactor("local_registration", "Registration region",
