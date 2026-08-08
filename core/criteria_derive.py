@@ -1457,11 +1457,13 @@ def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) 
     hist = [h for h in (org.get("org_funder_history") or []) if h]
     if _is_past_grantee(org, rfp, donor):
         return "Current/past grantee"
-    if (_canonical_donor_match(org.get("org_engaged_donors"), donor, rfp)
+    _eng, _ = _donor_engaged(org, rfp, donor)
+    if ((_eng is not None and _eng > 0.0)
             or _shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor)):
         return "Some contact"
     if (not hist and not (org.get("org_donor_registrations") or [])
             and not (org.get("trusted_partners") or [])
+            and _eng is None
             and not (org.get("org_engaged_donors") or [])):
         return None                    # no relationship data on file → Not sure
     return "None"
@@ -1955,6 +1957,27 @@ def _capacity_factors(org: dict, rfp: dict, donor: dict | None = None,
     return capacity_factors(org, rfp, donor, org_settings)
 
 
+# "Donor already engaged" — a HUMAN answer, per opportunity (owner 2026-08-07).
+# The system cannot know in real time whether anyone has approached this funder about
+# THIS call: a meeting, a concept note or an EOI leaves no trace the crawler can see. It
+# was previously inferred from `org_engaged_donors`, a per-DONOR list, which answers a
+# different question ("have we ever engaged this funder?") and was empty in practice.
+# `partial` is the case the owner named: contact made via a third party on our behalf.
+_ENGAGED_SCORE = {"yes": 1.0, "partial": 0.5, "no": 0.0}
+
+
+def _donor_engaged(org: dict, rfp: dict, donor: dict | None) -> tuple[float | None, str]:
+    """(score, source). The reviewer's per-RFP answer wins; the org-level engaged-donors
+    list is the fallback for rows nobody has answered yet. Neither → None, so the tier is
+    EXCLUDED rather than scored 0 — the system is not entitled to guess."""
+    ans = str((rfp or {}).get("donor_engaged") or "").strip().lower()
+    if ans in _ENGAGED_SCORE:
+        return _ENGAGED_SCORE[ans], "set by reviewer"
+    if _canonical_donor_match((org or {}).get("org_engaged_donors"), donor, rfp):
+        return 1.0, "from your org profile"
+    return None, ""
+
+
 def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> list[dict]:
     # Match the funder history CANONICALLY, not by raw name. `_funder_in_history` compares
     # `rfp.funding_agency` as a STRING, so a call published under a programme brand missed
@@ -1967,14 +1990,19 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
     # are not in the donor catalog at all.
     grantee = _is_past_grantee(org, rfp, donor)
     contact = bool(_shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor))
-    # Donor engaged — we've had prior contact (meetings / concept notes / EOIs) with this
-    # call's donor though no funding yet. Matched robustly to org.engaged_donors.
-    engaged = _canonical_donor_match(org.get("org_engaged_donors"), donor, rfp)
+    sc, src = _donor_engaged(org, rfp, donor)
+    eng = _factor("rel_engaged", "Donor already engaged on this opportunity", "R",
+                  (None if sc is None else sc >= 1.0 if sc >= 1.0 else sc > 0.0),
+                  active=sc is not None, score=sc)
+    if sc is not None:
+        eng["_detail"] = {1.0: "yes — we have engaged this funder about this call",
+                          0.5: "partially — engaged via a third party on our behalf",
+                          0.0: "no — no contact about this call"}[sc] + f" ({src})"
     # OR-tiers: any one satisfies PREFER 7 (grantee is the strongest). Tagged
     # so the Review panel shows them as alternative routes, not all-required.
     return [
         _factor("rel_grantee", "Past / current grantee of this donor", "DO", grantee),
-        _factor("rel_engaged", "Donor engaged (prior contact, no funding yet)", "DO", engaged),
+        eng,
         _factor("rel_contact", "Shared collaborator or registered", "DO", contact),
     ]
 

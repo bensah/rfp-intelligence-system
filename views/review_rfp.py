@@ -1152,6 +1152,24 @@ else:
         "Decision rationale (2-3 lines)", value=_safe_str(row.get("decision_note")),
         key=f"rat_{row['uid']}", height=90)
 
+    # PREFER-7 "Donor already engaged" (migration 091). A HUMAN answer: nothing the
+    # crawler sees can tell us whether someone has approached this funder about THIS
+    # call. Unanswered stays out of PREFER-7 entirely rather than scoring 0.
+    _eng_opts = {"— not answered": None,
+                 "Yes — we have engaged this funder about this opportunity": "yes",
+                 "Partial — via a third party on our behalf": "partial",
+                 "No — no contact about this opportunity": "no"}
+    _eng_cur = str(row.get("donor_engaged") or "").strip().lower()
+    _eng_labels = list(_eng_opts)
+    _eng_idx = next((i for i, v in enumerate(_eng_opts.values()) if v == (_eng_cur or None)), 0)
+    new_engaged = _eng_opts[st.selectbox(
+        "Donor already engaged on this opportunity?", _eng_labels, index=_eng_idx,
+        key=f"eng_{row['uid']}",
+        help="Has anyone approached this funder about THIS call — a meeting, a concept "
+             "note, an EOI? The system can't see this, so it only counts once you "
+             "answer. 'Partial' covers contact made through a third party on our "
+             "behalf. Leave unanswered and it is excluded from Donor relationship.")]
+
     bsave, bcancel, _bspace = st.columns([1, 1, 3])
     if bsave.button("💾 Save changes", type="primary", width='stretch'):
         update = {
@@ -1162,6 +1180,7 @@ else:
             "auto_recommendation": live_rec,
             "decision": new_decision,
             "decision_note": new_rationale.strip() or None,
+            "donor_engaged": new_engaged,
             "decision_date": date.today().isoformat(),
             "decision_overridden_by": user.get("email"),
             "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
