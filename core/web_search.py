@@ -31,7 +31,7 @@ from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
 import streamlit as st
-from dotenv import load_dotenv
+from core.dotenv_compat import load_dotenv   # tolerates a venv without python-dotenv
 
 # Load .env so the key resolves when running locally (`streamlit run App.py`),
 # independent of import order. No-op on Streamlit Cloud (uses st.secrets there).
