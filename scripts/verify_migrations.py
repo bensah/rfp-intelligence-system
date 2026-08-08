@@ -48,6 +48,57 @@ CHECKS = [
      "Re-scan keeps the original discovery date and flags merge conflicts."),
 ]
 
+# NOT every migration adds a column, and a column check silently SKIPS the ones that
+# don't — which made this script look complete while omitting two. A rename and a
+# default-plus-data-repair each need their own probe.
+#
+# Each entry: (stem, description, probe) where probe(sb) -> (state, detail):
+#   state True = applied · False = not applied · None = could not tell.
+def _probe_086(sb):
+    """086 renamed active_grants -> applied_funding (and grant_id -> funding_id)."""
+    try:
+        sb.table("applied_funding").select("funding_id").limit(1).execute()
+    except Exception as exc:
+        return False, f"applied_funding.funding_id unreadable: {str(exc)[:70]}"
+    try:
+        sb.table("active_grants").select("*").limit(1).execute()
+        return False, "the OLD active_grants table still exists — rename incomplete"
+    except Exception:
+        return True, "applied_funding.funding_id present; active_grants gone"
+
+
+def _probe_089(sb):
+    """089 set submissions' default to 0 and repaired the stored rows. The default is
+    not visible through PostgREST, so this checks the INVARIANT the repair establishes:
+    a row that was never submitted must carry 0."""
+    try:
+        rows = (sb.table("rfp_submissions")
+                .select("uid,progress_status,submissions").limit(5000).execute().data or [])
+    except Exception as exc:
+        return None, str(exc)[:70]
+    if not rows:
+        return None, "no rows to judge"
+    bad = [r for r in rows
+           if str(r.get("progress_status") or "").strip().lower() != "completed"
+           and (r.get("submissions") or 0) != 0]
+    zero = sum(1 for r in rows if (r.get("submissions") or 0) == 0)
+    if len(bad) > len(rows) * 0.1:
+        return False, f"{len(bad)} of {len(rows)} never-submitted rows still carry a count"
+    detail = f"{zero} of {len(rows)} rows at 0"
+    if bad:
+        detail += (f"; {len(bad)} row(s) drifted AFTER the repair "
+                   f"({', '.join(r['uid'] for r in bad[:3])}) — harmless, "
+                   f"submission_weight() gates on Progress = Completed")
+    return True, detail
+
+
+NON_COLUMN_CHECKS = [
+    ("086_rename_active_grants_to_applied_funding",
+     "Grants table + grant_id renamed to applied_funding + funding_id.", _probe_086),
+    ("089_submissions_default_zero",
+     "submissions defaults to 0 and never-submitted rows were repaired.", _probe_089),
+]
+
 
 def _has_column(sb, table: str, column: str) -> bool | None:
     """True / False, or None when the table itself could not be read."""
@@ -74,6 +125,15 @@ def main() -> int:
         state = _has_column(sb, table, column)
         label = {True: "APPLIED", False: "MISSING", None: "UNKNOWN (table unreadable)"}[state]
         print(f"{stem:38} {table + '.' + column:44} {label}")
+        if state is False:
+            missing.append((stem, note))
+
+    print()
+    for stem, note, probe in NON_COLUMN_CHECKS:
+        state, detail = probe(sb)
+        label = {True: "APPLIED", False: "MISSING", None: "UNKNOWN"}[state]
+        print(f"{stem:38} {'(not a column change)':44} {label}")
+        print(f"{'':38} {detail}")
         if state is False:
             missing.append((stem, note))
 
