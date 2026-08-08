@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import threading
 
-from dotenv import load_dotenv
+from core.dotenv_compat import load_dotenv   # tolerates a venv without python-dotenv
 from supabase import Client, create_client
 
 load_dotenv()

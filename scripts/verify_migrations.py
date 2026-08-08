@@ -1,12 +1,24 @@
-"""Check which migrations are actually APPLIED to the live database.
+"""Check which migrations are actually APPLIED to the live database — by asking the
+SCHEMA, not the ledger.
 
-Migrations here are not tracked in a table — the files in db/migrations are applied by
-hand in the SQL editor, so the only reliable answer to "is 090 applied?" is to ask the
-database whether the column exists. This does exactly that, per migration, and prints
-the SQL to run for any that are missing.
+CORRECTION (2026-08-08): an earlier version of this file claimed migrations here are not
+tracked. They are — `scripts/migrate.py` applies them over a direct psycopg2 connection
+and records each in a `schema_migrations` table. But that ledger is STALE: it stops at
+041, while the schema itself is at 089. Everything from 042 onwards was applied by hand
+in the SQL editor and never recorded.
 
-Read-only. It never applies anything: the DDL has to go through the SQL editor because
-the PostgREST client cannot execute ALTER TABLE.
+So the two sources disagree, and the ledger is the one that is wrong:
+
+    scripts/migrate.py --status   → claims ~49 migrations are pending
+    this script                   → asks the schema, and finds 086-089 applied
+
+That matters because `python scripts/migrate.py` with no arguments would try to RE-APPLY
+all of them, and 086 (a table rename) cannot be re-applied — active_grants no longer
+exists, so the run would fail there. Until the ledger is reconciled with
+`--mark-applied`, a single outstanding migration is safer to run in the SQL editor.
+
+This script is the schema-side answer: per migration, does the thing it creates actually
+exist? Read-only — it never applies anything.
 
 Usage:
     python scripts/verify_migrations.py           # status of every registered check
