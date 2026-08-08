@@ -35,7 +35,12 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+# Run directly (python scripts/migrate.py) and sys.path[0] is scripts/, not the repo
+# root — so put the root on the path BEFORE importing anything from core.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.dotenv_compat import load_dotenv   # noqa: E402  (tolerates a venv without
+#                                              python-dotenv installed)
 
 # Importing psycopg2 lazily so the helpful error message below fires
 # instead of an opaque ImportError when the dep isn't installed yet.
