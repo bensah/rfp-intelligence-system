@@ -116,8 +116,8 @@ and funding-platform registration were moved to **PREFER 8**.)
 
 | Component (active when…) | Satisfied by (org) | Type |
 |---|---|---|
-| Co-financing — `cost_sharing_match_required`, `state_party_cofinancing_required`, `min_cofinancing_secured_pct` > 0, or an RFP cost-share clause | `cofinancing_capacity` (strong/moderate→1 · limited→0.5 · none→0) | soft |
-| Pre-financing — an explicit `prefinance_required`. `reimbursement_only` is **not** a requirement: it says when money arrives, not who may apply | `prefinance_capacity` — **no such org field yet**, so it stays unscored and out of the denominator | soft |
+| Co-financing — `cofinancing_required` = Required (migration 092); legacy `cost_sharing_match_required` / `state_party_cofinancing_required` / `min_cofinancing_secured_pct` > 0 / an RFP cost-share clause still activate it | `cofinancing_capacity`: none→0 "Not met" · limited→0.5 "Partial, with effort" · strong→1 "Yes, fully met". **Both sides must be known** — Not required / Not sure / blank, or an unrecorded capacity, leaves it unscored | soft |
+| Pre-financing — `prefinance_required` = Required. `reimbursement_only` is **not** a requirement: it says when money arrives, not who may apply | `prefinance_capacity`, the SAME three levels, never read off `cofinancing_capacity` | soft |
 | Audited financials / Audit report — `audited_financials_required` / `audit_report_required` | `has_audited_financials` / `has_audit_report` | hard |
 | SAM.gov/UEI — **US-federal (grants.gov) call only**, or `sam_uei_registration_required` | `org_has_sam_uei` (or a SAM registration). **For every other funder it is EXCLUDED entirely** (2026-08-06) — out of the denominator, not a free pass inside it | hard |
 | Tax-exempt — `tax_exempt_status_required` | `org_tax_exempt` | hard |

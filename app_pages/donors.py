@@ -124,6 +124,7 @@ _LABEL_OVERRIDES = {
     "donor_funding_platform_registration_required": "Funding-platform registration required",
     # New capture fields (migration 062). State/counterpart co-financing is DISTINCT
     # from cost-share match. Indirect-cost flag is phrased as the constraint.
+    "donor_cofinancing_required": "Co-financing required",
     "donor_state_party_cofinancing_required": "Government / counterpart co-financing required",
     "donor_indirect_cost_disallowed": "Indirect / overhead costs not allowed",
     "donor_fund_use_conditions": "Conditions on use of funds",
@@ -436,6 +437,16 @@ _ELIG = [
 ]
 _FIT = [c for c in _FLAGS if c.endswith("_fit")]
 _REQ = [c for c in _FLAGS if c not in _ELIG and c not in _FIT]
+# CO-FINANCING and PRE-FINANCING are eligibility requirements, so they belong in the
+# tri-state matrix with every other one (owner 2026-08-10). Co-financing had NO plainly
+# named field at all — it had to be inferred from "Cost sharing match required",
+# "Government / counterpart co-financing required" and a numeric min-secured-%, none of
+# which a researcher would recognise as the question (migration 092 adds the column).
+# Pre-financing was a special-cased selectbox further down the form; both are now asked in
+# the same place, the same way, and scored against their own org capacity.
+for _rq in ("donor_cofinancing_required", "donor_prefinance_required"):
+    if _rq not in _REQ:
+        _REQ.append(_rq)
 _FLAG_GROUPS = {
     "Legal & registration requirements": [c for c in _ELIG if c in _FLAGS],
     "Program-area fit": _FIT,
@@ -1232,7 +1243,13 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
         edited.update(_checkbox_matrix(
             row, editable=True, key_prefix=f"ed_{ck}",
             groups=["Legal & registration requirements", "Requirements & compliance"]))
+        # ── Application Process ──────────────────────────────────────────────
+        # This block had no heading at all, so "Direct local org eligible" through
+        # "Selection / evaluation criteria" read as a continuation of the requirements
+        # matrix above rather than as its own subject.
         st.divider()
+        st.markdown("**Application Process** — how this funder runs its calls and what "
+                    "an applicant has to go through.")
         _r1, _r2 = st.columns(2)
         with _r1:
             edited["donor_direct_local_org_eligible"] = _single_with_other(
@@ -1240,47 +1257,22 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
                 row.get("donor_direct_local_org_eligible"), key=f"dle_{ck}")
         with _r2:
             edited["donor_active_route_status"] = _single_with_other(
-                "Route status", ROUTE_STATUSES, row.get("donor_active_route_status"), key=f"rstat_{ck}")
+                "Route status", ROUTE_STATUSES, row.get("donor_active_route_status"),
+                key=f"rstat_{ck}")
         _pc1, _pc2 = st.columns(2)
         with _pc1:
-            # PRE-FINANCING IS AN ELIGIBILITY QUESTION, so it is asked as the same
-            # tri-state as every other requirement (Required / Not required / Not sure)
-            # rather than as a payment-modality list (owner 2026-08-10). The old options
-            # — none / partial / reimbursement_only — described WHEN money arrives, and
-            # "reimbursement_only" was being read as though the funder had imposed a
-            # requirement on the applicant, which it had not. Legacy values are mapped
-            # for display so no curated record silently loses its answer.
-            _LEGACY_PF = {"reimbursement_only": "no", "none": "no", "partial": "no"}
-            _raw_pf = str(row.get("donor_prefinance_required") or "").strip().lower()
-            _cur_pf = _VAL_TO_TRISTATE.get(_LEGACY_PF.get(_raw_pf, _raw_pf), "—")
-            _sel_pf = st.selectbox(
-                "Pre-financing required", _TRISTATE_OPTS,
-                index=_TRISTATE_OPTS.index(_cur_pf),
-                key=f"prefinance_required_{ck}",
-                help="Must the applicant fund activities UP FRONT and be reimbursed "
-                     "later, as a condition of being eligible? This is not the same as "
-                     "co-financing (contributing your own funds), and a funder that "
-                     "simply reimburses in arrears has imposed no requirement — answer "
-                     "'Not required' for that. Scored against the org's own "
-                     "pre-financing capacity.")
-            edited["donor_prefinance_required"] = _TRISTATE_TO_VAL[_sel_pf]
-            if _raw_pf == "reimbursement_only" and _sel_pf == "Not required":
-                st.caption(":grey[Was recorded as “Reimbursement only” — a payment "
-                           "modality, kept as *Not required* because it asks nothing of "
-                           "the applicant.]")
-        with _pc2:
             edited["donor_funding_cycle"] = _single_with_other(
                 "Funding cycle / timing", FUNDING_CYCLES, row.get("donor_funding_cycle"),
                 key=f"fcyc_{ck}")
-        _ap1, _ap2 = st.columns(2)
-        with _ap1:
-            edited["donor_application_process"] = _single_with_other(
-                "Application process", APPLICATION_PROCESSES,
-                row.get("donor_application_process"), key=f"appproc_{ck}")
-        with _ap2:
+        with _pc2:
+            # Moved up from below: it describes what the funder asks of a grantee, which
+            # belongs with the requirements rather than among the deadlines.
             edited["donor_reporting_requirements"] = _single_with_other(
                 "Reporting requirements", REPORTING_REQUIREMENTS,
                 row.get("donor_reporting_requirements"), key=f"reprq_{ck}")
+        edited["donor_application_process"] = _single_with_other(
+            "Application process", APPLICATION_PROCESSES,
+            row.get("donor_application_process"), key=f"appproc_{ck}")
         _dl1, _dl2 = st.columns(2)
         edited["donor_application_deadlines"] = _dl1.text_input(
             _label("donor_application_deadlines"), row.get("donor_application_deadlines") or "",

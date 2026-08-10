@@ -118,13 +118,13 @@ DEFAULT_PROFILE: dict[str, Any] = {
     # MUST-5 indirect cost — our own overhead rate as a % of project cost, matched
     # against the maximum a call/funder reimburses (see criteria_derive indirect_cost).
     "org_indirect_cost_rate": None,         # number 0-100, e.g. 15 for 15%
-    "org_cofinancing_capacity": "limited",      # none | limited | moderate | strong
+    "org_cofinancing_capacity": "limited",      # none | limited | strong
     # PRE-FINANCING is a DIFFERENT capability from co-financing (owner 2026-08-10):
     # co-financing = we commit our OWN funds alongside the award; pre-financing = we can
     # carry the grant's costs up front and be reimbursed later. Scoring one against the
     # other is what MUST-5 used to do. Blank = not recorded, so the component stays
     # unscored and out of the denominator rather than borrowing the co-financing answer.
-    "org_prefinance_capacity": None,            # none | limited | moderate | strong
+    "org_prefinance_capacity": None,            # none | limited | strong
     # Hard pre-acquire compliance credentials the org ALREADY holds — each gates a
     # donor requirement of the same name (org lacks it + donor requires it -> 0).
     "org_has_audited_financials": False,        # recent independently audited financials
@@ -166,7 +166,12 @@ LIST_FIELDS: tuple[str, ...] = (
     "proposal_languages", "org_authorized_signatory_donors", "org_funding_routes",
 )
 
-COFINANCING_LEVELS: tuple[str, ...] = ("none", "limited", "moderate", "strong")
+# Three levels, mapping 1:1 onto the three component scores (owner 2026-08-10):
+#   none -> 0.0 "Not met" · limited -> 0.5 "Partial, with effort" · strong -> 1.0 "Yes,
+#   fully met". "moderate" was dropped because it scored 1.0, exactly like "strong" — a
+#   third label for a second outcome. Profiles saved with it still score 1.0 (see
+#   criteria_derive._capacity_score), so no stored answer changes meaning.
+COFINANCING_LEVELS: tuple[str, ...] = ("none", "limited", "strong")
 
 # Canonical legal_type buckets -> human-readable labels. Stored value stays the
 # canonical code (matched by the scan/scorer); the form dropdown and the
