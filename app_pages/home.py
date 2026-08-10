@@ -204,8 +204,8 @@ with _main:
     st.subheader("Where to start")
 
     CARDS = [
-        ("Pipelines", "app_pages/pipelines.py", "📚", "Screen → Review → Tracking → Summary",
-         "Friday-scan + manual submissions through the full lifecycle: 4 tabs (Screen, Review, Tracking, Summary)."),
+        ("Pipelines", "app_pages/pipelines.py", "📚", "Screen → Review → Track → Summary",
+         "Friday-scan + manual submissions through the full lifecycle: 4 tabs (Screen, Review, Track, Summary)."),
         ("Grants", "app_pages/grants.py", "💼", "Applied Funding",
          "Grants under donor review or already awarded, with reporting deadlines."),
         ("Actions", "app_pages/actions.py", "🗒️", "Team check-ins + Engagements",
@@ -250,7 +250,7 @@ with _main:
                the badge grid. Capture meeting notes in **Meeting Log**, linked to the
                RFP under discussion. Decisions saved here override the auto-recommendation
                and are timestamped.
-            4. **Mid-week** — proposal teams work the **Tracking** pipeline. Update stage,
+            4. **Mid-week** — proposal teams work the **Track** pipeline. Update stage,
                progress, next action, deadlines. Log donor calls in **Engagement Log**.
 
             **Roles**

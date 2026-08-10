@@ -25,7 +25,7 @@ _NAV: list[tuple[str, str, str, bool]] = [
      "app_pages/pipelines.py", False),
     ("Pipelines · Review", "review eligibility criteria badges decision",
      "app_pages/pipelines.py", False),
-    ("Pipelines · Tracking", "tracking pipeline stage progress proposal",
+    ("Pipelines · Track", "track tracking pipeline stage progress proposal",
      "app_pages/pipelines.py", False),
     ("Pipelines · Summary", "summary stats overview", "app_pages/pipelines.py", False),
     ("Grants", "applied funding awarded won reporting deadlines",
