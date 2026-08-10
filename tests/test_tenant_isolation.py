@@ -23,6 +23,10 @@ if _ROOT not in sys.path:
 
 # A fake `streamlit` MUST be in sys.modules before importing app modules that do
 # `import streamlit as st` at module top (auth.tenant_context does).
+# NOTE: this stub STAYS in sys.modules for the rest of the process — `sc` and `tc` resolve
+# `streamlit` lazily in places, so restoring the real module here breaks these tests. Any
+# test that needs the REAL Streamlit at run time must reinstall it around its own runs; see
+# tests/test_criteria_editor_widget.py.
 _fake_st = types.ModuleType("streamlit")
 _fake_st.session_state = {}
 sys.modules["streamlit"] = _fake_st
