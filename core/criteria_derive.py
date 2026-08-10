@@ -1056,6 +1056,43 @@ def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
     return _canonical_donor_match(org.get("org_authorized_signatory_donors"), donor, rfp)
 
 
+def _capacity_score(level: Any) -> float | None:
+    """An org co-financing / pre-financing capacity level → its component score.
+
+    Three levels, one score each (owner 2026-08-10):
+        none 0.0 "Not met" · limited 0.5 "Partial, with effort" · strong 1.0 "Yes, fully met"
+
+    "moderate" is mapped to 1.0 rather than dropped: it was removed from the picker because
+    it already scored exactly like "strong", so a profile saved with it must keep its
+    meaning. None for anything unrecorded or unrecognised — the caller then leaves the
+    component unscored instead of guessing.
+    """
+    lv = str(level or "").strip().lower()
+    return {"strong": 1.0, "moderate": 1.0,          # legacy "moderate" == strong
+            "limited": 0.5,
+            "none": 0.0, "weak": 0.0, "no": 0.0}.get(lv)
+
+
+def _requirement(donor: dict, *cols: str) -> str:
+    """'yes' | 'no' | 'not_sure' | '' for the first of `cols` that carries an answer.
+
+    The donor form writes the same tri-state for every requirement, and "" (nothing
+    answered) is distinct from "not_sure" (answered, and the answer is that we don't know):
+    both leave a component unscored, but only the first should fall through to a legacy
+    column. Reads the CALL-merged column first (see _eff_column) so a specific call
+    outranks the funder's standing guideline.
+    """
+    for c in cols:
+        v = str(donor.get(_eff_column(c)) or donor.get(c) or "").strip().lower()
+        if v in ("yes", "true", "required"):
+            return "yes"
+        if v in ("no", "false", "not required", "not_required"):
+            return "no"
+        if v in ("not_sure", "not sure", "unsure", "unknown"):
+            return "not_sure"
+    return ""
+
+
 def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
                        org_settings: dict | None = None) -> list[dict]:
     """MUST-5 COFINANCING & COMPLIANCE (rework 2026-06-29; ACTIVE-ONLY 2026-06-29b).
@@ -1088,64 +1125,74 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     #    otherwise the component is "Not sure" and stays out of the denominator.
     #    ("weak"/"no" are legacy spellings; the live vocabulary is
     #    org_profile.COFINANCING_LEVELS = none | limited | moderate | strong.)
-    cap = str(org.get("org_cofinancing_capacity") or "").strip().lower()
-    cap_sc = {"strong": 1.0, "moderate": 1.0, "limited": 0.5,
-              "none": 0.0, "weak": 0.0, "no": 0.0}.get(cap)
-    #    `donor_min_cofinancing_secured_pct` is a NUMBER ("20" = 20% must already be
-    #    secured), but it was being tested with `_need` → `_truthy`, which only accepts
-    #    yes/true/required — so a donor stating a real percentage threshold never
-    #    activated this check at all. Any positive figure imposes it.
+    #    THE MATCH-MAKING MATRIX (owner 2026-08-10). Co-financing and pre-financing are
+    #    two INDEPENDENT components, each scored the same way: a three-level org capacity
+    #    against a tri-state funder requirement.
     #
-    #    CO-FINANCING AND PRE-FINANCING ARE DIFFERENT REQUIREMENTS (owner 2026-08-10).
-    #    They were merged here — "cost_share + prefinance were redundant" — and they are
-    #    not:
-    #      co-financing  — the funder expects the org to commit its OWN funds alongside
-    #                      the award, as a condition of being eligible at all.
-    #      pre-financing — the org must fund the grant's activities up front and be
-    #                      reimbursed later. A cash-flow modality, NOT an eligibility
-    #                      condition: a funder that reimburses in arrears has not asked
-    #                      the applicant to contribute anything.
-    #    The merge did two wrong things. It scored a PRE-FINANCING value against the org's
-    #    CO-FINANCING capacity — two different capabilities treated as interchangeable —
-    #    and it let `donor_prefinance_required == "reimbursement_only"` ACTIVATE a
-    #    co-financing requirement. On a funder whose cost-sharing is explicitly "no",
-    #    whose state-party co-financing is unset and whose min-secured-% is blank, that
-    #    invented an eligibility requirement the funder never imposed, scored it against
-    #    an unrelated capacity, and cost MUST-5 half its weight (◐ 0.5 → "Partial, with
-    #    effort" → 5.0 of 10 points) purely because the funder reimburses in arrears.
-    #    So `reimbursement_only` no longer activates anything; it is reported instead.
-    a_cofin = bool(_need("donor_cost_sharing_match_required",
-                         "donor_state_party_cofinancing_required")
-                   or _num(donor.get("donor_min_cofinancing_secured_pct"))
-                   or _cost_share_required(rfp))
+    #        org capacity           score   reads as
+    #        none                   0.0     Not met
+    #        limited                0.5     Partial, with effort
+    #        strong                 1.0     Yes, fully met
+    #
+    #        funder requirement     effect
+    #        Required   ('yes')     the component is ACTIVE and scores as above
+    #        Not required ('no')    nothing is imposed → unscored, out of the denominator
+    #        Not sure   / blank     nothing is KNOWN     → unscored, out of the denominator
+    #
+    #    BOTH SIDES must be known: an org capacity on its own is never scored (a funder
+    #    that asks for no match cannot fail us on one), and a requirement on its own is
+    #    never scored either (the 2026-08-07 rule — an unrecorded capacity is not a
+    #    partial). Either side missing greys the component out of MUST-5 entirely.
+    #
+    #    "moderate" was dropped from the org vocabulary: it scored 1.0, exactly like
+    #    "strong", so it was a third label for a second outcome. Legacy values are mapped
+    #    on read, so a profile saved with "moderate" keeps scoring 1.0.
+    # ── CO-FINANCING ──────────────────────────────────────────────────────────────
+    #    `donor_cofinancing_required` (migration 092) is the plainly-named question and
+    #    wins when answered. The three legacy columns still activate it so no curated
+    #    research is lost: cost-sharing match, government/counterpart co-financing, and a
+    #    positive min-secured-%. That last one is a NUMBER ("20" = 20% must already be
+    #    secured) and used to be tested with _truthy, which only accepts yes/true/required
+    #    — so a donor stating a real threshold never activated the check at all.
+    cap = str(org.get("org_cofinancing_capacity") or "").strip().lower()
+    cap_sc = _capacity_score(cap)
+    _cofin_req = _requirement(donor, "donor_cofinancing_required")
+    if not _cofin_req:                                  # fall back to the legacy columns
+        _cofin_req = ("yes" if (_need("donor_cost_sharing_match_required",
+                                      "donor_state_party_cofinancing_required")
+                                or _num(donor.get("donor_min_cofinancing_secured_pct"))
+                                or _cost_share_required(rfp))
+                      else _requirement(donor, "donor_cost_sharing_match_required"))
+    a_cofin = _cofin_req == "yes"
     cof = _qfactor("cofinance", "Co-financing capacity",
                    active=bool(a_cofin and cap_sc is not None), score=cap_sc, hard=False)
     if a_cofin and cap_sc is not None:
-        cof["_detail"] = (f"this funder expects us to co-fund; our recorded capacity "
-                          f"is '{cap}'")
+        cof["_detail"] = (f"this funder requires co-financing; our recorded capacity is "
+                          f"'{cap}'")
+    elif a_cofin:
+        cof["_detail"] = ("this funder requires co-financing; our capacity isn't recorded, "
+                          "so it stays unscored")
     items.append(cof)
 
-    #    PRE-FINANCING is its own component, and today it can never be SCORED: both sides
-    #    have to be known (the 2026-08-07 rule that an unrecorded capacity is not a
-    #    partial), and the org profile has no pre-financing capacity field at all — only
-    #    `org_cofinancing_capacity`. So it stays inactive and out of the denominator until
-    #    an `org_prefinance_capacity` exists to score against. Reading it off
-    #    `org_cofinancing_capacity` instead is exactly the conflation above.
-    #    `reimbursement_only` is still worth SAYING — it is a real execution risk, just
-    #    not an eligibility test — so it rides along as the component's detail.
+    # ── PRE-FINANCING ─────────────────────────────────────────────────────────────
+    #    The same matrix against `org_prefinance_capacity`. Never read off the co-financing
+    #    capacity — different capability, and reading one off the other is the conflation
+    #    this component was split out to end.
+    #
+    #    `reimbursement_only` is a legacy PAYMENT-MODALITY value, not a requirement: it
+    #    says when money arrives, not who may apply. It activates nothing, but it is worth
+    #    SAYING, so it rides along as the component's detail.
     _pf_raw = str(donor.get("donor_prefinance_required") or "").strip().lower()
     _pf_cap = str(org.get("org_prefinance_capacity") or "").strip().lower()
-    _pf_cap_sc = {"strong": 1.0, "moderate": 1.0, "limited": 0.5,
-                  "none": 0.0}.get(_pf_cap)
-    # A funder REQUIRES pre-financing only when it says so outright. "reimbursement_only"
-    # describes when money arrives, not who may apply (owner 2026-08-10); "none" and
-    # "partial" describe an advance being available, which is the opposite of a
-    # requirement.
-    _pf_required = _truthy(donor.get("donor_prefinance_required"))
+    _pf_cap_sc = _capacity_score(_pf_cap)
+    _pf_required = _requirement(donor, "donor_prefinance_required") == "yes"
     prefin = _qfactor("prefinance", "Pre-financing capacity",
                       active=bool(_pf_required and _pf_cap_sc is not None),
                       score=_pf_cap_sc, hard=False)
-    if _pf_raw == "reimbursement_only":
+    if _pf_required and _pf_cap_sc is not None:
+        prefin["_detail"] = (f"this funder requires pre-financing; our recorded capacity "
+                             f"is '{_pf_cap}'")
+    elif _pf_raw == "reimbursement_only":
         prefin["_detail"] = ("this funder reimburses in arrears, so we would carry the "
                             "cash — a delivery risk, not an eligibility condition")
     elif _pf_required and _pf_cap_sc is None:

@@ -53,6 +53,10 @@ CHECKS = [
      "PREFER-7 'Donor already engaged'. Until applied the field reads as unanswered and "
      "the tier stays excluded — nothing errors. NOTE: ships with PR #145; the file only "
      "exists once that is merged."),
+    ("092_donor_cofinancing_required", "donor_intel", "donor_cofinancing_required",
+     "MUST-5 co-financing match. Until applied the component falls back to the three "
+     "legacy columns (cost-sharing match / state-party co-financing / min-secured %) and "
+     "the donor form hides the plainly-named question — nothing errors."),
     # Earlier migrations worth confirming while we are here.
     ("087_criteria_component_overrides", "rfp_submissions", "criteria_component_overrides",
      "Persisted human component verdicts on the Review card."),
