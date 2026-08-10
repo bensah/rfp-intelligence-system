@@ -192,7 +192,23 @@ _DEADLINE_LABEL_RE = re.compile(
     # Separator is OPTIONAL — BMGF writes "Date Closed May 21, 2026" with
     # no colon, "Apply by 15 March 2026" with just a space, etc.
     r"\s*[:\-–]?\s+"
-    r"([A-Za-z0-9 ,\-/.]{6,60})",
+    # STOP AT A SENTENCE BREAK. The capture used to be a flat 60-char run that included
+    # ".", so it read straight through into the NEXT sentence and swallowed dates that
+    # have nothing to do with this deadline:
+    #
+    #   "Applications close on 1 June 2026. Evaluation runs 1 July to 30 August 2026."
+    #        captured -> "1 June 2026. Evaluation runs 1 July 2026 to 30 August 2026."
+    #        so the evaluation window outranked the actual deadline.
+    #
+    # It also swallowed the FOLLOWING LABEL, which silently disabled the extended-deadline
+    # behaviour this module documents: in "Deadline: 23 March. Extended deadline: 30
+    # March", the first match consumed "Extended deadline", so that label never matched on
+    # its own and 30 March was never seen at all.
+    #
+    # The tempered class refuses any position that begins ". <Capital>", which ends the
+    # clause without breaking dates that legitimately contain a period ("Mar. 15, 2026",
+    # "15.03.2026" — neither is a period + space + capital).
+    r"((?:(?!\.\s+[A-Z])[A-Za-z0-9 ,\-/.]){6,60})",
     re.IGNORECASE,
 )
 
@@ -290,55 +306,79 @@ _DATE_IN_TEXT_RE = re.compile(
 
 
 def _extract_deadline_from_text(text: str) -> date | None:
-    """Find ALL labelled deadlines in text. Returns the latest parseable
-    one — this naturally handles extended deadlines (donors typically
-    say 'Deadline: Mar 23' then 'Extended deadline: Mar 30' and we want
-    Mar 30). Also catches unlabelled date ranges ("from X to Y" → Y)."""
-    explicit: list[date] = []   # the date token carried a 20xx year
-    yearless: list[date] = []   # no year in the token → parser defaulted it
+    """The SUBMISSION deadline in `text`, or None.
+
+    Two kinds of date show up, and they must not compete on equal terms:
+
+      LABELLED   the text names it a deadline ("Deadline:", "applications close",
+                 "submission deadline", "closing date"). Authoritative. The LATEST wins,
+                 which is deliberate extended-deadline behaviour: donors say
+                 "Deadline: Mar 23" and later "Extended deadline: Mar 30", and Mar 30 is
+                 the real one.
+
+      UNLABELLED a date window with no deadline wording ("9 October to 7 November 2025:
+                 applications open"). The range patterns capture the window's END, which
+                 is the date an applicant must meet.
+
+    A LABELLED date always beats an unlabelled one. Among UNLABELLED windows the EARLIEST
+    end wins, not the latest — because a call that publishes a calendar lists the whole
+    selection process:
+
+        9 October to 7 November 2025 : applications open      <- the deadline
+        14 November 2025             : confirmation
+        18 December 2025 to 23 January 2026 : expert evaluation
+
+    Taking the latest picked 23 January — an evaluation milestone, ~11 weeks after
+    submissions closed. That is the dangerous direction: it makes a closed call look open,
+    so an expired call passes the deadline gate. The earliest window end is the submission
+    close. (Extended deadlines are unaffected: those are LABELLED, and still take max.)
+    """
     if not text:
         return None
+    # (explicit year in the token, came from a deadline LABEL) -> dates
+    buckets: dict[tuple[bool, bool], list[date]] = {
+        (True, True): [], (True, False): [], (False, True): [], (False, False): []}
 
-    def _add(raw: str | None) -> None:
-        # Scan the captured blob for every date token, not just its prefix —
-        # the prefix may be unparseable noise ("Tuesday, 16 December 1700HRS")
-        # while the real, year-bearing date sits later in the same capture.
+    def _add(raw: str | None, labelled: bool) -> None:
+        # Scan the captured blob for every date token, not just its prefix — the prefix
+        # may be unparseable noise ("Tuesday, 16 December 1700HRS") while the real,
+        # year-bearing date sits later in the same capture.
         for tok in _DATE_IN_TEXT_RE.findall(raw or ""):
             d = _parse_freeform_date(tok)
             if not d:
                 continue
-            if re.search(r"(?<!\d)20\d{2}(?!\d)", tok):
-                explicit.append(d)
-            else:
-                yearless.append(d)
+            has_year = bool(re.search(r"(?<!\d)20\d{2}(?!\d)", tok))
+            buckets[(has_year, labelled)].append(d)
 
-    # Labelled patterns (Deadline:, Closing Date:, etc.)
     for m in _DEADLINE_LABEL_RE.finditer(text):
-        _add(m.group(1))
+        _add(m.group(1), True)
     # Unlabelled date ranges — "APPLICATIONS: FROM OCT 9TH TO NOV 7TH 2025"
     for m in _DATE_RANGE_RE.finditer(text):
-        _add(m.group(1))
+        _add(m.group(1), False)
     # Trailing-label windows — "9 october to 7 november 2025: applications open"
     for m in _DATE_RANGE_TRAILING_RE.finditer(text):
-        _add(m.group(1))
+        _add(m.group(1), False)
 
-    # Prefer dates that carried an EXPLICIT year. A year-less phrase like
-    # "Deadline: 16 December" gets defaulted to the current year by the parser,
-    # which can turn a PAST deadline (the page's "Date Closed Dec 16, 2025")
-    # into a spurious FUTURE one (2026) and leak an expired call through. Only
-    # fall back to year-less dates when the text names no explicit-year date.
-    candidates = explicit or yearless
-    if not candidates:
-        return None
-    # Sanity window: drop absurd far-future dates (a stray year in a strategy
-    # PDF, or a "36 months" -> 2036 misparse). Real RFP deadlines are within a
-    # couple of years; keep the latest of the plausible ones (extended-deadline
-    # behaviour). If everything is implausibly far out, treat as no deadline.
+    # Sanity window: drop absurd far-future dates (a stray year in a strategy PDF, or a
+    # "36 months" -> 2036 misparse). Real RFP deadlines are within a couple of years.
     cutoff = date.today().year + 2
-    plausible = [d for d in candidates if d.year <= cutoff]
-    if not plausible:
-        return None
-    return max(plausible)
+
+    def _ok(ds: list[date]) -> list[date]:
+        return [d for d in ds if d.year <= cutoff]
+
+    # Prefer dates that carried an EXPLICIT year. A year-less phrase like "Deadline: 16
+    # December" gets defaulted to the current year by the parser, which can turn a PAST
+    # deadline (the page's "Date Closed Dec 16, 2025") into a spurious FUTURE one and leak
+    # an expired call through. Only fall back to year-less dates when no explicit-year
+    # date is present at all.
+    for has_year in (True, False):
+        labelled = _ok(buckets[(has_year, True)])
+        if labelled:
+            return max(labelled)                 # extended deadline wins
+        windows = _ok(buckets[(has_year, False)])
+        if windows:
+            return min(windows)                  # earliest window end = submission close
+    return None
 
 
 def _detect_url_year(url: str, title: str = "") -> int | None:
