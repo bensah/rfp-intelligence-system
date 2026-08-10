@@ -417,7 +417,11 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("Eligible countries", "eligibility_countries", "list"),
         ("Other requirements", "eligibility_other", "bullets"),
         ("Ideal applicant", "applicant_fit_profile", "text"),
-        ("Our role", "applicant_role", "text"),
+        # "Our role" is NOT here. It is what THIS tenant would be on a bid (prime / sub),
+        # which is a decision the tenant took — not something the call says about who may
+        # apply. Part 1 restates the CALL, identically for every tenant that opens it, so a
+        # tenant-specific fact in a card headed "Who can apply" read as an eligibility rule
+        # published by the funder. It lives in the decision aid (§2) instead.
     )),
     ("Classification", (
         ("Sector / focus themes", "focus_themes", "list"),
@@ -448,12 +452,35 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
 )
 
 # The narrative + bullet fields rendered as prose blocks rather than label/value rows.
+# All of these describe the CALL, so they are the same for every tenant that opens the page.
+# `key_risks` is deliberately absent — see DECISION_AID_FIELDS.
 NARRATIVE_FIELDS = (
     ("Project overview", "full_description"),
     ("What is funded", "what_is_funded"),
     ("What is NOT funded", "what_is_not_funded"),
     ("Compliance & hard gates", "compliance_requirements"),
-    ("Key risks", "key_risks"),
+)
+
+# ---------------------------------------------------------------------------
+# THE TENANT-SPECIFIC SPLIT
+# ---------------------------------------------------------------------------
+# Part 1 of the page is a read of the CALL and must render identically for every tenant —
+# that is what makes two calls comparable, and what lets the same page serve a call nobody
+# has screened yet. These two fields are the opposite: they are statements about THIS
+# tenant against this call.
+#
+#   applicant_role — prime or sub, a positioning decision the tenant made
+#   key_risks      — risks relative to this tenant's profile ("the organization lacks a
+#                    presence in the eligible regions"), which is a scoring output, not
+#                    something the funder published
+#
+# Shown in Part 1 they read as facts about the call. They belong with the verdict they
+# support, so both moved to the decision aid in §2.
+DECISION_AID_FIELDS = (
+    ("Our role on a bid", "applicant_role", "text"),
+)
+DECISION_AID_NARRATIVE = (
+    ("Key risks for this entity", "key_risks"),
 )
 
 
@@ -492,12 +519,62 @@ def sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
 
 def narrative_blocks(view: dict) -> list[tuple[str, list[str]]]:
     """[(heading, [lines])] for the prose sections — bullets split into lines."""
+    return _blocks(view, NARRATIVE_FIELDS)
+
+
+def _blocks(view: dict, spec) -> list[tuple[str, list[str]]]:
     out = []
-    for heading, field in NARRATIVE_FIELDS:
+    for heading, field in spec:
         lines = as_bullets(view.get(field))
         if lines:
             out.append((heading, lines))
     return out
+
+
+def decision_aid(view: dict) -> tuple[list[tuple[str, str]], list[tuple[str, list[str]]]]:
+    """The TENANT-SPECIFIC material for §2: ``(rows, narrative blocks)``.
+
+    Kept out of Part 1 so that part is a read of the call alone. Empty when the page is
+    showing a catalogue call nobody has screened — there is no tenant view of it yet.
+    """
+    rows = [(label, _render(view, f, k)) for label, f, k in DECISION_AID_FIELDS]
+    return [(lb, v) for lb, v in rows if v], _blocks(view, DECISION_AID_NARRATIVE)
+
+
+# ---------------------------------------------------------------------------
+# is this actually in the tenant's pipeline?
+# ---------------------------------------------------------------------------
+# A row exists in `rfp_submissions` from the moment the scan touches it, long before anyone
+# decides anything: 180 of 254 live rows carry NO decision, and 160 are marked not eligible.
+# Badging all of them "In your pipeline" told a reviewer that three quarters of the store
+# was work in progress. A pipeline is the three real dispositions and nothing else.
+PIPELINE_DECISIONS = ("Proceed", "Park", "Decline")
+
+
+def pipeline_decision(kind: str, row: dict) -> str | None:
+    """The tenant's recorded decision when this call is genuinely IN their pipeline
+    (Proceed / Park / Decline), else None — a scanned-but-undecided row, a row rejected at
+    screening, and a catalogue call all return None."""
+    if kind != KIND_PIPELINE:
+        return None
+    d = str((row or {}).get("decision") or "").strip()
+    for known in PIPELINE_DECISIONS:
+        if d.lower() == known.lower():
+            return known
+    return None
+
+
+def in_pipeline(kind: str, row: dict) -> bool:
+    return pipeline_decision(kind, row) is not None
+
+
+def header_reference(view: dict) -> str:
+    """The identifier shown beside the funder under the title: the FUNDER'S OWN id for the
+    call, so it can be quoted back to them or searched on their portal. Blank when the call
+    published none — the RFPIS uid is an internal key and belongs in Identity, where it
+    already is."""
+    v = (view or {}).get("opportunity_id")
+    return "" if _blank(v) else display_value(v)
 
 
 def summary_of(view: dict) -> str:

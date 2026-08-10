@@ -463,5 +463,101 @@ class TestIsScreened(unittest.TestCase):
                                         dict(PIPELINE_ROW, alignment_score=None)))
 
 
+class TestOnlyARealDispositionCountsAsAPipeline(unittest.TestCase):
+    """A row lands in `rfp_submissions` the moment the scan touches it. 180 of 254 live rows
+    carry NO decision and 160 are marked not eligible, so badging every pipeline row "In
+    your pipeline" told the reviewer that three quarters of the store was live work. A
+    pipeline is the three real dispositions and nothing else."""
+
+    def test_each_real_disposition_counts(self):
+        for d in ("Proceed", "Park", "Decline"):
+            with self.subTest(decision=d):
+                row = dict(PIPELINE_ROW, decision=d)
+                self.assertEqual(od.pipeline_decision(od.KIND_PIPELINE, row), d)
+                self.assertTrue(od.in_pipeline(od.KIND_PIPELINE, row))
+
+    def test_a_scanned_row_with_no_decision_does_not(self):
+        for blank in (None, "", "   "):
+            with self.subTest(decision=blank):
+                row = dict(PIPELINE_ROW, decision=blank)
+                self.assertIsNone(od.pipeline_decision(od.KIND_PIPELINE, row))
+                self.assertFalse(od.in_pipeline(od.KIND_PIPELINE, row))
+
+    def test_a_row_rejected_at_screening_does_not(self):
+        # The shape of the 160: scored, ineligible, never given a disposition.
+        row = dict(PIPELINE_ROW, decision=None, qualification="No, not eligible",
+                   auto_recommendation="Decline")
+        self.assertFalse(od.in_pipeline(od.KIND_PIPELINE, row))
+
+    def test_a_catalogue_call_never_does(self):
+        self.assertFalse(od.in_pipeline(od.KIND_CATALOG, CATALOG_ROW))
+        self.assertIsNone(od.pipeline_decision(od.KIND_CATALOG,
+                                               dict(CATALOG_ROW, decision="Proceed")))
+
+    def test_the_stored_casing_is_tolerated(self):
+        self.assertEqual(
+            od.pipeline_decision(od.KIND_PIPELINE, dict(PIPELINE_ROW, decision="proceed")),
+            "Proceed")
+
+
+class TestPartOneIsTenantVoid(unittest.TestCase):
+    """Part 1 restates the CALL and must read identically for every tenant. Two fields are
+    statements about the tenant instead, and both used to render there: "Our role" inside
+    the "Who can apply" card, where it looked like an eligibility rule the funder had
+    published, and "Key risks", which describes this entity's exposure, not the call."""
+
+    def test_our_role_is_not_in_the_call_layout(self):
+        v = od.standard_view(od.KIND_PIPELINE, PIPELINE_ROW, None)
+        self.assertEqual(v["applicant_role"], "Sub")        # still resolved…
+        self.assertNotIn("Our role", _flat(v))              # …but not shown in Part 1
+
+    def test_key_risks_is_not_a_call_narrative(self):
+        row = dict(PIPELINE_ROW, key_risks="Lacks presence in the eligible regions.")
+        v = od.standard_view(od.KIND_PIPELINE, row, None)
+        self.assertNotIn("Key risks",
+                         [h for h, _lines in od.narrative_blocks(v)])
+
+    def test_both_appear_in_the_decision_aid_instead(self):
+        row = dict(PIPELINE_ROW, key_risks="Lacks presence in the eligible regions.")
+        v = od.standard_view(od.KIND_PIPELINE, row, None)
+        rows, prose = od.decision_aid(v)
+        self.assertIn(("Our role on a bid", "Sub"), rows)
+        self.assertEqual([h for h, _l in prose], ["Key risks for this entity"])
+
+    def test_a_catalogue_call_has_no_decision_aid(self):
+        # Nobody has screened it, so there is no tenant view of it to show.
+        v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
+        self.assertEqual(od.decision_aid(v), ([], []))
+
+    def test_our_role_no_longer_counts_toward_extraction_completeness(self):
+        # It is not an extracted field, so counting it inflated the score.
+        self.assertNotIn("applicant_role", od._COVERAGE_FIELDS)
+
+
+class TestTheHeaderReference(unittest.TestCase):
+    """Under the title sat the RFPIS uid, which reads like the call's own number. The
+    funder's id is what gets quoted back to them or searched on their portal; the uid is an
+    internal key and already has a row under Identity."""
+
+    def test_the_funders_own_id_is_used(self):
+        v = od.standard_view(od.KIND_CATALOG,
+                             dict(CATALOG_ROW, opportunity_id="TOPIC-2026-03"),
+                             dict(CATALOG_ROW, opportunity_id="TOPIC-2026-03"))
+        self.assertEqual(od.header_reference(v), "TOPIC-2026-03")
+
+    def test_it_is_blank_when_the_call_published_none(self):
+        v = od.standard_view(od.KIND_PIPELINE, PIPELINE_ROW, None)
+        self.assertEqual(od.header_reference(v), "")
+        self.assertEqual(od.header_reference({"opportunity_id": "n/a"}), "")
+
+    def test_the_uid_is_never_used_as_the_reference(self):
+        v = od.standard_view(od.KIND_PIPELINE, PIPELINE_ROW, None)
+        self.assertNotEqual(od.header_reference(v), PIPELINE_ROW["uid"])
+
+    def test_the_uid_still_has_its_row_under_identity(self):
+        v = od.standard_view(od.KIND_PIPELINE, PIPELINE_ROW, None)
+        self.assertEqual(_flat(v)["RFPIS uid"], PIPELINE_ROW["uid"])
+
+
 if __name__ == "__main__":
     unittest.main()
