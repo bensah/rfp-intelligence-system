@@ -97,14 +97,21 @@ def _catalog_reader(uid: str):
 @st.cache_data(ttl=120, show_spinner=False)
 def _catalog_by_link(link: str):
     """The raw extraction behind a screened row, matched on call URL — so a pipeline
-    opportunity shows the whole call, not just the fields matching kept."""
+    opportunity shows the whole call, not just the fields matching kept.
+
+    CASE-INSENSITIVE on purpose: `link` arrives lowercased by `normalise_link` while the
+    column stores the URL as published, so an `=` comparison could never match the 344 rows
+    whose URL contains uppercase. See `opportunity_detail.link_query_patterns`. The returned
+    row is still verified against the normalised link, because LIKE can over-match.
+    """
     from db.supabase_client import service_client
     sb = service_client()
-    for candidate in (link, link + "/"):
+    for pattern in _od.link_query_patterns(link):
         rows = (sb.table("extracted_solicitations").select(_od.CATALOG_FIELDS)
-                .eq("opportunity_url", candidate).limit(1).execute().data or [])
-        if rows:
-            return rows[0]
+                .ilike("opportunity_url", pattern).limit(5).execute().data or [])
+        for r in rows:
+            if _od.normalise_link(r.get("opportunity_url")) == link:
+                return r
     return None
 
 
@@ -142,14 +149,24 @@ with _rail:
     except Exception as _rexc:                     # never let the rail take the page down
         st.caption(f"_Opportunity feed unavailable: {_rexc}_")
 
+try:
+    from core import permissions as _perm
+    _is_super = _perm.is_super_user(user)
+except Exception:
+    _is_super = False
+
 with _main:
     # ── header ──────────────────────────────────────────────────────────────
-    st.title(_od.title_of(_view))
+    # The KIND of solicitation is settled before any of the detail: a reviewer reads a
+    # tender differently from a concept-note round, and the column stores only the trade
+    # abbreviation (and is blank on a third of rows), so it is spelled out here.
+    _title, _sol = _od.title_line(_view)
+    st.title(f"{_title}: {_sol}" if _sol else _title)
     _dl_txt, _dl_tone = _od.deadline_status(_view.get("deadline"),
-                                            _view.get("funding_status"))
+                                           _view.get("funding_status"))
     _chips = [(_dl_txt, _dl_tone)]
-    for _f in ("solicitation_type", "instrument_type", "funding_window",
-               "solicitation_language"):
+    # solicitation_type is NOT a chip — it is in the title now.
+    for _f in ("instrument_type", "funding_window"):
         if _view.get(_f):
             _chips.append((_od.display_value(_view[_f]), ""))
     # A row lands in rfp_submissions the moment the scan touches it, so "in your pipeline"
@@ -179,6 +196,9 @@ with _main:
         + "".join(f"<span class='opp-chip {t}'>{_txt(c)}</span>" for c, t in _chips)
         + "</div>", unsafe_allow_html=True)
 
+    # apply_url falls back to the call page (it is extracted on no row — see
+    # opportunity_detail.apply_url), so a separate "Apply" link only appears when the
+    # extraction genuinely found a different target.
     _call, _apply = _od.call_url(_view), _od.apply_url(_view)
     _links = []
     if _call:
@@ -243,6 +263,13 @@ with _main:
                         f"font-size:0.78rem'>{_txt(_dkind)}</span>",
                         unsafe_allow_html=True)
 
+    # A thin page is usually the funder publishing little on the listing page, or our
+    # extraction not reaching a linked document. Say so in the reviewer's terms — the
+    # field-level accounting is super_user detail below.
+    if len(_secs) <= 2:
+        st.caption("This call published limited structured detail. The full text as the "
+                   "source published it is below, and **Open the call ↗** has the rest.")
+
     _raw = _od.as_published(_view)
     if _raw:
         with st.expander("📄 As published (raw extract from the primary source)"):
@@ -251,11 +278,28 @@ with _main:
                        "this is the fullest read available in-app.")
             st.text(_raw)
 
-    _filled, _total, _missing = _od.coverage(_view)
-    st.caption(f"Extraction completeness: **{_filled}/{_total}** schema fields populated"
-               + (f" · not extracted: {', '.join(_missing[:8])}"
-                  + (f" +{len(_missing) - 8} more" if len(_missing) > 8 else "")
-                  if _missing else ""))
+    # ── internal bookkeeping: super_user only ───────────────────────────────
+    # A reviewer does not act on a crawl timestamp, a content hash or an extraction
+    # confidence band, and the completeness line is a statement about OUR pipeline, not
+    # about the call. All of it competed for attention with the funder's actual terms.
+    if _is_super:
+        _tech = _od.technical_sections(_view)
+        _filled, _total, _missing = _od.coverage(_view)
+        with st.expander(f"🔧 Record, provenance & extraction coverage "
+                         f"({_filled}/{_total} schema fields) — super_user"):
+            for _title, _fields in _tech:
+                st.markdown(
+                    f"<div class='opp-card'><h4>{_txt(_title)}</h4>"
+                    + "".join(f"<div class='opp-kv'><span class='opp-k'>{_txt(lb)}</span>"
+                              f"<span class='opp-v'>{_txt(v)}</span></div>"
+                              for lb, v in _fields)
+                    + "</div>", unsafe_allow_html=True)
+            if _missing:
+                st.caption("Not extracted: " + ", ".join(_missing))
+                st.caption("Most of these have no writer at all — the LLM-synthesis stage "
+                           "of the schema was specified but never built. `full_description` "
+                           "is named in exactly two places: the column allow-list and the "
+                           "read on this page.")
 
     # ── PART 2 — scoring analysis ───────────────────────────────────────────
     st.markdown("<div class='opp-sec'>2 · Scoring analysis — is this worth bidding?"
