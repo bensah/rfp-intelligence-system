@@ -71,6 +71,13 @@ SCRIPT = textwrap.dedent("""
             dict(key="bid_team", name="Has a BD team", active=True,
                  score=None, met=True),
         ], "Ample time, sufficient resources"),
+        # PREFER-8: the derivation is authoritative, so edits must NOT rename it.
+        "prefer8_derivation_wins": ("competitiveness", "PREFER 8", [
+            dict(key="comp_track", name="Track record", active=True,
+                 score=1.0, met=True),
+            dict(key="comp_age", name="Established", active=True,
+                 score=None, met=True),
+        ], "Moderate"),
     }}
 
     key, title, items, derived = FIXTURES[st.session_state["fixture"]]
@@ -197,6 +204,36 @@ class TestSamUeiStaysLocked(unittest.TestCase):
         # ...while the two the call never imposed read "—", NOT 0.0.
         self.assertEqual(by_key["qsel_U1_cofinancing_sam_uei"].value, "—")
         self.assertEqual(by_key["qsel_U1_cofinancing_tax_exempt"].value, "—")
+
+
+class TestPrefer8IsNamedByItsOwnModel(unittest.TestCase):
+    """Owner 2026-08-10: the derivation is authoritative for PREFER-6 / PREFER-8. The
+    components stay editable and are still recorded — they just don't rename the
+    criterion — and the editor must SAY so, or a reviewer sets a value, watches the label
+    sit still, and concludes the editor is broken."""
+
+    def test_editing_a_component_does_not_rename_the_criterion(self):
+        at = _app("prefer8_derivation_wins").run()
+        self.assertEqual(_label(at), "Moderate")
+        at.selectbox[0].set_value("0").run()
+        self.assertFalse(at.exception)
+        self.assertEqual(_label(at), "Moderate")      # the model still names it
+
+    def test_the_edit_is_still_recorded(self):
+        at = _app("prefer8_derivation_wins").run()
+        at.selectbox[0].set_value("0").run()
+        self.assertEqual(_collected(at), {"competitiveness": {"comp_track": 0.0}})
+
+    def test_the_editor_explains_why_the_label_does_not_move(self):
+        at = _app("prefer8_derivation_wins").run()
+        blob = " ".join(c.value for c in at.caption)
+        self.assertIn("weighted model", blob)
+        self.assertIn("do **not** rename", blob)
+
+    def test_a_normal_criterion_carries_no_such_caption(self):
+        at = _app("prefer9_two_of_two").run()
+        blob = " ".join(c.value for c in at.caption)
+        self.assertNotIn("do **not** rename", blob)
 
 
 class TestPrefer9NoLongerFreezes(unittest.TestCase):

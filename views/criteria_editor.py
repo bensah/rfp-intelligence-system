@@ -126,6 +126,12 @@ def render_component_editor(uid: str, key: str, title: str, items: list[dict],
                "classification recalculates. **—** means not scored; leave it there and "
                "the system keeps deciding. Greyed rows aren't required by this call, but "
                "setting one asserts that it applies.")
+    # PREFER-6 / PREFER-8 are named by their own weighted model, so editing their
+    # components moves the count but NOT the label. Say that here, or a reviewer sets a
+    # value, watches the label sit still, and reasonably concludes the editor is broken.
+    if key in _crev.DERIVATION_AUTHORITATIVE:
+        st.caption(":blue[This criterion is scored by its own weighted model, so your "
+                   "component edits are recorded and shown but do **not** rename it.]")
     for it in items:
         ck = str(it.get("key"))
         is_act = bool(it.get("active"))

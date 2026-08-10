@@ -39,8 +39,20 @@ gates PREFER-6 on "can the award be sized at all" and weights PREFER-8's track r
 So: the derivation names the criterion, EXCEPT where a human has overridden one of its
 components — then the rules do, because a reviewer's verdict has to be able to move the
 label. Overriding is the only way to reach the cruder formula, and it is a deliberate act.
-(The PREFER-6 / PREFER-8 rule-vs-derivation divergence is a real, separate defect: which
-formula is authoritative is a scoring decision, not a display one.)
+
+...EXCEPT AGAIN for `funding_quality` and `competitiveness`, where the DERIVATION IS
+AUTHORITATIVE unconditionally (owner 2026-08-10). Their derivations are not roll-ups at
+all: PREFER-6 gates on whether the award can be sized before it looks at anything else,
+and PREFER-8 is a weighted accumulator — the track record counts 1.5 and unmet donor
+requirements SUBTRACT. A flat mean over the component list cannot express either, so
+letting the mean name the criterion would replace a considered model with a cruder one the
+moment somebody touched a component. See DERIVATION_AUTHORITATIVE.
+
+The consequence is deliberate and must stay VISIBLE: for those two the component ratio can
+disagree with the label beside it (65 live rows do, e.g. "Moderate" next to 3/4 · 75%).
+That is not the frozen-label defect — both numbers are live, they are just measuring
+different things — so `label_source_note` explains it in the panel rather than hiding
+either one.
 """
 from __future__ import annotations
 
@@ -56,6 +68,18 @@ SUM_OVER_ACTIVE = frozenset({"qualification", "capacity", "cofinancing"})
 
 # Criteria that are ONE component scored 0 / 0.5 / 1.
 SINGLE_COMPONENT = frozenset({"strategic_fit", "geographic_fit"})
+
+# Criteria the DERIVATION always names — a human component override cannot rename them
+# (owner 2026-08-10). Their derivations are considered models, not roll-ups:
+#   funding_quality — gates on whether the award can be sized at all, then reads the org's
+#                     configured min/ceiling band, falling back to absolute award tiers.
+#   competitiveness — a weighted accumulator: track record scores 1.5, and unmet donor
+#                     requirements (grassroots, local board, co-financing, HQ) SUBTRACT.
+# A flat mean over the component list expresses neither, so the mean must not be allowed to
+# replace them. Overrides on their components are still recorded and still shown in the
+# panel — they inform the count and the reviewer's own reading — they just don't rename the
+# criterion. `label_source_note` says so on screen.
+DERIVATION_AUTHORITATIVE = frozenset({"funding_quality", "competitiveness"})
 
 # THE ONE COMPONENT A REVIEWER MAY NOT ACTIVATE.
 # Every other component is editable, on the principle that a human who has read the call
@@ -285,14 +309,44 @@ def criterion_label(key: str, facts: Iterable[dict], derived_label: Any,
     The derivation names the criterion, except where a reviewer has overridden a
     component (or is editing one now) — then the component roll-up does, because a human
     verdict has to be able to move the label it is displayed beside.
+
+    For DERIVATION_AUTHORITATIVE criteria (PREFER-6 / PREFER-8) that exception does NOT
+    apply: their derivations are weighted models a flat component mean cannot express, so
+    the mean must never replace them. `force_roll_up` still wins, so a caller that has
+    genuinely no derived label to show can fall back.
     """
     rolled = roll_up(key, facts, session_scores)
-    if rolled is not None and (force_roll_up or session_scores
-                               or has_human_override(facts)):
+    _human = force_roll_up or bool(session_scores) or has_human_override(facts)
+    if key in DERIVATION_AUTHORITATIVE and not force_roll_up:
+        _human = False
+    if rolled is not None and _human:
         return rolled
     if derived_label not in (None, ""):
         return str(derived_label)
     return rolled if rolled is not None else "Not sure"
+
+
+def label_source_note(key: str, facts: Iterable[dict], label: Any) -> str:
+    """Why the label and the component count can differ for this criterion — "" when they
+    can't, so the note only appears where it is needed.
+
+    Only DERIVATION_AUTHORITATIVE criteria produce one, and only when the component roll-up
+    would actually have said something else. Without this the card looks like the
+    frozen-label defect all over again ("Moderate" beside 3/4 · 75%), when in fact both
+    numbers are live and simply measure different things.
+    """
+    if key not in DERIVATION_AUTHORITATIVE:
+        return ""
+    rolled = roll_up(key, facts)
+    if rolled is None or str(rolled) == str(label):
+        return ""
+    if key == "competitiveness":
+        return ("The label comes from the weighted competitiveness model — track record "
+                "counts 1.5×, and unmet donor requirements subtract — not from this "
+                f"component ratio, which on its own would read “{rolled}”.")
+    return ("The label comes from the funding-quality model, which sizes the award "
+            "against your configured targets before weighing anything else, not from "
+            f"this component ratio, which on its own would read “{rolled}”.")
 
 
 def criterion_count(key: str, facts: Iterable[dict], label: Any = None

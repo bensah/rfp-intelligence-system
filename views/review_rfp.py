@@ -493,7 +493,7 @@ except Exception:
     _is_fatal, _trigger, _bd = False, None, {}
 
 
-def _factor_html(ckey: str) -> str:
+def _factor_html(ckey: str, label=None) -> str:
     """Component pass/fail rows for ONE criterion — the body of its collapsible
     card. Shows EVERY sub-factor: ✓ met · ◐ partly met (measured, between pass and
     fail) · ✗ failed · ? not-applicable (greyed, not required by this call → excluded
@@ -582,6 +582,14 @@ def _factor_html(ckey: str) -> str:
                "🔒 fatal gate (failing it auto-Declines) · "
                "<span style='color:#1a7f37'>set by reviewer</span> = human verdict, "
                "overrides the system</div>")
+    # PREFER-6 / PREFER-8 are named by their own weighted model, not by this ratio, so the
+    # two can legitimately differ. Say why — otherwise the card reads exactly like the
+    # frozen-label defect it is not (both numbers here are live).
+    _note = _crev.label_source_note(ckey, facts, label)
+    if _note:
+        out.append("<div style='margin-top:8px;border-left:3px solid #1f7a8c;"
+                   "background:#eef7fa;padding:7px 10px;border-radius:6px;"
+                   f"color:#155e6b;font-size:0.78rem'>{_esc(_note)}</div>")
     return "".join(out)
 
 
@@ -656,7 +664,7 @@ with grid_col:
                 with st.expander(
                         f"{_crit_badge(current)}  **{LABELS[key]}** — "
                         f":{_vc}[{current or 'Not sure'}]  ·  {_ratio}"):
-                    st.markdown(_factor_html(key), unsafe_allow_html=True)
+                    st.markdown(_factor_html(key, current), unsafe_allow_html=True)
 
 # Composite org × donor × RFP match: Bid Strength = 100% of the 9 weighted criteria
 # (MUST .65 + PREFER .35), with the hard MUST/fatal gate. (The old 20% donor-org
