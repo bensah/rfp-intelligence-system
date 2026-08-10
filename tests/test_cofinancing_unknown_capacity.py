@@ -90,7 +90,7 @@ class RecordedCapacityTests(unittest.TestCase):
     """strong/moderate → 1 · limited → 0.5 · none → 0, exactly as specified."""
 
     def test_the_whole_vocabulary_scores_as_specified(self):
-        want = {"strong": 1.0, "moderate": 1.0, "limited": 0.5, "none": 0.0}
+        want = {"strong": 1.0, "limited": 0.5, "none": 0.0}
         for level in COFINANCING_LEVELS:
             it = _item({"org_cofinancing_capacity": level}, MATCH)
             self.assertTrue(it["active"], level)
@@ -101,7 +101,7 @@ class RecordedCapacityTests(unittest.TestCase):
         it = _item({"org_cofinancing_capacity": "limited"}, MATCH)
         self.assertEqual(it["score"], 0.5)
         self.assertEqual(CD.component_mark(it)[0], "◐")
-        self.assertIn("co-fund", it["_detail"])
+        self.assertIn("requires co-financing", it["_detail"])
 
     def test_no_capacity_at_all_is_a_real_zero(self):
         it = _item({"org_cofinancing_capacity": "none"}, MATCH)

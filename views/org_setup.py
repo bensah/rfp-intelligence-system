@@ -277,8 +277,10 @@ def render_org_setup(user, sb, tenant_id=None):
             index=_cofin_opts.index(_cofin_cur) if _cofin_cur in _cofin_opts else 1,
             key="orgfit_cofinancing_capacity",
             help="Can you commit YOUR OWN funds alongside an award when a funder "
-                 "requires a match or cost-share? (MUST-5 co-financing). This is NOT "
-                 "the same as pre-financing.")
+                 "requires a match or cost-share? none = 0 (Not met) · limited = 0.5 "
+                 "(Partial, with effort) · strong = 1 (Yes, fully met). Scored ONLY when a "
+                 "call or funder actually requires co-financing. Not the same as "
+                 "pre-financing.")
         # PRE-FINANCING is a DIFFERENT capability and used to be scored off the
         # co-financing answer above (owner 2026-08-10). Blank is meaningful: the MUST-5
         # component stays unscored and out of the denominator rather than borrowing the
@@ -291,7 +293,8 @@ def render_org_setup(user, sb, tenant_id=None):
             key="orgfit_prefinance_capacity",
             format_func=lambda v: "— not recorded" if not v else v,
             help="Can you carry a grant's costs UP FRONT and be reimbursed later? Some "
-                 "funders make that an eligibility condition. Leave blank if not "
+                 "funders make that an eligibility condition. Same three levels as "
+                 "co-financing, scored against its own requirement. Leave blank if not "
                  "recorded — the check is then skipped rather than assumed.")
         # Capacity inputs (MUST 3). Labels spell out the DISTINCT meanings — the
         # earlier terse labels let "annual budget" read as "max grant", which
