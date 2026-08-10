@@ -13,7 +13,7 @@ Every field is tagged with the bid/no-bid criterion it feeds:
   strategic_fit        founding_year, domains, priority_areas
   capacity             annual_budget_usd, largest_grant_usd
   geographic_fit       org_operating_countries, trusted_partners
-  cofinancing          cofinancing_capacity
+  cofinancing          cofinancing_capacity, prefinance_capacity
   funder_relationship  funder_history
   bid_effort           proposal_languages
 
@@ -119,6 +119,12 @@ DEFAULT_PROFILE: dict[str, Any] = {
     # against the maximum a call/funder reimburses (see criteria_derive indirect_cost).
     "org_indirect_cost_rate": None,         # number 0-100, e.g. 15 for 15%
     "org_cofinancing_capacity": "limited",      # none | limited | moderate | strong
+    # PRE-FINANCING is a DIFFERENT capability from co-financing (owner 2026-08-10):
+    # co-financing = we commit our OWN funds alongside the award; pre-financing = we can
+    # carry the grant's costs up front and be reimbursed later. Scoring one against the
+    # other is what MUST-5 used to do. Blank = not recorded, so the component stays
+    # unscored and out of the denominator rather than borrowing the co-financing answer.
+    "org_prefinance_capacity": None,            # none | limited | moderate | strong
     # Hard pre-acquire compliance credentials the org ALREADY holds — each gates a
     # donor requirement of the same name (org lacks it + donor requires it -> 0).
     "org_has_audited_financials": False,        # recent independently audited financials
