@@ -38,18 +38,23 @@ st.markdown("""
   .opp-chip.soon   { background:#fff4cc; color:#8a6d00; font-weight:600; }
   .opp-chip.open   { background:#dcf5e3; color:#00703C; }
   .opp-card { background:#fff; border:1px solid #e6e6e6; border-radius:10px;
-              padding:14px 16px; height:100%; }
+              padding:16px 18px; height:100%; }
   .opp-card h4 { font-weight:700; color:#16734a; margin:0 0 10px;
-                 font-size:0.92rem; letter-spacing:.01em; }
-  .opp-kv { display:flex; justify-content:space-between; gap:14px; padding:4px 0;
+                 font-size:1.02rem; letter-spacing:.01em; }
+  /* TYPE SCALE. The values were 0.83/0.87rem inside a 14px-padded card, so the content
+     sat small in a lot of white space and the card outweighed what it held. The card is
+     furniture; the extracted value is the point of the page, so the value now leads at
+     1rem and the label sits a step below it. */
+  .opp-kv { display:flex; justify-content:space-between; gap:16px; padding:7px 0;
             border-bottom:1px dashed #f0f0f0; }
   .opp-kv:last-child { border-bottom:none; }
-  .opp-k { color:#5d6b63; font-size:0.83rem; flex:0 0 45%; }
-  .opp-v { color:#1f2a24; font-size:0.87rem; text-align:right; font-weight:500; }
+  .opp-k { color:#5d6b63; font-size:0.94rem; flex:0 0 42%; line-height:1.45; }
+  .opp-v { color:#1f2a24; font-size:1rem; text-align:right; font-weight:600;
+           line-height:1.45; }
   .opp-sec { color:#778; font-size:0.72rem; letter-spacing:.08em;
              text-transform:uppercase; margin:26px 0 8px; font-weight:700; }
   .opp-prose { background:#fff; border:1px solid #e6e6e6; border-radius:10px;
-               padding:14px 18px; color:#2b332e; line-height:1.62; font-size:0.93rem; }
+               padding:16px 20px; color:#2b332e; line-height:1.65; font-size:1rem; }
   .opp-crit { display:flex; align-items:center; gap:10px; padding:7px 12px;
               border:1px solid #ececec; border-left-width:4px; border-radius:8px;
               margin-bottom:6px; background:#fff; }
@@ -147,17 +152,29 @@ with _main:
                "solicitation_language"):
         if _view.get(_f):
             _chips.append((_od.display_value(_view[_f]), ""))
-    if _kind == _od.KIND_PIPELINE:
-        _chips.append(("In your pipeline", "open"))
+    # A row lands in rfp_submissions the moment the scan touches it, so "in your pipeline"
+    # was true of everything the scan had ever seen — including the 160 rows marked not
+    # eligible. Only a recorded disposition means it is actually in a pipeline.
+    _decision = _od.pipeline_decision(_kind, _row)
+    if _decision:
+        _chips.append((f"In your pipeline · {_decision}",
+                       {"Proceed": "open", "Park": "soon", "Decline": "closed"}[_decision]))
+    elif _kind == _od.KIND_PIPELINE:
+        _chips.append(("Screened — not in a pipeline yet", ""))
     else:
         _chips.append(("Shared catalogue — not screened for you", ""))
+    # The reference beside the funder is the FUNDER'S id for the call, which is what gets
+    # quoted in an enquiry or searched on their portal. The RFPIS uid is internal and shows
+    # under Identity; it used to sit here, where it looked like the call's own number.
+    _ref = _od.header_reference(_view)
     st.markdown(
-        f"<div style='color:#5d6b63;font-size:0.92rem;margin:-6px 0 2px'>"
+        f"<div style='color:#5d6b63;font-size:0.97rem;margin:-6px 0 2px'>"
         f"{_txt(_view.get('funder_name') or '—')}"
         + (f" <span style='color:#9aa39d'>· administered by "
            f"{_txt(_view.get('grantmaking_entity'))}</span>"
            if _view.get("grantmaking_entity") else "")
-        + f" <span style='color:#b9c0bb'>· uid {_txt(_uid)}</span></div>"
+        + (f" <span style='color:#b9c0bb'>· {_txt(_ref)}</span>" if _ref else "")
+        + "</div>"
         + "<div class='opp-chips'>"
         + "".join(f"<span class='opp-chip {t}'>{_txt(c)}</span>" for c, t in _chips)
         + "</div>", unsafe_allow_html=True)
@@ -320,6 +337,32 @@ with _main:
                     "would-be Proceed at Park.")
 
         _COL = {2: "#1a7f37", 1: "#b8860b", 0: "#c0392b"}
+
+    # ── decision aid: the facts about US, not about the call ────────────────
+    # Both of these used to sit in Part 1 — "Our role" inside the "Who can apply" card,
+    # where it read as an eligibility rule the funder had published, and "Key risks" as a
+    # call narrative even though it describes this entity's exposure. Part 1 is the call;
+    # this is us against it.
+    _aid_rows, _aid_prose = _od.decision_aid(_view)
+    if _aid_rows or _aid_prose:
+        st.markdown("##### Decision aid — this entity against this call")
+        if _aid_rows:
+            st.markdown(
+                "<div class='opp-card'>"
+                + "".join(f"<div class='opp-kv'><span class='opp-k'>{_txt(lb)}</span>"
+                          f"<span class='opp-v'>{_txt(v)}</span></div>"
+                          for lb, v in _aid_rows)
+                + "</div>", unsafe_allow_html=True)
+        for _heading, _lines in _aid_prose:
+            st.markdown(f"**{_heading}**")
+            if len(_lines) == 1:
+                st.markdown(f"<div class='opp-prose'>{_txt(_lines[0])}</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown("\n".join(f"- {l}" for l in _lines))
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+    if _an:
         for _c in _an["criteria"]:
             _col = _COL.get(_c["band"], "#9aa39d")
             st.markdown(
