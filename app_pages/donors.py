@@ -1243,12 +1243,31 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
                 "Route status", ROUTE_STATUSES, row.get("donor_active_route_status"), key=f"rstat_{ck}")
         _pc1, _pc2 = st.columns(2)
         with _pc1:
-            _pf_opts = _CHOICE["donor_prefinance_required"]
-            _cur_pf = row.get("donor_prefinance_required") or ""
-            edited["donor_prefinance_required"] = st.selectbox(
-                _label("donor_prefinance_required"), _pf_opts,
-                index=_pf_opts.index(_cur_pf) if _cur_pf in _pf_opts else 0,
-                key=f"prefinance_required_{ck}", format_func=_pretty_choice)
+            # PRE-FINANCING IS AN ELIGIBILITY QUESTION, so it is asked as the same
+            # tri-state as every other requirement (Required / Not required / Not sure)
+            # rather than as a payment-modality list (owner 2026-08-10). The old options
+            # — none / partial / reimbursement_only — described WHEN money arrives, and
+            # "reimbursement_only" was being read as though the funder had imposed a
+            # requirement on the applicant, which it had not. Legacy values are mapped
+            # for display so no curated record silently loses its answer.
+            _LEGACY_PF = {"reimbursement_only": "no", "none": "no", "partial": "no"}
+            _raw_pf = str(row.get("donor_prefinance_required") or "").strip().lower()
+            _cur_pf = _VAL_TO_TRISTATE.get(_LEGACY_PF.get(_raw_pf, _raw_pf), "—")
+            _sel_pf = st.selectbox(
+                "Pre-financing required", _TRISTATE_OPTS,
+                index=_TRISTATE_OPTS.index(_cur_pf),
+                key=f"prefinance_required_{ck}",
+                help="Must the applicant fund activities UP FRONT and be reimbursed "
+                     "later, as a condition of being eligible? This is not the same as "
+                     "co-financing (contributing your own funds), and a funder that "
+                     "simply reimburses in arrears has imposed no requirement — answer "
+                     "'Not required' for that. Scored against the org's own "
+                     "pre-financing capacity.")
+            edited["donor_prefinance_required"] = _TRISTATE_TO_VAL[_sel_pf]
+            if _raw_pf == "reimbursement_only" and _sel_pf == "Not required":
+                st.caption(":grey[Was recorded as “Reimbursement only” — a payment "
+                           "modality, kept as *Not required* because it asks nothing of "
+                           "the applicant.]")
         with _pc2:
             edited["donor_funding_cycle"] = _single_with_other(
                 "Funding cycle / timing", FUNDING_CYCLES, row.get("donor_funding_cycle"),

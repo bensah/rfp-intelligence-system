@@ -265,7 +265,7 @@ def render_org_setup(user, sb, tenant_id=None):
                  "grassroots/local vs multi-country vs individual applicant "
                  "(qualification, MUST-1 item B). Replaces the old grassroots / "
                  "multi-country checkboxes; it also feeds competitiveness.")
-        fp3, fp4 = st.columns(2)
+        fp3, fp4, fp5 = st.columns(3)
         founding_year = fp3.number_input(
             "Founding year", min_value=1800, max_value=2100,
             value=int(_prof["org_founding_year"]) if _prof.get("org_founding_year") else 2000,
@@ -275,7 +275,24 @@ def render_org_setup(user, sb, tenant_id=None):
         cofin = fp4.selectbox(
             "Co-financing capacity", _cofin_opts,
             index=_cofin_opts.index(_cofin_cur) if _cofin_cur in _cofin_opts else 1,
-            help="Can you meet match / cost-share requirements? (cofinancing).")
+            key="orgfit_cofinancing_capacity",
+            help="Can you commit YOUR OWN funds alongside an award when a funder "
+                 "requires a match or cost-share? (MUST-5 co-financing). This is NOT "
+                 "the same as pre-financing.")
+        # PRE-FINANCING is a DIFFERENT capability and used to be scored off the
+        # co-financing answer above (owner 2026-08-10). Blank is meaningful: the MUST-5
+        # component stays unscored and out of the denominator rather than borrowing the
+        # co-financing value.
+        _pref_opts = [""] + list(_orgp.COFINANCING_LEVELS)
+        _pref_cur = _prof.get("org_prefinance_capacity") or ""
+        prefin_cap = fp5.selectbox(
+            "Pre-financing capacity", _pref_opts,
+            index=_pref_opts.index(_pref_cur) if _pref_cur in _pref_opts else 0,
+            key="orgfit_prefinance_capacity",
+            format_func=lambda v: "— not recorded" if not v else v,
+            help="Can you carry a grant's costs UP FRONT and be reimbursed later? Some "
+                 "funders make that an eligibility condition. Leave blank if not "
+                 "recorded — the check is then skipped rather than assumed.")
         # MUST-5 indirect cost (#7): our own overhead rate, matched against the maximum
         # a call/funder reimburses. Blank = not recorded → the component stays "Not sure"
         # and is excluded from the denominator, never defaulted to a pass.
@@ -586,6 +603,7 @@ def render_org_setup(user, sb, tenant_id=None):
                 "org_entity_type": entity_type,
                 "org_founding_year": int(founding_year) or None,
                 "org_cofinancing_capacity": cofin,
+                "org_prefinance_capacity": (prefin_cap or None),
                 "org_indirect_cost_rate": (float(indirect_cost_rate)
                                            if indirect_cost_rate is not None else None),
                 "org_annual_budget": int(annual_budget) or None,
