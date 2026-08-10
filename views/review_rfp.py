@@ -962,9 +962,13 @@ with gauge_col:
           f"System suggestion: <b>{_sug_adj}</b>"
           + (f" <span style='color:#8a6d00'>(was {_esc(_sys_dec)})</span>"
              if _sug_adj != _sys_dec else "") + "</div>"
+        # "donor 0%" meant two different things — no funder profile at all, or a profile
+        # with nothing researched. Say which, so the reviewer knows whether to fix the
+        # funder name or fill in the donor record.
         + f"<div style='color:{_bcol};font-size:0.78rem;margin-top:4px'>"
           f"Confidence: <b>{_band}</b> · data {_bpct}% "
-          f"(donor {_dpct}% · call {_cpct}%)</div>"
+          f"(donor {f'{_dpct}%' if _dq2.donor_matched(_donor) else 'no funder profile'}"
+          f" · call {_cpct}%)</div>"
         + (f"<div style='color:#8a6d00;font-size:0.74rem;margin-top:3px'>⚠ {_esc(_conf_note)}</div>"
            if _conf_note else "")
         + "</div>",
