@@ -284,14 +284,44 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # legalese). The org-specific reasoning (key_risks / decision) is added per tenant at
     # the rfp_submissions insert.
     _store_brief = None
+    _syn: dict[str, Any] = {}
     if use_llm and len(text) >= 120:
         try:
             from core import llm_synthesis
             _neutral = llm_synthesis.synthesize_store(cand)
-            if _neutral and _neutral.get("brief_description"):
-                _store_brief = _neutral["brief_description"]
+            if _neutral:
+                _syn = _neutral
+                if _neutral.get("brief_description"):
+                    _store_brief = _neutral["brief_description"]
         except Exception as _sexc:
             log.debug("store synthesis skipped (%s): %s", url, _sexc)
+
+    # KEEP WHAT THE SYNTHESIS ALREADY GAVE US. This call returns the whole org-neutral
+    # read of the RFP — programme areas, eligibility specifics, compliance requirements,
+    # how to apply, and a structured award value / duration it recovered from ranged text —
+    # and only `brief_description` was ever stored. Everything else was computed, paid for
+    # in tokens, and thrown away, which is why `call_domain_areas`, `submission_format`,
+    # `eligibility_other` and `project_duration` read 0-of-500 across the catalogue and the
+    # opportunity page looked empty. Nothing here changes the prompt or the cost; it stops
+    # discarding the answer.
+    def _syn_text(*keys) -> str | None:
+        """First non-blank synthesis value across `keys`, joined when several are set."""
+        parts = []
+        for k in keys:
+            v = _syn.get(k)
+            if v is None:
+                continue
+            v = str(v).strip()
+            if v and v.lower() not in ("none stated", "none", "n/a", "not stated"):
+                parts.append(v)
+        return "\n".join(parts) or None
+
+    _syn_areas = [a for a in (_syn.get("call_domain_areas") or []) if str(a).strip()]
+    # The LLM reads a RANGED award / duration the regex cannot ("up to $2M over 24-36
+    # months"). It fills ONLY where the structural extractor came back blank, so a figure
+    # read straight off the page always wins.
+    _syn_amount = _syn.get("call_award_value")
+    _syn_duration = _syn.get("project_duration")
 
     rec = {
         "uid": extracted_store.make_uid(url, title),
@@ -308,7 +338,9 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
         "opportunity_type": candidate.get("opportunity_type"),
         "call_geographic_scope": sorted(geo),
         "eligibility_applicant_types": candidate.get("eligibility_applicant_types") or [],
-        "grant_amount": g_amt,
+        # Structural extraction first; the synthesis fills a blank, never overrides.
+        "grant_amount": g_amt if g_amt else _syn_amount,
+        "project_duration": _syn_duration or None,
         "currency": g_cur,
         "call_award_floor": floor,
         "call_award_ceiling": ceil,
@@ -321,6 +353,11 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
         # text. NULL when synthesis is unavailable (backfilled later). The raw page text is
         # preserved separately in raw_text for grounding + backfill.
         "brief_description": _store_brief,
+        # Schema §4.3-§4.6 fields the synthesis produces (see the note above).
+        "call_domain_areas": _syn_areas or None,
+        "eligibility_other": _syn_text("eligibility_specifics",
+                                       "compliance_requirements"),
+        "submission_format": _syn_text("how_to_apply"),
         "raw_text": (text or None) and str(text)[:20000],
         "content_hash": hashlib.sha1(blob.encode("utf-8")).hexdigest(),
         "extraction_confidence": overall_conf,
