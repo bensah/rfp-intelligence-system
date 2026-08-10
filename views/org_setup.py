@@ -276,47 +276,67 @@ def render_org_setup(user, sb, tenant_id=None):
             "Co-financing capacity", _cofin_opts,
             index=_cofin_opts.index(_cofin_cur) if _cofin_cur in _cofin_opts else 1,
             help="Can you meet match / cost-share requirements? (cofinancing).")
-        # MUST-5 indirect cost (#7): our own overhead rate, matched against the maximum
-        # a call/funder reimburses. Blank = not recorded → the component stays "Not sure"
-        # and is excluded from the denominator, never defaulted to a pass.
-        _ic_cur = _prof.get("org_indirect_cost_rate")
-        # value=None keeps BLANK distinct from 0. A blank means "not recorded" -> the
-        # MUST-5 component stays "Not sure" and is excluded from the denominator; a
-        # real 0 means "we recover no overhead", which is a scored answer.
-        indirect_cost_rate = st.number_input(
-            "Indirect cost policy (% of project cost)",
-            min_value=0.0, max_value=100.0, step=0.5,
-            value=float(_ic_cur) if _ic_cur not in (None, "") else None,
-            placeholder="e.g. 15  — leave blank if not set",
-            help="Your negotiated overhead / administrative rate, e.g. 15 for 15%. "
-                 "Matched against the maximum a call or funder reimburses. Blank = not "
-                 "recorded (the check is skipped); 0 = we recover no overhead.")
-
         # Capacity inputs (MUST 3). Labels spell out the DISTINCT meanings — the
         # earlier terse labels let "annual budget" read as "max grant", which
         # mis-set the capacity bar. These four feed the multi-factorial capacity
         # model (annual throughput + biggest grant + range + track-record depth,
         # stretched by founding year / org stage).
-        fb1, fb2 = st.columns(2)
+        #
+        # Indirect cost shares this row and takes the NARROW column: it is a two-digit
+        # percentage, and a full-width box for it both stretched the form and read as
+        # though a long value were expected.
+        fb1, fb2, fbic = st.columns([2, 2, 1])
         annual_budget = fb1.number_input(
             "Annual budget managed (USD/yr, 0 = unset)", min_value=0, step=100000,
             value=int(_prof["org_annual_budget"]) if _prof.get("org_annual_budget") else 0,
+            key="orgfit_annual_budget",
             help="Total funds the org MANAGES/spends per YEAR (annual throughput) — "
                  "NOT one grant. A multi-year grant counts only the portion used "
                  "that year. Capacity (MUST 3).")
         largest_grant = fb2.number_input(
             "Largest SINGLE grant ever (USD, 0 = unset)", min_value=0, step=100000,
             value=int(_prof["org_largest_grant"]) if _prof.get("org_largest_grant") else 0,
+            key="orgfit_largest_grant",
             help="Biggest single grant received from ONE donor over its full life "
                  "(distinct from annual budget). Capacity (MUST 3).")
+        # MUST-5 indirect cost (#7): our own overhead rate, matched against the maximum
+        # a call/funder reimburses. Blank = not recorded → the component stays "Not sure"
+        # and is excluded from the denominator, never defaulted to a pass; a real 0 means
+        # "we recover no overhead", which is a scored answer. So value=None keeps BLANK
+        # distinct from 0 — that part must not change.
+        #
+        # THE VALUE USED TO VANISH. Every widget in this section was keyless, so its state
+        # lived under an auto-generated id derived from the widget's own arguments. That is
+        # fine while `value=` is constant, but this one is `value=None` until the profile is
+        # SAVED: type 15, something reruns the page, the widget is rebuilt from
+        # `value=None`, and the typing is gone — with no Save in between, the DB could never
+        # supply it back. A stable `key` puts the state in session_state, where a rerun
+        # cannot touch it, and the value is READ from there rather than recomputed. Keys
+        # added to the neighbours above for the same reason.
+        _IC_KEY = "orgfit_indirect_cost_rate"
+        _ic_cur = _prof.get("org_indirect_cost_rate")
+        if _IC_KEY not in st.session_state:
+            st.session_state[_IC_KEY] = (float(_ic_cur)
+                                         if _ic_cur not in (None, "") else None)
+        fbic.number_input(
+            "Indirect cost %", min_value=0.0, max_value=100.0, step=0.5,
+            key=_IC_KEY, placeholder="e.g. 15",
+            help="Your negotiated overhead / administrative rate, e.g. 15 for 15% of "
+                 "project cost. Matched against the maximum a call or funder reimburses. "
+                 "Leave blank if not set (the check is skipped); 0 = we recover no "
+                 "overhead.")
+        indirect_cost_rate = st.session_state.get(_IC_KEY)
+
         fb3, fb4 = st.columns(2)
         lowest_grant = fb3.number_input(
             "Smallest grant managed (USD, 0 = unset)", min_value=0, step=10000,
             value=int(_prof["org_lowest_grant"]) if _prof.get("org_lowest_grant") else 0,
+            key="orgfit_lowest_grant",
             help="Smallest grant the org has run — range awareness for capacity.")
         n_grants = fb4.number_input(
             "Number of grants managed (0 = unset)", min_value=0, step=1,
             value=int(_prof["org_grants_count"]) if _prof.get("org_grants_count") else 0,
+            key="orgfit_grants_count",
             help="How many grants delivered to date — track-record DEPTH; more "
                  "grants raises how far past your largest grant you can credibly stretch.")
 
@@ -433,9 +453,6 @@ def render_org_setup(user, sb, tenant_id=None):
         st.markdown("**Competitiveness**",
                     help="Drives PREFER 8 against each donor's requirements (org age + "
                          "grassroots / board / co-financing / multi-country / HQ match).")
-        st.caption("Grassroots/local vs multi-country is now set by **Entity type** "
-                   "(top of this form) — one field drives both eligibility (MUST-1) "
-                   "and competitiveness.")
         _hq_opts = ["(none)"] + list(_geo.COUNTRIES)
         _hq_cur = _org.get("org_hq_country") or "(none)"
         hq_country = st.selectbox(
