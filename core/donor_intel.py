@@ -60,6 +60,28 @@ def _norm(s: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip()
 
 
+# Funder strings are stored as "ACRONYM <dash> Donor Name" ("BMGF - Gates Foundation").
+# The dash is NOT reliably an ASCII hyphen: values typed in Word/Excel, pasted from a
+# funder's own web page, or auto-corrected arrive with an EN DASH (U+2013) or EM DASH
+# (U+2014) instead. Splitting on the ASCII form alone silently dropped the donor join for
+# those rows — "BMGF – Gates Foundation" (en dash) resolved to NO donor record at all,
+# which zeroed the donor side of the confidence band AND left every donor-imposed MUST-1 /
+# MUST-5 component inactive, so the criteria read "Not sure" on a funder the org knows
+# well. Accept the whole dash family (core.donor_enrich already did; this brings the
+# matcher into line).
+_FUNDER_SEP_RE = re.compile(r"\s[-‐‑‒–—―−]\s")
+
+
+def split_funder_prefix(funder: Any) -> Optional[tuple[str, str]]:
+    """('BMGF', 'Gates Foundation') for "BMGF <dash> Gates Foundation", for ANY dash
+    variant. None when the string carries no acronym prefix."""
+    raw = str(funder or "")
+    m = _FUNDER_SEP_RE.search(raw)
+    if not m:
+        return None
+    return raw[:m.start()].strip(), raw[m.end():].strip()
+
+
 def _keys_for(row: dict) -> set[str]:
     keys: set[str] = set()
     for f in ("canonical_key", "donor", "donor_short"):
@@ -96,8 +118,10 @@ def match_donor(funder: Any, *, fuzzy: bool = True) -> Optional[dict]:
     Excel-migrated funders are stored as "ACRONYM - Donor Name" (e.g. "BMGF - Gates
     Foundation"), while donor_intel holds just the name ("Gates Foundation" / "Bill &
     Melinda Gates Foundation"). The leading acronym blocks a plain match, so we also
-    try the name AFTER the first " - " separator (and the acronym before it). This is
-    why HAPPI's MUST-5 / PREFER-7 came back unmatched.
+    try the name AFTER the first separator (and the acronym before it). This is
+    why HAPPI's MUST-5 / PREFER-7 came back unmatched. The separator is matched as ANY
+    dash variant (see `split_funder_prefix`) — an en/em dash used to defeat the split
+    entirely and return no donor.
 
     `fuzzy` (default True) enables the last-resort ≥5-char SUBSTRING-containment fallback.
     Callers on the HARD-GATE / auto-Decline scoring path MUST pass fuzzy=False: a wrong
@@ -106,8 +130,9 @@ def match_donor(funder: Any, *, fuzzy: bool = True) -> Optional[dict]:
     split) stays on for everyone — it's a strict superset of the old exact `.ilike`."""
     raw = str(funder or "")
     cands = [_norm(raw)]
-    if " - " in raw:
-        acr, name = raw.split(" - ", 1)
+    _split = split_funder_prefix(raw)
+    if _split:
+        acr, name = _split
         cands += [_norm(name), _norm(acr)]      # prefer the donor name, then the acronym
     cands = [c for c in dict.fromkeys(cands) if c]   # de-dup, drop blanks, keep order
     if not cands:
