@@ -206,6 +206,68 @@ class TestSamUeiStaysLocked(unittest.TestCase):
         self.assertEqual(by_key["qsel_U1_cofinancing_tax_exempt"].value, "—")
 
 
+def _row_html(at: AppTest, name: str) -> str:
+    """The rendered label cell for one component row."""
+    for m in at.markdown:
+        if name in m.value and "padding-top:0.5rem" in m.value:
+            return m.value
+    raise AssertionError(f"no rendered row for {name!r}")
+
+
+class TestGreyingFollowsTheValue(unittest.TestCase):
+    """Owner 2026-08-10: a component is greyed exactly when it has NO value. "—" is greyed;
+    0 / 0.5 / 1 is live. Reading `active` off the pre-edit item meant a row the reviewer had
+    just scored kept rendering greyed and captioned "not required" with its own value
+    sitting in the box beside it."""
+
+    def test_a_dash_row_is_greyed(self):
+        at = _app("must1_nothing_imposed").run()
+        html = _row_html(at, "Entity type")
+        self.assertIn("color:#aaa", html)
+        self.assertIn("not required", html)
+
+    def test_scoring_a_greyed_row_ungreys_it(self):
+        at = _app("must1_nothing_imposed").run()
+        by_key = {sb.key: sb for sb in at.selectbox}
+        by_key["qsel_U1_qualification_entity_type"].set_value("1").run()
+        html = _row_html(at, "Entity type")
+        self.assertNotIn("color:#aaa", html)          # no longer greyed
+        self.assertNotIn("not required", html)        # it IS required now — by the reviewer
+        self.assertIn("set by you", html)
+
+    def test_every_allowed_value_activates_the_row(self):
+        for val in ("0", "0.5", "1"):
+            with self.subTest(value=val):
+                at = _app("must1_nothing_imposed").run()
+                by_key = {sb.key: sb for sb in at.selectbox}
+                by_key["qsel_U1_qualification_entity_type"].set_value(val).run()
+                html = _row_html(at, "Entity type")
+                self.assertNotIn("color:#aaa", html)
+
+    def test_returning_to_the_dash_greys_it_again(self):
+        at = _app("must1_nothing_imposed").run()
+        by_key = {sb.key: sb for sb in at.selectbox}
+        by_key["qsel_U1_qualification_entity_type"].set_value("1").run()
+        self.assertNotIn("color:#aaa", _row_html(at, "Entity type"))
+        by_key = {sb.key: sb for sb in at.selectbox}
+        by_key["qsel_U1_qualification_entity_type"].set_value("—").run()
+        html = _row_html(at, "Entity type")
+        self.assertIn("color:#aaa", html)
+        self.assertIn("not required", html)
+
+    def test_a_system_scored_row_is_not_greyed(self):
+        # Same rule for the scan/cron's own values — no separate rendering for those.
+        at = _app("must5_all_clear").run()
+        self.assertNotIn("color:#aaa", _row_html(at, "All requirements met"))
+
+    def test_the_selected_value_survives_the_rerun(self):
+        at = _app("must1_nothing_imposed").run()
+        by_key = {sb.key: sb for sb in at.selectbox}
+        by_key["qsel_U1_qualification_entity_type"].set_value("0.5").run()
+        by_key = {sb.key: sb for sb in at.selectbox}
+        self.assertEqual(by_key["qsel_U1_qualification_entity_type"].value, "0.5")
+
+
 class TestPrefer8IsNamedByItsOwnModel(unittest.TestCase):
     """Owner 2026-08-10: the derivation is authoritative for PREFER-6 / PREFER-8. The
     components stay editable and are still recorded — they just don't rename the
