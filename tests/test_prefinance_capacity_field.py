@@ -169,3 +169,58 @@ class TheAutoScorerIsIndependentOfHumanOverridesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class AClearedComponentSurvivesTheRoundTripTests(unittest.TestCase):
+    """A reviewer clearing a component ("—") persists as a NULL in
+    criteria_component_overrides. `apply_component_overrides` used to call float(None),
+    raise, and hit its `continue` — so a saved clear was silently ignored and the derived
+    score reappeared on the next render."""
+
+    ORG = {"org_cofinancing_capacity": "limited", "org_founding_year": 2007}
+    RFP = {"opportunity_title": "A call", "funding_agency": "A Funder",
+           "call_award_value": 250000, "call_submission_deadline": "2027-01-31"}
+
+    def _comp(self, overrides):
+        bd = CD.factor_breakdown(self.RFP, self.ORG, {"donor_cost_sharing_match_required":
+                                                      "yes"}, {}, overrides=overrides)
+        return {i["key"]: i for i in bd["cofinancing"]}["cofinance"]
+
+    def test_without_an_override_the_derivation_scores_it(self):
+        it = self._comp(None)
+        self.assertTrue(it["active"])
+        self.assertEqual(it["score"], 0.5)          # capacity 'limited'
+
+    def test_a_stored_null_clears_the_component(self):
+        it = self._comp({"cofinancing": {"cofinance": None}})
+        self.assertFalse(it["active"])
+        self.assertIsNone(it["score"])
+        self.assertIsNone(it["met"])
+        self.assertTrue(it["_cleared"])
+        self.assertTrue(it["_override"])
+
+    def test_a_cleared_component_leaves_the_denominator(self):
+        from core import criteria_review as CR
+        bd = CD.factor_breakdown(self.RFP, self.ORG,
+                                 {"donor_cost_sharing_match_required": "yes"}, {},
+                                 overrides={"cofinancing": {"cofinance": None}})
+        keys = [i["key"] for i in CR.active_components(bd["cofinancing"])]
+        self.assertNotIn("cofinance", keys)
+
+    def test_a_stored_score_still_overrides_normally(self):
+        it = self._comp({"cofinancing": {"cofinance": 1.0}})
+        self.assertTrue(it["active"])
+        self.assertEqual(it["score"], 1.0)
+        self.assertFalse(it.get("_cleared"))
+
+    def test_a_stored_zero_is_a_score_not_a_clear(self):
+        # 0 is falsy — it must NOT be mistaken for "cleared".
+        it = self._comp({"cofinancing": {"cofinance": 0.0}})
+        self.assertTrue(it["active"])
+        self.assertEqual(it["score"], 0.0)
+        self.assertFalse(it.get("_cleared"))
+
+    def test_junk_in_the_column_is_ignored_not_treated_as_a_clear(self):
+        it = self._comp({"cofinancing": {"cofinance": "banana"}})
+        self.assertTrue(it["active"])            # untouched by the bad override
+        self.assertEqual(it["score"], 0.5)
