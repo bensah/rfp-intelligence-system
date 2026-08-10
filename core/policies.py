@@ -98,6 +98,31 @@ DEFAULT_POLICIES: dict[str, Any] = {
             # criterion — these hard-reject at scan time via the theme gate.
             "high risk",
             "highly experimental",
+            # FINANCIAL-INTEGRITY / GOVERNANCE topics. A regional economic bloc's
+            # tender on trade-based money laundering has nothing to do with health
+            # delivery, but it survived every other gate: no required keyword is
+            # needed to pass when the exclusion list stays silent, and the geo gate
+            # sees a legitimate African region. Topic scope is the right place to
+            # stop it — it is policy, so an admin can reverse it in Settings.
+            #
+            # NOT included, deliberately: the acronym "AML". Short terms match on a
+            # whole-word boundary, and AML is Acute Myeloid Leukaemia — excluding it
+            # would hard-reject genuine oncology calls that carry the abbreviation.
+            #
+            # "trade financ" is a stem: it covers "trade finance" AND "trade
+            # financing" without touching "health financing" or "trade in essential
+            # medicines", which need the two words adjacent to match.
+            "anti-corruption",
+            "anti corruption",
+            "anticorruption",
+            "money laundering",
+            "money-laundering",
+            "anti-money",
+            "terrorist financing",
+            "terrorism financing",
+            "trade financ",
+            "trade-financ",
+            "illicit financial flow",
         ],
     },
     # Opportunity-TYPE opt-outs (title-based hard rejects). Defaults suit an
