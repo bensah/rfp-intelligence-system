@@ -1065,16 +1065,63 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     #    secured), but it was being tested with `_need` → `_truthy`, which only accepts
     #    yes/true/required — so a donor stating a real percentage threshold never
     #    activated this check at all. Any positive figure imposes it.
+    #
+    #    CO-FINANCING AND PRE-FINANCING ARE DIFFERENT REQUIREMENTS (owner 2026-08-10).
+    #    They were merged here — "cost_share + prefinance were redundant" — and they are
+    #    not:
+    #      co-financing  — the funder expects the org to commit its OWN funds alongside
+    #                      the award, as a condition of being eligible at all.
+    #      pre-financing — the org must fund the grant's activities up front and be
+    #                      reimbursed later. A cash-flow modality, NOT an eligibility
+    #                      condition: a funder that reimburses in arrears has not asked
+    #                      the applicant to contribute anything.
+    #    The merge did two wrong things. It scored a PRE-FINANCING value against the org's
+    #    CO-FINANCING capacity — two different capabilities treated as interchangeable —
+    #    and it let `donor_prefinance_required == "reimbursement_only"` ACTIVATE a
+    #    co-financing requirement. On a funder whose cost-sharing is explicitly "no",
+    #    whose state-party co-financing is unset and whose min-secured-% is blank, that
+    #    invented an eligibility requirement the funder never imposed, scored it against
+    #    an unrelated capacity, and cost MUST-5 half its weight (◐ 0.5 → "Partial, with
+    #    effort" → 5.0 of 10 points) purely because the funder reimburses in arrears.
+    #    So `reimbursement_only` no longer activates anything; it is reported instead.
     a_cofin = bool(_need("donor_cost_sharing_match_required",
                          "donor_state_party_cofinancing_required")
                    or _num(donor.get("donor_min_cofinancing_secured_pct"))
-                   or str(donor.get("donor_prefinance_required") or "").strip().lower() == "reimbursement_only"
                    or _cost_share_required(rfp))
-    cof = _qfactor("cofinance", "Co-financing / pre-finance capacity",
+    cof = _qfactor("cofinance", "Co-financing capacity",
                    active=bool(a_cofin and cap_sc is not None), score=cap_sc, hard=False)
     if a_cofin and cap_sc is not None:
-        cof["_detail"] = f"this funder requires money up front; our capacity is '{cap}'"
+        cof["_detail"] = (f"this funder expects us to co-fund; our recorded capacity "
+                          f"is '{cap}'")
     items.append(cof)
+
+    #    PRE-FINANCING is its own component, and today it can never be SCORED: both sides
+    #    have to be known (the 2026-08-07 rule that an unrecorded capacity is not a
+    #    partial), and the org profile has no pre-financing capacity field at all — only
+    #    `org_cofinancing_capacity`. So it stays inactive and out of the denominator until
+    #    an `org_prefinance_capacity` exists to score against. Reading it off
+    #    `org_cofinancing_capacity` instead is exactly the conflation above.
+    #    `reimbursement_only` is still worth SAYING — it is a real execution risk, just
+    #    not an eligibility test — so it rides along as the component's detail.
+    _pf_raw = str(donor.get("donor_prefinance_required") or "").strip().lower()
+    _pf_cap = str(org.get("org_prefinance_capacity") or "").strip().lower()
+    _pf_cap_sc = {"strong": 1.0, "moderate": 1.0, "limited": 0.5,
+                  "none": 0.0}.get(_pf_cap)
+    # A funder REQUIRES pre-financing only when it says so outright. "reimbursement_only"
+    # describes when money arrives, not who may apply (owner 2026-08-10); "none" and
+    # "partial" describe an advance being available, which is the opposite of a
+    # requirement.
+    _pf_required = _truthy(donor.get("donor_prefinance_required"))
+    prefin = _qfactor("prefinance", "Pre-financing capacity",
+                      active=bool(_pf_required and _pf_cap_sc is not None),
+                      score=_pf_cap_sc, hard=False)
+    if _pf_raw == "reimbursement_only":
+        prefin["_detail"] = ("this funder reimburses in arrears, so we would carry the "
+                            "cash — a delivery risk, not an eligibility condition")
+    elif _pf_required and _pf_cap_sc is None:
+        prefin["_detail"] = ("this funder requires pre-financing; our capacity for it "
+                             "isn't recorded, so it stays unscored")
+    items.append(prefin)
 
     # HARD credential gates — ACTIVE only when the donor/call imposes it; then the org
     # must already hold it (else 0). Undetected → Not sure (excluded).
@@ -1549,7 +1596,13 @@ def derive_bid_effort(rfp: dict, org_settings: dict | None = None) -> str:
 # (Yes/No/Required/…) → _truthy. Absent/blank flags simply skip that factor.
 _GRASSROOT_FLAGS = ("donor_local_registration_required", "donor_local_partner_required")
 _BOARD_FLAGS = ("donor_local_board_required",)
-_COFIN_FLAGS = ("donor_cost_sharing_match_required", "donor_prefinance_required")
+# CO-FINANCING only. `donor_prefinance_required` used to sit here too, so a funder's
+# PAYMENT MODALITY was scored against the org's CO-FINANCING capacity — the same conflation
+# corrected in compliance_factors (owner 2026-08-10). Whether a funder pays in advance or
+# reimburses in arrears says nothing about whether we can commit our own funds, which is
+# what `org_cofinancing_capacity` records.
+_COFIN_FLAGS = ("donor_cost_sharing_match_required",
+                "donor_state_party_cofinancing_required")
 # multi_country_encouraged (migration 053) = the call EXPLICITLY encourages
 # multi-country proposals → matched to org Entity type = Multi-country Organization
 # (org_is_multi_country). global_multi_country_scope kept as a weaker legacy cue.
