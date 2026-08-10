@@ -1427,9 +1427,15 @@ def _funder_in_history(funding_agency: Any, hist: list[str]) -> bool:
     raw = str(funding_agency or "")
     # "ACRONYM - Donor Name" (Excel migration) → also try the name after the separator,
     # so "BMGF - Gates Foundation" matches a "Gates Foundation" funder-history entry.
+    # The separator is ANY dash variant: an en/em dash ("BMGF – Gates Foundation") used to
+    # defeat the split, so the org's longest-standing funder read as "not a grantee".
+    # Imported lazily (like `match_donor` below) so criteria_derive keeps working without
+    # a DB client on the import path — donor_intel pulls in db.supabase_client.
+    from core.donor_intel import split_funder_prefix
     variants = {_norm_rel(raw)}
-    if " - " in raw:
-        variants.add(_norm_rel(raw.split(" - ", 1)[1]))
+    _split = split_funder_prefix(raw)
+    if _split:
+        variants.add(_norm_rel(_split[1]))
     variants.discard("")
     if not variants:
         return False
