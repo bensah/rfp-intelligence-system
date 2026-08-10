@@ -96,7 +96,7 @@ with _cL:
             "- **🏠 Home** — dashboard: pending actions, recent activity, and "
             "quick links to submit or review an opportunity.\n"
             "- **📚 Pipelines** — the core workflow in four tabs: **Screen** → "
-            "**Review** → **Tracking** → **Summary**.\n"
+            "**Review** → **Track** → **Summary**.\n"
             "- **💼 Grants** — opportunities won or under active management, "
             "with reporting deadlines.\n"
             "- **🗒️ Actions** — four tabs: **Meetings** (team-call notes), "
@@ -139,7 +139,7 @@ with st.container(border=True):
         "<b>Reviewed</b><span>On <b>Review</b>, the team confirms or overrides "
         "— Proceed / Park / Decline.</span></div></div>"
         "<div class='step'><div class='step-n'>4</div><div class='step-b'>"
-        "<b>Tracked</b><span>A <b>Proceed</b> moves to <b>Tracking</b> with an "
+        "<b>Tracked</b><span>A <b>Proceed</b> moves to <b>Track</b> with an "
         "owner + deadlines; wins graduate to <b>Grants</b>.</span></div></div>"
         "</div>",
         unsafe_allow_html=True,
