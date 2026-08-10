@@ -33,10 +33,23 @@ def _nonblank(v: Any) -> bool:
     return str(v).strip() != ""
 
 
+def donor_matched(donor: dict | None) -> bool:
+    """Did the funder resolve to a donor_intel record at all?
+
+    `donor_completeness` returns 0% for BOTH "no funder profile exists" and "the profile
+    exists but none of its requirement fields are answered". Those are different problems
+    with different fixes (fix the funder name / create the record vs. research the
+    requirements), and a bare "donor 0%" hid the first behind the second — a Gates call
+    read "donor 0%" while a well-researched Gates record sat unmatched in the table.
+    Callers that DISPLAY the figure should use this to say so explicitly."""
+    return bool(donor)
+
+
 def donor_completeness(donor: dict | None) -> tuple[int, int, int]:
     """(pct, answered, total) over the donor's REQUIREMENT fields (the '*_required' gates
     that drive MUST/PREFER). Answered = an explicit Required/Not Required/Not Sure; blank =
-    genuinely missing. No donor / no fields → (0, 0, 0)."""
+    genuinely missing. No donor / no fields → (0, 0, 0) — see `donor_matched` for telling
+    "no record" apart from "record with nothing answered"."""
     if not donor:
         return 0, 0, 0
     fields = [k for k in donor if isinstance(k, str) and k.endswith("_required")]
