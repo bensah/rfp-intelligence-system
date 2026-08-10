@@ -310,6 +310,36 @@ def _org_years(org: dict) -> int | None:
 _EXP_YEARS_RE = re.compile(r"^(\d{1,2})\s*\+?\s*(?:y|yr|yrs|year|years)?$")
 
 
+def _age_band(founding_year: Any) -> tuple[float, bool | None]:
+    """(score, met) for how ESTABLISHED the org is, from its founding year.
+
+    Owner 2026-08-10: "established" starts at FIVE years, not ten. The old rule scored
+    20+ → 1.0, 10+ → 0.5 and everything below 10 → 0.0, which treated a seven-year-old
+    organisation with a delivery record as no more established than one founded last year.
+    Five to nine years now earns the middle band, and `met` is True from five years up so
+    the Review panel stops showing a ✗ against an organisation that is plainly established.
+
+        20+ years → 1.0 ✓      long track record
+        10-19     → 0.75 ✓     well established
+        5-9       → 0.5 ✓      established
+        under 5   → 0.0 ✗      still building a record
+
+    Returns (0.0, None) for an unusable/missing year so the caller can leave it unscored.
+    """
+    from datetime import date as _d
+    fy = _num(founding_year)
+    if not fy or fy < 1900:
+        return 0.0, None
+    age = _d.today().year - int(fy)
+    if age >= 20:
+        return 1.0, True
+    if age >= 10:
+        return 0.75, True
+    if age >= 5:
+        return 0.5, True
+    return 0.0, False
+
+
 def _experience_required_years(donor: dict) -> int | None:
     """Years of experience the CALL/donor requires (LLM-detected, `experience_required`).
     A bare number ('3', '5+', '10 years') is taken literally; otherwise the graded
@@ -1641,8 +1671,7 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
     fy = _num(org.get("org_founding_year"))
     if fy:
         signals += 1
-        age = date.today().year - int(fy)
-        score += 1.0 if age >= 20 else (0.5 if age >= 10 else 0.0)
+        score += _age_band(fy)[0]
 
     # Portal familiarity — registered on the donor's / call's portal = an edge
     # (knows the application process). Positive-only (no penalty if not).
@@ -2186,9 +2215,17 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
                                  + (f" · {_area}" if _area else "") + ")")
     out = [
         comp_track,
-        _factor("comp_age", "Established (10+ years)", "G",
-                (fy is not None and (date.today().year - int(fy)) >= 10) if fy else None,
-                active=bool(fy)),
+        # ESTABLISHED = 5+ YEARS, not 10 (owner 2026-08-10). An organisation with five
+        # years of delivery behind it is experienced; the old 10-year bar scored everything
+        # from 5 to 9 years as a flat FAIL, which quietly held down competitiveness for orgs
+        # that are demonstrably established. The graded band below still rewards the older
+        # ones, so nothing is lost at the top end — only the false zero at the bottom.
+        # `met` carries the PASS/FAIL only — established or not — so a 19-year-old
+        # organisation renders ✓ and not the ◐ an explicit 0.75 score would produce. HOW
+        # established it is belongs to the weighted model (`_age_band` in
+        # derive_competitiveness), not to a tick in the panel.
+        _factor("comp_age", "Established (5+ years)", "G",
+                _age_band(fy)[1] if fy else None, active=bool(fy)),
         _factor("comp_portal", "Familiar with the donor's portal", "DG",
                 _registered_on_portal(org, rfp, donor), active=True),
     ]
