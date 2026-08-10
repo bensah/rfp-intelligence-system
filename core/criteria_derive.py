@@ -2179,8 +2179,15 @@ def _funding_quality_factors(rfp: dict, org: dict | None = None) -> list[dict]:
                 (val >= lo) if (val and lo) else None, active=bool(lo)),
         _factor("fq_ceiling", "Within your absorptive ceiling", "RG",
                 (val <= mx) if (val and mx) else None, active=bool(mx)),
+        # A MISSING award value is "we don't know", never a failure. `bool(val)` made a
+        # blank read as ✗ "not met" — a measured verdict — when the honest answer is that
+        # our extractor came back empty. The EDCTP3 call that exposed it publishes its
+        # budget plainly on the funder's own page; the ✗ was reporting OUR gap as the
+        # funder's silence. Note the two siblings above already do this correctly: they
+        # return None when `val` is missing. None here → inactive → "?" and excluded from
+        # the count, so an extraction gap can never cost PREFER-6 a point.
         _factor("fq_value", "Award value stated by the call", "R",
-                bool(val), active=True),
+                True if val else None, active=bool(val)),
         # Duration tier as a 0/0.5/1 score-factor (absent → inactive → Not sure).
         _qfactor("fq_duration", "Project duration (longer preferred)",
                  active=_dur is not None, score=_dur, hard=False, source="R"),
