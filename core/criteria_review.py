@@ -252,9 +252,16 @@ def with_session_edits(facts: Iterable[dict],
     happens to the same edit once it is persisted, so the pre-save and post-save views
     agree.
 
-    `edits` holds only components the reviewer actually set. A component left at "—"
-    carries NO entry: the em dash is the absence of a human answer, not an instruction to
-    erase what the system measured.
+    `edits` holds only components the reviewer actually touched:
+
+        0 / 0.5 / 1  a score  — ACTIVATES the component and counts it
+        None ("—")   CLEARED  — "do not score this", so it deactivates and leaves the
+                                denominator
+
+    A component they never touched carries NO entry, and the derivation keeps driving it.
+    The cleared case matters: a reviewer who sets a scan-scored component back to "—" is
+    saying the system should not have scored it, and until that was honoured the derived
+    score simply reappeared while the box sat on "—".
     """
     out = [dict(f) for f in (facts or [])]
     if not edits:
@@ -263,7 +270,15 @@ def with_session_edits(facts: Iterable[dict],
         ck = str(f.get("key"))
         if ck not in edits:
             continue
-        sc = snap(edits[ck])
+        val = edits[ck]
+        if val is None:                     # explicitly cleared
+            f["score"] = None
+            f["met"] = None
+            f["active"] = False
+            f["_override"] = True
+            f["_cleared"] = True
+            continue
+        sc = snap(val)
         f["score"] = sc
         f["met"] = True if sc >= 1.0 else (False if sc <= 0.0 else None)
         f["active"] = True
@@ -289,7 +304,9 @@ def roll_up(key: str, facts: Iterable[dict],
     act = active_components(facts)
     if not act:
         return None
-    session_scores = session_scores or {}
+    # A CLEARED component arrives as None and has already been deactivated in `facts`, so
+    # it is not in `act` at all; guard anyway so a stray None can never reach snap().
+    session_scores = {k: v for k, v in (session_scores or {}).items() if v is not None}
     by_key: dict[str, float] = {}
     for f in act:
         ck = str(f.get("key"))
@@ -316,7 +333,10 @@ def criterion_label(key: str, facts: Iterable[dict], derived_label: Any,
     genuinely no derived label to show can fall back.
     """
     rolled = roll_up(key, facts, session_scores)
-    _human = force_roll_up or bool(session_scores) or has_human_override(facts)
+    # `session_scores` may be all-None (every touched component cleared), which is still a
+    # human intervention — has_human_override() catches it via the _override stamp.
+    _human = (force_roll_up or bool(session_scores) or has_human_override(facts)
+              or any(f.get("_cleared") for f in (facts or [])))
     if key in DERIVATION_AUTHORITATIVE and not force_roll_up:
         _human = False
     if rolled is not None and _human:

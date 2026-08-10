@@ -170,7 +170,10 @@ class TestSettingAGreyedComponentActivatesItLive(unittest.TestCase):
         self.assertEqual(_label(at), "No, not eligible")
         at.selectbox[0].set_value("—").run()
         self.assertEqual(_label(at), "Not sure")
-        self.assertEqual(_collected(at), {"qualification": {}})
+        # The clear is RECORDED as None rather than vanishing from the dict. It has to be:
+        # a component the scan scored needs an explicit "do not score this" to persist, or
+        # the derived value simply returns on the next render.
+        self.assertEqual(_collected(at), {"qualification": {"applicant_type": None}})
 
 
 class TestOnlyHumanSetValuesArePersisted(unittest.TestCase):
@@ -314,3 +317,78 @@ class TestPrefer9NoLongerFreezes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAnExplicitDashClearsTheComponent(unittest.TestCase):
+    """Owner 2026-08-10, reported on a live RFP: setting "Co-financing / pre-finance
+    capacity" from 0.5 back to "—" appeared to do nothing — the row stayed dark and kept
+    counting, while the box sat on "—".
+
+    Cause: the touched-flag was set to `value != DASH`, so choosing "—" ERASED the record
+    that the reviewer had touched it. The derived 0.5 came back, but Streamlit kept showing
+    the session value "—" (it ignores `index` for a keyed widget), so the display and the
+    score disagreed. "—" now means CLEARED: not scored, greyed, out of the denominator."""
+
+    def test_clearing_a_scan_scored_component_greys_it(self):
+        at = _app("must5_all_clear").run()
+        by = {sb.key: sb for sb in at.selectbox}
+        k = "qsel_U1_cofinancing_compliance_all_clear"
+        self.assertEqual(by[k].value, "1")                       # scored by the scan
+        self.assertNotIn("color:#aaa", _row_html(at, "All requirements met"))
+        by[k].set_value("—").run()
+        self.assertFalse(at.exception)
+        html = _row_html(at, "All requirements met")
+        self.assertIn("color:#aaa", html)                         # now greyed
+        self.assertIn("cleared by you", html)
+
+    def test_the_box_and_the_styling_agree_after_clearing(self):
+        at = _app("must5_all_clear").run()
+        by = {sb.key: sb for sb in at.selectbox}
+        by["qsel_U1_cofinancing_compliance_all_clear"].set_value("—").run()
+        by = {sb.key: sb for sb in at.selectbox}
+        # The widget still shows "—" AND the row is styled as unscored — the two used to
+        # disagree, which is what made the edit look inert.
+        self.assertEqual(by["qsel_U1_cofinancing_compliance_all_clear"].value, "—")
+        self.assertIn("color:#aaa", _row_html(at, "All requirements met"))
+
+    def test_clearing_is_recorded_so_it_can_be_persisted(self):
+        at = _app("must5_all_clear").run()
+        by = {sb.key: sb for sb in at.selectbox}
+        by["qsel_U1_cofinancing_compliance_all_clear"].set_value("—").run()
+        # None = cleared. It must be PRESENT (not absent), or the save can't persist it.
+        self.assertEqual(_collected(at),
+                         {"cofinancing": {"compliance_all_clear": None}})
+
+    def test_clearing_every_component_hands_the_label_back_to_the_derivation(self):
+        # A clear says "the components should not drive this", not "the system is wrong
+        # about the criterion" — so with nothing left to count the DERIVED label shows and
+        # the row is styled unscored. The reviewer removed a measurement, not a verdict.
+        at = _app("must5_all_clear").run()
+        by = {sb.key: sb for sb in at.selectbox}
+        by["qsel_U1_cofinancing_compliance_all_clear"].set_value("—").run()
+        self.assertEqual(_label(at), "Yes, fully met")            # the derived label
+        self.assertIn("color:#aaa", _row_html(at, "All requirements met"))
+
+    def test_a_cleared_component_can_be_scored_again(self):
+        at = _app("must5_all_clear").run()
+        k = "qsel_U1_cofinancing_compliance_all_clear"
+        {sb.key: sb for sb in at.selectbox}[k].set_value("—").run()
+        self.assertIn("color:#aaa", _row_html(at, "All requirements met"))
+        {sb.key: sb for sb in at.selectbox}[k].set_value("0.5").run()
+        html = _row_html(at, "All requirements met")
+        self.assertNotIn("color:#aaa", html)
+        self.assertIn("set by you", html)
+        self.assertEqual(_label(at), "Partial, with effort")
+
+    def test_clearing_one_component_leaves_the_others_alone(self):
+        at = _app("must1_nothing_imposed").run()
+        # Score BOTH first — setting a widget to the value it already holds fires no
+        # change event, so a row already sitting on "—" cannot be "cleared".
+        {sb.key: sb for sb in at.selectbox}["qsel_U1_qualification_applicant_type"]             .set_value("1").run()
+        {sb.key: sb for sb in at.selectbox}["qsel_U1_qualification_entity_type"]             .set_value("1").run()
+        {sb.key: sb for sb in at.selectbox}["qsel_U1_qualification_entity_type"]             .set_value("—").run()
+        self.assertEqual(_collected(at), {"qualification": {"applicant_type": 1.0,
+                                                           "entity_type": None}})
+        self.assertNotIn("color:#aaa", _row_html(at, "Eligible legal type"))
+        self.assertIn("color:#aaa", _row_html(at, "Entity type"))
+        self.assertEqual(_label(at), "Yes, fully")     # only the scored one counts
