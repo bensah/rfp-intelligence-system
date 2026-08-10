@@ -1,15 +1,17 @@
-"""One opportunity, on its own page — /opportunity?uid=<uid>.
+"""One opportunity, in full — /opportunity?uid=<uid>.
 
-Every title in the Live Opportunity Feed used to link to the bare `/pipelines` page: the
-same destination for all of them, so the click told you nothing and you still had to hunt
-for the row. And the Featured card ranks the SHARED catalog, whose calls are not in
-`rfp_submissions` at all — there was no page that could show one.
+Two parts, in this order, because that is the order the decision gets made in:
 
-This page shows the FULL extracted detail for either store (see
-core.opportunity_detail), and for a catalog call it offers **Track this opportunity**,
-which runs it through the same objective scorer the scan uses and lands it in the pipeline
-with derived criteria, an alignment score and a recommendation — classified against the
-eligibility criteria, awaiting a human decision.
+  1. THE OPPORTUNITY — the raw extraction (regex + LLM + deep read, schema
+     docs/DATA_SCHEMA_ETL.md §4) restated in the RFPIS standard format. Primary sources all
+     publish the same facts differently; one structure is what lets a reviewer read two
+     calls the same way. A screened row is joined back to its extraction by call URL, so it
+     shows the full call and not only the handful of fields matching kept.
+  2. SCORING ANALYSIS — our eligibility criteria and fit strength against this entity, so
+     the reviewer can decide whether to put it in their pipeline or drop it.
+
+The live opportunity rail sits alongside, as on Pipelines, so moving between calls doesn't
+mean going back first.
 """
 from __future__ import annotations
 
@@ -19,13 +21,58 @@ from urllib.parse import quote as _quote
 import streamlit as st
 
 from core import opportunity_detail as _od
+from core import opportunity_scoring as _osc
 from db.supabase_client import get_client
 
 user = st.session_state.get("app_user") or {}
-
 _uid = (st.query_params.get("uid") or "").strip()
 
+# ── page styling: cards, chips, criterion rows ──────────────────────────────
+st.markdown("""
+<style>
+  .opp-chips { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 2px; }
+  .opp-chip { font-size:0.76rem; padding:2px 10px; border-radius:12px;
+              background:#eef2f0; color:#3b4a43; white-space:nowrap; }
+  .opp-chip.closed { background:#fde2e2; color:#b3261e; }
+  .opp-chip.urgent { background:#fde2e2; color:#b3261e; font-weight:600; }
+  .opp-chip.soon   { background:#fff4cc; color:#8a6d00; font-weight:600; }
+  .opp-chip.open   { background:#dcf5e3; color:#00703C; }
+  .opp-card { background:#fff; border:1px solid #e6e6e6; border-radius:10px;
+              padding:14px 16px; height:100%; }
+  .opp-card h4 { font-weight:700; color:#16734a; margin:0 0 10px;
+                 font-size:0.92rem; letter-spacing:.01em; }
+  .opp-kv { display:flex; justify-content:space-between; gap:14px; padding:4px 0;
+            border-bottom:1px dashed #f0f0f0; }
+  .opp-kv:last-child { border-bottom:none; }
+  .opp-k { color:#5d6b63; font-size:0.83rem; flex:0 0 45%; }
+  .opp-v { color:#1f2a24; font-size:0.87rem; text-align:right; font-weight:500; }
+  .opp-sec { color:#778; font-size:0.72rem; letter-spacing:.08em;
+             text-transform:uppercase; margin:26px 0 8px; font-weight:700; }
+  .opp-prose { background:#fff; border:1px solid #e6e6e6; border-radius:10px;
+               padding:14px 18px; color:#2b332e; line-height:1.62; font-size:0.93rem; }
+  .opp-crit { display:flex; align-items:center; gap:10px; padding:7px 12px;
+              border:1px solid #ececec; border-left-width:4px; border-radius:8px;
+              margin-bottom:6px; background:#fff; }
+  .opp-crit .nm { flex:1; font-size:0.87rem; color:#2b332e; }
+  .opp-crit .lb { font-size:0.85rem; font-weight:700; }
+  .opp-crit .ct { font-size:0.78rem; color:#8a8f8b; min-width:96px; text-align:right; }
+  .opp-crit .pt { font-size:0.8rem; color:#5d6b63; min-width:62px; text-align:right; }
+</style>
+""", unsafe_allow_html=True)
 
+
+def _esc(v) -> str:
+    # display_value untangles the jsonb columns (real list / JSON string / double-encoded)
+    # so a Python repr never reaches the page. "$" is neutralised so Streamlit's markdown
+    # doesn't render a money value as a LaTeX block.
+    return _html.escape(_od.display_value(v)).replace("$", "&#36;")
+
+
+def _txt(s) -> str:
+    return _html.escape("" if s is None else str(s)).replace("$", "&#36;")
+
+
+# ── resolve ──────────────────────────────────────────────────────────────────
 def _pipeline_reader(uid: str):
     # Tenant-scoped: a reviewer must only ever see their own entity's screened rows.
     rows = (get_client().table("rfp_submissions").select(_od.PIPELINE_FIELDS)
@@ -34,12 +81,26 @@ def _pipeline_reader(uid: str):
 
 
 def _catalog_reader(uid: str):
-    # NOT tenant-scoped, by design: the catalog is the shared pool the Featured card ranks,
-    # which is exactly what makes a screening miss recoverable. It holds no tenant data.
+    # NOT tenant-scoped, by design: the catalogue is the shared pool the Featured card
+    # ranks, which is what makes a screening miss recoverable. It holds no tenant data.
     from db.supabase_client import service_client
     rows = (service_client().table("extracted_solicitations").select(_od.CATALOG_FIELDS)
             .eq("uid", uid).limit(1).execute().data or [])
     return rows[0] if rows else None
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _catalog_by_link(link: str):
+    """The raw extraction behind a screened row, matched on call URL — so a pipeline
+    opportunity shows the whole call, not just the fields matching kept."""
+    from db.supabase_client import service_client
+    sb = service_client()
+    for candidate in (link, link + "/"):
+        rows = (sb.table("extracted_solicitations").select(_od.CATALOG_FIELDS)
+                .eq("opportunity_url", candidate).limit(1).execute().data or [])
+        if rows:
+            return rows[0]
+    return None
 
 
 if not _uid:
@@ -51,12 +112,13 @@ if not _uid:
 
 try:
     _res = _od.load(_uid, pipeline_reader=_pipeline_reader,
-                    catalog_reader=_catalog_reader)
+                    catalog_reader=_catalog_reader,
+                    catalog_by_link_reader=_catalog_by_link)
 except Exception as exc:
     st.error(f"Couldn't load `{_uid}` right now: {exc}")
     st.stop()
 
-_kind, _row = _res["kind"], _res["row"]
+_kind, _row, _ext = _res["kind"], _res["row"], _res["extraction"]
 if not _kind:
     st.title("Opportunity")
     st.warning(f"Couldn't find an opportunity with uid `{_uid}`. It may have been "
@@ -64,131 +126,274 @@ if not _kind:
     st.markdown("[📚 Back to Pipelines](/pipelines)")
     st.stop()
 
+_view = _od.standard_view(_kind, _row, _ext)
 
-def _esc(v) -> str:
-    # display_value untangles the jsonb columns (real list / JSON-encoded string /
-    # double-encoded list) so a raw Python repr never reaches the page. "$" is neutralised
-    # so Streamlit's markdown doesn't render a money value as a LaTeX block.
-    return _html.escape(_od.display_value(v)).replace("$", "&#36;")
+_main, _rail = st.columns([3.4, 1], gap="medium")
 
-
-# ── Header ───────────────────────────────────────────────────────────────────
-st.title(_od.title_of(_kind, _row))
-_funder = _row.get("funder_name") or _row.get("funding_agency") or "—"
-st.caption(f"UID `{_uid}` · Funder: **{_esc(_funder)}** · "
-           + ("in your pipeline" if _kind == _od.KIND_PIPELINE
-              else "from the shared catalogue — not yet screened for your entity"))
-
-_link = _od.link_of(_kind, _row)
-if _link:
-    st.markdown(f"[Open the call ↗]({_link})")
-
-# ── Action row ───────────────────────────────────────────────────────────────
-if _kind == _od.KIND_PIPELINE:
-    _a1, _a2, _a3 = st.columns([1.6, 1.3, 3])
-    # A markdown link, not st.page_link: page_link cannot carry a query string, and
-    # /pipelines WITHOUT the uid lands on the tab list where the reviewer has to hunt for
-    # the row again — which is the complaint that started this. `?uid=` opens the focused
-    # single-RFP Review view (already implemented in app_pages/pipelines.py).
-    _a1.markdown(f"#### [✏️ Open in Review](/pipelines?uid={_quote(_uid)})")
-    _a1.caption("Score the criteria and record the team decision.")
-    if _od.is_screened(_kind, _row):
-        _a2.metric("Bid Strength", f"{float(_row.get('alignment_score') or 0):.0f}/100")
-else:
-    st.markdown("")
-    _t1, _t2 = st.columns([1.6, 4])
-    # Tracking mints a NEW uid, so this page keeps resolving to the catalogue row
-    # afterwards. Look the tenant's own row up by call URL so a revisit says "already
-    # tracked" instead of offering the button again.
-    _already = st.session_state.get(f"_opp_tracked_{_uid}")
-    if not _already:
-        try:
-            _mine = (get_client().table("rfp_submissions")
-                     .select("uid,opportunity_link").limit(2000).execute().data or [])
-            _already = _od.tracked_uid(_row, _mine)
-        except Exception:
-            _already = None
-    if _already:
-        _t1.success("✓ Tracked")
-        _t2.caption(f"Now in your pipeline as `{_already}` — open **Pipelines → Review** "
-                    "to score it and record a decision.")
-    elif _t1.button("➕ Track this opportunity", type="primary", width='stretch',
-                    help="Run it through the same scorer the scan uses and add it to your "
-                         "pipeline, scored and classified against the eligibility "
-                         "criteria, awaiting your decision."):
-        from core import found_loader
-        _cand = _od.to_candidate(_row)
-        # provenance is NOT "search": that path re-runs the eligibility gate, and this call
-        # already came from the crawl + extraction. A Featured call may have MISSED this
-        # tenant's soft gate, which is the whole reason it is offered here — re-gating it
-        # would refuse exactly the recovery the card exists to make possible.
-        _res2 = found_loader.load_candidate(_cand, user, provenance="opportunity-page")
-        if _res2.get("ok"):
-            st.session_state[f"_opp_tracked_{_uid}"] = _res2["uid"]
-            st.success(f"Tracked as `{_res2['uid']}` — system recommendation: "
-                       f"**{_res2.get('reason') or 'scored'}**.")
-            st.cache_data.clear()          # the rail + pipeline lists are cached
-            st.rerun()
-        elif _res2.get("skipped"):
-            st.info("Already in your pipeline — not added twice. Open **Pipelines → "
-                    "Review** to find it.")
-        else:
-            st.warning(f"Couldn't track it: {_res2.get('reason') or 'unknown error'}")
-    else:
-        _t2.caption("Tracking scores it against your eligibility criteria and puts it in "
-                    "your pipeline for review. Nothing is decided for you.")
-
-st.divider()
-
-# ── Narrative ────────────────────────────────────────────────────────────────
-_narr = _od.narrative_of(_kind, _row)
-if _kind == _od.KIND_PIPELINE:
-    # Same display guard the Review card uses: never show a raw attachment/legalese dump.
+with _rail:
     try:
-        from core.records import clean_brief as _clean_brief
-        _narr = _clean_brief(_row.get("brief_description"), _row.get("raw_text")) or ""
-    except Exception:
-        pass
-if _narr:
-    st.markdown("#### What this call is")
+        from views.opportunity_rail import render_opportunity_rail
+        render_opportunity_rail()
+    except Exception as _rexc:                     # never let the rail take the page down
+        st.caption(f"_Opportunity feed unavailable: {_rexc}_")
+
+with _main:
+    # ── header ──────────────────────────────────────────────────────────────
+    st.title(_od.title_of(_view))
+    _dl_txt, _dl_tone = _od.deadline_status(_view.get("deadline"),
+                                            _view.get("funding_status"))
+    _chips = [(_dl_txt, _dl_tone)]
+    for _f in ("solicitation_type", "instrument_type", "funding_window",
+               "solicitation_language"):
+        if _view.get(_f):
+            _chips.append((_od.display_value(_view[_f]), ""))
+    if _kind == _od.KIND_PIPELINE:
+        _chips.append(("In your pipeline", "open"))
+    else:
+        _chips.append(("Shared catalogue — not screened for you", ""))
     st.markdown(
-        f"<div style='background:#fff;border:1px solid #e6e6e6;border-radius:10px;"
-        f"padding:14px 16px;color:#333;line-height:1.6'>"
-        f"{_esc(_narr).replace(chr(10), '<br>')}</div>", unsafe_allow_html=True)
-    st.markdown("")
+        f"<div style='color:#5d6b63;font-size:0.92rem;margin:-6px 0 2px'>"
+        f"{_txt(_view.get('funder_name') or '—')}"
+        + (f" <span style='color:#9aa39d'>· administered by "
+           f"{_txt(_view.get('grantmaking_entity'))}</span>"
+           if _view.get("grantmaking_entity") else "")
+        + f" <span style='color:#b9c0bb'>· uid {_txt(_uid)}</span></div>"
+        + "<div class='opp-chips'>"
+        + "".join(f"<span class='opp-chip {t}'>{_txt(c)}</span>" for c, t in _chips)
+        + "</div>", unsafe_allow_html=True)
 
-# ── Detail sections ──────────────────────────────────────────────────────────
-_secs = _od.sections(_kind, _row)
-if not _secs:
-    st.info("No further detail was extracted for this call.")
-else:
-    _cols = st.columns(2)
-    for _i, (_title, _fields) in enumerate(_secs):
-        with _cols[_i % 2]:
-            with st.container(border=True):
+    _call, _apply = _od.call_url(_view), _od.apply_url(_view)
+    _links = []
+    if _call:
+        _links.append(f"[Open the call ↗]({_call})")
+    if _apply and _apply != _call:
+        _links.append(f"[Apply ↗]({_apply})")
+    if _view.get("aggregator_url"):
+        _links.append(f"[Where we found it ↗]({_view['aggregator_url']})")
+    if _links:
+        st.markdown(" &nbsp;·&nbsp; ".join(_links))
+
+    # ── PART 1 — the opportunity, in our standard format ────────────────────
+    st.markdown("<div class='opp-sec'>1 · The opportunity</div>",
+                unsafe_allow_html=True)
+
+    _summary = _od.summary_of(_view)
+    if _summary:
+        st.markdown(f"<div class='opp-prose'>{_txt(_summary)}</div>",
+                    unsafe_allow_html=True)
+    else:
+        st.caption("_No summary was extracted for this call — see **As published** below._")
+
+    # Headline money + deadline, the two facts a reviewer looks for first.
+    _money = _od.format_money(_view.get("grant_amount"), _view.get("currency"))
+    _usd = _od.usd_equivalent(_view.get("grant_amount"), _view.get("currency"))
+    _range = _od.format_money_range(_view.get("call_award_floor"),
+                                    _view.get("call_award_ceiling"),
+                                    _view.get("currency"))
+    _h1, _h2, _h3 = st.columns(3)
+    _h1.metric("Award value", _money or "—",
+               (_usd or (_range if _range and _range != _money else None)))
+    _h2.metric("Deadline", str(_view.get("deadline") or "—")[:10], _dl_txt)
+    _h3.metric("Duration", _od.format_duration(_view.get("project_duration")) or "—",
+               _od.display_value(_view.get("funding_window")) or None)
+
+    for _heading, _lines in _od.narrative_blocks(_view):
+        st.markdown(f"##### {_heading}")
+        if len(_lines) == 1:
+            st.markdown(f"<div class='opp-prose'>{_txt(_lines[0])}</div>",
+                        unsafe_allow_html=True)
+        else:
+            st.markdown("\n".join(f"- {l}" for l in _lines))
+
+    _secs = _od.sections(_view)
+    if _secs:
+        _cols = st.columns(2, gap="medium")
+        for _i, (_title, _fields) in enumerate(_secs):
+            with _cols[_i % 2]:
                 st.markdown(
-                    f"<div style='font-weight:700;color:#16734a;margin-bottom:8px;"
-                    f"font-size:0.95rem'>{_esc(_title)}</div>", unsafe_allow_html=True)
-                for _label, _val in _fields:
-                    st.markdown(
-                        f"<div style='margin-bottom:9px'>"
-                        f"<div style='font-weight:600;color:#243524;font-size:0.85rem'>"
-                        f"{_esc(_label)}</div>"
-                        f"<div style='color:#5a5a5a;font-size:0.9rem'>"
-                        f"{_esc(_val)}</div></div>", unsafe_allow_html=True)
+                    f"<div class='opp-card'><h4>{_txt(_title)}</h4>"
+                    + "".join(f"<div class='opp-kv'><span class='opp-k'>{_txt(lb)}</span>"
+                              f"<span class='opp-v'>{_txt(v)}</span></div>"
+                              for lb, v in _fields)
+                    + "</div>", unsafe_allow_html=True)
+                st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-# ── Attachments / resource links (catalogue only) ────────────────────────────
-if _kind == _od.KIND_CATALOG:
-    for _fld, _hdr in (("resource_links", "Resource links"),
-                       ("attachments", "Attachments")):
-        _vals = _row.get(_fld)
-        if isinstance(_vals, str):
-            _vals = [_vals] if _vals.strip() else []
-        if _vals:
-            st.markdown(f"#### {_hdr}")
-            for _v in _vals:
-                _u = str(_v).strip()
-                if _u.startswith("http"):
-                    st.markdown(f"- [{_esc(_u)}]({_u})")
-                elif _u:
-                    st.markdown(f"- {_esc(_u)}")
+    _docs = _od.documents(_view)
+    if _docs:
+        st.markdown("##### Documents & links")
+        for _label, _url, _dkind in _docs:
+            st.markdown(f"- [{_label}]({_url}) &nbsp;<span style='color:#9aa39d;"
+                        f"font-size:0.78rem'>{_txt(_dkind)}</span>",
+                        unsafe_allow_html=True)
+
+    _raw = _od.as_published(_view)
+    if _raw:
+        with st.expander("📄 As published (raw extract from the primary source)"):
+            st.caption("The call as the source published it, kept for audit. With the "
+                       "LLM-synthesis stage of the extraction schema still unpopulated, "
+                       "this is the fullest read available in-app.")
+            st.text(_raw)
+
+    _filled, _total, _missing = _od.coverage(_view)
+    st.caption(f"Extraction completeness: **{_filled}/{_total}** schema fields populated"
+               + (f" · not extracted: {', '.join(_missing[:8])}"
+                  + (f" +{len(_missing) - 8} more" if len(_missing) > 8 else "")
+                  if _missing else ""))
+
+    # ── PART 2 — scoring analysis ───────────────────────────────────────────
+    st.markdown("<div class='opp-sec'>2 · Scoring analysis — is this worth bidding?"
+                "</div>", unsafe_allow_html=True)
+
+    from core import criteria_derive as _cd
+    from core import org_profile as _orgp
+    from core import settings as _settings
+
+    @st.cache_data(ttl=120, show_spinner=False)
+    def _context():
+        return _orgp.get_profile(), _settings.get_org()
+
+    try:
+        _org_prof, _org_set = _context()
+    except Exception:
+        _org_prof, _org_set = {}, {}
+    # A catalogue call has no screened row, so score the CANDIDATE built from its
+    # extraction — same derivation, same criteria, so the two paths can't disagree.
+    _scored_row = _row if _kind == _od.KIND_PIPELINE else _od.to_candidate(_row)
+    _donor = None
+    try:
+        from core.donor_intel import match_donor
+        _fa = str(_view.get("funder_name") or "").strip()
+        if _fa:
+            _donor = match_donor(_fa, fuzzy=False)
+    except Exception:
+        _donor = None
+    try:
+        import json as _json
+        _flags = _json.loads(_scored_row.get("call_compliance_flags") or "{}")
+        _flags = _flags if isinstance(_flags, dict) else {}
+    except Exception:
+        _flags = {}
+    _ov = _scored_row.get("criteria_component_overrides")
+    if isinstance(_ov, str):
+        try:
+            import json as _json2
+            _ov = _json2.loads(_ov or "{}")
+        except Exception:
+            _ov = {}
+    try:
+        _an = _osc.analyse(_scored_row, _org_prof, _donor, _org_set,
+                           rfp_compliance=_flags,
+                           overrides=_ov if isinstance(_ov, dict) else {})
+    except Exception as _sexc:
+        _an = None
+        st.warning(f"Couldn't score this opportunity right now: {_sexc}")
+
+    if _an:
+        _tone = {"Proceed": ("#dcf5e3", "#00703C"), "Park": ("#fff4cc", "#8a6d00"),
+                 "Decline": ("#fde2e2", "#b3261e")}.get(
+                     _an["suggested_decision"], ("#eee", "#333"))
+        _conf = _an["confidence"]
+        _dtxt = (f"{_conf['donor_pct']}%" if _conf["donor_matched"]
+                 else "no funder profile")
+        st.markdown(
+            f"<div style='background:{_tone[0]};border-radius:10px;padding:12px 16px;"
+            f"display:flex;gap:28px;align-items:center;flex-wrap:wrap'>"
+            f"<div><span style='color:{_tone[1]};font-weight:700;font-size:1.25rem'>"
+            f"Bid Strength {_an['bid_strength']}/100 — {_txt(_an['fit'])}</span></div>"
+            f"<div style='color:#31403a;font-size:0.9rem'>Suggestion: "
+            f"<b>{_txt(_an['suggested_decision'])}</b>"
+            + (f" <span style='color:#8a6d00'>(was {_txt(_an['system_decision'])})</span>"
+               if _an["suggested_decision"] != _an["system_decision"] else "")
+            + "</div>"
+            f"<div style='color:#31403a;font-size:0.84rem'>Confidence "
+            f"<b>{_txt(_conf['band'])}</b> · data {_conf['pct']}% "
+            f"(donor {_txt(_dtxt)} · call {_conf['call_pct']}%)</div>"
+            "</div>", unsafe_allow_html=True)
+        if _an["fatal"]:
+            st.error(f"🔒 **Fatal gate — {_od.display_value(_an['fatal_trigger'])}.** "
+                     "This is a structural ineligibility we cannot fix before the "
+                     "deadline, so the system declines it.")
+        if _an["confidence_note"]:
+            st.warning(f"⚠ {_an['confidence_note']}")
+        if _an["below_award_floor"]:
+            st.info("This award is below your minimum funding target, which caps a "
+                    "would-be Proceed at Park.")
+
+        _COL = {2: "#1a7f37", 1: "#b8860b", 0: "#c0392b"}
+        for _c in _an["criteria"]:
+            _col = _COL.get(_c["band"], "#9aa39d")
+            st.markdown(
+                f"<div class='opp-crit' style='border-left-color:{_col}'>"
+                f"<span class='nm'>{_txt(_c['title'])}</span>"
+                f"<span class='lb' style='color:{_col}'>{_txt(_c['label'])}</span>"
+                f"<span class='ct'>{_txt(_c['count_text'])}</span>"
+                f"<span class='pt'>{_c['points']:.1f} / "
+                f"{_c['weight'] * 100:.0f}</span></div>", unsafe_allow_html=True)
+            if _c["note"]:
+                st.caption(f":blue[{_c['note']}]")
+        st.caption("Each row: the criterion, its verdict, the components behind it, and "
+                   "the points it contributes out of its weight. Proceed ≥90 · Park "
+                   "70–89 · Decline <70; a 🔒 fatal gate declines outright. \"Not "
+                   "scored\" means this call stated nothing to score — it takes the "
+                   "Park midpoint.")
+
+        if _an["blockers"]:
+            st.markdown("**What's against it:** "
+                        + ", ".join(_txt(b["title"].split(" · ", 1)[-1])
+                                    for b in _an["blockers"]))
+
+    # ── decision ────────────────────────────────────────────────────────────
+    st.divider()
+    if _kind == _od.KIND_PIPELINE:
+        st.markdown(f"#### [✏️ Open in Review](/pipelines?uid={_quote(_uid)})")
+        st.caption("Already in your pipeline — score the criteria and record the team "
+                   "decision there.")
+    else:
+        _tracked = st.session_state.get(f"_opp_tracked_{_uid}")
+        if not _tracked:
+            try:
+                _mine = (get_client().table("rfp_submissions")
+                         .select("uid,opportunity_link").limit(2000).execute().data or [])
+                _tracked = _od.tracked_uid(_row, _mine)
+            except Exception:
+                _tracked = None
+        _rejected = st.session_state.get(f"_opp_rejected_{_uid}")
+        if _tracked:
+            st.success(f"✓ In your pipeline as `{_tracked}`.")
+            st.markdown(f"#### [✏️ Open in Review](/pipelines?uid={_quote(_tracked)})")
+        elif _rejected:
+            st.info("Marked not relevant — noted for the learning engine.")
+            st.markdown("[📚 Back to Pipelines](/pipelines)")
+        else:
+            st.markdown("**Add this to your pipeline?** Adding scores it against your "
+                        "eligibility criteria and queues it for review — nothing is "
+                        "decided for you.")
+            _d1, _d2, _d3 = st.columns([1.5, 1.3, 3])
+            if _d1.button("➕ Add to my pipeline", type="primary", width='stretch'):
+                from core import found_loader
+                # provenance is NOT "search": that path re-runs the eligibility gate, and
+                # this call already came from the crawl + extraction. A Featured call may
+                # have MISSED this tenant's soft gate — the whole reason it is offered
+                # here — so re-gating it would refuse exactly the recovery intended.
+                _r2 = found_loader.load_candidate(_od.to_candidate(_row), user,
+                                                  provenance="opportunity-page")
+                if _r2.get("ok"):
+                    st.session_state[f"_opp_tracked_{_uid}"] = _r2["uid"]
+                    st.cache_data.clear()      # the rail + pipeline lists are cached
+                    st.rerun()
+                elif _r2.get("skipped"):
+                    st.info("Already in your pipeline — not added twice.")
+                else:
+                    st.warning(f"Couldn't add it: {_r2.get('reason') or 'unknown error'}")
+            if _d2.button("✕ Not relevant", width='stretch',
+                          help="Records a negative signal for the learning engine."):
+                try:
+                    from core import decision_log
+                    decision_log.log_feedback(_od.to_candidate(_row), "bad",
+                                              by=user.get("email"),
+                                              reason="opportunity-page")
+                    st.session_state[f"_opp_rejected_{_uid}"] = True
+                    st.rerun()
+                except Exception as _fexc:
+                    st.warning(f"Couldn't record that: {_fexc}")
+            _d3.caption("")
