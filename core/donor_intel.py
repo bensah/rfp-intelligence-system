@@ -152,7 +152,7 @@ def match_donor(funder: Any, *, fuzzy: bool = True) -> Optional[dict]:
     Foundation"), while donor_intel holds just the name ("Gates Foundation" / "Bill &
     Melinda Gates Foundation"). The leading acronym blocks a plain match, so we also
     try the name AFTER the first separator (and the acronym before it). This is
-    why HAPPI's MUST-5 / PREFER-7 came back unmatched. The separator is matched as ANY
+    why a funder recorded with an acronym prefix came back unmatched on MUST-5 / PREFER-7. The separator is matched as ANY
     dash variant (see `split_funder_prefix`) — an en/em dash used to defeat the split
     entirely and return no donor.
 
