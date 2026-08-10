@@ -123,31 +123,45 @@ def render_component_editor(uid: str, key: str, title: str, items: list[dict],
         f"<span style='color:{_label_color(lbl)};font-weight:800'>{_esc(lbl)}</span>"
         f"</div>", unsafe_allow_html=True)
     st.caption("Set any component (0 · none / 0.5 · partial / 1 · full) — the "
-               "classification recalculates. **—** means not scored; leave it there and "
-               "the system keeps deciding. Greyed rows aren't required by this call, but "
-               "setting one asserts that it applies.")
+               "classification recalculates. **—** means not scored and is greyed out; "
+               "give it a value and it activates and starts counting. Greyed rows aren't "
+               "required by this call, but setting one asserts that it applies.")
     # PREFER-6 / PREFER-8 are named by their own weighted model, so editing their
     # components moves the count but NOT the label. Say that here, or a reviewer sets a
     # value, watches the label sit still, and reasonably concludes the editor is broken.
     if key in _crev.DERIVATION_AUTHORITATIVE:
         st.caption(":blue[This criterion is scored by its own weighted model, so your "
                    "component edits are recorded and shown but do **not** rename it.]")
-    for it in items:
+    # Iterate the EFFECTIVE items (derivation + this session's edits), not the raw ones.
+    # Reading `active` off the raw item meant a component the reviewer had just scored kept
+    # rendering greyed and captioned "not required" while its chosen value sat in the box
+    # beside it: the edit counted towards the label but looked inert.
+    for it, ef in zip(items, eff):
         ck = str(it.get("key"))
-        is_act = bool(it.get("active"))
+        # The SCOPE decision still comes from the derivation (SAM/UEI stays unreachable),
+        # but everything visual is decided by the value now showing in the box.
         editable = _crev.is_editable(it)
+        # Preselect the MEASURED value; an unmeasured component shows "—" so a reviewer can
+        # tell "we don't know" from "we know, and it's zero".
+        cur = (f"{_crev.component_score(ef):g}"
+               if (_crev.is_scored(ef) and ef.get("active")) else DASH)
+        # THE RULE (owner 2026-08-10): a component is greyed exactly when it has NO VALUE.
+        # "—" = not scored, excluded from the count → greyed. Any of 0 / 0.5 / 1 = live and
+        # counting → normal weight. One rule, whether the value came from the scan/cron or
+        # from a human, so the same state is never rendered two different ways.
+        has_value = cur != DASH
         c1, c2 = st.columns([4, 1])
         c1.markdown(
             f"<div style='padding-top:0.5rem;font-size:0.9rem;"
-            f"{'' if is_act else 'color:#aaa'}'>{_esc(it.get('name') or ck)}"
+            f"{'' if has_value else 'color:#aaa'}'>{_esc(it.get('name') or ck)}"
             + (" 🔒" if it.get("hard") else "")
-            + ("" if is_act else " · not required")
+            # "not required" describes what the CALL imposed, so it must disappear the moment
+            # the row carries a value — a scored row IS required, by whoever scored it.
+            + ("" if (has_value or it.get("active")) else " · not required")
+            + (" <span style='color:#1a7f37;font-size:0.72rem'>· set by you</span>"
+               if ef.get("_override") else "")
             + ("" if editable else " · not applicable to this funder")
             + "</div>", unsafe_allow_html=True)
-        # Preselect the MEASURED value; an unmeasured component starts at "—" so a
-        # reviewer can tell "we don't know" from "we know, and it's zero".
-        cur = (f"{_crev.component_score(it):g}"
-               if (_crev.is_scored(it) and is_act) else DASH)
         qk = comp_widget_key(uid, key, ck)
         c2.selectbox(
             it.get("name") or ck, COMP_OPTS,
