@@ -554,8 +554,16 @@ def _factor_html(ckey: str, label=None) -> str:
     out = []
     for f in facts:
         if not f.get("active", True):
-            sym, col, suffix = "?", "#b8860b", (" <span style='color:#aaa'>"
-                "(Not sure — not stated by this call; excluded from the count)</span>")
+            # An inactive component with a DETAIL has something worth saying even though it
+            # isn't scored — e.g. a funder that reimburses in arrears is a real delivery
+            # risk without being an eligibility test. Show the detail instead of the
+            # generic "not stated", so the fact isn't lost just because it doesn't score.
+            sym, col = "?", "#b8860b"
+            suffix = (f" <span style='color:#888'>— {_esc(f['_detail'])}</span>"
+                      " <span style='color:#aaa'>(not scored)</span>"
+                      if f.get("_detail") is not None else
+                      " <span style='color:#aaa'>"
+                      "(Not sure — not stated by this call; excluded from the count)</span>")
         elif f.get("_detail") is not None:
             # Graded component (track record, financial capacity, experience bar):
             # band symbol + the measurement behind it.
