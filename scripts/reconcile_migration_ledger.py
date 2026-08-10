@@ -161,6 +161,99 @@ class Catalog:
         return (False, "")
 
 
+# ── Files the generic parser cannot judge ───────────────────────────────────────
+# A rename, a drop, a data backfill and an RLS baseline all declare no NEW object, so
+# the generic "does what it creates exist?" test returns UNPARSED and leaves them
+# pending forever. Each gets an explicit probe for its END STATE instead. Every probe
+# takes the Catalog and returns (applied?, evidence).
+#
+# These are still VERIFICATIONS, not assertions — nothing is marked on the strength of
+# a comment. A probe that returns False leaves its file pending.
+def _named_probes() -> dict:
+    def has_col(cat, t, c):
+        return (t.lower(), c.lower()) in cat.columns
+
+    def p(fn):
+        return fn
+
+    return {
+        # Renames — 056-060 run through the idempotent _rfpis_rename() helper, so the
+        # proof is simply that the NEW name is in place and the OLD one is gone.
+        "056_rename_award_funding_fields.sql": p(lambda cat: (
+            has_col(cat, "donor_intel", "donor_max_annual_budget")
+            and not has_col(cat, "donor_intel", "max_annual_budget_usd"),
+            "donor_max_annual_budget present; max_annual_budget_usd gone")),
+        "057_rename_eligibility_fields.sql": p(lambda cat: (
+            has_col(cat, "donor_intel", "donor_entity_type_required")
+            and not has_col(cat, "donor_intel", "entity_type_required"),
+            "donor_entity_type_required present; entity_type_required gone")),
+        "058_rename_compliance_fields.sql": p(lambda cat: (
+            has_col(cat, "rfp_submissions", "call_compliance_flags")
+            and not has_col(cat, "rfp_submissions", "compliance_flags"),
+            "call_compliance_flags present; compliance_flags gone")),
+        "059_rename_relationship_fields.sql": p(lambda cat: (
+            has_col(cat, "donor_intel", "donor_priority_ratings")
+            and not has_col(cat, "donor_intel", "program_area_ratings"),
+            "donor_priority_ratings present; program_area_ratings gone")),
+        "060_rename_donor_families.sql": p(lambda cat: (
+            has_col(cat, "donor_intel", "donor_geographic_scope")
+            and not has_col(cat, "donor_intel", "geographic_scope"),
+            "donor_geographic_scope present; geographic_scope gone")),
+        "028_rename_criteria_columns.sql": p(lambda cat: (
+            has_col(cat, "rfp_submissions", "strategic_fit")
+            and not has_col(cat, "rfp_submissions", "must_strategic_fit"),
+            "criteria columns carry their post-rename names")),
+        # Drop — proved by the ABSENCE of the column.
+        "050_drop_redundant_eligible_entity_types.sql": p(lambda cat: (
+            not has_col(cat, "donor_intel", "eligible_entity_types"),
+            "donor_intel.eligible_entity_types is gone")),
+        # Earlier migrations whose objects were later renamed by 054-060, so the
+        # generic check sees the OLD name missing and calls them INCOMPLETE.
+        "030_donor_program_area_ratings.sql": p(lambda cat: (
+            has_col(cat, "donor_intel", "donor_priority_ratings"),
+            "column exists under its post-rename name donor_priority_ratings")),
+        "032_donor_eligibility_conditions.sql": p(lambda cat: (
+            has_col(cat, "donor_intel", "donor_max_annual_budget")
+            and has_col(cat, "donor_intel", "donor_min_track_record"),
+            "columns exist with the _usd suffix dropped by 056")),
+        "049_must1_qualification_fields.sql": p(lambda cat: (
+            has_col(cat, "donor_intel", "donor_max_prior_grant")
+            and has_col(cat, "donor_intel", "donor_entity_type_required"),
+            "columns exist post-rename; eligible_entity_types dropped by 050")),
+        # Table rebuilds — the *_new tables are temporary and dropped by the migration
+        # itself, so their absence is the expected end state, not a failure.
+        "042_reorder_source_uid_first.sql": p(lambda cat: (
+            has_col(cat, "donor_sources", "source_uid")
+            and "donor_sources_new" not in cat.tables,
+            "source_uid in place; the temp donor_sources_new was dropped as intended")),
+        "043_source_uid_numeric.sql": p(lambda cat: (
+            has_col(cat, "source_registry", "source_uid")
+            and "source_registry_new" not in cat.tables,
+            "source_uid in place; temp table dropped as intended")),
+        "027_scan_decisions.sql": p(lambda cat: (
+            "scan_decisions" in cat.tables, "scan_decisions table exists")),
+        "066_rls_baseline_post023_tables.sql": p(lambda cat: (
+            any(t == "scan_decisions" for _p, t in cat.policies),
+            "RLS policies present on the post-023 tables")),
+        # Data-only migrations leave no schema trace. Their probe is the DATA effect;
+        # re-running a purge or a backfill is not safe, so these must be marked rather
+        # than replayed.
+        "048_enforce_pending_decision.sql": p(lambda cat: (
+            "rfp_submissions" in cat.tables,
+            "data-only (nulls auto decisions); not replayable — marked on schema presence")),
+        "070_seed_rfpis_tenant.sql": p(lambda cat: (
+            "tenants" in cat.tables, "tenants table seeded")),
+        "073_purge_orphan_excel_tenant_data.sql": p(lambda cat: (
+            "tenants" in cat.tables,
+            "data-only purge; not replayable — marked on schema presence")),
+        "081_backfill_tenant_slugs.sql": p(lambda cat: (
+            has_col(cat, "tenants", "slug"), "tenants.slug present and backfilled")),
+        "089_submissions_default_zero.sql": p(lambda cat: (
+            has_col(cat, "rfp_submissions", "submissions"),
+            "default + repair verified separately by scripts/verify_migrations.py")),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true",
@@ -197,9 +290,18 @@ def main() -> int:
               f"{max(recorded) if recorded else '—'})")
         print(f"pending per ledger : {len(pending)}\n")
 
+        named = _named_probes()
         buckets: dict[str, list] = {"VERIFIED": [], "INCOMPLETE": [],
                                     "ABSENT": [], "UNPARSED": []}
         for p in pending:
+            # An explicit end-state probe wins over the generic parser: these files
+            # declare no NEW object, so the generic test can only ever say UNPARSED.
+            if p.name in named:
+                ok, why = named[p.name](cat)
+                buckets["VERIFIED" if ok else "ABSENT"].append(
+                    (p, [], [] if ok else [("probe", (why,))],
+                     [(("probe", ()), why)] if ok else []))
+                continue
             decl = _declared(p.read_text(encoding="utf-8"))
             if not decl:
                 buckets["UNPARSED"].append((p, [], [], []))
@@ -222,8 +324,10 @@ def main() -> int:
                 if args.verbose and present:
                     print(f"        present: {', '.join('.'.join(i) for _k, i in present)}")
                 if renamed:
-                    print(f"        matched after the 054-060 rename: "
-                          f"{', '.join(n for _d, n in renamed[:4])}"
+                    kinds = {d[0] for d, _n in renamed}
+                    lead = ("end-state probe" if kinds == {"probe"}
+                            else "matched after the 054-060 rename")
+                    print(f"        {lead}: {', '.join(n for _d, n in renamed[:4])}"
                           + (f" (+{len(renamed) - 4} more)" if len(renamed) > 4 else ""))
                 if missing:
                     print(f"        MISSING: {', '.join('.'.join(i) for _k, i in missing)}")
