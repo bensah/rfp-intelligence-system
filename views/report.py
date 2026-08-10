@@ -758,8 +758,8 @@ def _load_grants(_scope: str) -> pd.DataFrame:
 # Everything defaults to on, so Generate with no changes = the full report.
 _REPORT_SECTIONS = [
     ("1", "1 · Search activity", [
-        ("s1_discovery",  "RFPs discovered by member"),
-        ("s1_donor",      "RFPs by donor (top 15)"),
+        ("s1_discovery",  "Funding discovered by member"),
+        ("s1_donor",      "Funding by donor (top 15)"),
         ("s1_keywords",   "Search keyword cloud"),
         ("s1_kw_success", "Keywords driving success"),
         ("s1_sources",    "Top sources by yield"),
@@ -1974,101 +1974,95 @@ if _show_sec("4"):
             return clean_df(pd.DataFrame(all_rows))
         _STACK_COLORS = {"Submitted": "#10b981", "Unsubmitted": "#cbd5e1"}
 
-        # ───────────── Proposal Leads (stacked) ───────────────────────────────
-        # `proposal_lead` is a free-text field that can hold a single name
-        # OR a comma-separated list ("Alice, Bob"). Split + explode so each
-        # named person gets their own bar; first-name display when unique.
-        if _show("s4_leads"):
-            st.markdown("##### Proposal Leads")
-        if _show("s4_leads") and "proposal_lead" in activity_rows.columns:
-            lead_rows = activity_rows[
-                ["proposal_lead", "progress_status", "donor_decision"]].copy()
-            lead_rows["is_submitted"] = _submitted_mask(lead_rows).to_numpy()
-            # Dedupe names PER ROW (set) so one RFP never counts a person twice.
-            lead_rows["_members"] = lead_rows["proposal_lead"].apply(
+        # ───────── Proposal Leads + Contributors, SIDE BY SIDE ────────────────
+        # Two charts of the same shape — people on the y-axis, submitted vs unsubmitted
+        # stacked — so they belong in one row where the same person's two bars can be
+        # compared at a glance. Stacked vertically they were a scroll apart.
+        #
+        # Each stays INDEPENDENTLY toggleable, so when only one section is enabled it takes
+        # the full width instead of rendering half a row with a gap beside it. That is why
+        # the figures are BUILT first and rendered afterwards: the layout can only be chosen
+        # once we know how many charts there are.
+        #
+        # `proposal_lead` is free text that may hold one name or a comma-separated list
+        # ("Alice, Bob"); `contributors` is a Postgres text[] whose elements can themselves
+        # carry comma-separated names from sloppy form submissions.
+        # split_and_normalize_names handles both shapes, and the per-row set() dedupe means
+        # one RFP never counts the same person twice.
+        def _people_stack(col: str, y_title: str, x_title: str, chart_title: str,
+                          empty_msg: str):
+            """(figure|None, message|None, row_count) for one people-vs-status chart."""
+            if col not in activity_rows.columns:
+                return None, empty_msg, 0
+            rows = activity_rows[[col, "progress_status", "donor_decision"]].copy()
+            rows["is_submitted"] = _submitted_mask(rows).to_numpy()
+            rows["_members"] = rows[col].apply(
                 lambda v: sorted(set(split_and_normalize_names(v))))
-            lead_rows = lead_rows.explode("_members").dropna(subset=["_members"])
-            lead_rows = lead_rows[lead_rows["_members"] != ""]
-            if not lead_rows.empty:
-                disp = first_name_display_map(lead_rows["_members"])
-                lead_rows["display"] = lead_rows["_members"].map(disp).fillna(lead_rows["_members"])
-                stacked = _stacked_chart_df(
-                    lead_rows[["display", "is_submitted"]],
-                    "display",
-                )
-                if not stacked.empty:
-                    fig_pl = px.bar(
-                        stacked, x="RFPs", y="display",
-                        color="Status", orientation="h",
-                        color_discrete_map=_STACK_COLORS,
-                        title="Proposal lead — top 15 by RFP count "
-                              "(stacked: Submitted vs Unsubmitted)",
-                        text="RFPs",
-                        category_orders={"Status": ["Submitted", "Unsubmitted"]},
-                    )
-                    fig_pl.update_layout(
-                        height=max(280, 30 * stacked["display"].nunique() + 100),
-                        margin=dict(t=50, b=10), barmode="stack",
-                        yaxis={"categoryorder": "total ascending",
-                               "title": "Proposal lead"},
-                        xaxis={"title": "RFPs"},
-                        legend={"orientation": "h", "yanchor": "bottom",
-                                "y": 1.02, "xanchor": "right", "x": 1,
-                                "font": dict(size=11)},
-                    )
-                    st.plotly_chart(fig_pl, width='stretch')
-                else:
-                    st.info("No proposal_lead values recorded yet.")
-            else:
-                st.info("No proposal_lead values recorded yet.")
+            rows = rows.explode("_members").dropna(subset=["_members"])
+            rows = rows[rows["_members"] != ""]
+            if rows.empty:
+                return None, empty_msg, 0
+            disp = first_name_display_map(rows["_members"])
+            rows["display"] = rows["_members"].map(disp).fillna(rows["_members"])
+            stacked = _stacked_chart_df(rows[["display", "is_submitted"]], "display")
+            if stacked.empty:
+                return None, empty_msg, 0
+            fig = px.bar(
+                stacked, x="RFPs", y="display",
+                color="Status", orientation="h",
+                color_discrete_map=_STACK_COLORS,
+                title=chart_title, text="RFPs",
+                category_orders={"Status": ["Submitted", "Unsubmitted"]},
+            )
+            return fig, None, int(stacked["display"].nunique())
 
-        # ───────────── Contributors (stacked) ─────────────────────────────────
-        # `contributors` is a Postgres text[] array, but individual list
-        # elements can themselves carry comma-separated names from sloppy
-        # form submissions. split_and_normalize_names handles both shapes.
+        _pl_fig = _ct_fig = None
+        _pl_msg = _ct_msg = None
+        _pl_n = _ct_n = 0
+        if _show("s4_leads"):
+            _pl_fig, _pl_msg, _pl_n = _people_stack(
+                "proposal_lead", "Proposal lead", "RFPs",
+                "Top 15 by RFP count (Submitted vs Unsubmitted)",
+                "No proposal_lead values recorded yet.")
         if _show("s4_contrib"):
-            st.markdown("##### Contributors")
-        if _show("s4_contrib") and "contributors" in activity_rows.columns:
-            contribs = activity_rows[
-                ["contributors", "progress_status", "donor_decision"]].copy()
-            contribs["is_submitted"] = _submitted_mask(contribs).to_numpy()
-            # Dedupe per RFP so a person listed twice in one contributors array counts once.
-            contribs["_members"] = contribs["contributors"].apply(
-                lambda v: sorted(set(split_and_normalize_names(v))))
-            contribs = contribs.explode("_members").dropna(subset=["_members"])
-            contribs = contribs[contribs["_members"] != ""]
-            if not contribs.empty:
-                disp = first_name_display_map(contribs["_members"])
-                contribs["display"] = contribs["_members"].map(disp).fillna(contribs["_members"])
-                stacked = _stacked_chart_df(
-                    contribs[["display", "is_submitted"]],
-                    "display",
-                )
-                if not stacked.empty:
-                    fig_ct = px.bar(
-                        stacked, x="RFPs", y="display",
-                        color="Status", orientation="h",
-                        color_discrete_map=_STACK_COLORS,
-                        title="Contributor — top 15 by RFPs supported "
-                              "(stacked: Submitted vs Unsubmitted)",
-                        text="RFPs",
-                        category_orders={"Status": ["Submitted", "Unsubmitted"]},
-                    )
-                    fig_ct.update_layout(
-                        height=max(280, 30 * stacked["display"].nunique() + 100),
-                        margin=dict(t=50, b=10), barmode="stack",
-                        yaxis={"categoryorder": "total ascending",
-                               "title": "Contributor"},
-                        xaxis={"title": "RFP contributions"},
-                        legend={"orientation": "h", "yanchor": "bottom",
-                                "y": 1.02, "xanchor": "right", "x": 1,
-                                "font": dict(size=11)},
-                    )
-                    st.plotly_chart(fig_ct, width='stretch')
-                else:
-                    st.info("No contributors recorded yet.")
-            else:
-                st.info("No contributors recorded yet.")
+            _ct_fig, _ct_msg, _ct_n = _people_stack(
+                "contributors", "Contributor", "RFP contributions",
+                "Top 15 by RFPs supported (Submitted vs Unsubmitted)",
+                "No contributors recorded yet.")
+
+        # ONE height for both, from whichever has more people, so the two panels line up
+        # instead of one floating short beside the other.
+        _people_h = max(280, 30 * max(_pl_n, _ct_n) + 100)
+
+        def _finish(fig, y_title: str, x_title: str):
+            fig.update_layout(
+                height=_people_h, margin=dict(t=54, b=10), barmode="stack",
+                yaxis={"categoryorder": "total ascending", "title": y_title},
+                xaxis={"title": x_title},
+                title={"font": dict(size=13)},
+                legend={"orientation": "h", "yanchor": "bottom", "y": 1.02,
+                        "xanchor": "right", "x": 1, "font": dict(size=11)},
+            )
+            return fig
+
+        def _panel(heading: str, fig, msg, y_title: str, x_title: str):
+            st.markdown(f"##### {heading}")
+            if fig is not None:
+                st.plotly_chart(_finish(fig, y_title, x_title), width="stretch")
+            elif msg:
+                st.info(msg)
+
+        if _show("s4_leads") and _show("s4_contrib"):
+            _pc1, _pc2 = st.columns(2, gap="medium")
+            with _pc1:
+                _panel("Proposal Leads", _pl_fig, _pl_msg, "Proposal lead", "RFPs")
+            with _pc2:
+                _panel("Contributors", _ct_fig, _ct_msg, "Contributor",
+                       "RFP contributions")
+        elif _show("s4_leads"):
+            _panel("Proposal Leads", _pl_fig, _pl_msg, "Proposal lead", "RFPs")
+        elif _show("s4_contrib"):
+            _panel("Contributors", _ct_fig, _ct_msg, "Contributor", "RFP contributions")
 
         # ───────────── Lead & Sub Applicant partners ──────────────────────────
         # Over the PROCEED RFPs (activity_rows), each applicant cell can list MULTIPLE partners
@@ -2229,13 +2223,13 @@ if _show_sec("5"):
 
         # Consolidated KPI cards — counts on top, amounts below (no duplicate secured tile).
         k1, k2, k3 = st.columns(3)
-        k1.metric("Submitted grants", n_submitted,
+        k1.metric("Applied grants", n_submitted,
                   help="Sum of donor-side submissions on Proceed RFPs whose Progress = "
                        "Completed (an RFP can be submitted to a donor more than once).")
         k2.metric("Approved", n_approved,
                   help="Submitted (Proceed + Completed) RFPs with donor_decision = Approved.")
         k3.metric("Win rate", f"{win_rate:.1f}%" if n_submitted else "—",
-                  help="Approved ÷ Submitted grants. '—' with no submissions.")
+                  help="Approved ÷ Applied grants. '—' with no submissions.")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Requested (USD)", f"${total_req:,.0f}")
         m2.metric("Total Secured (USD)", f"${amt_secured:,.0f}",
@@ -2368,11 +2362,11 @@ if _show_sec("5"):
         # report / Owner columns aren't needed here). Not collapsible; the closing table of
         # the results story.
         if _show("s5_grants"):
-            st.markdown("##### Submitted Grants")
+            st.markdown("##### Applied Grants")
             st.caption("Every grant we've submitted (Proceed RFPs with Progress = "
                        "Completed) — requested amount and the donor's decision.")
             if _pc.empty:
-                st.info("No submitted grants yet.")
+                st.info("No applied grants yet.")
             else:
                 _sg = _pc.copy()
                 _sg["_req"] = _series_to_usd(
