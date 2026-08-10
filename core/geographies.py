@@ -207,6 +207,14 @@ _REGION_MEMBERS.update({
     "sadc": ["Angola", "Botswana", "Comoros", "Congo (DRC)", "Eswatini", "Lesotho",
              "Madagascar", "Malawi", "Mauritius", "Mozambique", "Namibia", "Seychelles",
              "South Africa", "Tanzania", "Zambia", "Zimbabwe"],
+    # UEMOA/WAEMU are the same bloc under its French and English acronyms.
+    "uemoa": ["Benin", "Burkina Faso", "Côte d'Ivoire", "Guinea-Bissau", "Mali",
+              "Niger", "Senegal", "Togo"],
+    "waemu": ["Benin", "Burkina Faso", "Côte d'Ivoire", "Guinea-Bissau", "Mali",
+              "Niger", "Senegal", "Togo"],
+    "igad": ["Djibouti", "Eritrea", "Ethiopia", "Kenya", "Somalia", "South Sudan",
+             "Sudan", "Uganda"],
+    "amu": ["Algeria", "Libya", "Mauritania", "Morocco", "Tunisia"],
     "europe": _EUROPE,
     "european union": _EU,
     "northern europe": ["Denmark", "Estonia", "Finland", "Iceland", "Ireland",
@@ -238,10 +246,22 @@ _REGION_MEMBERS.update({
     "mediterranean": _MEDITERRANEAN,
 })
 
+# African regional ECONOMIC COMMUNITIES, as scope labels the gate must RECOGNISE.
+# Their membership already lives in _REGION_MEMBERS below; without them here the gate
+# never saw the label at all, so a call scoped ["COMESA"] read as having NO stated
+# geography and was admitted as if global. Registering them is what lets the existing
+# membership test answer the real question — COMESA does not include Cameroon or Mali
+# (they are CEMAC/ECCAS and ECOWAS respectively), so a COMESA-only call is out of scope.
+# EXCLUSIVE blocs only: each names a fixed member list, unlike the inclusive tiers
+# ("LMIC", "global") that are handled as keepers upstream.
+AFRICAN_BLOCS = ["COMESA", "ECOWAS", "CEMAC", "ECCAS", "EAC", "SADC",
+                 "UEMOA", "WAEMU", "IGAD", "AMU"]
+
 # Region labels the geo gate scans for in a call's text (UN regions + the two
-# common non-M49 scopes). Income tiers + the global tier are deliberately
-# EXCLUDED — those are inclusive ("LMIC", "global"), handled as keepers upstream.
-REGION_TERMS = UN_REGIONS + ["European Union", "Mediterranean"]
+# common non-M49 scopes + the African economic blocs). Income tiers + the global tier
+# are deliberately EXCLUDED — those are inclusive ("LMIC", "global"), handled as
+# keepers upstream.
+REGION_TERMS = UN_REGIONS + ["European Union", "Mediterranean"] + AFRICAN_BLOCS
 
 
 def expand(selection) -> set[str]:
@@ -264,12 +284,26 @@ def expand(selection) -> set[str]:
 # spelling/acronym variants matched in RFP text, plus its member countries via
 # expand(). Selecting a broad term is what relaxes the gate beyond exact
 # countries; with NONE selected, only exact eligible-country matches admit.
-BROAD_GEOGRAPHIES = UN_REGIONS + INCOME_TIERS
+BROAD_GEOGRAPHIES = UN_REGIONS + AFRICAN_BLOCS + INCOME_TIERS
 
 # Conservative variant lists — word-boundary matched, so short acronyms (SSA,
 # LMIC, LDC) won't fire inside other words. Terms not listed fall back to just
 # their own label + member countries.
 SYNONYMS: dict[str, list[str]] = {
+    # The blocs are usually written as bare acronyms, which the word-boundary matcher
+    # handles, but sources do spell them out. Kept tight on purpose: "EAC" and "AMU"
+    # are short enough to collide, so they get no loose variants.
+    "COMESA": ["comesa", "common market for eastern and southern africa"],
+    "ECOWAS": ["ecowas", "economic community of west african states",
+               "economic community of west africa"],
+    "CEMAC": ["cemac", "economic and monetary community of central africa"],
+    "ECCAS": ["eccas", "economic community of central african states"],
+    "SADC": ["sadc", "southern african development community"],
+    "EAC": ["eac", "east african community"],
+    "UEMOA": ["uemoa", "west african economic and monetary union"],
+    "WAEMU": ["waemu"],
+    "IGAD": ["igad", "intergovernmental authority on development"],
+    "AMU": ["amu", "arab maghreb union"],
     "Africa": ["africa", "african continent", "pan-african", "pan african"],
     "Sub-Saharan Africa": ["sub-saharan africa", "sub saharan africa",
                            "subsaharan africa", "sub-saharan", "ssa"],
