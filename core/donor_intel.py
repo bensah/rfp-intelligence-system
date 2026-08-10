@@ -112,6 +112,39 @@ def _load_index() -> dict[str, dict]:
     return idx
 
 
+# Legal / organisational FORM suffixes. A funder string that is a donor's canonical name
+# PLUS one of these names the SAME entity: "Global Health EDCTP3 Joint Undertaking" is the
+# donor recorded as "Global Health EDCTP3". Stripping them and retrying an EXACT key match
+# is safe in a way substring containment is not — it still requires equality, so it cannot
+# wander to a different donor.
+#
+# DELIBERATELY EXCLUDED: "foundation", "trust", "fund", "institute", "association". Those
+# DISTINGUISH entities rather than describing a legal form — Pfizer is not the Pfizer
+# Foundation, and Wellcome is not the Wellcome Trust. Stripping them would merge a company
+# with its philanthropic arm and score an RFP against the wrong funder's requirements.
+_FORM_SUFFIXES = (
+    "joint undertaking", "joint programme", "joint program",
+    "limited", "ltd", "incorporated", "inc", "plc", "llc", "llp",
+    "gmbh", "ag", "sa", "nv", "bv", "asbl", "aisbl", "e v", "ev",
+    "the",                                    # leading article, handled below
+)
+
+
+def _strip_form_suffix(norm: str) -> str:
+    """A normalised funder name with one trailing legal-form suffix removed, or "" when
+    there is nothing to strip. Only ONE pass: two suffixes stacked is not a real name."""
+    if not norm:
+        return ""
+    if norm.startswith("the "):
+        return norm[4:].strip()
+    for suf in _FORM_SUFFIXES:
+        if suf == "the":
+            continue
+        if norm.endswith(" " + suf):
+            return norm[: -(len(suf) + 1)].strip()
+    return ""
+
+
 def match_donor(funder: Any, *, fuzzy: bool = True) -> Optional[dict]:
     """Best-effort match of an RFP funder string to a donor_intel row.
 
@@ -134,6 +167,9 @@ def match_donor(funder: Any, *, fuzzy: bool = True) -> Optional[dict]:
     if _split:
         acr, name = _split
         cands += [_norm(name), _norm(acr)]      # prefer the donor name, then the acronym
+    # A trailing legal FORM ("... Joint Undertaking", "... Ltd") is not part of the
+    # identity, so try the name without it — still as an EXACT key, never a substring.
+    cands += [_strip_form_suffix(c) for c in list(cands)]
     cands = [c for c in dict.fromkeys(cands) if c]   # de-dup, drop blanks, keep order
     if not cands:
         return None
