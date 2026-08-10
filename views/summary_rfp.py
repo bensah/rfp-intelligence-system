@@ -215,7 +215,7 @@ proceed_df = unique[dec_lower.str.startswith("proceed").to_numpy()].copy()
 # =============================================================================
 # A. RFPs Snapshot  (was A. Screening snapshot + B. Pipeline highlights)
 # =============================================================================
-st.subheader("A · RFPs snapshot")
+st.subheader("A · Funding Calls Snapshot")
 proceed = int(dec_lower.str.startswith("proceed").sum())
 park = int(dec_lower.eq("park").sum())
 decline = int(dec_lower.eq("decline").sum())
@@ -223,12 +223,12 @@ decline = int(dec_lower.eq("decline").sum())
 # Row 1 — counts
 r1c = st.columns(6)
 for col, (label, val) in zip(r1c, [
-    ("Total RFPs Found", len(rfps)),
-    ("Total Unique RFPs", len(unique)),
+    ("Total Found", len(rfps)),
+    ("Unique Found", len(unique)),
     ("Proceed", proceed),
     ("Parked", park),
     ("Declined", decline),
-    ("Duplicate Flagged", dup_count),
+    ("Duplicates", dup_count),
 ]):
     with col:
         _kpi(label, val)
@@ -867,7 +867,7 @@ else:
 # Row 1 — quantitative: count → requested → secured → % secured
 ar1, ar2, ar3, ar4 = st.columns(4)
 with ar1:
-    _kpi("Total Submitted RFPs", total_submitted,
+    _kpi("Total Submitted", total_submitted,
          "Sum of Submissions where Progress = Completed")
 with ar2:
     _kpi("Total Requested (USD)", f"${total_requested_usd:,.0f}",
