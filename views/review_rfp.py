@@ -100,7 +100,7 @@ with wc:
 
 df = _fetch(sel_week)
 # Concluded grants (won/submitted) are tracked under Grants + counted in Summary —
-# keep them out of the active Review list (e.g. HAPPI: Completed + Approved).
+# keep them out of the active Review list (a row marked Completed + Approved).
 df = drop_concluded(df)
 if df.empty:
     with rc:

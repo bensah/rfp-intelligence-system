@@ -101,7 +101,7 @@ def _weeks_with_data() -> list[str]:
 
 df = _fetch(selected_week)
 # Drop concluded grants (won/submitted) — they belong in Grants + the Home Summary,
-# not the active screening list (e.g. HAPPI: Completed + Approved).
+# not the active screening list (a row marked Completed + Approved).
 df = drop_concluded(df)
 
 # LIVE scoring — single source of truth (shared with Review / Records / View modal).
