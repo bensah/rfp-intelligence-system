@@ -13,6 +13,8 @@ core.opportunity_feed.
 """
 from __future__ import annotations
 
+from urllib.parse import quote as _quote
+
 import streamlit as st
 
 from core import opportunity_feed as _feed
@@ -134,10 +136,20 @@ def _deadline_chip(item: dict) -> str:
 
 
 def _render_item(item: dict) -> None:
-    # Title links to the Pipeline (Review tab) so it's reviewable in-app; the external
-    # call URL is offered as a secondary ↗ when present.
+    # Title links to THAT opportunity's own page, carrying its uid. Every title used to
+    # link to the bare `/pipelines` — the same destination for all of them, so the click
+    # told you nothing and you still had to find the row by hand. Worse, a FEATURED item
+    # comes from the shared catalogue and is not in rfp_submissions at all, so no
+    # pipeline page could show it; /opportunity resolves both stores and offers
+    # "Track this opportunity" for the catalogue ones.
     title = (item["title"][:70] + "…") if len(item["title"]) > 70 else item["title"]
-    st.markdown(f"**[{title}](/pipelines)**")
+    uid = str(item.get("uid") or "").strip()
+    if uid:
+        st.markdown(f"**[{title}](/opportunity?uid={_quote(uid)})**")
+    else:
+        # No uid to link to (shouldn't happen — both stores carry one). Don't emit a link
+        # that goes nowhere useful; the external ↗ below is still offered.
+        st.markdown(f"**{title}**")
     bits = [b for b in (item.get("funder", "")[:34],
                         _fmt_amount(item["amount"], item["currency"]),
                         _deadline_chip(item)) if b]
