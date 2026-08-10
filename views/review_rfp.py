@@ -19,7 +19,7 @@ import streamlit as st
 from core import dropdowns, settings
 from core.review_week import all_weeks_for_year, review_week_label, upcoming_review_week_label
 from core.scorer import (
-    CRITERIA, CRITERION_RESPONSES, criterion_score, default_response, score_submission,
+    CRITERIA, criterion_score, default_response, score_submission,
 )
 from core.records import clean_df, drop_concluded
 from db.supabase_client import get_client, safe_execute
@@ -196,12 +196,21 @@ _reviewed = bool(str(row.get("decision_date") or "").strip())   # genuine human 
 
 
 def _baseline_val(key):
-    """Criterion value shown in BOTH view & edit: the human's saved value when the
-    row was genuinely reviewed (persists overrides), else the live derivation."""
-    stored = row.get(key)
-    if _reviewed and stored not in (None, ""):
-        return stored
-    return _derived.get(key) or stored
+    """Criterion value shown in BOTH view & edit — the LIVE derivation, never the
+    stored column.
+
+    It used to return the stored value whenever `decision_date` was stamped, on the
+    reasoning that a reviewed row's human answer must persist. But the component panel
+    beneath the label is recomputed on every render, so the stored label FROZE while its
+    own components moved: PREFER-9 read "Tight but doable, with a team" next to
+    components at 2/2 · 100% (the bid-time component flips to 1.0 once the bid is in).
+    That affected all nine criteria, not just PREFER-9.
+
+    A human verdict is still authoritative — it is just recorded at COMPONENT level now
+    (`criteria_component_overrides`), where it both moves the label and stays visible as
+    "set by reviewer" in the panel. The stored column remains the historical record of
+    what was answered at submit time. See core.criteria_review.criterion_label."""
+    return _derived.get(key) or row.get(key)
 
 
 # PERSISTENT SYSTEM decision — computed from the pure DERIVED criteria (the system's
@@ -398,13 +407,12 @@ stored_has_values = any(
 # (Org/donor context + `_derived` + `_reviewed` + `_baseline_val` are computed at
 # the top, before the header — single source of truth.)
 
-# Seed widget session_state on first render of this UID — from the BASELINE values
-# (human-reviewed → stored; else derived) so edit mode starts from exactly what
-# view shows. Sentinel seeds once per UID per session so edits aren't clobbered.
-_seed_sentinel = f"_review_seeded_v5_{row['uid']}"
+# Seed widget session_state on first render of this UID. The nine criterion widgets are
+# NOT seeded any more: there is no criterion-level widget to seed — each criterion is
+# edited through its components, and every component widget takes its own default from the
+# live derivation on each render. Sentinel seeds once per UID per session.
+_seed_sentinel = f"_review_seeded_v6_{row['uid']}"
 if _seed_sentinel not in st.session_state:
-    for _k in CRITERIA:
-        st.session_state[f"elig_{row['uid']}_{_k}"] = _coerce_elig(_baseline_val(_k), _k)
     st.session_state[f"decline_{row['uid']}"] = "Yes" if row.get("decline_flags_present") else "No"
     st.session_state[f"risks_{row['uid']}"] = _safe_str(row.get("key_risks"))
     _stored_dec = row.get("decision") or row.get("auto_recommendation")
@@ -420,11 +428,17 @@ edit_mode = can_edit and bool(st.session_state.get(_edit_key))
 
 
 def _exit_edit_and_reset():
-    """Leave edit mode and drop in-progress widget state so it re-seeds from DB."""
+    """Leave edit mode and drop in-progress widget state so it re-seeds from DB.
+
+    The per-component selections and their touched-flags MUST go too: they are what
+    decides which values get persisted as a human verdict, so an abandoned edit that
+    survived here would be saved as somebody's answer the next time this row was
+    touched."""
+    _uid = row["uid"]
     for _k in CRITERIA:
-        st.session_state.pop(f"elig_{row['uid']}_{_k}", None)
+        _clear_comp_edits(_uid, _k, _bd.get(_k) or [])
     for _p in ("decline_", "risks_", "dec_", "rat_"):
-        st.session_state.pop(f"{_p}{row['uid']}", None)
+        st.session_state.pop(f"{_p}{_uid}", None)
     st.session_state.pop(_seed_sentinel, None)
     st.session_state[_edit_key] = False
 
@@ -450,7 +464,8 @@ st.markdown("**Eligibility criteria**  "
 
 # Fatal verdict + factor breakdown — computed ONCE here (single source) so each
 # criterion's collapsible card and the gauge all read the same numbers.
-_OR_KEYS = {"funder_relationship"}   # geographic_fit is now a single tiered component
+from core import criteria_review as _crev   # roll-up rules + label/count (testable)
+_OR_KEYS = _crev.OR_KEYS   # geographic_fit is now a single tiered component
 # Component verdict symbol — SCORE-driven, and shared with the factor model so the
 # symbol and the score can't drift apart. "?" means UNDETERMINED (the call stated
 # nothing → excluded from the count); a MEASURED partial (0.5, e.g. a partial priority
@@ -570,119 +585,6 @@ def _factor_html(ckey: str) -> str:
     return "".join(out)
 
 
-def _qual_rule(scores: list[float], by_key=None) -> str:
-    """MUST-1 roll-up: any 0 → No · any 0.5 → Mostly · all 1 → Yes."""
-    if any(s <= 0.0 for s in scores):
-        return "No, not eligible"
-    if any(s == 0.5 for s in scores):
-        return "Mostly, one item unclear"
-    return "Yes, fully"
-
-
-def _strat_rule(scores: list[float], by_key=None) -> str:
-    """MUST-2 roll-up: BEST-aligned theme wins — 1 → Strongly · 0.5 → Limited · else Off."""
-    best = max(scores, default=0.0)
-    return {1.0: "Strongly aligns", 0.5: "Limited priority"}.get(best, "Off-strategy")
-
-
-def _cap_rule(scores: list[float], by_key=None) -> str:
-    """MUST-3 roll-up (gate, like MUST-1): any 0 → No, beyond us · any 0.5 → stretch ·
-    all 1 → comfortably."""
-    if any(s <= 0.0 for s in scores):
-        return "No, beyond us"
-    if any(s == 0.5 for s in scores):
-        return "Yes, but a stretch"
-    return "Yes, comfortably"
-
-
-def _geo_rule(scores: list[float], by_key=None) -> str:
-    """MUST-4 roll-up: single tiered component — 1 → own presence · 0.5 → via a
-    partner · else no presence."""
-    best = max(scores, default=0.0)
-    return {1.0: "Yes, our own presence",
-            0.5: "Yes, via a partner"}.get(best, "No presence there")
-
-
-def _cofin_rule(scores: list[float], by_key=None) -> str:
-    """MUST-5 roll-up — Met / Not Met framing (MUST-5 spans co-financing AND the
-    compliance gates SAM/tax-exempt/…). ANY unmet active component (hard gate OR
-    co-financing) → 'Not met', overriding the rest · any 0.5 → 'Partial, with effort' ·
-    all 1 → 'Yes, fully met'."""
-    if any(s <= 0.0 for s in scores):
-        return "Not met"
-    if any(s == 0.5 for s in scores):
-        return "Partial, with effort"
-    return "Yes, fully met"
-
-
-# ── PREFER roll-up rules (component scores → the criterion's response label) ────────
-# Same contract as the MUST rules so PREFER 6-9 render with the SAME component editor.
-# Labels MUST match core.scorer.CRITERION_RESPONSES for that key (so Save stores a
-# valid value). Two need keyed access (`by_key`): relationship (grantee outranks
-# contact) and bid-effort (a time × team matrix).
-def _fq_rule(scores: list[float], by_key=None) -> str:
-    """PREFER-6 funding quality: ratio of active size-fit components."""
-    if not scores:
-        return "Not sure"
-    r = sum(scores) / len(scores)
-    return "High" if r >= 0.75 else ("Moderate" if r >= 0.4 else "Low")
-
-
-def _rel_rule(scores: list[float], by_key=None) -> str:
-    """PREFER-7 donor relationship (OR-tiers): grantee is strongest, then any contact."""
-    bk = by_key or {}
-    if bk.get("rel_grantee", 0.0) >= 1.0:
-        return "Current/past grantee"
-    if bk.get("rel_grantee", 0.0) >= 0.5 or bk.get("rel_contact", 0.0) >= 0.5:
-        return "Some contact"
-    return "None"
-
-
-def _comp_rule(scores: list[float], by_key=None) -> str:
-    """PREFER-8 competitiveness: track record dominates, else the overall signal ratio."""
-    if not scores:
-        return "Not sure"
-    bk = by_key or {}
-    r = sum(scores) / len(scores)
-    track = bk.get("comp_track")
-    if (track is not None and track >= 1.0) or r >= 0.66:
-        return "Strong (limited field / incumbent / clear edge)"
-    if (track is not None and track >= 0.5) or r >= 0.34:
-        return "Moderate"
-    return "Weak (wide-open)"
-
-
-def _bid_rule(scores: list[float], by_key=None) -> str:
-    """PREFER-9 bid effort: a time × business-development-team matrix. The reviewer can
-    set the time component to 1 (ample) / 0.5 (tight) / 0 (not enough)."""
-    bk = by_key or {}
-    t = bk.get("bid_time", 1.0)               # inactive (no deadline) → assume ample
-    has_team = bk.get("bid_team", 0.0) >= 1.0
-    if t >= 1.0:
-        return "Ample time, sufficient resources" if has_team else "Ample time, but no dedicated team"
-    if t >= 0.5:
-        return "Tight but doable, with a team" if has_team else "Tight, and no dedicated team"
-    return "Not enough time, even with a team" if has_team else "Not enough time, no team"
-
-
-def _snap(v) -> float:
-    """Coerce any input to the nearest allowed component score: 0 / 0.5 / 1."""
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        v = 0.0
-    return max(0.0, min(1.0, round(v * 2) / 2))
-
-
-def _factor_score(it: dict) -> float:
-    """A component's editable 0/0.5/1 score. MUST score-factors carry `score`; the
-    PREFER met-based factors don't, so map met → score (True→1 · False→0 · None→0.5)
-    so both kinds render in the same numeric component editor."""
-    sc = it.get("score")
-    if sc is not None:
-        return _snap(sc)
-    met = it.get("met")
-    return 1.0 if met is True else (0.0 if met is False else 0.5)
 
 
 def _crit_label_color(lbl: str) -> str:
@@ -706,88 +608,13 @@ def _apply_component_writethrough(comp_scores: dict, donor_eff: dict | None,
     return notes
 
 
-def _dirty_key(uid: str, key: str) -> str:
-    """Session flag: the reviewer has actually edited a component of this criterion."""
-    return f"qdirty_{uid}_{key}"
-
-
-def _mk_snap(qk: str, dirty_key: str | None = None):
-    """Callback factory — snap a component box to 0 / 0.5 / 1 on change.
-
-    Also marks the criterion DIRTY. Streamlit fires on_change ONLY for a genuine user
-    interaction, so this is the reliable signal that the reviewer actually touched a
-    component (as opposed to the editor merely re-rendering with derived defaults)."""
-    def _cb():
-        st.session_state[qk] = _snap(st.session_state.get(qk, 0.0))
-        if dirty_key:
-            st.session_state[dirty_key] = True
-    return _cb
-
-
-def _item_score_editor(uid: str, key: str, items: list[dict], opts: list[str],
-                       current: str, rule, *, reviewed: bool = False,
-                       collect: dict | None = None) -> str:
-    """EDIT-mode composite criterion. The classification is CALCULATED from the ACTIVE
-    component scores (0/0.5/1) and shown INLINE next to the criterion title — bold and
-    colour-coded — with NO dropdown; the user edits the component numbers and the label
-    follows (hard gate: any non-dynamic 0 → fail; soft polarities are baked into the
-    component scores). When no component is active (nothing imposed by this call), fall
-    back to a manual dropdown."""
-    active = [it for it in items if it.get("active")]
-    if not active:
-        lk = f"elig_{uid}_{key}"
-        idx = opts.index(current) if current in opts else 0
-        return st.selectbox(LABELS[key], opts, index=idx, key=lk)
-
-    # Classification = rule over the CURRENT active component values (session, else the
-    # derived default). Computed BEFORE the inputs so the inline label reflects edits.
-    scores = []
-    by_key = {}
-    for it in active:
-        qk = f"qnum_{uid}_{key}_{it['key']}"
-        sc = _snap(st.session_state.get(qk, _factor_score(it)))
-        scores.append(sc)
-        by_key[str(it.get("key"))] = sc
-    lbl = rule(scores, by_key)
-    if collect is not None:
-        collect[key] = dict(by_key)      # Save reads these for org-profile write-through
-    # DON'T SILENTLY REVERT A HUMAN VERDICT. The components always re-seed from the LIVE
-    # derivation, so simply opening the editor on a reviewed row and pressing Save used to
-    # recompute the label from derived values and overwrite the reviewer's saved answer
-    # (and with it alignment_score / auto_recommendation) without anyone touching a thing.
-    # Keep the stored label until the reviewer actually edits a component (_dirty_key is
-    # set from the on_change callback, which only fires on real interaction).
-    if reviewed and current and not st.session_state.get(_dirty_key(uid, key)):
-        lbl = current
-    st.markdown(
-        f"<div style='font-size:0.95rem;margin:0.15rem 0 0.1rem'>"
-        f"<span style='font-weight:700'>{_esc(LABELS[key])}</span>&nbsp; → &nbsp;"
-        f"<span style='color:{_crit_label_color(lbl)};font-weight:800'>{_esc(lbl)}</span>"
-        f"</div>", unsafe_allow_html=True)
-    st.caption("Set each component (0 · none / 0.5 · partial / 1 · full) — the "
-               "classification recalculates. Greyed rows aren't required by this call.")
-    for it in items:                     # ALL components — active editable, inactive greyed
-        ik = str(it.get("key"))
-        is_act = bool(it.get("active"))
-        c1, c2 = st.columns([4, 1])
-        c1.markdown(
-            f"<div style='padding-top:0.5rem;font-size:0.9rem;"
-            f"{'' if is_act else 'color:#aaa'}'>{_esc(it.get('name') or ik)}"
-            + (" 🔒" if it.get('hard') else "")
-            + ("" if is_act else " · not required") + "</div>", unsafe_allow_html=True)
-        if is_act:
-            qk = f"qnum_{uid}_{key}_{ik}"
-            c2.number_input(
-                it.get("name") or ik, min_value=0.0, max_value=1.0, step=0.5,
-                value=_factor_score(it),
-                key=qk, on_change=_mk_snap(qk, _dirty_key(uid, key)),
-                format="%.1f", label_visibility="collapsed")
-        else:
-            c2.number_input(                       # empty/disabled until activated
-                it.get("name") or ik, min_value=0.0, max_value=1.0, step=0.5, value=0.0,
-                key=f"qnuminactive_{uid}_{key}_{ik}", disabled=True,
-                format="%.1f", label_visibility="collapsed")
-    return lbl
+# The edit-mode component editor is a Streamlit widget, so it lives in its own module —
+# importable, and therefore drivable by streamlit.testing.AppTest (this page runs the auth
+# gate at import time, so the editor could not be reached from a test at all).
+from views.criteria_editor import (
+    clear_session_edits as _clear_comp_edits,
+    render_component_editor as _render_comp_editor,
+)
 
 
 grid_col, gauge_col = st.columns([3, 2])
@@ -803,84 +630,21 @@ with grid_col:
     _component_scores: dict[str, dict[str, float]] = {}
     for i, key in enumerate(CRITERIA):
         target = g1 if i < 5 else g2
-        # SINGLE SOURCE OF TRUTH: in VIEW mode the ONE live derivation (_derived,
-        # the same one "Why this score" uses) drives the grid label, the badge, the
-        # factor panel AND the gauge — so they can never show different answers for
-        # the same criterion (all 5 MUST + 4 PREFER). EDIT mode loads the stored
-        # value so a reviewer can revise it. Falls back to stored only where the
-        # derivation can't determine a value (so we never lose a real answer).
-        # Single source of truth: BOTH view and edit baseline from `_baseline_val`
-        # (human-reviewed → saved value persists; else live derivation) so the two
-        # screens always agree.
-        current = _coerce_elig(_baseline_val(key), key)
+        # SINGLE SOURCE OF TRUTH for the label, in BOTH modes: it is COMPUTED, never read
+        # from the stored column. The derivation names the criterion unless a reviewer has
+        # overridden one of its components, in which case their verdict does — so the
+        # label can never contradict the component panel printed underneath it. See
+        # core.criteria_review.criterion_label.
+        _items = _bd.get(key) or []          # ALL components (active + inactive)
+        current = _coerce_elig(
+            _crev.criterion_label(key, _items, _baseline_val(key)), key)
         with target:
             if edit_mode:
-                opts = CRITERION_RESPONSES.get(key, [])
-                # ALL 9 criteria are edited via their component sub-factors (0/0.5/1);
-                # the label derives from the components and flips the stored verdict on
-                # Save. PREFER 6-9 now render the SAME component editor as MUST 1-5.
-                _RULES = {"qualification": _qual_rule, "strategic_fit": _strat_rule,
-                          "capacity": _cap_rule, "geographic_fit": _geo_rule,
-                          "cofinancing": _cofin_rule, "funding_quality": _fq_rule,
-                          "funder_relationship": _rel_rule, "competitiveness": _comp_rule,
-                          "bid_effort": _bid_rule}
-                if key in _RULES:
-                    _items = _bd.get(key) or []     # ALL components (active + inactive)
-                    edited_values[key] = _item_score_editor(
-                        row["uid"], key, _items, opts, current, _RULES[key],
-                        reviewed=_reviewed, collect=_component_scores)
-                else:
-                    idx = opts.index(current) if current in opts else 0
-                    edited_values[key] = st.selectbox(
-                        LABELS[key], opts, index=idx, key=f"elig_{row['uid']}_{key}")
+                edited_values[key] = _render_comp_editor(
+                    row["uid"], key, LABELS[key], _items, _baseline_val(key),
+                    collect=_component_scores)
             else:
-                # VIEW mode = the ONE live derivation (single source of truth): the label
-                # must not diverge from the live factor panel + count. A row reviewed
-                # before a scoring fix would otherwise freeze a stale label beside a live
-                # count (e.g. Funding quality "Moderate" next to 4/4 · 100%). EDIT mode
-                # still loads the saved value (above) so a reviewer resumes their work.
-                # Human edits WIN: _baseline_val returns the saved value on a reviewed
-                # row (else the live derivation), so the label can't silently disagree with
-                # the reviewer's verdict shown in the component panel below.
-                current = _coerce_elig(_baseline_val(key), key)
                 edited_values[key] = current   # feeds the live gauge
-                _act = [f for f in (_bd.get(key) or []) if f.get("active", True)]
-                if key in ("qualification", "capacity", "cofinancing"):
-                    # MUST-1 / MUST-3 / MUST-5 ratio = Σ component scores ÷ activated
-                    # components (NOT benefit-of-doubt won/total). den 0 → "Not sure".
-                    _num = sum((f.get("score") or 0) for f in _act)
-                    _total = len(_act)
-                    _won_disp = f"{_num:g}"
-                    _pct = round(_num / _total * 100) if _total else 0
-                elif key in ("strategic_fit", "geographic_fit"):
-                    # MUST-2 / MUST-4 = ONE component scored 0/0.5/1.
-                    _it0 = _act[0] if _act else None
-                    _sc0 = (_it0.get("score") or 0) if _it0 else 0
-                    _won_disp = f"{_sc0:g}"
-                    _total = 1 if _act else 0
-                    _pct = round(_sc0 * 100)
-                elif key in _OR_KEYS and any(f.get("met") is True for f in _act):
-                    # OR-CRITERION, satisfied. The tiers are ALTERNATIVE ROUTES — the panel
-                    # itself labels the unused ones "(alternative route — not needed)". An
-                    # AND-style mean over all three therefore showed the BEST possible
-                    # outcome as 1/3 · 33%: the denominator counted exactly the rows the
-                    # panel says were not required. One satisfied route IS the whole
-                    # criterion (owner 2026-08-06).
-                    _won_disp, _total, _pct = "1", 1, 100
-                else:
-                    # won/total over MEASURABLE components only: an unmeasurable factor
-                    # (met=None with no score — can't tell from call OR donor intel) is
-                    # EXCLUDED from BOTH numerator and denominator, never a benefit-of-doubt
-                    # "win"; a graded component contributes its FRACTIONAL score, not a full
-                    # win. This mirrors the criterion label's own mean, so count and label
-                    # agree (e.g. PREFER-6 with only the award-value factor failing → 0/1).
-                    _meas = [f for f in _act
-                             if f.get("score") is not None or f.get("met") is not None]
-                    _num = sum((f["score"] if f.get("score") is not None
-                                else (1.0 if f["met"] else 0.0)) for f in _meas)
-                    _total = len(_meas)
-                    _won_disp = f"{_num:g}"
-                    _pct = round(_num / _total * 100) if _total else 0
                 # Each criterion is its OWN collapsible card — click to expand and
                 # see the component sub-factors (✓/✗/?) behind it. Title is BOLD (no
                 # colour); the value LABEL is colour-coded. "Not sure" (no active
@@ -888,12 +652,7 @@ with grid_col:
                 _is_not_sure = criterion_score(current) is None
                 _vc = ("orange" if _is_not_sure else
                        {2: "green", 1: "orange", 0: "red"}.get(criterion_score(current), "gray"))
-                # No measurable component → "Not sure · Park" instead of "0/0 · 0%". Also
-                # for funding_quality: when the award can't be sized (label "Not sure")
-                # don't show a contradictory "0/1 · 0%" beside it — read "Not sure · Park".
-                _ratio = ("Not sure · Park"
-                          if (not _total or (key == "funding_quality" and _is_not_sure))
-                          else f"{_won_disp}/{_total} · {_pct}%")
+                _ratio = _crev.count_text(key, _items, current, _is_not_sure)
                 with st.expander(
                         f"{_crit_badge(current)}  **{LABELS[key]}** — "
                         f":{_vc}[{current or 'Not sure'}]  ·  {_ratio}"):
@@ -1059,14 +818,25 @@ with calc_col:
                 "funder_relationship": .08, "competitiveness": .10, "bid_effort": .09}
 
     def _contrib_row(key: str) -> str:
-        sc = criterion_score(edited_values.get(key))
+        # Reads `edited_values` — the SAME computed label the criterion card shows — so the
+        # breakdown and the card can no longer disagree. They used to: the card read the
+        # live components while this read the stored label, so MUST-1 was credited its full
+        # 15.0 here while its own card reported nothing scored.
+        _lbl = edited_values.get(key)
+        sc = criterion_score(_lbl)
         frac = 0.5 if sc is None else sc / 2.0            # Not sure → Park midpoint
         pts = _WEIGHTS[key] * frac * 100.0
         col = "#00703C" if frac >= 1 else "#8a6d00" if frac >= 0.5 else "#b3261e"
         nm = LABELS[key].split(" · ", 1)[-1]
+        # Say which rows are the Park midpoint BY DEFAULT rather than by measurement —
+        # a number with nothing behind it should not look like a measured result.
+        _unscored = _crev.count_text(
+            key, _bd.get(key) or [], _lbl, sc is None) == _crev.NOT_SCORED
+        _note = (" <span style='color:#b8860b;font-size:0.72rem'>· not scored</span>"
+                 if _unscored else "")
         return (f"<div style='display:flex;justify-content:space-between;padding:1px 0'>"
                 f"<span style='color:#555'>{_esc(nm)} "
-                f"<span style='color:#aaa'>·{_WEIGHTS[key]:.2f}</span></span>"
+                f"<span style='color:#aaa'>·{_WEIGHTS[key]:.2f}</span>{_note}</span>"
                 f"<span style='color:{col};font-weight:600'>{pts:.1f}</span></div>")
 
     st.markdown(
@@ -1189,12 +959,18 @@ else:
             "decision_overridden_by": user.get("email"),
             "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
         }
-        # Persist ONLY the components the reviewer actually touched, merged over anything
-        # saved before, so the derivation still drives everything else (migration 087).
+        # Persist ONLY the components the reviewer actually SET, merged over anything saved
+        # before, so the derivation still drives everything else (migration 087).
+        #
+        # `_component_scores[k]` now holds exactly the reviewer's explicit values —
+        # per-COMPONENT, from the on_change flag. It used to hold every ACTIVE component's
+        # value for any criterion with one edit, which froze the derived score of
+        # components nobody had looked at: a later scoring fix could then never reach them.
         _new_ov = {k: dict(v) for k, v in (_overrides or {}).items() if isinstance(v, dict)}
         for _k in CRITERIA:
-            if st.session_state.get(_dirty_key(row["uid"], _k)):
-                _new_ov.setdefault(_k, {}).update(_component_scores.get(_k) or {})
+            _set = _component_scores.get(_k) or {}
+            if _set:
+                _new_ov.setdefault(_k, {}).update(_set)
         if _new_ov:
             update["criteria_component_overrides"] = _new_ov
         sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
