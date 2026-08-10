@@ -2365,17 +2365,31 @@ def apply_component_overrides(breakdown: dict[str, list[dict]],
     Overridden factors are stamped `_override: True` so the UI can show who decided.
 
     An override on an INACTIVE component also ACTIVATES it: if a reviewer scores something
-    the call didn't visibly impose, they're asserting it applies."""
+    the call didn't visibly impose, they're asserting it applies.
+
+    A stored NULL is a CLEAR, not a missing value: the reviewer set the component back to
+    "—", meaning "do not score this". It deactivates the component and takes it out of the
+    denominator. `float(None)` used to raise and hit the `continue`, so a saved clear was
+    silently ignored and the derived score reappeared on the next render."""
     if not overrides or not isinstance(overrides, dict):
         return breakdown
     for crit, comps in overrides.items():
         if not isinstance(comps, dict):
             continue
         for it in breakdown.get(crit) or []:
-            if str(it.get("key")) not in comps:
+            ck = str(it.get("key"))
+            if ck not in comps:
+                continue
+            raw = comps[ck]
+            if raw is None:                       # explicitly cleared by a reviewer
+                it["score"] = None
+                it["met"] = None
+                it["active"] = False
+                it["_override"] = True
+                it["_cleared"] = True
                 continue
             try:
-                sc = float(comps[str(it.get("key"))])
+                sc = float(raw)
             except (TypeError, ValueError):
                 continue
             sc = max(0.0, min(1.0, sc))

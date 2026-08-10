@@ -57,26 +57,36 @@ def comp_widget_key(uid: str, key: str, ck: str) -> str:
 def _mk_change(qk: str, cdirty: str, compdirty: str):
     """on_change fires ONLY for a genuine user interaction, so it is the reliable signal
     that the reviewer actually chose this value — as opposed to the editor re-rendering
-    with derived defaults."""
+    with derived defaults.
+
+    The flag records THAT they chose, never WHAT they chose. It used to be set to
+    `value != DASH`, which threw away the one case that matters most: picking "—" on a
+    component the scan had scored cleared the flag, so the edit vanished, the derived
+    score came back, and the row kept counting while the box sat on "—"."""
     def _cb():
-        st.session_state[compdirty] = st.session_state.get(qk) != DASH
+        st.session_state[compdirty] = True
         st.session_state[cdirty] = True
     return _cb
 
 
-def session_edits(uid: str, key: str, items: list[dict]) -> dict[str, float]:
-    """The reviewer's explicit component values for this criterion — only components they
-    actually set to a number. A component left at "—" is absent, so the derivation keeps
-    driving it."""
-    edits: dict[str, float] = {}
+def session_edits(uid: str, key: str, items: list[dict]) -> dict[str, float | None]:
+    """The reviewer's explicit component verdicts for this criterion.
+
+    A component they never touched is ABSENT, so the derivation keeps driving it. A
+    component they touched carries their choice:
+
+        0 / 0.5 / 1  a score  — activates the component and counts it
+        None ("—")   CLEARED  — "do not score this", so it leaves the denominator
+
+    "—" was previously indistinguishable from "never touched", which is why clearing a
+    component the scan had scored appeared to do nothing at all."""
+    edits: dict[str, float | None] = {}
     for it in items or []:
         ck = str(it.get("key"))
         if not st.session_state.get(comp_dirty_key(uid, key, ck)):
             continue
         raw = st.session_state.get(comp_widget_key(uid, key, ck))
-        if raw in (None, DASH):
-            continue
-        edits[ck] = _crev.snap(raw)
+        edits[ck] = None if raw in (None, DASH) else _crev.snap(raw)
     return edits
 
 
@@ -141,10 +151,17 @@ def render_component_editor(uid: str, key: str, title: str, items: list[dict],
         # The SCOPE decision still comes from the derivation (SAM/UEI stays unreachable),
         # but everything visual is decided by the value now showing in the box.
         editable = _crev.is_editable(it)
-        # Preselect the MEASURED value; an unmeasured component shows "—" so a reviewer can
-        # tell "we don't know" from "we know, and it's zero".
-        cur = (f"{_crev.component_score(ef):g}"
-               if (_crev.is_scored(ef) and ef.get("active")) else DASH)
+        # THE WIDGET'S OWN VALUE IS AUTHORITATIVE once it exists. Streamlit ignores `index`
+        # for a keyed widget that already has session state, so recomputing the default here
+        # and styling from THAT let the two disagree: the box showed "—" while the row was
+        # styled from the derivation's 0.5, stayed dark, and kept counting.
+        qk = comp_widget_key(uid, key, ck)
+        cur = st.session_state.get(qk)
+        if cur not in COMP_OPTS:
+            # First render: preselect the MEASURED value; an unmeasured component shows "—"
+            # so a reviewer can tell "we don't know" from "we know, and it's zero".
+            cur = (f"{_crev.component_score(ef):g}"
+                   if (_crev.is_scored(ef) and ef.get("active")) else DASH)
         # THE RULE (owner 2026-08-10): a component is greyed exactly when it has NO VALUE.
         # "—" = not scored, excluded from the count → greyed. Any of 0 / 0.5 / 1 = live and
         # counting → normal weight. One rule, whether the value came from the scan/cron or
@@ -158,11 +175,12 @@ def render_component_editor(uid: str, key: str, title: str, items: list[dict],
             # "not required" describes what the CALL imposed, so it must disappear the moment
             # the row carries a value — a scored row IS required, by whoever scored it.
             + ("" if (has_value or it.get("active")) else " · not required")
-            + (" <span style='color:#1a7f37;font-size:0.72rem'>· set by you</span>"
+            + (" <span style='color:#1a7f37;font-size:0.72rem'>· cleared by you</span>"
+               if ef.get("_cleared") else
+               " <span style='color:#1a7f37;font-size:0.72rem'>· set by you</span>"
                if ef.get("_override") else "")
             + ("" if editable else " · not applicable to this funder")
             + "</div>", unsafe_allow_html=True)
-        qk = comp_widget_key(uid, key, ck)
         c2.selectbox(
             it.get("name") or ck, COMP_OPTS,
             index=COMP_OPTS.index(cur) if cur in COMP_OPTS else 0,
