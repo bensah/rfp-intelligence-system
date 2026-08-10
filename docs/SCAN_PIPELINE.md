@@ -73,7 +73,7 @@ flowchart TD
 | **Deadline** | `submission_deadline < today` | RFPs that already closed |
 | **Country** | `countries.eligible` + `countries.broad_terms` | RFP targets the US only, none of our countries listed |
 | **Required theme** | `themes.required_any` | RFP about robotics; no health keyword matches |
-| **Excluded theme** | `themes.excluded_any` | RFP title contains "Phase II clinical trial" |
+| **Excluded theme** | `themes.excluded_any` | RFP title contains "Phase II clinical trial", or a financial-integrity topic (money laundering, anti-corruption, trade finance) |
 
 Tune these in **Admin → Settings → Scan eligibility & auto-scoring policies → Countries / Themes / Criteria**.
 
