@@ -107,11 +107,9 @@ class TestHumanOverrideMovesTheLabel(unittest.TestCase):
                          "Not met")
 
     def test_without_an_override_the_derivation_still_names_it(self):
-        # PREFER-8's derivation is a weighted accumulator the component mean cannot
-        # reproduce, so with no human verdict the derivation must win.
-        facts = [f("comp_track", score=1.0, met=True), f("comp_age", met=True)]
-        self.assertEqual(cr.criterion_label("competitiveness", facts, "Moderate"),
-                         "Moderate")
+        facts = [f("cofinance", score=1.0, met=True)]
+        self.assertEqual(cr.criterion_label("cofinancing", facts, "Partial, with effort"),
+                         "Partial, with effort")
 
     def test_an_in_progress_edit_moves_the_label_before_saving(self):
         facts = [f("a", score=1.0, met=True), f("b", score=1.0, met=True)]
@@ -119,6 +117,92 @@ class TestHumanOverrideMovesTheLabel(unittest.TestCase):
             cr.criterion_label("capacity", facts, "Yes, comfortably",
                                session_scores={"a": 0.0}),
             "No, beyond us")
+
+
+class TestPrefer6And8AreNamedByTheirOwnModel(unittest.TestCase):
+    """Owner 2026-08-10: the DERIVATION is authoritative for funding_quality and
+    competitiveness. Their derivations are weighted models — PREFER-6 gates on whether the
+    award can be sized at all, PREFER-8 counts track record 1.5x and SUBTRACTS for unmet
+    donor requirements — and a flat component mean expresses neither, so the mean must
+    never replace them."""
+
+    def test_a_human_override_does_not_rename_competitiveness(self):
+        facts = [f("comp_track", score=1.0, met=True, override=True),
+                 f("comp_age", met=True)]
+        self.assertTrue(cr.has_human_override(facts))
+        # The roll-up WOULD say "Strong"; the derivation says Moderate and wins.
+        self.assertEqual(cr.roll_up("competitiveness", facts),
+                         "Strong (limited field / incumbent / clear edge)")
+        self.assertEqual(cr.criterion_label("competitiveness", facts, "Moderate"),
+                         "Moderate")
+
+    def test_an_in_progress_edit_does_not_rename_funding_quality(self):
+        facts = [f("fq_floor", met=True), f("fq_ceiling", met=True)]
+        self.assertEqual(
+            cr.criterion_label("funding_quality", facts, "Not sure",
+                               session_scores={"fq_floor": 0.0}),
+            "Not sure")
+
+    def test_the_other_seven_criteria_still_follow_a_human_override(self):
+        for key, facts, derived, want in (
+            ("qualification", [f("a", score=0.0, met=False, override=True)],
+             "Yes, fully", "No, not eligible"),
+            ("cofinancing", [f("a", score=0.0, met=False, override=True)],
+             "Yes, fully met", "Not met"),
+            ("capacity", [f("a", score=0.5, override=True)],
+             "Yes, comfortably", "Yes, but a stretch"),
+            ("bid_effort", [f("bid_time", score=0.5, override=True),
+                            f("bid_team", score=1.0, met=True)],
+             "Ample time, sufficient resources", "Tight but doable, with a team"),
+        ):
+            with self.subTest(criterion=key):
+                self.assertEqual(cr.criterion_label(key, facts, derived), want)
+
+    def test_force_roll_up_is_still_available_as_a_last_resort(self):
+        # A caller with no derived label at all can still get something to show.
+        facts = [f("comp_track", score=1.0, met=True)]
+        self.assertEqual(
+            cr.criterion_label("competitiveness", facts, None, force_roll_up=True),
+            "Strong (limited field / incumbent / clear edge)")
+
+    def test_no_derived_label_falls_back_to_the_components(self):
+        facts = [f("comp_track", score=1.0, met=True)]
+        self.assertEqual(cr.criterion_label("competitiveness", facts, None),
+                         "Strong (limited field / incumbent / clear edge)")
+
+
+class TestTheLabelSourceNoteExplainsTheDifference(unittest.TestCase):
+    """A label that disagrees with the count beside it looks exactly like the frozen-label
+    defect. For these two it isn't — both numbers are live and measure different things —
+    so the panel has to say so."""
+
+    def test_competitiveness_explains_itself_when_the_ratio_disagrees(self):
+        facts = [f("comp_track", score=1.0, met=True), f("comp_age", met=True)]
+        note = cr.label_source_note("competitiveness", facts, "Moderate")
+        self.assertIn("weighted competitiveness model", note)
+        self.assertIn("Strong", note)          # what the ratio alone would have said
+
+    def test_funding_quality_explains_itself(self):
+        facts = [f("fq_value", met=True)]
+        note = cr.label_source_note("funding_quality", facts, "Not sure")
+        self.assertIn("funding-quality model", note)
+
+    def test_no_note_when_the_two_agree(self):
+        facts = [f("comp_track", score=1.0, met=True)]
+        self.assertEqual(
+            cr.label_source_note("competitiveness", facts,
+                                 "Strong (limited field / incumbent / clear edge)"), "")
+
+    def test_no_note_for_the_other_seven_criteria(self):
+        facts = [f("a", score=0.0, met=False)]
+        for key in ("qualification", "strategic_fit", "capacity", "geographic_fit",
+                    "cofinancing", "funder_relationship", "bid_effort"):
+            with self.subTest(criterion=key):
+                self.assertEqual(cr.label_source_note(key, facts, "anything"), "")
+
+    def test_no_note_when_nothing_is_active(self):
+        facts = [f("comp_track", active=False)]
+        self.assertEqual(cr.label_source_note("competitiveness", facts, "Moderate"), "")
 
 
 class TestSettingAGreyedComponentActivatesIt(unittest.TestCase):
