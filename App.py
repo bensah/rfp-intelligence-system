@@ -81,6 +81,11 @@ def _pages(include_admin: bool) -> list:
                 url_path="organization"),
         st.Page("app_pages/submit_rfp.py", title="Submit", icon="📝",
                 url_path="submit-new-rfp"),
+        # One opportunity on its own page (/opportunity?uid=…) — every title in the Live
+        # Opportunity Feed links here. Menu-only, like the pages above: it is always
+        # reached from a feed item, never browsed to empty-handed.
+        st.Page("app_pages/opportunity.py", title="Opportunity", icon="🎯",
+                url_path="opportunity"),
         st.Page("app_pages/profile.py", title="Profile", icon="👤", url_path="profile"),
         st.Page("app_pages/help.py", title="Help", icon="❓", url_path="help"),
         st.Page("app_pages/search.py", title="Search", icon="🔍", url_path="search"),
