@@ -39,7 +39,12 @@ ADMIN_CONTACT_EMAIL = os.environ.get("ADMIN_CONTACT_EMAIL", "admin@example.org")
 # Sentinel option in the "Assign to tenant" picker: creates a personal ('individual'
 # kind) tenant for the user instead of an organization. Individual tenants are PUBLIC —
 # their activity is visible to all users (migration 078 + db.supabase_client scoping).
-_INDIVIDUAL_TENANT_LABEL = "🧑 Individual — personal account (visible to all)"
+# Shown wherever a tenant is picked. The long "— personal account (visible to
+# all)" suffix was a mouthful in a dropdown beside real tenant names; the Tenant
+# type question now carries that explanation (owner 2026-08-10).
+_INDIVIDUAL_TENANT_LABEL = "🧑 Individual"
+# Sentinel first option — "create a new one" rather than an existing tenant.
+_NEW_TENANT_LABEL = "➕ Create new…"
 
 
 # ---------------------------------------------------------------------------
@@ -957,15 +962,37 @@ def render_manage_users(user: dict, sb) -> None:
         _mt = tc.multitenant_enabled()
         _is_super = permissions.is_super_user(user)
         d_tenant_name = None
+        d_tenant_kind = None
+        d_new_org = ""
+        # Tenants split by KIND so the picker can be filtered (owner 2026-08-10): an
+        # individual's personal account has no business appearing in a list beside
+        # CHAI Cameroon and RFPIS APP — they answer different questions.
         _tenant_opts: dict[str, str] = {}
+        _by_kind: dict[str, dict[str, str]] = {"individual": {}, "organization": {}}
         if _mt and _is_super:
             try:
-                _tenant_opts = {t["name"]: t["id"] for t in
-                                (service_client().table("tenants").select("id,name")
-                                 .eq("status", "active").order("name")
-                                 .execute().data or [])}
+                for t in (service_client().table("tenants").select("id,name,kind")
+                          .eq("status", "active").order("name").execute().data or []):
+                    _tenant_opts[t["name"]] = t["id"]
+                    _k = ("individual" if str(t.get("kind") or "").strip().lower()
+                          == "individual" else "organization")
+                    _by_kind[_k][t["name"]] = t["id"]
             except Exception:
                 _tenant_opts = {}
+
+        # TENANT TYPE lives OUTSIDE the form on purpose. A widget inside st.form does
+        # not publish its value until the form is submitted, so a radio in there could
+        # not refilter the tenant list — the list would only catch up one submit late.
+        # Out here, changing it reruns the dialog fragment and the form below is rebuilt
+        # with the right options.
+        if _mt and _is_super:
+            d_tenant_kind = st.radio(
+                "Tenant type", ["Organization", "Individual"],
+                horizontal=True, key="adu_kind",
+                help="**Organization** — the user joins a team account. "
+                     "**Individual** — a personal account, whose activity is visible "
+                     "to all. This chooses which accounts the next question lists.")
+
         with st.form("add_user_dialog_form", clear_on_submit=False):
             dc1, dc2 = st.columns(2)
             d_email = dc1.text_input(
@@ -980,28 +1007,34 @@ def render_manage_users(user: dict, sb) -> None:
                 "Program areas", help="e.g. 'Vaccines, MCH, Malaria'",
                 key="adu_program")
             if _mt and _is_super:
-                # "Individual" first, then existing orgs. Individual → a personal,
-                # PUBLIC tenant for this user (not an organization).
-                _tenant_choices = [_INDIVIDUAL_TENANT_LABEL] + list(_tenant_opts.keys())
-                try:
-                    d_tenant_name = st.selectbox(
-                        "Assign to tenant", _tenant_choices,
-                        index=None, accept_new_options=True, key="adu_tenant",
-                        placeholder="Individual · an organization · or type a new org name…",
-                        help="Where this user belongs. Pick **Individual** for a personal "
-                             "account (its activity is visible to all), pick an existing "
-                             "organization, or TYPE A NEW ORG NAME and press Enter to "
-                             "create it on save. (Admins add users to their OWN tenant "
-                             "automatically.)")
-                except TypeError:
-                    # Older Streamlit without accept_new_options → plain picker; a new
-                    # org tenant can still be created from Settings → Accounts → Tenants.
-                    d_tenant_name = st.selectbox(
-                        "Assign to tenant",
-                        _tenant_choices or ["(no tenants yet)"],
-                        key="adu_tenant",
-                        help="Where this user belongs (Individual = personal account, "
-                             "visible to all).")
+                # The tenant list is FILTERED by the type chosen above (owner
+                # 2026-08-10). Previously "Individual" sat in the SAME list as the
+                # organizations, so a personal account like "B Nsah" appeared beside
+                # CHAI Cameroon and RFPIS APP as though it were one of them.
+                _is_ind = d_tenant_kind == "Individual"
+                _pool = _by_kind["individual" if _is_ind else "organization"]
+                # A PLAIN selectbox. `accept_new_options=True` was used here to let a
+                # super user type a new org name, but inside a form it SWALLOWS THE
+                # FIRST CLICK on the submit button — reproduced in a browser: click one
+                # returns save=False and the dialog just sits there, click two works.
+                # That is the "Create user does nothing" report. A new organization is
+                # now named in its own text box, which has no such behaviour.
+                _label = ("Assign to individual account" if _is_ind
+                          else "Assign to organization")
+                d_tenant_name = st.selectbox(
+                    _label, [_NEW_TENANT_LABEL] + list(_pool.keys()),
+                    index=0, key="adu_tenant",
+                    help="Only accounts of the selected tenant type are listed. "
+                         "(Admins add users to their OWN tenant automatically.)")
+                d_new_org = st.text_input(
+                    "New individual account name" if _is_ind
+                    else "New organization name",
+                    key="adu_new_org",
+                    placeholder=("Leave blank unless you picked “"
+                                 + _NEW_TENANT_LABEL + "”"),
+                    help="Used only when the picker above is set to “"
+                         + _NEW_TENANT_LABEL + "”. For an individual account, leave "
+                         "blank to name it after the user.")
             bc1, bc2 = st.columns([1, 1])
             save = bc1.form_submit_button(
                 "➕ Create user", type="primary", width='stretch')
@@ -1017,8 +1050,16 @@ def render_manage_users(user: dict, sb) -> None:
             if not d_name:
                 errs.append("Full name is required.")
             if not errs:
-                existing = sb.table("users").select("email") \
-                    .eq("email", d_email.strip()).limit(1).execute().data or []
+                # Guarded: this ran OUTSIDE the try below, so a transient read failure
+                # escaped the handler entirely and the click looked like it had done
+                # nothing at all.
+                try:
+                    existing = (sb.table("users").select("email")
+                                .eq("email", d_email.strip()).limit(1)
+                                .execute().data or [])
+                except Exception as _dexc:
+                    st.error(f"Couldn't check for an existing user: {_dexc}")
+                    return
                 if existing:
                     errs.append("A user with this email already exists.")
             if errs:
@@ -1045,49 +1086,42 @@ def render_manage_users(user: dict, sb) -> None:
                 # existing tenant OR types a new one (created here). (No-op single-tenant.)
                 if _mt and new_uid:
                     _tid = None
-                    if _is_super and d_tenant_name == _INDIVIDUAL_TENANT_LABEL:
-                        # Individual → a personal, PUBLIC ('individual' kind) tenant for
-                        # THIS user. Name it after them; append the email if that name is
-                        # already taken (tenants.name is unique).
-                        _ind_name = (d_name.strip() or d_email.strip())
-                        try:
-                            _svc = service_client()
-                            _dupe = (_svc.table("tenants").select("id")
-                                     .ilike("name", _ind_name).limit(1).execute().data or [])
-                            if _dupe:
-                                _ind_name = f"{_ind_name} — {d_email.strip()}"
-                            _created = (_svc.table("tenants").insert(
-                                {"name": _ind_name, "kind": "individual",
-                                 "status": "active",
-                                 "created_by": user.get("id")}).execute().data or [])
-                            _tid = _created[0]["id"] if _created else None
-                            if _tid:
-                                st.toast(f"Created individual account “{_ind_name}”.",
-                                         icon="🧑")
-                        except Exception as _cexc:
-                            st.warning(f"Couldn't create the individual account "
-                                       f"(did you run migration 078?): {_cexc}")
-                    elif _is_super and d_tenant_name:
-                        _nm = str(d_tenant_name).strip()
-                        _tid = _tenant_opts.get(d_tenant_name)
-                        if not _tid and _nm and _nm != "(no tenants yet)":
-                            # A newly-typed organization → create it (idempotent by name),
-                            # then assign the user to it.
+                    _want_new = (_is_super
+                                 and str(d_tenant_name or "") == _NEW_TENANT_LABEL)
+                    _ind = d_tenant_kind == "Individual"
+                    if _want_new:
+                        # Create the tenant of the chosen KIND. An individual account
+                        # defaults to the user's own name; tenants.name is unique, so a
+                        # clash is disambiguated with the email.
+                        _nm = (str(d_new_org or "").strip()
+                               or (d_name.strip() or d_email.strip() if _ind else ""))
+                        if not _nm:
+                            st.warning("Pick an organization, or type a name for the new "
+                                       "one — the user was created without a tenant.")
+                        else:
                             try:
                                 _svc = service_client()
                                 _dupe = (_svc.table("tenants").select("id")
                                          .ilike("name", _nm).limit(1).execute().data or [])
+                                if _dupe and _ind:
+                                    _nm = f"{_nm} — {d_email.strip()}"
+                                    _dupe = []
                                 if _dupe:
                                     _tid = _dupe[0]["id"]
                                 else:
                                     _created = (_svc.table("tenants").insert(
-                                        {"name": _nm, "status": "active",
+                                        {"name": _nm,
+                                         "kind": "individual" if _ind else "organization",
+                                         "status": "active",
                                          "created_by": user.get("id")}).execute().data or [])
                                     _tid = _created[0]["id"] if _created else None
                                     if _tid:
-                                        st.toast(f"Created tenant “{_nm}”.", icon="🏢")
+                                        st.toast(f"Created {'individual account' if _ind else 'tenant'}"
+                                                 f" “{_nm}”.", icon="🧑" if _ind else "🏢")
                             except Exception as _cexc:
-                                st.warning(f"Couldn't create tenant “{_nm}”: {_cexc}")
+                                st.warning(f"Couldn't create “{_nm}”: {_cexc}")
+                    elif _is_super and d_tenant_name:
+                        _tid = _tenant_opts.get(str(d_tenant_name).strip())
                     else:
                         _tid = tc.current_tenant_id()
                     if _tid:
