@@ -65,6 +65,7 @@ hiding it behind a page of blanks.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -507,7 +508,9 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("Institution types accepted", "eligibility_applicant_types", "list"),
         ("Eligible countries (applicants)", "eligibility_countries", "list"),
         ("Other conditions", "eligibility_other", "bullets"),
-        ("Compliance requirements", "compliance_requirements", "bullets"),
+        # compliance_requirements is NOT a row here. It is long prose and it already renders
+        # as its own block below this section; carrying it in both places printed the same
+        # text twice, once squeezed into a table cell.
     )),
     ("Who can apply", (
         ("Ideal applicant", "applicant_fit_profile", "text"),
@@ -609,9 +612,31 @@ def solicitation_label(view: dict) -> str:
 
 
 def title_line(view: dict) -> tuple[str, str]:
-    """``(title, solicitation label)`` — the label is appended after a colon so the kind of
-    thing being read is settled before any of the detail is."""
-    return title_of(view), solicitation_label(view)
+    """``(title, solicitation label)``.
+
+    The label used to be appended to the title after a colon, which produced "DIV Fund –
+    Request for Proposals: Request for Proposals" whenever the funder had already named the
+    kind in their own title — which they usually have. The label now goes in the chip row
+    instead, and is returned as "" when the title already says it.
+    """
+    title = title_of(view)
+    label = solicitation_label(view)
+    if label and _title_already_names(title, label):
+        return title, ""
+    return title, label
+
+
+def _title_already_names(title: str, label: str) -> bool:
+    """Does the title already say what kind of thing this is? Compared on words rather than
+    substrings, so "Request for Proposals" matches "Request for Proposal" and "RFP"."""
+    t = " ".join(re.findall(r"[a-z]+", (title or "").lower()))
+    words = [w.rstrip("s") for w in (label or "").lower().split() if len(w) > 2]
+    if not words:
+        return False
+    if all(w in t for w in words):
+        return True
+    acronym = "".join(w[0] for w in (label or "").split() if w[:1].isalpha())
+    return len(acronym) >= 3 and acronym.lower() in t.split()
 
 # The narrative + bullet fields rendered as prose blocks rather than label/value rows.
 # All of these describe the CALL, so they are the same for every tenant that opens the page.
@@ -772,7 +797,10 @@ def narrative_blocks(view: dict) -> list[tuple[str, list[str]]]:
 # What a narrative heading says when the call has nothing under it. Distinct from a plain
 # dash because these are the LLM-synthesis fields: "not extracted" is the honest word, and it
 # tells the reader the gap is ours rather than the funder's silence.
-NOT_EXTRACTED = "Not extracted for this call yet."
+# One mark for "nothing here", used by the cards AND the prose blocks. A sentence explaining
+# our pipeline ("Not extracted for this call yet") put our internal state in front of a
+# reviewer who only wants to know whether the funder said anything.
+NOT_EXTRACTED = MISSING
 
 
 # ---------------------------------------------------------------------------
@@ -784,9 +812,37 @@ NOT_EXTRACTED = "Not extracted for this call yet."
 # run before every card, so "What is funded" arrived long before "Who can apply" and the page
 # read as two unrelated halves. Keeping the order here rather than in the page keeps it
 # testable.
+# The overview sits BELOW the headline metrics, not above them (owner reverted this on
+# 2026-08-11 having seen it in place): the three numbers are the fastest read on the page, and
+# a 500-word summary above them buries what a reviewer looks at first.
+#
+# It is also a different KIND of text from `brief_description`. This is the publisher's own
+# account of what they aim to fund — purpose, objectives, scope, focus areas — kept close to
+# their wording rather than rewritten, and capped so a long one does not swallow the page. See
+# `overview_is_truncated`, which is what puts a "Learn more" link on the end.
 OVERVIEW_FIELDS = (
     ("Project overview", "full_description"),
 )
+OVERVIEW_MAX_CHARS = 3500          # ~500 words
+
+
+def overview_is_truncated(view: dict) -> bool:
+    """True when `full_description` was cut to fit, so the page can offer the source."""
+    v = view.get("full_description")
+    return (not _blank(v)) and len(str(v).strip()) > OVERVIEW_MAX_CHARS
+
+
+def overview_text(view: dict) -> str:
+    """The publisher's summary, clipped at a sentence boundary near the cap."""
+    v = view.get("full_description")
+    if _blank(v):
+        return ""
+    t = str(v).strip()
+    if len(t) <= OVERVIEW_MAX_CHARS:
+        return t
+    cut = t[:OVERVIEW_MAX_CHARS]
+    stop = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    return (cut[:stop + 1] if stop > OVERVIEW_MAX_CHARS // 2 else cut).rstrip() + " …"
 # heading of the card section -> narrative blocks that belong immediately AFTER it
 NARRATIVE_AFTER = {
     "Eligibility requirements": (("Compliance & hard gates", "compliance_requirements"),),
@@ -796,8 +852,13 @@ NARRATIVE_AFTER = {
 }
 # The card sections in reading order. Anything in _SECTIONS but not named here still renders,
 # after these, so adding a section can never make it silently disappear.
-CARD_ORDER = ("Funding & awards", "Timeline", "Eligibility requirements", "Who can apply",
-              "Scope & focus", "Type of opportunity", "How to apply")
+CARD_ORDER = ("Funding & awards", "Timeline", "Type of opportunity",
+              "Eligibility requirements", "Who can apply", "Scope & focus", "How to apply")
+
+# Only these render with card chrome. Seven cards turned the page into a wall of boxes, and a
+# box is only worth it for a tight column of key/value facts — numbers and dates a reader
+# scans rather than reads. Everything else reads better as labelled lines in open text.
+AS_CARDS = frozenset({"Funding & awards", "Timeline", "Type of opportunity"})
 
 
 def overview_blocks(view: dict) -> list[tuple[str, list[str], bool]]:
@@ -813,7 +874,7 @@ def page_blocks(view: dict) -> list[tuple]:
     ordered = [t for t in CARD_ORDER if t in by_title]
     ordered += [t for t in by_title if t not in CARD_ORDER]
     for title in ordered:
-        out.append(("cards", title, by_title[title]))
+        out.append(("cards" if title in AS_CARDS else "facts", title, by_title[title]))
         for heading, lines, missing in _named_blocks(view, NARRATIVE_AFTER.get(title, ())):
             out.append(("prose", heading, lines, missing))
     return out

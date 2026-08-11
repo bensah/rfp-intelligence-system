@@ -88,7 +88,7 @@ _SKIPPED_THIN = 0
 # House-style caps (§7). Long enough to be useful, short enough that a model padding
 # its answer cannot turn a card into an essay.
 _LIMITS = {
-    "full_description": 2400,
+    "full_description": 4000,      # ~500 words + headroom; the page clips to its own cap
     "what_is_funded": 1500,
     "what_is_not_funded": 1500,
     "eligibility_other": 1200,
@@ -282,10 +282,13 @@ NAME THE THING BY WHAT IT IS. In any prose you write, refer to it as "the {kind}
 reads as internal shorthand. Use the funder's own register: "the request for proposals",
 "the tender", "the call for proposals".
 
-full_description: 150-300 words of ORIGINAL prose describing this specific call — what it
-  funds, who it is for, and what an applicant is expected to deliver. Write it yourself in
-  neutral third person; do NOT copy sentences from the source, and do not open with a
-  marketing flourish. Name concrete specifics (amounts, geographies, themes) where stated.
+full_description: the PUBLISHER'S OWN account of what they aim to fund, up to 500 words —
+  purpose, objectives, scope, focus areas, and what a funded project is expected to achieve.
+  Stay CLOSE TO THEIR WORDING: condense and tidy to fit the length, drop navigation and
+  boilerplate, keep their terms and their emphasis. Do not rewrite it in your own voice, do
+  not editorialise, and do not add anything the text does not say. If the source is longer
+  than 500 words, cover the opening scope and objectives and stop cleanly — the reader is
+  offered a link to the full text.
 what_is_funded: array of short bullet strings — the activities, costs or work this call
   will pay for.
 what_is_not_funded: array of short bullet strings — explicit exclusions or ineligible
