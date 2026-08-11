@@ -198,8 +198,9 @@ def render_opportunity_rail() -> None:
     st.markdown("<div class='app-rail-marker' style='font-size:.8rem;color:#00703C;"
                 "font-weight:700;letter-spacing:.03em;'>🔴 LIVE OPPORTUNITY FEED</div>",
                 unsafe_allow_html=True)
-    st.caption("Updates as new funding calls arrive. Open any item in **Pipelines → "
-               "Review**.")
+    # The old caption sent the reader to Pipelines → Review to open an item, which stopped
+    # being true once every entry here linked straight to its own opportunity page.
+    st.caption("Every title opens that opportunity in full.")
     _card("💰 Top Funding", "Biggest / most-urgent calls your entity is geographically "
           "eligible for.",
           groups["top_funding"], "No live opportunities yet — run a scan.")
