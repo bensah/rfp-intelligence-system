@@ -842,7 +842,10 @@ class TestTheFullSchemaIsAlwaysOnScreen(unittest.TestCase):
                       "Expected award date", "Time to award",
                       # the call's OWN eligibility, in its own section
                       "Institution types accepted", "Eligible countries (applicants)",
-                      "Other conditions", "Compliance requirements",
+                      "Other conditions",
+                      # "Compliance requirements" is deliberately NOT a card row: it is long
+                      # prose and renders as its own block, so carrying it in both places
+                      # printed the same text twice.
                       "Ideal applicant",
                       "Geographic scope", "Sector", "Programme areas", "Project stages",
                       "Submission format", "Application language", "Application steps"):
@@ -866,7 +869,7 @@ class TestTheFullSchemaIsAlwaysOnScreen(unittest.TestCase):
         self.assertEqual([h for h, _l, _m in got],
                          [h for h, _f in od.NARRATIVE_FIELDS])
         self.assertTrue(all(m for _h, _l, m in got))          # all missing here
-        self.assertEqual(got[0][1], [od.NOT_EXTRACTED])
+        self.assertEqual(got[0][1], [od.MISSING])
 
     def test_a_narrative_section_with_content_is_not_marked_missing(self):
         v = dict(self.THIN, what_is_funded="Equipment\nTraining")
@@ -876,10 +879,12 @@ class TestTheFullSchemaIsAlwaysOnScreen(unittest.TestCase):
         self.assertFalse(missing)
         self.assertEqual(lines, ["Equipment", "Training"])
 
-    def test_the_narrative_placeholder_names_OUR_gap_not_the_funders(self):
-        # These are the LLM-synthesis fields, so "not extracted" is the honest word: the gap
-        # is ours, and a reviewer should read it that way rather than as funder silence.
-        self.assertIn("Not extracted", od.NOT_EXTRACTED)
+    def test_the_placeholder_is_the_SAME_mark_everywhere(self):
+        # Reversed on 2026-08-11: a sentence about our pipeline ("Not extracted for this call
+        # yet") put our internal state in front of a reviewer who only wants to know whether
+        # the funder said anything. Cards and prose now use one mark.
+        self.assertEqual(od.NOT_EXTRACTED, od.MISSING)
+        self.assertEqual(od.MISSING, "—")
 
 
 class TestTheSourcesOwnTextIsNotInTheUserView(unittest.TestCase):
@@ -965,3 +970,95 @@ class TestTheAwardCardAlwaysCarriesAUsdFigure(unittest.TestCase):
 
     def test_a_messy_currency_string_still_counts_as_usd(self):
         self.assertEqual(od.usd_reference(500, "USD $"), "=US $500")
+
+
+class TestNothingIsPrintedTwice(unittest.TestCase):
+    """Text was appearing both inside a card and again as a prose block below it — the same
+    sentences squeezed into a table cell and then set properly."""
+
+    def test_no_field_is_both_a_card_row_and_a_prose_block(self):
+        card_fields = {f for _t, rows in od._SECTIONS for _lb, f, _k in rows}
+        prose_fields = {f for spec in list(od.NARRATIVE_AFTER.values())
+                        + [od.OVERVIEW_FIELDS] for _h, f in spec}
+        self.assertEqual(card_fields & prose_fields, set())
+
+    def test_the_brief_and_the_overview_are_different_fields(self):
+        # The lede is brief_description; the overview is the publisher's fuller account. If
+        # the overview ever fell back to the brief they would print twice under two headings.
+        self.assertEqual([f for _h, f in od.OVERVIEW_FIELDS], ["full_description"])
+
+
+class TestOnlyTightFactColumnsGetACard(unittest.TestCase):
+    """Seven cards turned the page into a wall of boxes. A box earns its chrome for a column
+    of numbers and dates a reader scans; round a sentence it is furniture."""
+
+    def test_the_card_sections_are_the_scannable_ones(self):
+        self.assertEqual(od.AS_CARDS,
+                         frozenset({"Funding & awards", "Timeline", "Type of opportunity"}))
+
+    def test_the_rest_are_marked_as_open_text(self):
+        v = {"opportunity_name": "A Call", "deadline": "2026-09-01"}
+        kinds = {b[1]: b[0] for b in od.page_blocks(v)}
+        self.assertEqual(kinds["Funding & awards"], "cards")
+        self.assertEqual(kinds["Timeline"], "cards")
+        self.assertEqual(kinds["Eligibility requirements"], "facts")
+        self.assertEqual(kinds["Who can apply"], "facts")
+        self.assertEqual(kinds["How to apply"], "facts")
+
+    def test_every_section_still_appears_in_one_form_or_the_other(self):
+        v = {"opportunity_name": "A Call"}
+        rendered = {b[1] for b in od.page_blocks(v) if b[0] in ("cards", "facts")}
+        self.assertEqual(rendered, {t for t, _rows in od.sections(v)})
+
+
+class TestTheTitleDoesNotRepeatItself(unittest.TestCase):
+    """"DIV Fund – Request for Proposals: Request for Proposals" — the funder usually names
+    the kind in their own title, so appending our label repeated it."""
+
+    def test_a_title_that_already_names_the_kind_gets_no_suffix(self):
+        self.assertEqual(
+            od.title_line({"opportunity_name": "A Fund – Request for Proposals",
+                           "solicitation_type": "RFP"}),
+            ("A Fund – Request for Proposals", ""))
+
+    def test_an_acronym_in_the_title_counts_as_naming_it(self):
+        self.assertEqual(
+            od.title_line({"opportunity_name": "RFP: Cold chain equipment",
+                           "solicitation_type": "RFP"})[1], "")
+
+    def test_a_title_that_does_not_say_it_keeps_the_label(self):
+        self.assertEqual(
+            od.title_line({"opportunity_name": "Full-scale demonstration of heat upgrades",
+                           "solicitation_type": "Tender"})[1], "Tender")
+
+    def test_singular_and_plural_are_the_same_kind(self):
+        self.assertEqual(
+            od.title_line({"opportunity_name": "A Request for Proposal for services",
+                           "solicitation_type": "RFP"})[1], "")
+
+
+class TestThePublishersOwnOverview(unittest.TestCase):
+    """The overview is the publisher's account of what they aim to fund, kept close to their
+    wording — not our rewrite — and capped so a long one does not swallow the page."""
+
+    def test_a_short_overview_is_returned_whole(self):
+        v = {"full_description": "Purpose and objectives, stated briefly."}
+        self.assertEqual(od.overview_text(v), "Purpose and objectives, stated briefly.")
+        self.assertFalse(od.overview_is_truncated(v))
+
+    def test_a_long_overview_is_clipped_at_a_sentence(self):
+        body = ("The programme funds work on health systems. " * 200)
+        v = {"full_description": body}
+        got = od.overview_text(v)
+        self.assertLess(len(got), od.OVERVIEW_MAX_CHARS + 40)
+        self.assertTrue(got.endswith("…"))
+        self.assertTrue(od.overview_is_truncated(v))
+        self.assertIn("systems.", got)          # cut on a sentence, not mid-word
+
+    def test_the_cap_is_about_five_hundred_words(self):
+        self.assertGreaterEqual(od.OVERVIEW_MAX_CHARS, 3000)
+        self.assertLessEqual(od.OVERVIEW_MAX_CHARS, 4200)
+
+    def test_nothing_yields_nothing(self):
+        self.assertEqual(od.overview_text({}), "")
+        self.assertFalse(od.overview_is_truncated({}))
