@@ -663,23 +663,45 @@ def _render(view: dict, field: str, kind: str) -> str:
     return display_value(v)
 
 
-def _lay_out(view: dict, spec) -> list[tuple[str, list[tuple[str, str]]]]:
+def _lay_out(view: dict, spec, *, show_missing: bool = False
+             ) -> list[tuple[str, list[tuple[str, str]]]]:
     out: list[tuple[str, list[tuple[str, str]]]] = []
     for title, fields in spec:
-        rows = [(label, _render(view, f, k)) for label, f, k in fields]
-        rows = [(lb, v) for lb, v in rows if v]
+        rows: list[tuple[str, str]] = []
+        for label, field, kind in fields:
+            value = _render(view, field, kind)
+            if value:
+                rows.append((label, value))
+            elif show_missing and not field.startswith("_"):
+                # A real schema field with nothing in it — say so. A `_`-prefixed layout
+                # pseudo-field that produced nothing was SUPPRESSED as a duplicate, not
+                # missing, so printing a dash for it would invent a gap.
+                rows.append((label, MISSING))
         if rows:
             out.append((title, rows))
     return out
 
 
-def sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
-    """[(section title, [(label, formatted value)])] — the reviewer's read of the call.
+MISSING = "—"
 
-    An empty section is dropped whole: a card of em dashes tells a reviewer nothing, and
-    the point of this page is the detail that IS there.
+
+def sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
+    """[(section title, [(label, value or "—")])] — the reviewer's read of the call.
+
+    THE WHOLE SKELETON IS ALWAYS RENDERED, including fields this call has nothing for.
+    Blank rows used to be dropped and an empty section dropped whole, which read better on
+    one call but was wrong across a set of them: the page changed SHAPE from call to call, so
+    a reader could not tell "this funder did not state a project duration" from "this app does
+    not track project duration", and could not compare two calls by eye because the rows were
+    in different places. A dash is a statement — the field is tracked, this call is silent on
+    it — and that is worth more than a shorter card. (Owner's call, 2026-08-11.)
+
+    The exception is a row suppressed for REDUNDANCY rather than for absence: the layout
+    pseudo-fields (`_award_range` when it merely repeats the single award value,
+    `_second_reference` when it repeats the header identifier) are dropped entirely, because
+    those are duplicates rather than gaps and printing "—" for them would invent a gap.
     """
-    return _lay_out(view, _SECTIONS)
+    return _lay_out(view, _SECTIONS, show_missing=True)
 
 
 def technical_sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
@@ -688,8 +710,31 @@ def technical_sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
 
 
 def narrative_blocks(view: dict) -> list[tuple[str, list[str]]]:
-    """[(heading, [lines])] for the prose sections — bullets split into lines."""
+    """[(heading, [lines])] for the prose sections — bullets split into lines.
+
+    Only the sections that HAVE content. `narrative_sections` is what the page renders.
+    """
     return _blocks(view, NARRATIVE_FIELDS)
+
+
+# What a narrative heading says when the call has nothing under it. Distinct from a plain
+# dash because these are the LLM-synthesis fields: "not extracted" is the honest word, and it
+# tells the reader the gap is ours rather than the funder's silence.
+NOT_EXTRACTED = "Not extracted for this call yet."
+
+
+def narrative_sections(view: dict) -> list[tuple[str, list[str], bool]]:
+    """``[(heading, lines, is_missing)]`` for EVERY narrative section in the schema.
+
+    Same reasoning as `sections`: the shape of the page stays constant across calls, so a
+    reader can see that the app tracks "What is NOT funded" and that this call is silent on
+    it, rather than wondering whether the section exists at all.
+    """
+    out: list[tuple[str, list[str], bool]] = []
+    for heading, field in NARRATIVE_FIELDS:
+        lines = as_bullets(view.get(field))
+        out.append((heading, lines or [NOT_EXTRACTED], not lines))
+    return out
 
 
 def _blocks(view: dict, spec) -> list[tuple[str, list[str]]]:
@@ -756,9 +801,14 @@ def summary_of(view: dict) -> str:
 def as_published(view: dict) -> str:
     """`raw_text` — the audit copy of the call as the primary source published it.
 
-    Shown collapsed, and it matters more than it looks: with the LLM-synthesis stage of the
-    schema still unpopulated, this is the only place a reviewer can read the WHOLE call
-    without leaving the app. ~3,000 characters on the rows that have it (443 of 500).
+    SUPER_USER ONLY, and no longer part of the reviewer's page. The point of this app is that
+    every call reads the same way; dropping the primary source's own text into the page put a
+    different publisher's structure on screen beside ours and undid that. It stays available
+    for audit — checking what the extraction had to work with is exactly a development and
+    validation task — but a reviewer reads OUR schema. (Owner's call, 2026-08-11.)
+
+    Now that the synthesis writer fills the narrative fields, the reason it was in the user
+    view — being the only place to read the whole call — has gone.
     """
     v = view.get("raw_text")
     return "" if _blank(v) else str(v).strip()
