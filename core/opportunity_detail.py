@@ -666,9 +666,11 @@ NARRATIVE_FIELDS = (
 #
 # Shown in Part 1 they read as facts about the call. They belong with the verdict they
 # support, so both moved to the decision aid in §2.
-DECISION_AID_FIELDS = (
-    ("Our role on a bid", "applicant_role", "text"),
-)
+# Nothing here any more. "Our role on a bid" was the only row, and a one-row card carrying a
+# single word ("Prime") is more furniture than information — the same fact is stated by the
+# criteria below, which is where a reviewer is already looking. The field is still resolved on
+# the view for anything else that wants it; it just is not given a card of its own.
+DECISION_AID_FIELDS: tuple[tuple[str, str, str], ...] = ()
 DECISION_AID_NARRATIVE = (
     ("Key risks for this entity", "key_risks"),
 )
