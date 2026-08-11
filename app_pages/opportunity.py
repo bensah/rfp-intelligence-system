@@ -263,6 +263,14 @@ with _main:
                         f"font-size:0.78rem'>{_txt(_dkind)}</span>",
                         unsafe_allow_html=True)
 
+    # The two award axes are shown as one reconciled line, so the only thing left to say is
+    # when the combination genuinely does not add up. That is 7 of 686 live rows — warning on
+    # the 30 legitimate grant-awarded-as-a-contract rows would have taught a reviewer to
+    # ignore the warning that matters here.
+    _pair = _od.award_pairing(_view)
+    if _pair.get("note"):
+        st.caption(f":orange[⚠ {_pair['note']}]")
+
     # A thin page is usually the funder publishing little on the listing page, or our
     # extraction not reaching a linked document. Say so in the reviewer's terms — the
     # field-level accounting is super_user detail below.
