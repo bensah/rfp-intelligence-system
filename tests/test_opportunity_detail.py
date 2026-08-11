@@ -994,21 +994,27 @@ class TestOnlyTightFactColumnsGetACard(unittest.TestCase):
     of numbers and dates a reader scans; round a sentence it is furniture."""
 
     def test_the_card_sections_are_the_scannable_ones(self):
+        # Eligibility requirements and Scope & focus joined the cards so they align with
+        # Timeline and Type of opportunity in height and padding (owner, 2026-08-11).
         self.assertEqual(od.AS_CARDS,
-                         frozenset({"Funding & awards", "Timeline", "Type of opportunity"}))
+                         frozenset({"Funding & awards", "Timeline", "Type of opportunity",
+                                    "Eligibility requirements", "Scope & focus"}))
 
     def test_the_rest_are_marked_as_open_text(self):
         v = {"opportunity_name": "A Call", "deadline": "2026-09-01"}
-        kinds = {b["title"]: b["kind"] for r in od.page_rows(v) for b in r}
+        kinds = {b["title"]: b["kind"]
+                 for r in od.page_rows(v) for c in r for b in c}
         self.assertEqual(kinds["Funding & awards"], "cards")
         self.assertEqual(kinds["Timeline"], "cards")
-        self.assertEqual(kinds["Eligibility requirements"], "facts")
+        self.assertEqual(kinds["Eligibility requirements"], "cards")
+        self.assertEqual(kinds["Scope & focus"], "cards")
+        # These two stay cardless — the owner asked for them to read like the prose blocks.
         self.assertEqual(kinds["Who can apply"], "facts")
         self.assertEqual(kinds["How to apply"], "facts")
 
     def test_every_section_still_appears_in_one_form_or_the_other(self):
         v = {"opportunity_name": "A Call"}
-        rendered = {b["title"] for r in od.page_rows(v) for b in r
+        rendered = {b["title"] for r in od.page_rows(v) for c in r for b in c
                     if b["kind"] in ("cards", "facts")}
         self.assertEqual(rendered, {t for t, _rows in od.sections(v)})
 
@@ -1073,44 +1079,54 @@ class TestTheRowsLeaveNoHoles(unittest.TestCase):
 
     V = {"opportunity_name": "A Call", "deadline": "2026-09-01"}
 
-    def test_no_row_holds_more_than_two_blocks(self):
+    def test_no_row_holds_more_than_two_columns(self):
         for row in od.page_rows(self.V):
             self.assertLessEqual(len(row), 2)
             self.assertGreaterEqual(len(row), 1)
 
+    def test_the_short_card_is_followed_by_another_in_the_same_column(self):
+        # THE FIX FOR THE HOLES. "Funding & awards" (3 rows) beside "Timeline" (5 rows) left
+        # dead space under the shorter one, and the next row began below BOTH. Stacking puts
+        # the next card directly under the short one.
+        first = od.page_rows(self.V)[0]
+        left = [b["title"] for b in first[0]]
+        right = [b["title"] for b in first[1]]
+        self.assertEqual(left, ["Funding & awards", "Eligibility requirements"])
+        self.assertEqual(right, ["Timeline", "Type of opportunity"])
+
     def test_the_paired_rows_are_actually_paired(self):
         rows = od.page_rows(self.V)
-        pairs = {tuple(b["title"] for b in r) for r in rows if len(r) == 2}
-        self.assertIn(("Funding & awards", "Timeline"), pairs)
+        beside = {tuple(c[0]["title"] for c in r) for r in rows if len(r) == 2}
+        self.assertIn(("Funding & awards", "Timeline"), beside)
         # The owner asked for these two beside each other.
-        self.assertIn(("Who can apply", "How to apply"), pairs)
+        self.assertIn(("Who can apply", "How to apply"), beside)
 
     def test_what_is_and_is_not_funded_share_a_row(self):
-        pairs = {tuple(b["title"] for b in r) for r in od.page_rows(self.V) if len(r) == 2}
-        self.assertIn(("What is funded", "What is NOT funded"), pairs)
+        beside = {tuple(c[0]["title"] for c in r)
+                  for r in od.page_rows(self.V) if len(r) == 2}
+        self.assertIn(("What is funded", "What is NOT funded"), beside)
 
-    def test_an_unplanned_section_is_paired_rather_than_orphaned(self):
-        # A section added to _SECTIONS but not to LAYOUT_ROWS must still reach the page.
-        planned = {t for row in od.LAYOUT_ROWS for t in row}
+    def test_an_unplanned_section_still_reaches_the_page(self):
+        # A section in the layout spec but not in any LAYOUT column must still render, or
+        # adding one would make it silently vanish.
         titles = {t for t, _r in od.sections(self.V)}
-        rendered = {b["title"] for r in od.page_rows(self.V) for b in r
+        rendered = {b["title"] for r in od.page_rows(self.V) for c in r for b in c
                     if b["kind"] != "prose"}
         self.assertEqual(rendered, titles)
-        self.assertTrue(titles <= planned | (titles - planned))
 
     def test_how_to_apply_carries_its_detail_without_a_second_heading(self):
         v = dict(self.V, how_to_apply="Register, then upload the budget.")
-        block = next(b for r in od.page_rows(v) for b in r
+        block = next(b for r in od.page_rows(v) for c in r for b in c
                      if b["title"] == "How to apply")
         self.assertEqual(block["prose"], ["Register, then upload the budget."])
         # ...and there is no separate block for it.
-        headings = [b["title"] for r in od.page_rows(v) for b in r]
+        headings = [b["title"] for r in od.page_rows(v) for c in r for b in c]
         self.assertNotIn("How to apply in detail", headings)
 
     def test_compliance_sits_under_eligibility_not_on_its_own(self):
         v = dict(self.V, compliance_requirements="Audited accounts required.")
-        block = next(b for r in od.page_rows(v) for b in r
+        block = next(b for r in od.page_rows(v) for c in r for b in c
                      if b["title"] == "Eligibility requirements")
         self.assertEqual(block["prose"], ["Audited accounts required."])
         self.assertNotIn("Compliance & hard gates",
-                         [b["title"] for r in od.page_rows(v) for b in r])
+                         [b["title"] for r in od.page_rows(v) for c in r for b in c])
