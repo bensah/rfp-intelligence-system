@@ -200,7 +200,7 @@ def drop_concluded(df):
 # submitted RFPs — Total Submitted, Approved, Under Review, Not Approved, win rate — must use
 # this weight so the whole app tells the same story.
 #
-#   weight = (Progress == Completed) * Submissions[N]
+#   weight = (Progress == Completed OR a real donor decision) * Submissions[N]
 #
 # Progress = Completed is the ONLY thing that opens the gate, and Submissions counts from 1
 # upwards once it does. Nothing else qualifies a row: an earlier version also accepted a
@@ -216,10 +216,35 @@ def drop_concluded(df):
 # row that isn't marked Completed must not inflate the totals.
 
 
+# THE DECISIONS THAT PROVE A SUBMISSION. A donor cannot approve, review or reject an
+# application it never received, so any of these three IS evidence the row was submitted —
+# whatever `progress_status` says. "Not submitted" is deliberately absent, which is what keeps
+# the migration-089 intent intact: the phantom-1 problem was a *Not submitted* donor_decision
+# counting as an application, not a real one.
+SUBMITTED_DECISIONS = frozenset({"approved", "under review", "not approved"})
+
+
 def submission_weight(row) -> int:
-    """Donor-side submissions this row contributes: N when Progress = Completed, else 0."""
+    """Donor-side submissions this row contributes, else 0.
+
+    N when Progress = Completed OR the donor has recorded a real decision.
+
+    THE SECOND CLAUSE IS THE FIX for a count that disagreed with its own list. The Grants page
+    included a row in the applied-funding log on `donor_decision in SUBMITTED_DECISIONS` OR
+    Completed — 13 rows — while this weight counted only the Completed ones, so the KPI read
+    12 above a list of 13. Two rows sat in the list uncounted, both with a donor decision of
+    "Under Review" over a `progress_status` still saying "Not Started": the donor plainly had
+    the application and the progress field was simply stale.
+
+    A field somebody forgot to advance must not silently remove an application from the
+    ledger, and one page must not hold two definitions of "submitted". Weighted by
+    `submissions`, the union now reads 14 — 13 rows, one of which carries two applications to
+    the same call.
+    """
     get = row.get if hasattr(row, "get") else (lambda k, d=None: getattr(row, k, d))
-    if str(get("progress_status") or "").strip().lower() != "completed":
+    completed = str(get("progress_status") or "").strip().lower() == "completed"
+    decided = str(get("donor_decision") or "").strip().lower() in SUBMITTED_DECISIONS
+    if not (completed or decided):
         return 0
     n = get("submissions")
     try:
