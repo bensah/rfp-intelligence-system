@@ -76,10 +76,20 @@ def _reply(content):
     return _Stub(content)
 
 
+# Long enough to clear _MIN_TEXT, because a row with less text than this does not get a
+# model call at all (see AThinRowNeverCostsACallTests). The fixture used to be two
+# sentences, which made every model-path test here silently exercise the skip path instead.
 ROW = {"uid": "es_1", "opportunity_name": "A Health Delivery Call",
        "funder_name": "A Funder", "opportunity_url": "https://funder.example/call/1",
-       "raw_text": "Applications are invited. Proposals must be submitted through UNGM. "
-                   "The programme funds cold-chain equipment and training."}
+       "raw_text": (
+           "Applications are invited from established organisations for the delivery of "
+           "cold-chain equipment and associated training in participating districts. "
+           "Proposals must be submitted through UNGM before the closing date. "
+           "The programme will fund the procurement, installation and commissioning of "
+           "equipment, together with the training of health workers in its operation and "
+           "routine maintenance. Applicants are expected to demonstrate prior experience "
+           "of comparable delivery, and to describe how the equipment will be maintained "
+           "beyond the period of the award. Construction of new facilities is excluded.")}
 
 GOOD = ('{"full_description": "A long original description of the call and what it '
         'expects an applicant to deliver.", "what_is_funded": ["Cold-chain equipment", '
@@ -303,3 +313,55 @@ class DocumentsComeFromTheMarkupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class AThinRowNeverCostsACallTests(unittest.TestCase):
+    """Measured on a 20-row batch, 4 rows produced no field at all — and every one had a
+    raw_text that was boilerplate rather than a call: 20 characters ("fundsforNGOs Premium",
+    an aggregator paywall stub), 74, 96 and 108 characters of procurement-portal furniture.
+    That is 20% of a free-tier batch spent on rows that could not have answered. The model was
+    right to return nothing; the fix is not to ask it."""
+
+    def setUp(self):
+        CS.reset_calls()
+
+    def test_a_paywall_stub_costs_no_call(self):
+        with _reply(GOOD) as c:
+            got = CS.synthesize_row(dict(ROW, raw_text="fundsforNGOs Premium"))
+        self.assertEqual(c.calls, 0)
+        self.assertEqual(CS.skipped_thin(), 1)
+        self.assertNotIn("full_description", got)
+
+    def test_portal_boilerplate_costs_no_call(self):
+        boiler = ("Welcome to the procurement platform of the organisation. "
+                  "Terms and Conditions Site Map Glossary")
+        with _reply(GOOD) as c:
+            CS.synthesize_row(dict(ROW, raw_text=boiler))
+        self.assertEqual(c.calls, 0)
+
+    def test_the_free_regex_fields_are_still_returned(self):
+        # Skipping the model must not skip the work that costs nothing.
+        thin = "Submit bids through UNGM. Terms and Conditions."
+        with _reply(GOOD):
+            got = CS.synthesize_row(dict(ROW, raw_text=thin))
+        self.assertEqual(got.get("submission_format"), "Online portal: UNGM")
+
+    def test_a_real_call_is_still_read(self):
+        body = ("The programme invites proposals from established organisations. " * 8)
+        self.assertGreaterEqual(len(body), CS._MIN_TEXT)
+        with _reply(GOOD) as c:
+            got = CS.synthesize_row(dict(ROW, raw_text=body))
+        self.assertEqual(c.calls, 1)
+        self.assertIn("full_description", got)
+
+    def test_the_threshold_is_generous_rather_than_strict(self):
+        # A false skip loses a row permanently; a wasted call costs seconds. So the bar sits
+        # at roughly two sentences of substance, not at "long".
+        self.assertLessEqual(CS._MIN_TEXT, 600)
+
+    def test_skips_are_counted_separately_from_failures(self):
+        # A thin batch must read as a SOURCE problem, not as the model failing.
+        with _reply(GOOD):
+            CS.synthesize_row(dict(ROW, raw_text="too short"))
+            CS.synthesize_row(dict(ROW, raw_text="also short"))
+        self.assertEqual((CS.calls_made(), CS.skipped_thin()), (0, 2))
