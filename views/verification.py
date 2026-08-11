@@ -581,30 +581,56 @@ def _srcreg_edit_dialog(r: dict, email) -> None:
     """Edit ONE registry source. 'Verify & Save' also marks it confirmed."""
     host = r.get("host") or ""
     st.markdown(f"**{r.get('donor_name') or host}** · `{host}`")
-    name = st.text_input("Source name", value=r.get("donor_name") or "")
-    code = st.text_input("Code", value=r.get("donor_code") or "")
-    lu = st.text_input("Listings URL", value=r.get("listings_url") or "",
+    # EVERY WIDGET NEEDS AN EXPLICIT KEY, and the values are seeded into session state ONCE.
+    #
+    # Without a key, a widget's identity is derived from its own arguments, and every
+    # interaction inside a dialog reruns the script and re-invokes this function — which
+    # rebuilt each widget from `value=` / `default=` / `index=` off the database row. So
+    # ticking an option in "Solicitation type(s)" immediately snapped back to the stored
+    # value and there was no way to reach Save. The multiselect showed it most obviously
+    # because a list default is re-applied wholesale.
+    #
+    # With a key, session state owns the value and survives the rerun. The seed is namespaced
+    # by host and re-runs when the host changes, so opening a DIFFERENT row does not inherit
+    # the previous row's edits. `value=`/`index=`/`default=` are then deliberately omitted:
+    # Streamlit ignores them once a keyed widget has session state, and passing them anyway
+    # invites a warning and reads as though they were doing something.
+    _K = f"srcreg_edit::{host}::"
+    if st.session_state.get(_K + "seeded") != host:
+        _sc0, _vf0 = _src_class_of(r), _verif_of(r)
+        st.session_state[_K + "name"] = r.get("donor_name") or ""
+        st.session_state[_K + "code"] = r.get("donor_code") or ""
+        st.session_state[_K + "lu"] = r.get("listings_url") or ""
+        st.session_state[_K + "su"] = r.get("sample_url") or ""
+        st.session_state[_K + "sc"] = _sc0 if _sc0 in _SRC_OPTS else _SRC_OPTS[0]
+        st.session_state[_K + "vf"] = _vf0 if _vf0 in _VERIF_OPTS else _VERIF_OPTS[0]
+        _ac0 = r.get("access_model") or "Unknown"
+        _me0 = _norm_method(r.get("ingestion_method"))
+        st.session_state[_K + "ac"] = _ac0 if _ac0 in _ACCESS_OPTS else _ACCESS_OPTS[0]
+        st.session_state[_K + "me"] = (_me0 if _me0 in _METHOD_OPTS
+                                       else _METHOD_OPTS[min(2, len(_METHOD_OPTS) - 1)])
+        st.session_state[_K + "sol"] = [t for t in (r.get("solicitation_types") or [])
+                                        if t in SOLICITATION_TYPES]
+        st.session_state[_K + "inst"] = [t for t in (r.get("instrument_types") or [])
+                                         if t in INSTRUMENT_TYPES]
+        st.session_state[_K + "notes"] = r.get("notes") or ""
+        st.session_state[_K + "seeded"] = host
+    name = st.text_input("Source name", key=_K + "name")
+    code = st.text_input("Code", key=_K + "code")
+    lu = st.text_input("Listings URL", key=_K + "lu",
                        help="The page or API that LISTS this source's opportunities "
                             "(what the scanner ingests) — the main field to keep accurate.")
-    su = st.text_input("Sample opportunity URL (optional)", value=r.get("sample_url") or "",
+    su = st.text_input("Sample opportunity URL (optional)", key=_K + "su",
                        help="An example of ONE opportunity — optional; not the listings page.")
     c1, c2 = st.columns(2)
-    _sc0, _vf0 = _src_class_of(r), _verif_of(r)
-    sc = c1.selectbox("Source class", _SRC_OPTS,
-                      index=_SRC_OPTS.index(_sc0) if _sc0 in _SRC_OPTS else 0)
-    vf = c2.selectbox("Verification", _VERIF_OPTS,
-                      index=_VERIF_OPTS.index(_vf0) if _vf0 in _VERIF_OPTS else 0)
+    sc = c1.selectbox("Source class", _SRC_OPTS, key=_K + "sc")
+    vf = c2.selectbox("Verification", _VERIF_OPTS, key=_K + "vf")
     c3, c4 = st.columns(2)
-    _ac0, _me0 = (r.get("access_model") or "Unknown"), _norm_method(r.get("ingestion_method"))
-    ac = c3.selectbox("Access", _ACCESS_OPTS,
-                      index=_ACCESS_OPTS.index(_ac0) if _ac0 in _ACCESS_OPTS else 0)
-    me = c4.selectbox("Method", _METHOD_OPTS,
-                      index=_METHOD_OPTS.index(_me0) if _me0 in _METHOD_OPTS else 2)
-    sol = st.multiselect("Solicitation type(s)", SOLICITATION_TYPES,
-                         default=[t for t in (r.get("solicitation_types") or []) if t in SOLICITATION_TYPES])
-    inst = st.multiselect("Instrument type(s)", INSTRUMENT_TYPES,
-                          default=[t for t in (r.get("instrument_types") or []) if t in INSTRUMENT_TYPES])
-    notes = st.text_input("Notes", value=r.get("notes") or "")
+    ac = c3.selectbox("Access", _ACCESS_OPTS, key=_K + "ac")
+    me = c4.selectbox("Method", _METHOD_OPTS, key=_K + "me")
+    sol = st.multiselect("Solicitation type(s)", SOLICITATION_TYPES, key=_K + "sol")
+    inst = st.multiselect("Instrument type(s)", INSTRUMENT_TYPES, key=_K + "inst")
+    notes = st.text_input("Notes", key=_K + "notes")
 
     def _save(verify: bool) -> None:
         f = {
@@ -620,6 +646,11 @@ def _srcreg_edit_dialog(r: dict, email) -> None:
         if source_registry.update_row(host, f, by=email):
             _flash_set("srcreg", ("✅ Verified & saved " if verify else "💾 Saved ") + host)
             st.cache_data.clear()          # registry rows are cached — show the write
+            # Drop the seed so reopening this row reads the DATABASE again, not the edits
+            # that have now been written (and possibly normalised on the way in).
+            for _sfx in ("seeded", "name", "code", "lu", "su", "sc", "vf", "ac", "me",
+                         "sol", "inst", "notes"):
+                st.session_state.pop(_K + _sfx, None)
             st.rerun()
         else:
             st.error("Save failed — the DB rejected the write (column/RLS). Nothing changed.")
