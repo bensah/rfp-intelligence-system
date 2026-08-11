@@ -51,8 +51,17 @@ st.markdown("""
   .opp-k { color:#5d6b63; font-size:0.94rem; flex:0 0 42%; line-height:1.45; }
   .opp-v { color:#1f2a24; font-size:1rem; text-align:right; font-weight:600;
            line-height:1.45; }
-  .opp-sec { color:#778; font-size:0.72rem; letter-spacing:.08em;
-             text-transform:uppercase; margin:26px 0 8px; font-weight:700; }
+  /* HIERARCHY. These were 0.72rem in mid-grey while the h5 subsections beneath them were
+     larger and near-black, so the page read as though the subsections outranked the sections
+     they belong to. The section heading is now the largest, darkest thing in the body, and
+     the subsections sit a clear step below it in both size and weight. */
+  .opp-sec { color:#0f3d2a; font-size:1.35rem; letter-spacing:.005em; margin:34px 0 12px;
+             font-weight:800; border-bottom:2px solid #d8e6de; padding-bottom:6px; }
+  .opp-open { background:transparent; border:none; padding:0; }
+  .opp-open h4 { font-weight:700; color:#16734a; margin:0 0 8px; font-size:1.02rem; }
+  /* Subsection headings (st.markdown "#####") — a step below .opp-sec, not above it. */
+  h5 { color:#24352c !important; font-size:1.06rem !important; font-weight:700 !important;
+       margin-top:14px !important; }
   /* The summary is PROSE, not a data card — a border round it made a paragraph look like
      one more table. */
   .opp-line { display:flex; gap:18px; padding:5px 0; align-items:baseline;
@@ -265,48 +274,45 @@ with _main:
         # in-card/out-of-card repetition being removed.
         st.markdown(f"<div class='opp-lede'>{_od.MISSING}</div>", unsafe_allow_html=True)
 
-    # THE BODY, in reading order — cards and prose interleaved so the page walks the reader
-    # through the opportunity instead of presenting all the prose and then all the tables.
-    # See opportunity_detail.page_blocks.
-    _blocks = _od.page_blocks(_view)
-    _secs = [b for b in _blocks if b[0] in ("cards", "facts")]
-    _col_i = 0
-    _cols = st.columns(2, gap="medium")
-    for _b in _blocks:
-        if _b[0] == "facts":
-            # Open text, not a box. A card is worth its chrome only for a tight column of
-            # numbers and dates; round a sentence it is just furniture.
-            st.markdown(f"##### {_txt(_b[1])}")
-            st.markdown(
-                "".join(f"<div class='opp-line'><span class='opp-k'>{_txt(lb)}</span>"
-                        f"<span class='opp-v2'>{_txt(v)}</span></div>"
-                        for lb, v in _b[2]), unsafe_allow_html=True)
-            _col_i = 0
-            _cols = st.columns(2, gap="medium")
-        elif _b[0] == "cards":
-            _title, _fields = _b[1], _b[2]
-            with _cols[_col_i % 2]:
-                st.markdown(
-                    f"<div class='opp-card'><h4>{_txt(_title)}</h4>"
-                    + "".join(f"<div class='opp-kv'><span class='opp-k'>{_txt(lb)}</span>"
-                              f"<span class='opp-v'>{_txt(v)}</span></div>"
-                              for lb, v in _fields)
-                    + "</div>", unsafe_allow_html=True)
-                st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-            _col_i += 1
-        else:
-            _heading, _lines, _is_missing = _b[1], _b[2], _b[3]
-            st.markdown(f"##### {_heading}")
-            if _is_missing:
-                st.caption(f"_{_lines[0]}_")
-            elif len(_lines) == 1:
-                st.markdown(f"<div class='opp-prose'>{_txt(_lines[0])}</div>",
+    # THE BODY as explicit ROWS — see opportunity_detail.page_rows. Streaming sections into
+    # a two-column run and resetting it whenever prose appeared left holes all down the page:
+    # a card on the left with nothing beside it, then a heading, then another lone card.
+    _rows = _od.page_rows(_view)
+    _secs = [b for r in _rows for b in r if b["kind"] != "prose"]
+
+    def _fact_html(_b):
+        _cls = "opp-card" if _b["kind"] == "cards" else "opp-open"
+        return (f"<div class='{_cls}'><h4>{_txt(_b['title'])}</h4>"
+                + "".join(f"<div class='opp-kv'><span class='opp-k'>{_txt(lb)}</span>"
+                          f"<span class='opp-v'>{_txt(v)}</span></div>"
+                          for lb, v in _b["rows"]) + "</div>")
+
+    for _row in _rows:
+        _cols = st.columns(len(_row), gap="medium") if len(_row) > 1 else [st.container()]
+        for _b, _c in zip(_row, _cols):
+            with _c:
+                if _b["kind"] == "prose":
+                    st.markdown(f"##### {_txt(_b['title'])}")
+                    if _b["missing"]:
+                        st.markdown(f"<div class='opp-lede'>{_od.MISSING}</div>",
+                                    unsafe_allow_html=True)
+                    elif len(_b["lines"]) == 1:
+                        st.markdown(f"<div class='opp-lede'>{_txt(_b['lines'][0])}</div>",
+                                    unsafe_allow_html=True)
+                    else:
+                        st.markdown(chr(10).join(f"- {l}" for l in _b["lines"]))
+                else:
+                    st.markdown(_fact_html(_b), unsafe_allow_html=True)
+                    # The subsection's own detail, under its rows and with NO second heading:
+                    # "How to apply" followed by "How to apply in detail" was two headings for
+                    # one subject.
+                    if _b["prose"]:
+                        st.markdown(
+                            f"<div class='opp-lede'>{_txt(' '.join(_b['prose']))}</div>"
+                            if len(_b["prose"]) == 1
+                            else chr(10).join(f"- {l}" for l in _b["prose"]),
                             unsafe_allow_html=True)
-            else:
-                st.markdown(chr(10).join(f"- {l}" for l in _lines))
-            # Prose breaks the two-column run, so the next card starts a fresh row.
-            _col_i = 0
-            _cols = st.columns(2, gap="medium")
+                st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
     # Kept as a section rather than appearing only when it has content, for the same reason
     # as the rest of the skeleton.
@@ -368,7 +374,10 @@ with _main:
     # ── PART 2 — scoring analysis ───────────────────────────────────────────
     st.markdown("<div class='opp-sec'>2 · Decision aid — is this worth bidding?"
                 "</div>", unsafe_allow_html=True)
-    st.markdown("##### Scoring analysis")
+    # "Scoring analysis" and "This entity against this opportunity" were two headings saying
+    # the same thing, and "entity" is our internal word for a tenant — a reader who has not
+    # met it does not know whether it means them, the funder, or something else.
+    st.markdown("##### How this opportunity fares against your organisation")
 
     from core import criteria_derive as _cd
     from core import org_profile as _orgp
@@ -455,7 +464,6 @@ with _main:
     # this is us against it.
     _aid_rows, _aid_prose = _od.decision_aid(_view)
     if _aid_rows or _aid_prose:
-        st.markdown("##### This entity against this opportunity")
         if _aid_rows:
             st.markdown(
                 "<div class='opp-card'>"
