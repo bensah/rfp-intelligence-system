@@ -45,7 +45,7 @@ from core import suggestions as _suggestions
 can_suggest = _suggestions.can_suggest(user)
 sb = get_client()
 
-st.title("Your Curated Donor List")
+st.title("Your Donor Mapping")
 
 # Flash message after a modal save/delete closes (so we're sure it landed).
 _flash = st.session_state.pop("_donor_flash", None)
@@ -55,11 +55,20 @@ _flash_warn = st.session_state.pop("_donor_flash_warn", None)
 if _flash_warn:
     st.warning(_flash_warn)
 
+# REWRITTEN for a reader (owner, 2026-08-11). The original said the same things in the
+# system's own vocabulary — "country-agnostic donor metadata powering RFP eligibility
+# screening" — and buried the one rule that actually affects the person editing the page: a
+# blank is what counts as missing, and answering "Not sure" is enough to close the gap.
 st.caption(
-    "Country-agnostic donor metadata powering RFP eligibility screening. "
-    "Requirements: blank = unanswered (missing data); set Required / Not Required / Not "
-    "Sure once addressed. Not Sure & Not Required both score as Not Required — only blank "
-    "is counted as incomplete, so completeness reflects true data quality."
+    "Your curated list of funders and what each one requires. It is country-agnostic — the "
+    "same donor record serves every call from that funder — and it is what the eligibility "
+    "screening reads when it scores an opportunity."
+)
+st.caption(
+    "**On the requirement questions:** leave one blank only while you genuinely do not know "
+    "yet — blank is what counts as missing, and it is the only thing that lowers a donor's "
+    "completeness. **Not sure** is a real answer: it scores the same as **Not required**, so "
+    "recording it closes the gap without pretending to a certainty you do not have."
 )
 
 
