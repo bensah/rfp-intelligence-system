@@ -248,6 +248,14 @@ def submission_weight(row) -> int:
 # Nothing here writes. It reports, so a human decides.
 SUBMITTED_DECISIONS = frozenset({"approved", "under review", "not approved"})
 
+# Progress values that mean "not sent to the donor yet" and "sent". Moved here from
+# views/summary_rfp.py so the rule has ONE definition: the page had its own copy of this check
+# and I then added a second in this module, which is two implementations of one rule waiting to
+# drift. "missing" is a legacy DB spelling of Missed, tolerated rather than migrated.
+PRE_SUBMIT_PROGRESS = frozenset({"", "not started", "in progress", "discontinued",
+                                 "missed", "missing"})
+POST_SUBMIT_PROGRESS = frozenset({"completed"})
+
 
 def submission_inconsistencies(rows) -> list[dict]:
     """Rows whose donor decision and progress status tell different stories.
@@ -266,11 +274,16 @@ def submission_inconsistencies(rows) -> list[dict]:
     for r in rows or []:
         get = r.get if hasattr(r, "get") else (lambda k, d=None: getattr(r, k, d))
         ps = str(get("progress_status") or "").strip().lower()
-        dd = str(get("donor_decision") or "").strip().lower()
+        # A BLANK decision means "not submitted" — that is what the Summary page's own version
+        # of this check assumed, and dropping the assumption would have quietly narrowed the
+        # rule while consolidating it.
+        dd = str(get("donor_decision") or "").strip().lower() or "not submitted"
         issue = None
-        if dd in SUBMITTED_DECISIONS and ps != "completed":
+        if dd in SUBMITTED_DECISIONS and ps not in POST_SUBMIT_PROGRESS:
             issue = "decided_not_completed"
-        elif ps == "completed" and dd == "not submitted":
+        elif dd == "not submitted" and ps not in PRE_SUBMIT_PROGRESS:
+            # Not just "completed": ANY progress value outside the pre-submit set contradicts
+            # "nothing was sent", including a value nobody recognises.
             issue = "completed_not_sent"
         if issue:
             out.append({"uid": get("uid"), "donor_decision": get("donor_decision"),
