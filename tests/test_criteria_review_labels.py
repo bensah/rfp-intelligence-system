@@ -295,3 +295,43 @@ class TestSnapAndComponentScore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAGateCriterionDoesNotShowAPercentage(unittest.TestCase):
+    """MUST-5 spans co-financing AND the compliance gates, so `_cofin_rule` makes ANY unmet
+    active component "Not met" — which scores zero points. Printing "2/3 · 67%" beside
+    "0.0/10" invited the reading that the points had been miscalculated. They had not: the
+    count is evidence, the band is the score, and for this one criterion the band ignores the
+    ratio by design.
+
+    Contrast PREFER-8, where 5 of 6 components genuinely earns the top band — so a percentage
+    there is honest. This is display-only; no score changes."""
+
+    def _facts(self, scores):
+        return [{"key": f"c{i}", "active": True, "score": s} for i, s in enumerate(scores)]
+
+    def test_a_shortfall_names_what_is_unmet_instead_of_a_ratio(self):
+        facts = self._facts([1.0, 1.0, 0.0])
+        label = cr.criterion_label("cofinancing", facts, None)
+        self.assertEqual(label, "Not met")
+        self.assertEqual(cr.count_text("cofinancing", facts, label, False),
+                         "1 unmet · all required")
+
+    def test_two_shortfalls_are_counted(self):
+        facts = self._facts([1.0, 0.0, 0.0])
+        label = cr.criterion_label("cofinancing", facts, None)
+        self.assertEqual(cr.count_text("cofinancing", facts, label, False),
+                         "2 unmet · all required")
+
+    def test_all_met_still_shows_the_ratio(self):
+        facts = self._facts([1.0, 1.0, 1.0])
+        label = cr.criterion_label("cofinancing", facts, None)
+        self.assertEqual(cr.count_text("cofinancing", facts, label, False), "3/3 · 100%")
+
+    def test_a_ratio_criterion_keeps_its_percentage(self):
+        facts = self._facts([1.0, 1.0, 1.0, 1.0, 1.0, 0.0])
+        label = cr.criterion_label("competitiveness", facts, None)
+        self.assertIn("%", cr.count_text("competitiveness", facts, label, False))
+
+    def test_only_the_gate_criteria_are_treated_this_way(self):
+        self.assertEqual(cr.ALL_OR_NOTHING, frozenset({"cofinancing"}))
