@@ -866,13 +866,22 @@ PROSE_ROWS = (
 # Only these render with card chrome. Seven cards turned the page into a wall of boxes, and a
 # box is only worth it for a tight column of numbers and dates a reader scans rather than
 # reads. Everything else reads better as labelled lines in open text.
-AS_CARDS = frozenset({"Funding & awards", "Timeline", "Type of opportunity"})
+AS_CARDS = frozenset({"Funding & awards", "Timeline", "Type of opportunity",
+                      "Eligibility requirements", "Scope & focus"})
 
-LAYOUT_ROWS = (
-    ("Funding & awards", "Timeline"),
-    ("Eligibility requirements", "Type of opportunity"),
-    ("Who can apply", "How to apply"),
-    ("Scope & focus",),
+# THE LAYOUT, as rows of COLUMN STACKS. A row is one or more columns; a column is a stack of
+# section titles rendered one under the other.
+#
+# Rows alone were not enough. "Funding & awards" (3 rows) beside "Timeline" (5 rows) leaves
+# dead space under the shorter one, and the next row starts below BOTH — so the page grew a
+# ladder of holes. Stacking lets the short card be followed immediately by the next one in the
+# same column, which is what closes the gap.
+LAYOUT: tuple[tuple[tuple[str, ...], ...], ...] = (
+    # left column stacks under itself; right column does the same, so the two even out
+    (("Funding & awards", "Eligibility requirements"),
+     ("Timeline", "Type of opportunity")),
+    (("Who can apply",), ("How to apply",)),
+    (("Scope & focus",),),                 # one column = full width
 )
 
 
@@ -881,8 +890,12 @@ def overview_blocks(view: dict) -> list[tuple[str, list[str], bool]]:
     return _named_blocks(view, OVERVIEW_FIELDS)
 
 
-def page_rows(view: dict) -> list[list[dict]]:
-    """Section 1 as VISUAL ROWS. Each row holds one or two blocks, rendered side by side.
+def page_rows(view: dict) -> list[list[list[dict]]]:
+    """Section 1 as ``[row][column][block]``.
+
+    A row is rendered as N side-by-side columns; each column stacks its blocks vertically, so
+    a short card is followed immediately by the next one rather than leaving dead space until
+    the tallest block in the row ends.
 
     A block is either a fact block —
         ``{"kind": "cards"|"facts", "title", "rows": [(label, value)], "prose": [lines]}``
@@ -890,12 +903,10 @@ def page_rows(view: dict) -> list[list[dict]]:
     heading; or a prose block —
         ``{"kind": "prose", "title", "lines", "missing": bool}``.
 
-    Sections not named in LAYOUT_ROWS still appear, paired up after the named ones, so adding
-    one can never make it silently vanish.
+    Sections absent from LAYOUT are appended in their own row, so adding one can never make it
+    silently vanish.
     """
     by_title = {t: rows for t, rows in sections(view)}
-    planned = [t for row in LAYOUT_ROWS for t in row]
-    extra = [t for t in by_title if t not in planned]
 
     def _block(title: str) -> dict:
         prose: list[str] = []
@@ -904,20 +915,23 @@ def page_rows(view: dict) -> list[list[dict]]:
         return {"kind": "cards" if title in AS_CARDS else "facts", "title": title,
                 "rows": by_title[title], "prose": prose}
 
-    out: list[list[dict]] = []
-    for row in LAYOUT_ROWS:
-        blocks = [_block(t) for t in row if t in by_title]
-        if blocks:
-            out.append(blocks)
-    for i in range(0, len(extra), 2):                 # pair the leftovers, never orphan them
-        out.append([_block(t) for t in extra[i:i + 2]])
+    out: list[list[list[dict]]] = []
+    for row in LAYOUT:
+        cols = [[_block(t) for t in stack if t in by_title] for stack in row]
+        cols = [c for c in cols if c]
+        if cols:
+            out.append(cols)
+    planned = {t for row in LAYOUT for stack in row for t in stack}
+    extra = [t for t in by_title if t not in planned]
+    if extra:
+        out.append([[_block(t)] for t in extra])
     for prose_row in PROSE_ROWS:
-        blocks = []
+        cols = []
         for heading, field in prose_row:
             lines = as_bullets(view.get(field))
-            blocks.append({"kind": "prose", "title": heading,
-                           "lines": lines or [MISSING], "missing": not lines})
-        out.append(blocks)
+            cols.append([{"kind": "prose", "title": heading,
+                          "lines": lines or [MISSING], "missing": not lines}])
+        out.append(cols)
     return out
 
 
