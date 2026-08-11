@@ -978,8 +978,9 @@ class TestNothingIsPrintedTwice(unittest.TestCase):
 
     def test_no_field_is_both_a_card_row_and_a_prose_block(self):
         card_fields = {f for _t, rows in od._SECTIONS for _lb, f, _k in rows}
-        prose_fields = {f for spec in list(od.NARRATIVE_AFTER.values())
-                        + [od.OVERVIEW_FIELDS] for _h, f in spec}
+        prose_fields = {f for fields in od.INLINE_PROSE.values() for f in fields}
+        prose_fields |= {f for row in od.PROSE_ROWS for _h, f in row}
+        prose_fields |= {f for _h, f in od.OVERVIEW_FIELDS}
         self.assertEqual(card_fields & prose_fields, set())
 
     def test_the_brief_and_the_overview_are_different_fields(self):
@@ -998,7 +999,7 @@ class TestOnlyTightFactColumnsGetACard(unittest.TestCase):
 
     def test_the_rest_are_marked_as_open_text(self):
         v = {"opportunity_name": "A Call", "deadline": "2026-09-01"}
-        kinds = {b[1]: b[0] for b in od.page_blocks(v)}
+        kinds = {b["title"]: b["kind"] for r in od.page_rows(v) for b in r}
         self.assertEqual(kinds["Funding & awards"], "cards")
         self.assertEqual(kinds["Timeline"], "cards")
         self.assertEqual(kinds["Eligibility requirements"], "facts")
@@ -1007,7 +1008,8 @@ class TestOnlyTightFactColumnsGetACard(unittest.TestCase):
 
     def test_every_section_still_appears_in_one_form_or_the_other(self):
         v = {"opportunity_name": "A Call"}
-        rendered = {b[1] for b in od.page_blocks(v) if b[0] in ("cards", "facts")}
+        rendered = {b["title"] for r in od.page_rows(v) for b in r
+                    if b["kind"] in ("cards", "facts")}
         self.assertEqual(rendered, {t for t, _rows in od.sections(v)})
 
 
@@ -1062,3 +1064,53 @@ class TestThePublishersOwnOverview(unittest.TestCase):
     def test_nothing_yields_nothing(self):
         self.assertEqual(od.overview_text({}), "")
         self.assertFalse(od.overview_is_truncated({}))
+
+
+class TestTheRowsLeaveNoHoles(unittest.TestCase):
+    """Streaming sections into a two-column run and resetting it whenever prose appeared left
+    holes all down the page: a card on the left with nothing beside it, then a heading, then
+    another lone card. Rows are now explicit."""
+
+    V = {"opportunity_name": "A Call", "deadline": "2026-09-01"}
+
+    def test_no_row_holds_more_than_two_blocks(self):
+        for row in od.page_rows(self.V):
+            self.assertLessEqual(len(row), 2)
+            self.assertGreaterEqual(len(row), 1)
+
+    def test_the_paired_rows_are_actually_paired(self):
+        rows = od.page_rows(self.V)
+        pairs = {tuple(b["title"] for b in r) for r in rows if len(r) == 2}
+        self.assertIn(("Funding & awards", "Timeline"), pairs)
+        # The owner asked for these two beside each other.
+        self.assertIn(("Who can apply", "How to apply"), pairs)
+
+    def test_what_is_and_is_not_funded_share_a_row(self):
+        pairs = {tuple(b["title"] for b in r) for r in od.page_rows(self.V) if len(r) == 2}
+        self.assertIn(("What is funded", "What is NOT funded"), pairs)
+
+    def test_an_unplanned_section_is_paired_rather_than_orphaned(self):
+        # A section added to _SECTIONS but not to LAYOUT_ROWS must still reach the page.
+        planned = {t for row in od.LAYOUT_ROWS for t in row}
+        titles = {t for t, _r in od.sections(self.V)}
+        rendered = {b["title"] for r in od.page_rows(self.V) for b in r
+                    if b["kind"] != "prose"}
+        self.assertEqual(rendered, titles)
+        self.assertTrue(titles <= planned | (titles - planned))
+
+    def test_how_to_apply_carries_its_detail_without_a_second_heading(self):
+        v = dict(self.V, how_to_apply="Register, then upload the budget.")
+        block = next(b for r in od.page_rows(v) for b in r
+                     if b["title"] == "How to apply")
+        self.assertEqual(block["prose"], ["Register, then upload the budget."])
+        # ...and there is no separate block for it.
+        headings = [b["title"] for r in od.page_rows(v) for b in r]
+        self.assertNotIn("How to apply in detail", headings)
+
+    def test_compliance_sits_under_eligibility_not_on_its_own(self):
+        v = dict(self.V, compliance_requirements="Audited accounts required.")
+        block = next(b for r in od.page_rows(v) for b in r
+                     if b["title"] == "Eligibility requirements")
+        self.assertEqual(block["prose"], ["Audited accounts required."])
+        self.assertNotIn("Compliance & hard gates",
+                         [b["title"] for r in od.page_rows(v) for b in r])
