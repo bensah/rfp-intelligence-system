@@ -590,6 +590,26 @@ with _main:
                 _r2 = found_loader.load_candidate(_od.to_candidate(_row), user,
                                                   provenance="opportunity-page")
                 if _r2.get("ok"):
+                    # A LEARNING SIGNAL, recorded silently. Choosing to track a call is a
+                    # human saying it is worth pursuing, and it is the cheapest positive
+                    # label the system can get — the reviewer is not filling in a form, they
+                    # are doing the thing they came to do. "Not relevant" already logs the
+                    # negative below, so the pair gives the trainer both classes from one
+                    # screen. Best-effort and silent: a learning write must never be able to
+                    # fail the action the user actually asked for.
+                    #
+                    # FEEDBACK, not a decision. Adding to a pipeline is not a Proceed — that
+                    # is a verdict a team records after review, and writing one here would
+                    # put un-reviewed rows into the decision labels and re-break what "in
+                    # your pipeline" means. good/bad is the channel the like/dislike buttons
+                    # already use.
+                    try:
+                        from core import decision_log
+                        decision_log.log_feedback(_od.to_candidate(_row), "good",
+                                                  by=user.get("email"),
+                                                  reason="opportunity-page")
+                    except Exception:
+                        pass
                     st.session_state[f"_opp_tracked_{_uid}"] = _r2["uid"]
                     st.cache_data.clear()      # the rail + pipeline lists are cached
                     st.rerun()
