@@ -501,13 +501,19 @@ with _main:
                 f"<span class='ct'>{_txt(_c['count_text'])}</span>"
                 f"<span class='pt'>{_c['points']:.1f} / "
                 f"{_c['weight'] * 100:.0f}</span></div>", unsafe_allow_html=True)
-            if _c["note"]:
-                st.caption(f":blue[{_c['note']}]")
-        st.caption("Each row: the criterion, its verdict, the components behind it, and "
-                   "the points it contributes out of its weight. Proceed ≥90 · Park "
-                   "70–89 · Decline <70; a 🔒 fatal gate declines outright. \"Not "
-                   "scored\" means this call stated nothing to score — it takes the "
-                   "Park midpoint.")
+            # The per-row note explaining WHY a label can differ from its component ratio
+            # (PREFER-6/8 are weighted models, not means) is gone from here. It is true and it
+            # matters — to somebody editing components in Update Decision, where it still
+            # shows. On this page it put a paragraph of scoring internals between one
+            # criterion and the next for a reader who only wants the verdict.
+        # One line and a pointer, rather than the rulebook. How the nine criteria roll up,
+        # what the bands mean and why a label can disagree with its ratio all live on Help
+        # now — a reader who wants them will go and read them once, not on every call.
+        st.caption("Each row: the criterion, its verdict, the components behind it, and the "
+                   "points it contributes out of its weight. "
+                   + _uilinks.internal_link("How this is scored", "help")
+                   + " explains the bands and the roll-up.",
+                   unsafe_allow_html=True)
 
 
     # ── decision aid: the facts about US, not about the call ────────────────
