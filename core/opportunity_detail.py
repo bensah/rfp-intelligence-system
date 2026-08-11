@@ -207,6 +207,23 @@ def format_money_range(floor: Any, ceiling: Any, currency: Any = "USD") -> str:
     return lo or hi
 
 
+def usd_reference(value: Any, currency: Any) -> str:
+    """The USD figure for an award, ALWAYS — "≈US $38,108,565" for a converted amount, and
+    "=US $1,500,000" when the call is already in USD.
+
+    Two reasons it is unconditional. The award card was a line shorter than the deadline and
+    duration cards whenever the call was in USD, so the row of three sat unevenly. And a
+    reader comparing two calls wants the dollar figure in the same place on both, rather than
+    having to notice that its absence means "this one already was in dollars".
+    """
+    amt = _amount(value)
+    if amt is None:
+        return ""
+    if currency_code(currency) == "USD":
+        return f"=US ${amt:,.0f}"
+    return usd_equivalent(value, currency)
+
+
 def usd_equivalent(value: Any, currency: Any) -> str:
     """"≈US $27,000" for a non-USD amount, else "". Best-effort: a missing FX table
     returns "" rather than a wrong number."""
@@ -400,6 +417,9 @@ _PIPELINE_TO_SCHEMA = {
     "eligibility_specifics": "eligibility_other",
 }
 # Carried across unchanged when the extraction doesn't have them.
+# Rows whose fields were typed by a person rather than read off the call.
+_HAND_ENTERED = frozenset({"migration", "manual", "form"})
+
 _PIPELINE_KEEP = (
     "currency", "date_posted", "call_geographic_scope", "call_domain_areas",
     "brief_description", "instrument_type", "project_duration", "expected_award_date",
@@ -431,6 +451,17 @@ def standard_view(kind: str, row: dict, extraction: dict | None = None) -> dict:
         _put(k, (row or {}).get(k))
     for k in _PIPELINE_KEEP:
         _put(k, (row or {}).get(k))
+
+    # GEOGRAPHY MUST BE THE CALL'S OWN. A migrated or hand-entered row carries the countries
+    # the SUBMITTER had in mind, not the scope the funder published: 34 of 63 migrated rows
+    # and both manual rows name one of the tenant's own countries in this column, against 3
+    # of 192 auto-scanned ones. Displaying that as "Geographic scope" told a reviewer the
+    # funder had restricted the call to their countries when it may well have said "Global".
+    # With no extraction to defer to, the honest move is to withhold it from the call view and
+    # keep it as what it is — the submitter's note, for the decision aid.
+    if kind == KIND_PIPELINE and not extraction             and str((row or {}).get("source") or "").strip().lower() in _HAND_ENTERED:
+        if not _blank(out.get("call_geographic_scope")):
+            out["_submitter_geographic_scope"] = out.pop("call_geographic_scope")
     return out
 
 
@@ -468,10 +499,17 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("Expected award date", "expected_award_date", "date"),
         ("Time to award", "time_to_award", "text"),
     )),
+    ("Eligibility requirements", (
+        # WHAT THE CALL ITSELF PUBLISHES about who qualifies — nothing derived from the
+        # donor profile and nothing from our own screening criteria. A reviewer uses this to
+        # decide whether they qualify at all, so a condition we inferred rather than read
+        # would be actively misleading here. Our criteria live in the decision aid (§2).
+        ("Institution types accepted", "eligibility_applicant_types", "list"),
+        ("Eligible countries (applicants)", "eligibility_countries", "list"),
+        ("Other conditions", "eligibility_other", "bullets"),
+        ("Compliance requirements", "compliance_requirements", "bullets"),
+    )),
     ("Who can apply", (
-        ("Applicant types", "eligibility_applicant_types", "list"),
-        ("Eligible countries", "eligibility_countries", "list"),
-        ("Other requirements", "eligibility_other", "bullets"),
         ("Ideal applicant", "applicant_fit_profile", "text"),
         # "Our role" is NOT here. It is what THIS tenant would be on a bid (prime / sub),
         # which is a decision the tenant took — not something the call says about who may
@@ -485,7 +523,7 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("Programme areas", "call_domain_areas", "list"),
         ("Project stages", "project_stages", "list"),
     )),
-    ("Award type", (
+    ("Type of opportunity", (
         # ONE reconciled line, not two labels the reader has to reconcile themselves.
         # "Instrument: Contract" sitting above "Opportunity type: grant" read as the
         # extraction contradicting itself, when the two answer different questions: what
@@ -497,7 +535,11 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
     )),
     ("How to apply", (
         ("Submission format", "submission_format", "text"),
-        ("Language of the call", "solicitation_language", "text"),
+        # A funder often REQUIRES the application in a named language — usually the one the
+        # call is published in, sometimes stated separately. It is a requirement, not a
+        # property of our record, so it is labelled as the applicant's obligation.
+        ("Application language", "solicitation_language", "text"),
+        ("Application steps", "application_checklist", "bullets"),
         # Only when the funder publishes a SECOND reference distinct from the header id.
         ("Opportunity number", "_second_reference", "text"),
     )),
@@ -576,6 +618,7 @@ def title_line(view: dict) -> tuple[str, str]:
 # `key_risks` is deliberately absent — see DECISION_AID_FIELDS.
 NARRATIVE_FIELDS = (
     ("Project overview", "full_description"),
+    ("How to apply", "how_to_apply"),
     ("What is funded", "what_is_funded"),
     ("What is NOT funded", "what_is_not_funded"),
     ("Compliance & hard gates", "compliance_requirements"),
@@ -663,23 +706,54 @@ def _render(view: dict, field: str, kind: str) -> str:
     return display_value(v)
 
 
-def _lay_out(view: dict, spec) -> list[tuple[str, list[tuple[str, str]]]]:
+# The only rows that vanish rather than showing a dash. Both are layout pseudo-fields whose
+# emptiness means "this repeats something already on the page", not "this is unknown":
+#   _award_range       an award range identical to the single award value in the metrics
+#   _second_reference  a funder reference identical to the one beside the title
+# `_award_type` is deliberately NOT here: it stands for two real schema columns, so when both
+# are missing that IS a gap and must read as one.
+_SUPPRESSED_WHEN_REDUNDANT = frozenset({"_award_range", "_second_reference"})
+
+
+def _lay_out(view: dict, spec, *, show_missing: bool = False
+             ) -> list[tuple[str, list[tuple[str, str]]]]:
     out: list[tuple[str, list[tuple[str, str]]]] = []
     for title, fields in spec:
-        rows = [(label, _render(view, f, k)) for label, f, k in fields]
-        rows = [(lb, v) for lb, v in rows if v]
+        rows: list[tuple[str, str]] = []
+        for label, field, kind in fields:
+            value = _render(view, field, kind)
+            if value:
+                rows.append((label, value))
+            elif show_missing and field not in _SUPPRESSED_WHEN_REDUNDANT:
+                # A field with nothing in it — say so. Only the two rows below are exempt,
+                # and they are exempt because they were suppressed as DUPLICATES rather than
+                # being absent; a dash there would invent a gap.
+                rows.append((label, MISSING))
         if rows:
             out.append((title, rows))
     return out
 
 
-def sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
-    """[(section title, [(label, formatted value)])] — the reviewer's read of the call.
+MISSING = "—"
 
-    An empty section is dropped whole: a card of em dashes tells a reviewer nothing, and
-    the point of this page is the detail that IS there.
+
+def sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
+    """[(section title, [(label, value or "—")])] — the reviewer's read of the call.
+
+    THE WHOLE SKELETON IS ALWAYS RENDERED, including fields this call has nothing for.
+    Blank rows used to be dropped and an empty section dropped whole, which read better on
+    one call but was wrong across a set of them: the page changed SHAPE from call to call, so
+    a reader could not tell "this funder did not state a project duration" from "this app does
+    not track project duration", and could not compare two calls by eye because the rows were
+    in different places. A dash is a statement — the field is tracked, this call is silent on
+    it — and that is worth more than a shorter card. (Owner's call, 2026-08-11.)
+
+    The exception is a row suppressed for REDUNDANCY rather than for absence: the layout
+    pseudo-fields (`_award_range` when it merely repeats the single award value,
+    `_second_reference` when it repeats the header identifier) are dropped entirely, because
+    those are duplicates rather than gaps and printing "—" for them would invent a gap.
     """
-    return _lay_out(view, _SECTIONS)
+    return _lay_out(view, _SECTIONS, show_missing=True)
 
 
 def technical_sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
@@ -688,8 +762,31 @@ def technical_sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
 
 
 def narrative_blocks(view: dict) -> list[tuple[str, list[str]]]:
-    """[(heading, [lines])] for the prose sections — bullets split into lines."""
+    """[(heading, [lines])] for the prose sections — bullets split into lines.
+
+    Only the sections that HAVE content. `narrative_sections` is what the page renders.
+    """
     return _blocks(view, NARRATIVE_FIELDS)
+
+
+# What a narrative heading says when the call has nothing under it. Distinct from a plain
+# dash because these are the LLM-synthesis fields: "not extracted" is the honest word, and it
+# tells the reader the gap is ours rather than the funder's silence.
+NOT_EXTRACTED = "Not extracted for this call yet."
+
+
+def narrative_sections(view: dict) -> list[tuple[str, list[str], bool]]:
+    """``[(heading, lines, is_missing)]`` for EVERY narrative section in the schema.
+
+    Same reasoning as `sections`: the shape of the page stays constant across calls, so a
+    reader can see that the app tracks "What is NOT funded" and that this call is silent on
+    it, rather than wondering whether the section exists at all.
+    """
+    out: list[tuple[str, list[str], bool]] = []
+    for heading, field in NARRATIVE_FIELDS:
+        lines = as_bullets(view.get(field))
+        out.append((heading, lines or [NOT_EXTRACTED], not lines))
+    return out
 
 
 def _blocks(view: dict, spec) -> list[tuple[str, list[str]]]:
@@ -756,9 +853,14 @@ def summary_of(view: dict) -> str:
 def as_published(view: dict) -> str:
     """`raw_text` — the audit copy of the call as the primary source published it.
 
-    Shown collapsed, and it matters more than it looks: with the LLM-synthesis stage of the
-    schema still unpopulated, this is the only place a reviewer can read the WHOLE call
-    without leaving the app. ~3,000 characters on the rows that have it (443 of 500).
+    SUPER_USER ONLY, and no longer part of the reviewer's page. The point of this app is that
+    every call reads the same way; dropping the primary source's own text into the page put a
+    different publisher's structure on screen beside ours and undid that. It stays available
+    for audit — checking what the extraction had to work with is exactly a development and
+    validation task — but a reviewer reads OUR schema. (Owner's call, 2026-08-11.)
+
+    Now that the synthesis writer fills the narrative fields, the reason it was in the user
+    view — being the only place to read the whole call — has gone.
     """
     v = view.get("raw_text")
     return "" if _blank(v) else str(v).strip()
