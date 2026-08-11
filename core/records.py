@@ -279,6 +279,42 @@ def submission_inconsistencies(rows) -> list[dict]:
     return out
 
 
+# meeting-log rows that say nothing
+# ---------------------------------------------------------------------------
+# The Excel import carried trailing sheet rows holding no note at all — no linked RFP, no
+# issue, no action, no owner, no due date. They rendered as a line of em dashes with a red
+# "Not Resolved" badge, which reads as an outstanding action nobody has dealt with. A note with
+# nothing in it is not an unresolved item; it is not a note.
+#
+# Resolved/unresolved is deliberately NOT part of the test. A blank row's status is whatever the
+# import defaulted to, so judging on it would keep exactly the rows being removed. Presence of
+# CONTENT is the test.
+#
+# The DB names behind the displayed columns: Issues <- remarks, Action <- actions, Due Date <-
+# deadline. The form requires remarks and actions, so a row with neither was never entered
+# through the app.
+NOTE_CONTENT_FIELDS = ("remarks", "actions", "owner", "deadline", "rfp_uid", "donor_title")
+_NOTE_EMPTY_TOKENS = {"", "nan", "none", "null", "nat", "-", "—"}
+
+
+def note_has_content(row) -> bool:
+    """True when a meeting-log row says something — any content field is filled."""
+    get = row.get if hasattr(row, "get") else (lambda k, d=None: getattr(row, k, d))
+    for f in NOTE_CONTENT_FIELDS:
+        v = get(f)
+        if str("" if v is None else v).strip().lower() not in _NOTE_EMPTY_TOKENS:
+            return True
+    return False
+
+
+def drop_empty_notes(df):
+    """``(df without content-free rows, how many were dropped)``."""
+    if df is None or getattr(df, "empty", True):
+        return df, 0
+    keep = df.apply(note_has_content, axis=1)
+    return df[keep].copy(), int((~keep).sum())
+
+
 def submission_weights(df):
     """Vectorised `submission_weight` → an int Series aligned to `df` (0 for an empty df)."""
     import pandas as _pd
