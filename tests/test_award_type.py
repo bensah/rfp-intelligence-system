@@ -260,11 +260,15 @@ class ThePageShowsOneRowNotTwoTests(unittest.TestCase):
         self.assertEqual(p["verdict"], "unusual")
         self.assertTrue(p["note"])
 
-    def test_a_row_with_neither_axis_drops_the_row_entirely(self):
+    def test_a_row_with_neither_axis_shows_a_GAP_not_nothing(self):
+        # Reversed with the full-skeleton change (owner, 2026-08-11): every tracked field
+        # stays on screen so the page keeps its shape across calls. This row stands for two
+        # real schema columns, so both being absent is a gap and must read as one — unlike
+        # the two rows that vanish because they merely repeat something already displayed.
         from core import opportunity_detail as od
         flat = {lb: v for _t, rows in od.sections({"opportunity_name": "A Call"})
                 for lb, v in rows}
-        self.assertNotIn("Award type", flat)
+        self.assertEqual(flat["Award type"], od.MISSING)
 
 
 if __name__ == "__main__":

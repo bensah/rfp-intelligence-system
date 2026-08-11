@@ -485,7 +485,7 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("Programme areas", "call_domain_areas", "list"),
         ("Project stages", "project_stages", "list"),
     )),
-    ("Award type", (
+    ("Type of opportunity", (
         # ONE reconciled line, not two labels the reader has to reconcile themselves.
         # "Instrument: Contract" sitting above "Opportunity type: grant" read as the
         # extraction contradicting itself, when the two answer different questions: what
@@ -663,6 +663,15 @@ def _render(view: dict, field: str, kind: str) -> str:
     return display_value(v)
 
 
+# The only rows that vanish rather than showing a dash. Both are layout pseudo-fields whose
+# emptiness means "this repeats something already on the page", not "this is unknown":
+#   _award_range       an award range identical to the single award value in the metrics
+#   _second_reference  a funder reference identical to the one beside the title
+# `_award_type` is deliberately NOT here: it stands for two real schema columns, so when both
+# are missing that IS a gap and must read as one.
+_SUPPRESSED_WHEN_REDUNDANT = frozenset({"_award_range", "_second_reference"})
+
+
 def _lay_out(view: dict, spec, *, show_missing: bool = False
              ) -> list[tuple[str, list[tuple[str, str]]]]:
     out: list[tuple[str, list[tuple[str, str]]]] = []
@@ -672,10 +681,10 @@ def _lay_out(view: dict, spec, *, show_missing: bool = False
             value = _render(view, field, kind)
             if value:
                 rows.append((label, value))
-            elif show_missing and not field.startswith("_"):
-                # A real schema field with nothing in it — say so. A `_`-prefixed layout
-                # pseudo-field that produced nothing was SUPPRESSED as a duplicate, not
-                # missing, so printing a dash for it would invent a gap.
+            elif show_missing and field not in _SUPPRESSED_WHEN_REDUNDANT:
+                # A field with nothing in it — say so. Only the two rows below are exempt,
+                # and they are exempt because they were suppressed as DUPLICATES rather than
+                # being absent; a dash there would invent a gap.
                 rows.append((label, MISSING))
         if rows:
             out.append((title, rows))

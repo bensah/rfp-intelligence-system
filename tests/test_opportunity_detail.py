@@ -327,7 +327,7 @@ class TestTheStandardLayout(unittest.TestCase):
         v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
         titles = [t for t, _ in od.sections(v)]
         expected = ["Funding & awards", "Timeline", "Who can apply", "Scope & focus",
-                    "Award type", "How to apply"]
+                    "Type of opportunity", "How to apply"]
         self.assertEqual(titles, [t for t in expected if t in titles])
         self.assertNotIn("Provenance", titles)
         self.assertNotIn("Identity", titles)
@@ -830,7 +830,7 @@ class TestTheFullSchemaIsAlwaysOnScreen(unittest.TestCase):
     def test_every_section_appears_however_little_the_call_stated(self):
         titles = [t for t, _rows in od.sections(self.THIN)]
         for expected in ("Funding & awards", "Timeline", "Who can apply",
-                         "Scope & focus", "Award type", "How to apply"):
+                         "Scope & focus", "Type of opportunity", "How to apply"):
             with self.subTest(section=expected):
                 self.assertIn(expected, titles)
 
@@ -895,3 +895,12 @@ class TestTheSourcesOwnTextIsNotInTheUserView(unittest.TestCase):
 
     def test_a_row_without_it_is_not_an_error(self):
         self.assertEqual(od.as_published({}), "")
+
+    def test_the_award_type_row_shows_a_gap_when_neither_axis_is_known(self):
+        # It is a layout pseudo-field, but it stands for two REAL schema columns, so its
+        # emptiness is a gap — unlike the two rows suppressed for redundancy.
+        self.assertEqual(_flat({"opportunity_name": "A Call"})["Award type"], od.MISSING)
+
+    def test_only_the_redundancy_rows_are_allowed_to_vanish(self):
+        self.assertEqual(od._SUPPRESSED_WHEN_REDUNDANT,
+                         frozenset({"_award_range", "_second_reference"}))
