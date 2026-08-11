@@ -165,9 +165,10 @@ class ABlankStaysBlankTests(unittest.TestCase):
         self.assertNotIn("what_is_not_funded", got)
 
     def test_an_invented_project_stage_is_discarded(self):
+        # Stored as TEXT, not a list — see ProjectStagesAreStoredAsTextTests.
         with _reply('{"project_stages": ["Implementation", "Interpretive Dance"]}'):
             got = CS.synthesize_row(dict(ROW))
-        self.assertEqual(got["project_stages"], ["Implementation"])
+        self.assertEqual(got["project_stages"], "Implementation")
 
     def test_a_model_failure_still_returns_the_regex_fields(self):
         with mock.patch.object(CS, "_client", side_effect=RuntimeError("rate limited")):
@@ -402,3 +403,86 @@ class TheThingIsNamedByWhatItIsTests(unittest.TestCase):
         sent = c.client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("Read this tender", sent)
         self.assertIn('refer to it as "the tender"', sent)
+
+
+class AnOverviewCannotOutgrowItsSourceTests(unittest.TestCase):
+    """The first applied batch wrote 50 overviews and 26 were LONGER than the raw page text
+    they came from — worst case 1,346 characters produced from 432, a ratio of 3.1. The
+    catalogue explains it: 453 of 686 rows carry under 1,500 characters of source, median 802.
+    Asked for "up to 500 words in the publisher's own words" from 400 characters of page text,
+    the model fills the gap by elaborating — and the page then presents that elaboration as
+    the funder's own account of what they fund.
+
+    A dash is true. Invented prose about somebody's funding programme is not."""
+
+    def setUp(self):
+        CS.reset_calls()
+
+    def _long_source(self):
+        return ("The programme supports work on health systems in eligible countries. " * 12)
+
+    def test_an_overview_longer_than_its_source_is_discarded(self):
+        body = self._long_source()
+        padded = "x" * int(len(body) * 3)          # the worst real case was 3.1x
+        with _reply('{"full_description": "' + padded + '"}'):
+            got = CS.synthesize_row(dict(ROW, raw_text=body))
+        # the row still needs enough text to earn a call, but the overview must not survive
+        self.assertNotIn("full_description", got)
+        self.assertEqual(CS.padded_overviews(), 1)
+
+    def test_a_properly_condensed_overview_survives(self):
+        body = self._long_source()
+        with _reply('{"full_description": "A short faithful summary of the programme."}'):
+            got = CS.synthesize_row(dict(ROW, raw_text=body))
+        self.assertIn("full_description", got)
+        self.assertEqual(CS.padded_overviews(), 0)
+
+    def test_a_small_expansion_is_tolerated(self):
+        # Condensation artefacts — expanding an abbreviation, joining fragments — can push
+        # slightly past 1.0, so the allowance is a ratio rather than a hard equality.
+        body = "a" * 1000
+        with _reply('{"full_description": "' + "b" * 1100 + '"}'):
+            got = CS.synthesize_row(dict(ROW, raw_text=body))
+        self.assertIn("full_description", got)
+
+    def test_the_other_fields_are_unaffected_by_a_padded_overview(self):
+        body = self._long_source()
+        with _reply('{"full_description": "' + "z" * 9000 + '", '
+                    '"what_is_funded": ["Equipment"]}'):
+            got = CS.synthesize_row(dict(ROW, raw_text=body))
+        self.assertNotIn("full_description", got)
+        self.assertEqual(got["what_is_funded"], "Equipment")
+
+    def test_the_ratio_is_configurable_and_close_to_one(self):
+        self.assertGreater(CS._MAX_OVERVIEW_RATIO, 1.0)
+        self.assertLessEqual(CS._MAX_OVERVIEW_RATIO, 1.5)
+
+
+class ProjectStagesAreStoredAsTextTests(unittest.TestCase):
+    """`project_stages` is a TEXT column, so returning a Python list made the client
+    JSON-encode it — all 42 rows in the first applied batch stored the literal
+    `["Implementation"]`. The page survived it because `display_value` untangles a
+    JSON-looking string, but a SQL filter, an export or the ML feature builder would each
+    read the brackets and quotes as content."""
+
+    def test_stages_come_back_as_joined_text(self):
+        self.assertEqual(CS._stages(["Research", "Pilot"]), "Research\nPilot")
+
+    def test_it_is_not_json(self):
+        got = CS._stages(["Implementation"])
+        self.assertFalse(str(got).startswith("["))
+        self.assertEqual(got, "Implementation")
+
+    def test_an_invented_stage_is_still_dropped(self):
+        self.assertIsNone(CS._stages(["Interpretive Dance"]))
+
+    def test_nothing_yields_none_not_an_empty_string(self):
+        self.assertIsNone(CS._stages([]))
+        self.assertIsNone(CS._stages(None))
+
+    def test_the_page_renders_it_as_a_list_either_way(self):
+        from core import opportunity_detail as od
+        self.assertEqual(od.display_value(CS._stages(["Research", "Pilot"])),
+                         "Research\nPilot")
+        self.assertEqual(od.as_bullets(CS._stages(["Research", "Pilot"])),
+                         ["Research", "Pilot"])
