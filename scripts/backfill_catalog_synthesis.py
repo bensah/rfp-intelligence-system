@@ -151,8 +151,21 @@ def main() -> int:
                 continue
             _pipe_links.add(link)
 
-    with_text = [r for r in rows if str(r.get("raw_text") or "").strip()]
-    thin = [r for r in with_text if len(str(r.get("raw_text") or "")) < CS._MIN_TEXT]
+    # A THIN ROW IS ONLY THIN UNTIL WE FETCH IT. The stored raw_text is the brief for any row
+    # discovered from a listing (core/extract.py falls back to it when no page was fetched),
+    # so 247 rows look unreadable while their own call page carries thousands of characters —
+    # measured, 6 of 8 sampled went from under 400 to between 1,300 and 5,200.
+    #
+    # So with --fetch-html the thin rows are CANDIDATES, not exclusions: the fetch happens
+    # first and `synthesize_row` still declines to spend a model call if the page turns out to
+    # be as empty as the stored text (an aggregator paywall stub, which is the other two of
+    # the eight). Without --fetch-html there is nothing to improve them with, so they are
+    # skipped as before.
+    with_text = [r for r in rows
+                 if str(r.get("raw_text") or "").strip() or
+                 (args.fetch_html and r.get("opportunity_url"))]
+    thin = ([] if args.fetch_html
+            else [r for r in with_text if len(str(r.get("raw_text") or "")) < CS._MIN_TEXT])
     readable = [r for r in with_text if r not in thin]
     done = [r for r in readable if _already_asked(r)]
     pending = readable if args.redo else [r for r in readable if not _already_asked(r)]
@@ -171,7 +184,13 @@ def main() -> int:
           + ("   REDO: re-asking rows already answered" if args.redo else ""))
     print(f"catalogue  : {len(rows)} rows")
     print(f"  no text / boilerplate only : {len(rows) - len(readable)}"
-          f"  (under {CS._MIN_TEXT} chars — no call spent)")
+          + (f"  (under {CS._MIN_TEXT} chars — no call spent)" if not args.fetch_html
+             else "  (no URL to fetch)"))
+    if args.fetch_html:
+        _thin_now = len([r for r in readable
+                         if len(str(r.get("raw_text") or "")) < CS._MIN_TEXT])
+        print(f"  thin, will be re-fetched   : {_thin_now}"
+              "  (the page usually carries far more than the stored brief)")
     print(f"  already synthesised        : {len(done)}")
     print(f"  expired / closed           : {_expired_n}"
           + ("  (INCLUDED)" if args.include_expired else "  (skipped — nobody can bid)"))
@@ -186,7 +205,7 @@ def main() -> int:
         return 0
 
     filled = {f: 0 for f in CS.ALL_FIELDS}
-    written = failed = 0
+    written = failed = deeper = 0
     t_start = time.time()
     for i, r in enumerate(todo, 1):
         html = _fetch(r.get("opportunity_url") or "") if args.fetch_html else None
@@ -197,10 +216,18 @@ def main() -> int:
             failed += 1
             print(f"  {i:3d}. {r['uid'][:24]}  FAILED {type(exc).__name__}: {exc}")
             continue
-        for f in got:
+        # raw_text is PROVENANCE, not one of the schema fields being filled: it is the source
+        # text this run recovered, saved so the next pass does not re-fetch the same page. It
+        # is reported on its own line rather than inflating the field yield.
+        _deeper = "raw_text" in got
+        if _deeper:
+            deeper += 1
+        _named = sorted(f for f in got if f != "raw_text")
+        for f in _named:
             filled[f] = filled.get(f, 0) + 1
         print(f"  {i:3d}. {r['uid'][:24]}  {time.time() - t0:5.1f}s  "
-              f"{len(got)} field(s): {', '.join(sorted(got)) or '-'}")
+              f"{len(_named)} field(s): {', '.join(_named) or '-'}"
+              + ("   [source text recovered]" if _deeper else ""))
         if got and args.apply:
             try:
                 sb.table("extracted_solicitations").update(got).eq("uid", r["uid"]).execute()
@@ -214,8 +241,11 @@ def main() -> int:
     print(f"LLM calls {CS.calls_made()}   rows written {written}   failures {failed}"
           f"   thin-skipped mid-run {CS.skipped_thin()}"
           f"   overviews discarded as padded {CS.padded_overviews()}")
+    if args.fetch_html:
+        print(f"source text recovered on {deeper} row(s) — saved to raw_text, so the next "
+              "pass and every gate downstream read the fuller call")
     print("\nPER-FIELD YIELD")
-    for f in CS.ALL_FIELDS:
+    for f in (f for f in CS.ALL_FIELDS if f != "raw_text"):
         c = filled.get(f, 0)
         print(f"  {f:24s} {c:3d}/{n}  {100 * c / n:3.0f}%")
     if not args.fetch_html and (filled.get("attachments", 0) == 0
