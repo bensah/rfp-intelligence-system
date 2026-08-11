@@ -21,6 +21,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from core import records                                            # noqa: E402
 from core.records import (submission_weight, submission_weights,      # noqa: E402
                           requested_currency)
 
@@ -133,3 +134,63 @@ class ExcelSubmissionsImportTests(unittest.TestCase):
 
     def test_never_negative(self):
         self.assertEqual(self.f(-3, "Completed"), 0)
+
+
+class TheLedgerFlagsItsOwnInconsistenciesTests(unittest.TestCase):
+    """Total Submitted read 12 above a list of 13 rows, and nothing in the app said so — the
+    discrepancy was found by a human comparing two numbers on a dashboard.
+
+    The owner's rule stands: only Progress = Completed opens the gate, because a bare
+    donor_decision once resurrected counts migration 089 had deliberately reset. That makes the
+    DATA the thing to keep honest, so the mismatch has to be reportable rather than waiting to
+    be noticed. This reports; it never writes."""
+
+    def test_a_donor_decision_over_an_unfinished_progress_is_flagged(self):
+        bad = records.submission_inconsistencies([
+            {"uid": "A", "progress_status": "Not Started", "donor_decision": "Under Review"}])
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0]["issue"], "decided_not_completed")
+        self.assertEqual(bad[0]["uid"], "A")
+
+    def test_every_decision_that_proves_receipt_is_flagged(self):
+        for dd in ("Approved", "Under Review", "Not Approved"):
+            with self.subTest(decision=dd):
+                self.assertEqual(len(records.submission_inconsistencies(
+                    [{"uid": "A", "progress_status": "In Progress",
+                      "donor_decision": dd}])), 1)
+
+    def test_the_reverse_is_flagged_too(self):
+        # Marked Completed while the donor decision still says nothing was sent. One of the two
+        # is wrong, and this one COUNTS today, so it may be inflating the total.
+        bad = records.submission_inconsistencies([
+            {"uid": "B", "progress_status": "Completed",
+             "donor_decision": "Not submitted"}])
+        self.assertEqual([b["issue"] for b in bad], ["completed_not_sent"])
+
+    def test_a_consistent_ledger_reports_nothing(self):
+        self.assertEqual(records.submission_inconsistencies([
+            {"uid": "A", "progress_status": "Completed", "donor_decision": "Under Review"},
+            {"uid": "B", "progress_status": "Completed", "donor_decision": "Approved"},
+            {"uid": "C", "progress_status": "Not Started", "donor_decision": "Not submitted"},
+            {"uid": "D", "progress_status": "Discontinued", "donor_decision": ""},
+            {"uid": "E", "progress_status": "In Progress", "donor_decision": None},
+        ]), [])
+
+    def test_it_reports_and_never_writes(self):
+        # A validation check that mutates is a migration wearing a disguise.
+        rows = [{"uid": "A", "progress_status": "Not Started",
+                 "donor_decision": "Approved", "submissions": 0}]
+        before = [dict(r) for r in rows]
+        records.submission_inconsistencies(rows)
+        self.assertEqual(rows, before)
+
+    def test_the_flagged_row_carries_what_a_human_needs_to_fix_it(self):
+        bad = records.submission_inconsistencies([
+            {"uid": "A", "progress_status": "Not Started", "donor_decision": "Approved",
+             "submissions": 2}])[0]
+        for key in ("uid", "donor_decision", "progress_status", "submissions", "issue"):
+            self.assertIn(key, bad)
+
+    def test_empty_and_none_are_safe(self):
+        self.assertEqual(records.submission_inconsistencies([]), [])
+        self.assertEqual(records.submission_inconsistencies(None), [])
