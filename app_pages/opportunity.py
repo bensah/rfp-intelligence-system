@@ -219,7 +219,7 @@ with _main:
         st.markdown(f"<div class='opp-prose'>{_txt(_summary)}</div>",
                     unsafe_allow_html=True)
     else:
-        st.caption("_No summary was extracted for this call — see **As published** below._")
+        st.caption("_No summary has been synthesised for this call yet._")
 
     # Headline money + deadline, the two facts a reviewer looks for first.
     _money = _od.format_money(_view.get("grant_amount"), _view.get("currency"))
@@ -227,16 +227,30 @@ with _main:
     _range = _od.format_money_range(_view.get("call_award_floor"),
                                     _view.get("call_award_ceiling"),
                                     _view.get("currency"))
+    # Breathing room: the summary card sat flush against the metrics, so the three read as
+    # part of the same block instead of as the headline facts drawn out of it.
+    st.markdown("<div style='height:22px'></div>", unsafe_allow_html=True)
     _h1, _h2, _h3 = st.columns(3)
+    # ALWAYS a second line under the award value, including when the call is already in USD.
+    # Without it the first card was a line shorter than its neighbours and the row of three
+    # sat unevenly; and a reader comparing calls wants the USD figure in the same place every
+    # time rather than only on the foreign-currency ones.
     _h1.metric("Award value", _money or "—",
-               (_usd or (_range if _range and _range != _money else None)))
-    _h2.metric("Deadline", str(_view.get("deadline") or "—")[:10], _dl_txt)
-    _h3.metric("Duration", _od.format_duration(_view.get("project_duration")) or "—",
-               _od.display_value(_view.get("funding_window")) or None)
+               _od.usd_reference(_view.get("grant_amount"), _view.get("currency"))
+               or (_range if _range and _range != _money else None))
+    _h2.metric("Submission deadline", str(_view.get("deadline") or "—")[:10], _dl_txt)
+    _h3.metric("Project duration",
+               _od.format_duration(_view.get("project_duration")) or "—",
+               _od.display_value(_view.get("funding_window")) or "—")
 
-    for _heading, _lines in _od.narrative_blocks(_view):
+    # EVERY narrative section, whether or not this call has one. A section that vanishes when
+    # empty makes the page change shape between calls, so a reader cannot tell "silent on
+    # this" from "we do not track this" — and cannot compare two calls by eye.
+    for _heading, _lines, _is_missing in _od.narrative_sections(_view):
         st.markdown(f"##### {_heading}")
-        if len(_lines) == 1:
+        if _is_missing:
+            st.caption(f"_{_lines[0]}_")
+        elif len(_lines) == 1:
             st.markdown(f"<div class='opp-prose'>{_txt(_lines[0])}</div>",
                         unsafe_allow_html=True)
         else:
@@ -255,13 +269,18 @@ with _main:
                     + "</div>", unsafe_allow_html=True)
                 st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
+    # Kept as a section rather than appearing only when it has content, for the same reason
+    # as the rest of the skeleton.
+    st.markdown("##### Documents & links")
     _docs = _od.documents(_view)
     if _docs:
-        st.markdown("##### Documents & links")
         for _label, _url, _dkind in _docs:
             st.markdown(f"- [{_label}]({_url}) &nbsp;<span style='color:#9aa39d;"
                         f"font-size:0.78rem'>{_txt(_dkind)}</span>",
                         unsafe_allow_html=True)
+    else:
+        st.caption("_No documents or templates were found on the call page. "
+                   "**Open the call ↗** for anything published behind a login._")
 
     # The two award axes are shown as one reconciled line, so the only thing left to say is
     # when the combination genuinely does not add up. That is 7 of 686 live rows — warning on
@@ -271,20 +290,13 @@ with _main:
     if _pair.get("note"):
         st.caption(f":orange[⚠ {_pair['note']}]")
 
-    # A thin page is usually the funder publishing little on the listing page, or our
-    # extraction not reaching a linked document. Say so in the reviewer's terms — the
-    # field-level accounting is super_user detail below.
-    if len(_secs) <= 2:
-        st.caption("This call published limited structured detail. The full text as the "
-                   "source published it is below, and **Open the call ↗** has the rest.")
-
-    _raw = _od.as_published(_view)
-    if _raw:
-        with st.expander("📄 As published (raw extract from the primary source)"):
-            st.caption("The call as the source published it, kept for audit. With the "
-                       "LLM-synthesis stage of the extraction schema still unpopulated, "
-                       "this is the fullest read available in-app.")
-            st.text(_raw)
+    # There is no "thin page" caption any more: every section now renders whether or not this
+    # call filled it, so the dashes say what the caption used to.
+    #
+    # And the primary source's own raw text is NOT shown here — see
+    # opportunity_detail.as_published. Putting another publisher's structure on screen beside
+    # ours undid the one thing this page is for, which is that every call reads the same way.
+    # It moves to the super_user block below, where it belongs as audit material.
 
     # ── internal bookkeeping: super_user only ───────────────────────────────
     # A reviewer does not act on a crawl timestamp, a content hash or an extraction
@@ -302,6 +314,11 @@ with _main:
                               f"<span class='opp-v'>{_txt(v)}</span></div>"
                               for lb, v in _fields)
                     + "</div>", unsafe_allow_html=True)
+            _raw = _od.as_published(_view)
+            if _raw:
+                st.markdown("**As published by the primary source** — what the extraction "
+                            "had to work with. Audit only; a reviewer reads our schema.")
+                st.text(_raw)
             if _missing:
                 st.caption("Not extracted: " + ", ".join(_missing))
                 st.caption("Most of these have no writer at all — the LLM-synthesis stage "

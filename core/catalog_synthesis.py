@@ -274,8 +274,13 @@ _SYSTEM = (
     "Return ONLY the JSON object, no prose before or after it."
 )
 
-_USER_TEMPLATE = """Read this funding call and return a JSON object with these keys.
-Omit any key the call does not support.
+_USER_TEMPLATE = """Read this {kind} and return a JSON object with these keys.
+Omit any key it does not support.
+
+NAME THE THING BY WHAT IT IS. In any prose you write, refer to it as "the {kind}" — not as
+"the call". A reader outside this system does not call a tender "a call", and "the call"
+reads as internal shorthand. Use the funder's own register: "the request for proposals",
+"the tender", "the call for proposals".
 
 full_description: 150-300 words of ORIGINAL prose describing this specific call — what it
   funds, who it is for, and what an applicant is expected to deliver. Write it yourself in
@@ -312,6 +317,36 @@ CALL TEXT:
 
 _STAGES = ("Research", "Pilot", "Scale-up", "Implementation", "Technical assistance",
            "Capacity building", "Advocacy", "Infrastructure", "Supply/procurement")
+
+
+# What to CALL the thing in prose. "The call" is our internal shorthand; a reader outside the
+# system does not refer to a tender as a call, and the funder's own register is what makes the
+# text read as though a person wrote it about that specific opportunity.
+_KIND_PHRASES = {
+    "RFP": "request for proposals", "RFA": "request for applications",
+    "RFQ": "request for quotation", "RFI": "request for information",
+    "CFP": "call for proposals", "CFA": "call for applications",
+    "CFCN": "call for concept notes", "EOI": "expression of interest",
+    "LOI": "letter of intent", "NOFO": "funding opportunity",
+    "TENDER": "tender", "BID": "invitation to bid", "ITB": "invitation to bid",
+    "PRIZE": "prize competition", "CHALLENGE": "challenge",
+}
+
+
+def _kind_phrase(row: dict) -> str:
+    """"request for proposals" / "tender" / "funding call" — how to name this thing in prose."""
+    raw = str((row or {}).get("solicitation_type") or "").strip()
+    hit = _KIND_PHRASES.get(raw.replace(" ", "").replace("-", "").upper())
+    if hit:
+        return hit
+    kind = str((row or {}).get("opportunity_type") or "").strip().lower()
+    if "procure" in kind or "tender" in kind:
+        return "tender"
+    if "prize" in kind or "challenge" in kind:
+        return "prize competition"
+    if "consult" in kind:
+        return "consultancy assignment"
+    return "funding call"
 
 
 def is_enabled() -> bool:
@@ -477,6 +512,7 @@ def synthesize_row(row: dict, *, html: str | None = None) -> dict:
         log.info("catalog_synthesis: call ceiling %d reached", _MAX_CALLS)
         return out
     prompt = _USER_TEMPLATE.format(
+        kind=_kind_phrase(row),
         title=(row.get("opportunity_name") or "")[:300],
         funder=(row.get("funder_name") or "")[:200],
         body=body[:_MAX_INPUT])
