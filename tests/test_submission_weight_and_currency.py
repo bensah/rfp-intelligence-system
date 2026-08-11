@@ -194,3 +194,57 @@ class TheLedgerFlagsItsOwnInconsistenciesTests(unittest.TestCase):
     def test_empty_and_none_are_safe(self):
         self.assertEqual(records.submission_inconsistencies([]), [])
         self.assertEqual(records.submission_inconsistencies(None), [])
+
+
+class EmptyMeetingLogRowsAreNotNotesTests(unittest.TestCase):
+    """The Excel import carried trailing sheet rows holding no note at all. They rendered as a
+    line of em dashes with a red "Not Resolved" badge — which reads as an outstanding action
+    nobody has dealt with, in a table whose whole purpose is tracking outstanding actions.
+
+    Resolved/unresolved is deliberately not part of the test: a blank row's status is whatever
+    the import defaulted to, so judging on it would keep exactly the rows being removed."""
+
+    def test_a_real_note_is_kept(self):
+        self.assertTrue(records.note_has_content(
+            {"remarks": "Needs a partner institution", "actions": "Stop tracking",
+             "owner": "A Person"}))
+
+    def test_a_row_with_nothing_in_it_is_dropped(self):
+        self.assertFalse(records.note_has_content(
+            {"remarks": None, "actions": None, "owner": None, "deadline": None,
+             "rfp_uid": None, "donor_title": None}))
+
+    def test_the_spreadsheet_placeholders_count_as_empty(self):
+        # A CSV round-trip turns blanks into these, and they are not content.
+        self.assertFalse(records.note_has_content(
+            {"remarks": "nan", "actions": "—", "owner": "  ", "rfp_uid": "NaN",
+             "donor_title": "none", "deadline": "NaT"}))
+
+    def test_ANY_single_field_is_enough_to_keep_a_row(self):
+        # A note with only an owner, or only a linked RFP, is still somebody's record.
+        for field in records.NOTE_CONTENT_FIELDS:
+            with self.subTest(field=field):
+                self.assertTrue(records.note_has_content({field: "something"}))
+
+    def test_the_resolved_flag_is_not_what_decides(self):
+        # Both directions: a resolved blank is still dropped, an unresolved real note is kept.
+        self.assertFalse(records.note_has_content({"is_resolved": True}))
+        self.assertTrue(records.note_has_content(
+            {"is_resolved": False, "remarks": "Real issue"}))
+
+    def test_the_frame_helper_reports_how_many_it_dropped(self):
+        import pandas as pd
+        df = pd.DataFrame([
+            {"remarks": "Real", "actions": "Do it", "owner": "A"},
+            {"remarks": None, "actions": None, "owner": None},
+            {"remarks": "nan", "actions": "—", "owner": ""},
+            {"remarks": None, "actions": None, "owner": "B"},
+        ])
+        kept, dropped = records.drop_empty_notes(df)
+        self.assertEqual((len(kept), dropped), (2, 2))
+
+    def test_an_empty_frame_is_safe(self):
+        import pandas as pd
+        kept, dropped = records.drop_empty_notes(pd.DataFrame())
+        self.assertEqual(dropped, 0)
+        self.assertEqual(records.drop_empty_notes(None), (None, 0))
