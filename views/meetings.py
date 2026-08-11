@@ -235,7 +235,39 @@ def _fetch_notes(meeting_date: str) -> pd.DataFrame:
     return clean_df(pd.DataFrame(res.data or []))
 
 
-notes = _fetch_notes(mon_date.isoformat())
+# EMPTY ROWS FROM THE MIGRATION. The Excel import carried trailing sheet rows that hold no
+# note at all — no linked RFP, no issue, no action, no owner, no due date — and they rendered as
+# a line of em dashes with a red "Not Resolved" badge, which reads as an outstanding action
+# nobody has dealt with. A note with nothing in it is not an unresolved item; it is not a note.
+#
+# Resolved/unresolved is deliberately NOT part of the test: a blank row's status is whatever the
+# import defaulted to, so judging on it would keep exactly the rows being removed. Presence of
+# CONTENT is the test.
+# The DB names behind the displayed columns: Issues ← remarks, Action ← actions, Due Date ←
+# deadline. The form requires remarks and actions, so a row with neither was never entered
+# through the app — it came from the spreadsheet.
+_NOTE_CONTENT_FIELDS = ("remarks", "actions", "owner", "deadline", "rfp_uid", "donor_title")
+
+
+def _has_content(row) -> bool:
+    """True when a note row says something — any of its content fields is filled."""
+    for f in _NOTE_CONTENT_FIELDS:
+        v = row.get(f) if hasattr(row, "get") else None
+        s = "" if v is None else str(v).strip()
+        if s and s.lower() not in ("nan", "none", "-", "—", "nat"):
+            return True
+    return False
+
+
+def _drop_empty_notes(df):
+    """`df` without the content-free rows, and how many were dropped."""
+    if df is None or getattr(df, "empty", True):
+        return df, 0
+    keep = df.apply(_has_content, axis=1)
+    return df[keep].copy(), int((~keep).sum())
+
+
+notes, _blank_notes = _drop_empty_notes(_fetch_notes(mon_date.isoformat()))
 
 
 def _linked_label(n: dict) -> str:
@@ -255,6 +287,10 @@ def _linked_label(n: dict) -> str:
 
 
 st.subheader(f"Notes for {sel_week}  ·  {len(notes)} record(s)")
+if _blank_notes:
+    # Say so rather than silently changing the count — the rows are still in the table for an
+    # admin, and a count that shrinks without explanation is its own puzzle.
+    st.caption(f"_{_blank_notes} empty row(s) from the spreadsheet import are not shown._")
 
 if notes.empty:
     st.info("No notes captured for this week. Click **➕ Add a note** above to start.")
