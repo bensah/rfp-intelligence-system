@@ -455,7 +455,16 @@ def _countries(v: Any) -> list[str] | None:
     return out[:60] or None
 
 
-def _stages(v: Any) -> list[str] | None:
+def _stages(v: Any) -> str | None:
+    """The funded stages as ONE TEXT VALUE, not a list.
+
+    `project_stages` is a TEXT column (schema §4.3 calls it "text/array"), so returning a
+    Python list made the client JSON-encode it: all 42 rows in the first applied batch stored
+    the literal string `["Implementation"]`. The page happened to survive that because
+    `display_value` untangles a JSON-looking string, but nothing else does — a SQL filter, an
+    export, or the ML feature builder would each see the brackets and quotes as content. The
+    other text fields here are newline-joined, so this one is too.
+    """
     if not isinstance(v, (list, tuple)):
         v = [v] if v else []
     valid = {s.lower(): s for s in _STAGES}
@@ -464,7 +473,37 @@ def _stages(v: Any) -> list[str] | None:
         got = valid.get(re.sub(r"\s+", " ", str(it or "")).strip().lower())
         if got and got not in out:
             out.append(got)
-    return out or None
+    return chr(10).join(out) if out else None
+
+
+# A SUMMARY CANNOT BE LONGER THAN WHAT IT SUMMARISES.
+#
+# The first applied batch wrote 50 overviews, and 26 of them were LONGER than the raw page
+# text they were written from — worst case 1,346 characters produced from 432, a ratio of 3.1.
+# The catalogue explains why: 453 of 686 rows carry under 1,500 characters of source and the
+# median is 802. Asked for "up to 500 words in the publisher's own words" from 400 characters
+# of page text, the model fills the gap by elaborating, and the page then presents that
+# elaboration as the funder's own account of what they fund.
+#
+# So the length of the source is the ceiling. Above this ratio the overview is discarded and
+# the field stays blank, because a dash is true and invented prose about somebody's funding
+# programme is not. The allowance above 1.0 is for genuine condensation artefacts — expanding
+# an abbreviation, joining fragments into sentences.
+#
+# This is a GUARD, not a fix. The fix is more source text: a deep read of the call page and
+# its linked PDF, so the model has something to summarise.
+_MAX_OVERVIEW_RATIO = float(os.environ.get("RFPIS_SYNTH_MAX_OVERVIEW_RATIO", "1.2"))
+_PADDED = 0
+
+
+def padded_overviews() -> int:
+    """Overviews discarded for exceeding the source length — reported by the backfill."""
+    return _PADDED
+
+
+def _overview_is_padded(text: Any, source: str) -> bool:
+    src = len(str(source or "").strip())
+    return bool(src) and len(str(text or "").strip()) > src * _MAX_OVERVIEW_RATIO
 
 
 def synthesize_row(row: dict, *, html: str | None = None) -> dict:
@@ -555,6 +594,16 @@ def synthesize_row(row: dict, *, html: str | None = None) -> dict:
         "submission_format": _text(parsed.get("submission_format"),
                                    _LIMITS["submission_format"]),
     }
+    # DISCARD AN OVERVIEW THAT OUTGREW ITS SOURCE — see _MAX_OVERVIEW_RATIO. A dash is true;
+    # invented prose about somebody's funding programme is not.
+    if got.get("full_description") and _overview_is_padded(got["full_description"], body):
+        global _PADDED
+        _PADDED += 1
+        log.info("catalog_synthesis: overview for %s was %d chars from %d of source — "
+                 "discarded as padded", row.get("uid"),
+                 len(str(got["full_description"])), len(body))
+        got["full_description"] = None
+
     for field in wanted:
         if got.get(field) and field not in out:      # a regex answer already won
             out[field] = got[field]
@@ -572,6 +621,7 @@ def skipped_thin() -> int:
 
 
 def reset_calls() -> None:
-    global _CALLS, _SKIPPED_THIN
+    global _CALLS, _SKIPPED_THIN, _PADDED
     _CALLS = 0
     _SKIPPED_THIN = 0
+    _PADDED = 0

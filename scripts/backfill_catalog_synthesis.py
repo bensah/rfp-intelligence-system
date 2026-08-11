@@ -128,7 +128,8 @@ def main() -> int:
     n = len(todo)
     print(f"\nelapsed {time.time() - t_start:.0f}s  ({(time.time() - t_start) / n:.1f}s per row)")
     print(f"LLM calls {CS.calls_made()}   rows written {written}   failures {failed}"
-          f"   thin-skipped mid-run {CS.skipped_thin()}")
+          f"   thin-skipped mid-run {CS.skipped_thin()}"
+          f"   overviews discarded as padded {CS.padded_overviews()}")
     print("\nPER-FIELD YIELD")
     for f in CS.ALL_FIELDS:
         c = filled.get(f, 0)
