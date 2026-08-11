@@ -58,7 +58,9 @@ st.markdown("""
   .opp-sec { color:#0f3d2a; font-size:1.35rem; letter-spacing:.005em; margin:34px 0 12px;
              font-weight:800; border-bottom:2px solid #d8e6de; padding-bottom:6px; }
   .opp-open { background:transparent; border:none; padding:0; }
-  .opp-open h4 { font-weight:700; color:#16734a; margin:0 0 8px; font-size:1.02rem; }
+  /* A CARDLESS section is not a card, so its heading should not wear the card's green: it
+     sits in the flow of the page exactly like "What is funded", and must match it. */
+  .opp-open h4 { font-weight:700; color:#24352c; margin:0 0 8px; font-size:1.06rem; }
   /* Subsection headings (st.markdown "#####") — a step below .opp-sec, not above it. */
   h5 { color:#24352c !important; font-size:1.06rem !important; font-weight:700 !important;
        margin-top:14px !important; }
@@ -278,7 +280,7 @@ with _main:
     # a two-column run and resetting it whenever prose appeared left holes all down the page:
     # a card on the left with nothing beside it, then a heading, then another lone card.
     _rows = _od.page_rows(_view)
-    _secs = [b for r in _rows for b in r if b["kind"] != "prose"]
+    _secs = [b for r in _rows for c in r for b in c if b["kind"] != "prose"]
 
     def _fact_html(_b):
         _cls = "opp-card" if _b["kind"] == "cards" else "opp-open"
@@ -287,32 +289,34 @@ with _main:
                           f"<span class='opp-v'>{_txt(v)}</span></div>"
                           for lb, v in _b["rows"]) + "</div>")
 
+    def _render(_b):
+        if _b["kind"] == "prose":
+            st.markdown(f"##### {_txt(_b['title'])}")
+            if _b["missing"] or len(_b["lines"]) == 1:
+                st.markdown(f"<div class='opp-lede'>{_txt(_b['lines'][0])}</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(chr(10).join(f"- {l}" for l in _b["lines"]))
+            return
+        st.markdown(_fact_html(_b), unsafe_allow_html=True)
+        # The subsection's own detail, under its rows and with NO second heading.
+        if _b["prose"]:
+            st.markdown(
+                f"<div class='opp-lede'>{_txt(' '.join(_b['prose']))}</div>"
+                if len(_b["prose"]) == 1
+                else chr(10).join(f"- {l}" for l in _b["prose"]),
+                unsafe_allow_html=True)
+
+    # Each row is N side-by-side COLUMNS, and each column STACKS its blocks — so a short card
+    # is followed straight away by the next one in the same column instead of leaving dead
+    # space until the tallest block in the row ends.
     for _row in _rows:
         _cols = st.columns(len(_row), gap="medium") if len(_row) > 1 else [st.container()]
-        for _b, _c in zip(_row, _cols):
+        for _stack, _c in zip(_row, _cols):
             with _c:
-                if _b["kind"] == "prose":
-                    st.markdown(f"##### {_txt(_b['title'])}")
-                    if _b["missing"]:
-                        st.markdown(f"<div class='opp-lede'>{_od.MISSING}</div>",
-                                    unsafe_allow_html=True)
-                    elif len(_b["lines"]) == 1:
-                        st.markdown(f"<div class='opp-lede'>{_txt(_b['lines'][0])}</div>",
-                                    unsafe_allow_html=True)
-                    else:
-                        st.markdown(chr(10).join(f"- {l}" for l in _b["lines"]))
-                else:
-                    st.markdown(_fact_html(_b), unsafe_allow_html=True)
-                    # The subsection's own detail, under its rows and with NO second heading:
-                    # "How to apply" followed by "How to apply in detail" was two headings for
-                    # one subject.
-                    if _b["prose"]:
-                        st.markdown(
-                            f"<div class='opp-lede'>{_txt(' '.join(_b['prose']))}</div>"
-                            if len(_b["prose"]) == 1
-                            else chr(10).join(f"- {l}" for l in _b["prose"]),
-                            unsafe_allow_html=True)
-                st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+                for _b in _stack:
+                    _render(_b)
+                    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
     # Kept as a section rather than appearing only when it has content, for the same reason
     # as the rest of the skeleton.
@@ -422,6 +426,11 @@ with _main:
     except Exception as _sexc:
         _an = None
         st.warning(f"Couldn't score this opportunity right now: {_sexc}")
+    if not _an:
+        # Never leave the section as a bare heading over white space: if scoring produced
+        # nothing, say so, because a blank section reads as a broken page.
+        st.info("No scoring is available for this opportunity yet. It needs an entity "
+                "profile and a screened row before the criteria can be evaluated.")
 
     if _an:
         _tone = {"Proceed": ("#dcf5e3", "#00703C"), "Park": ("#fff4cc", "#8a6d00"),
