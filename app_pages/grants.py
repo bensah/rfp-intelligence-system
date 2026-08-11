@@ -181,7 +181,7 @@ with _main:
     # (without it, a rerun triggered elsewhere on the page snaps the
     # selectbox back to index 0).
     pick = st.selectbox(
-        "Pick an application", labels,
+        "Pick an applied grant", labels,
         key="grants_active_picker",
     )
     uid = uid_by_label[pick]
@@ -384,7 +384,7 @@ with _main:
             )
 
     # ── Edit this application (open to ANY tenant member) ───────────────────────
-    # Pick an application above and edit the WHOLE record in ONE pop-up — status, progress,
+    # Pick an applied grant above and edit the WHOLE record in ONE pop-up — status, progress,
     # applicants (Lead/Sub), Date Submitted, Amount Requested/Secured, AND reporting (report
     # status/type/due/owner → applied_funding). Reuses the shared editor; the Application tab is
     # hidden here (it belongs on Review) and a Reporting tab is shown so reporting is edited in
