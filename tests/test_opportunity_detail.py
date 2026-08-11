@@ -199,10 +199,14 @@ class TestMoneyIsOneValue(unittest.TestCase):
     def test_equal_bounds_collapse_to_one_value(self):
         self.assertEqual(od.format_money_range(15000, 15000, "USD"), "US $15,000")
 
-    def test_the_section_shows_a_formatted_award_value(self):
+    def test_the_glance_metric_shows_a_formatted_award_value(self):
+        # Award value is a headline metric now, not a card row — a table row could not
+        # state it as plainly, and printing it in both places asked the reader to compare.
         v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
         flat = _flat(v)
-        self.assertEqual(flat["Award value"], "US $250,000")
+        self.assertEqual(od.format_money(v.get("grant_amount"), v.get("currency")),
+                         "US $250,000")
+        self.assertNotIn("Award value", flat)
         self.assertNotIn("Currency", flat)      # never a bare code on its own row
 
 
@@ -265,9 +269,12 @@ class TestDurationCarriesItsUnit(unittest.TestCase):
         for raw in (None, "", "n/a"):
             self.assertEqual(od.format_duration(raw), "")
 
-    def test_the_section_shows_the_unit(self):
+    def test_the_glance_metric_shows_the_unit(self):
+        # Duration moved out of the cards and into the three headline metrics, which is
+        # where the page states it now; the formatter is the part that matters.
         v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
-        self.assertEqual(_flat(v)["Project duration"], "24 months")
+        self.assertEqual(od.format_duration(v.get("project_duration")), "24 months")
+        self.assertNotIn("Project duration", _flat(v))
 
 
 class TestTheStandardLayout(unittest.TestCase):
@@ -289,13 +296,17 @@ class TestTheStandardLayout(unittest.TestCase):
     def test_empty_sections_are_dropped_whole(self):
         self.assertEqual(od.sections({}), [])
 
-    def test_sections_follow_the_schema_order(self):
+    def test_sections_follow_THE_REVIEWERS_QUESTIONS(self):
+        # Not the schema's storage order: how much, by when, can we apply, is it our kind
+        # of work, how do we submit. Provenance is no longer among them at all — it is
+        # super_user detail.
         v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
         titles = [t for t, _ in od.sections(v)]
-        self.assertEqual(titles[:2], ["Funding", "Dates & window"])
-        self.assertIn("Who can apply", titles)
-        self.assertIn("Classification", titles)
-        self.assertEqual(titles[-1], "Provenance")
+        expected = ["Funding & awards", "Timeline", "Who can apply", "Scope & focus",
+                    "Award type", "How to apply"]
+        self.assertEqual(titles, [t for t in expected if t in titles])
+        self.assertNotIn("Provenance", titles)
+        self.assertNotIn("Identity", titles)
 
     def test_a_list_field_renders_as_text_not_a_python_repr(self):
         v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
@@ -398,10 +409,13 @@ class TestTitleAndLinks(unittest.TestCase):
         self.assertEqual(od.call_url(v), "https://another.example/opportunity/7")
         self.assertEqual(od.apply_url(v), "https://another.example/apply/7")
 
-    def test_no_apply_url_is_empty_not_the_listing_page(self):
-        # An Apply button must never quietly send someone back to the summary page.
+    def test_a_missing_apply_url_falls_back_to_the_call_page(self):
+        # This assertion is the reverse of what it once was. Holding out for a real apply
+        # link meant the page offered NO way to act, on every row — the field is extracted
+        # on none. The call page is one click from the real button, and the caller can tell
+        # the fallback apart (it equals call_url) so no duplicate link is rendered.
         v = od.standard_view(od.KIND_PIPELINE, PIPELINE_ROW, None)
-        self.assertEqual(od.apply_url(v), "")
+        self.assertEqual(od.apply_url(v), od.call_url(v))
 
 
 class TestTurningACatalogueRowIntoATrackableCandidate(unittest.TestCase):
@@ -554,9 +568,222 @@ class TestTheHeaderReference(unittest.TestCase):
         v = od.standard_view(od.KIND_PIPELINE, PIPELINE_ROW, None)
         self.assertNotEqual(od.header_reference(v), PIPELINE_ROW["uid"])
 
-    def test_the_uid_still_has_its_row_under_identity(self):
+    def test_the_uid_still_has_its_row_in_the_technical_view(self):
         v = od.standard_view(od.KIND_PIPELINE, PIPELINE_ROW, None)
-        self.assertEqual(_flat(v)["RFPIS uid"], PIPELINE_ROW["uid"])
+        tech = {lb: val for _t, rows in od.technical_sections(v) for lb, val in rows}
+        self.assertEqual(tech["RFPIS uid"], PIPELINE_ROW["uid"])
+
+
+def _tech(view):
+    return {lb: val for _t, rows in od.technical_sections(view) for lb, val in rows}
+
+
+class TestNothingIsShownTwice(unittest.TestCase):
+    """The header and the three glance metrics own six facts outright. Repeating them in a
+    card below made the reader check whether the two agreed — the funder was printed twice
+    on the page for exactly this reason."""
+
+    FULL = {
+        "opportunity_name": "A Call", "funder_name": "A Funder",
+        "grantmaking_entity": "An Administrator", "opportunity_id": "TOPIC-01",
+        "solicitation_type": "RFP", "grant_amount": 500000, "currency": "USD",
+        "deadline": "2026-09-01", "project_duration": 24,
+        "date_posted": "2026-05-01", "instrument_type": "Grant",
+    }
+
+    def test_the_header_and_metric_fields_are_absent_from_the_cards(self):
+        flat = _flat(self.FULL)
+        for label in ("Funder", "Grantmaking entity", "Opportunity ID", "Award value",
+                      "Deadline", "Project duration", "Solicitation type"):
+            with self.subTest(label=label):
+                self.assertNotIn(label, flat)
+
+    def test_the_funder_is_not_a_card_at_all(self):
+        self.assertNotIn("Funder", [t for t, _rows in od.sections(self.FULL)])
+
+    def test_an_award_range_equal_to_the_single_amount_is_suppressed(self):
+        v = dict(self.FULL, call_award_floor=500000, call_award_ceiling=500000)
+        self.assertNotIn("Award range (per award)", _flat(v))
+
+    def test_a_real_award_span_is_shown(self):
+        v = dict(self.FULL, call_award_floor=100000, call_award_ceiling=500000)
+        self.assertEqual(_flat(v)["Award range (per award)"], "US $100,000 – US $500,000")
+
+    def test_a_repeated_reference_is_not_printed_as_a_second_one(self):
+        v = dict(self.FULL, funding_opportunity_number="TOPIC-01")   # same as the header id
+        self.assertNotIn("Opportunity number", _flat(v))
+
+    def test_a_genuinely_different_reference_is_shown(self):
+        v = dict(self.FULL, funding_opportunity_number="ABC-999")
+        self.assertEqual(_flat(v)["Opportunity number"], "ABC-999")
+
+
+class TestTheSolicitationKindIsSpelledOut(unittest.TestCase):
+    """The column holds the trade abbreviation (NOFO on 135 rows, CFP on 74, CfCN on 3) and
+    is blank on 244 of 686. A reviewer should not need to know that CfCN is a concept-note
+    round to understand what they are looking at."""
+
+    def test_the_abbreviations_are_expanded(self):
+        for raw, want in [("RFP", "Request for Proposals"),
+                          ("NOFO", "Notice of Funding Opportunity"),
+                          ("CFP", "Call for Proposals"),
+                          ("EOI", "Expression of Interest"),
+                          ("CfCN", "Call for Concept Notes"),
+                          ("LOI", "Letter of Intent"),
+                          ("RFQ", "Request for Quotation")]:
+            with self.subTest(raw=raw):
+                self.assertEqual(od.solicitation_label({"solicitation_type": raw}), want)
+
+    def test_a_word_that_needs_no_expansion_is_left_alone(self):
+        self.assertEqual(od.solicitation_label({"solicitation_type": "Tender"}), "Tender")
+
+    def test_a_blank_type_falls_back_to_the_broader_classifier(self):
+        # solicitation_type is blank on a third of rows; opportunity_type is on 99%.
+        self.assertEqual(
+            od.solicitation_label({"opportunity_type": "grant"}), "Grant")
+        self.assertEqual(
+            od.solicitation_label({"solicitation_type": "", "opportunity_type": "Procurement"}),
+            "Procurement")
+
+    def test_nothing_known_yields_nothing(self):
+        self.assertEqual(od.solicitation_label({}), "")
+
+    def test_the_title_line_pairs_the_two(self):
+        self.assertEqual(
+            od.title_line({"opportunity_name": "Bio-based fibres",
+                           "solicitation_type": "RFP"}),
+            ("Bio-based fibres", "Request for Proposals"))
+
+    def test_the_type_is_not_also_a_card_row(self):
+        self.assertNotIn("Solicitation type",
+                         _flat({"opportunity_name": "T", "solicitation_type": "RFP"}))
+
+    def test_a_super_user_can_still_see_the_raw_value(self):
+        self.assertEqual(_tech({"solicitation_type": "CfCN"})["Solicitation type (raw)"],
+                         "CfCN")
+
+
+class TestApplyFallsBackToTheCallPage(unittest.TestCase):
+    """`apply_url` is specified as required and populated on no row: the button is a
+    different shape on every portal. Returning "" left the page with no way to act at all."""
+
+    def test_the_extracted_apply_link_wins_when_present(self):
+        v = {"apply_url": "https://f.example/apply", "opportunity_url": "https://f.example/c"}
+        self.assertEqual(od.apply_url(v), "https://f.example/apply")
+
+    def test_a_missing_apply_link_falls_back_to_the_call_page(self):
+        for blank in (None, "", "n/a"):
+            with self.subTest(apply_url=blank):
+                v = {"apply_url": blank, "opportunity_url": "https://f.example/c"}
+                self.assertEqual(od.apply_url(v), "https://f.example/c")
+
+    def test_the_fallback_is_detectable_so_no_duplicate_link_is_rendered(self):
+        v = {"opportunity_url": "https://f.example/c"}
+        self.assertEqual(od.apply_url(v), od.call_url(v))
+
+    def test_no_url_at_all_stays_empty(self):
+        self.assertEqual(od.apply_url({}), "")
+
+
+class TestTechnicalDetailIsSuperUserOnly(unittest.TestCase):
+    """A reviewer does not act on a crawl timestamp, a content hash or a confidence band.
+    On the page they competed for attention with the funder's actual terms."""
+
+    ROW = dict(CATALOG_ROW, source="auto", source_uid="src-1",
+               extraction_confidence="high", deadline_confidence="med",
+               scraped_at="2026-07-01", updated_at="2026-08-01", agency_code="AF")
+
+    def test_the_internal_fields_are_not_in_the_reviewer_layout(self):
+        flat = _flat(self.ROW)
+        for label in ("RFPIS uid", "Source", "Source uid", "Extraction confidence",
+                      "Deadline confidence", "First seen", "Last updated", "Agency code"):
+            with self.subTest(label=label):
+                self.assertNotIn(label, flat)
+
+    def test_they_are_all_in_the_technical_view(self):
+        tech = _tech(od.standard_view(od.KIND_CATALOG, self.ROW, self.ROW))
+        for label in ("RFPIS uid", "Source", "Extraction confidence", "Last updated"):
+            with self.subTest(label=label):
+                self.assertIn(label, tech)
+
+    def test_an_empty_technical_view_yields_nothing(self):
+        self.assertEqual(od.technical_sections({}), [])
+
+
+class TestCoverageDoesNotFollowTheLayout(unittest.TestCase):
+    """Coverage measures EXTRACTION. While it was derived from the section list, moving a
+    card silently changed the score — and fields that are no longer displayed as rows
+    (award value, deadline, the funder) stopped being counted at all."""
+
+    def test_fields_owned_by_the_header_are_still_counted(self):
+        for f in ("funder_name", "opportunity_id", "solicitation_type", "grant_amount",
+                  "deadline", "project_duration"):
+            with self.subTest(field=f):
+                self.assertIn(f, od._COVERAGE_FIELDS)
+
+    def test_the_unwritten_synthesis_fields_are_counted_as_missing(self):
+        _f, _t, missing = od.coverage({"opportunity_name": "T"})
+        # full_description has NO writer anywhere in the codebase — it must show as a gap.
+        for f in ("full_description", "what_is_funded", "eligibility_countries",
+                  "applicant_fit_profile", "attachments", "apply_url"):
+            self.assertIn(f, missing)
+
+    def test_no_layout_only_pseudo_field_leaks_into_the_count(self):
+        for f in od._COVERAGE_FIELDS:
+            self.assertFalse(f.startswith("_"), f)
+
+    def test_a_fully_populated_view_reports_nothing_missing(self):
+        filled, total, missing = od.coverage({f: "x" for f in od._COVERAGE_FIELDS})
+        self.assertEqual((filled, missing), (total, []))
+
+
+class TestTheExtractionJoinIsCaseInsensitive(unittest.TestCase):
+    """THE REASON A SCREENED CALL LOOKED EMPTY. The join key is lowercased by
+    `normalise_link`, but the lookup compared it with `=` against a column holding the URL
+    as published — and 344 of 686 of those carry uppercase (a topic code sits in the path).
+    58 of 257 pipeline rows were finding their extraction; 192 were reachable."""
+
+    LINK = "https://funder.example/portal/topic-details/prog-ju-xyz-2026-ria-03"
+
+    def test_a_pattern_is_produced_with_and_without_a_trailing_slash(self):
+        self.assertEqual(od.link_query_patterns(self.LINK),
+                         (self.LINK, self.LINK + "/"))
+
+    def test_like_wildcards_in_a_url_are_escaped(self):
+        # An unescaped "_" matches ANY character, so it could join the wrong call.
+        pats = od.link_query_patterns("https://f.example/a_b?x=1%20y")
+        self.assertEqual(pats[0], "https://f.example/a\\_b?x=1\\%20y")
+
+    def test_a_backslash_is_escaped_first(self):
+        self.assertEqual(od.link_query_patterns("a\\b")[0], "a\\\\b")
+
+    def test_an_empty_link_produces_no_patterns(self):
+        self.assertEqual(od.link_query_patterns(""), ())
+        self.assertEqual(od.link_query_patterns(None), ())
+
+    def test_the_verification_step_accepts_a_differently_cased_stored_url(self):
+        stored = "https://Funder.example/portal/topic-details/PROG-JU-XYZ-2026-RIA-03"
+        self.assertEqual(od.normalise_link(stored), self.LINK)
+
+    def test_the_join_recovers_the_extraction_end_to_end(self):
+        # Mirrors the page reader: patterns are case-insensitive, the hit is then verified.
+        stored = dict(CATALOG_ROW,
+                      opportunity_url="https://F.example/Call/ABC-1",
+                      full_description="The long extracted description.")
+
+        def by_link(link):
+            for _p in od.link_query_patterns(link):
+                if od.normalise_link(stored["opportunity_url"]) == link:
+                    return stored
+            return None
+
+        res = od.load("BN-1",
+                      pipeline_reader=lambda _u: dict(PIPELINE_ROW,
+                                                      opportunity_link="https://f.example/call/abc-1"),
+                      catalog_by_link_reader=by_link)
+        self.assertIsNotNone(res["extraction"])
+        v = od.standard_view(res["kind"], res["row"], res["extraction"])
+        self.assertIn("Project overview", [h for h, _l in od.narrative_blocks(v)])
 
 
 if __name__ == "__main__":

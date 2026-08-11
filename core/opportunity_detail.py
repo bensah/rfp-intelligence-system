@@ -11,18 +11,37 @@ Two stores hold an opportunity, and a uid can name either:
              schema in docs/DATA_SCHEMA_ETL.md §4, and far richer than the matching row.
 
 A screened row is joined back to its extraction by call URL, so a pipeline opportunity
-shows the raw extraction too rather than only the fields matching kept. 190 of 254 live
-pipeline rows join this way (all 184 auto-scanned ones; migrated rows predate the store).
+shows the raw extraction too rather than only the fields matching kept. 192 of 257 live
+pipeline rows are reachable this way; the remainder predate the extraction store.
+
+That join was BROKEN until now, and it is most of why a screened call looked empty: the key
+is lowercased by `normalise_link` while the column stores the URL as published, and the
+lookup compared the two with `=`. Only 58 of 257 rows were finding their extraction. See
+`link_query_patterns`.
 
 WHY WE RESTATE EVERY CALL IN ONE STRUCTURE
 ------------------------------------------
 Primary sources are all different — grants.gov, a UN portal, a foundation's own page and a
 tender board publish the same facts under different names, in different orders, with
 different things missing. `standard_view` maps whichever store we have onto ONE canonical
-field set, and `sections` lays that out in the schema's own §4 order (identity, funder,
-narrative, eligibility, money, dates, classification, documents, provenance). The result
-reads like the published call, but every call reads the same way, which is the only way a
-reviewer can compare two of them.
+field set, and `sections` lays that out. The result reads like the published call, but every
+call reads the same way, which is the only way a reviewer can compare two of them.
+
+The layout is ordered by the QUESTIONS a reviewer asks — how much, by when, can we apply, is
+it our kind of work, how do we submit — not by the schema's storage order, and each fact
+appears exactly ONCE (see the note above `_SECTIONS`). Internal bookkeeping is in
+`technical_sections`, for a super_user only: a reviewer does not act on a crawl timestamp.
+
+WHY `full_description` IS EMPTY ON EVERY ROW
+-------------------------------------------
+It has NO WRITER. The name occurs in exactly two places in the codebase — the column
+allow-list in `core/extracted_store.py`, and the read here. §4.3 specifies it (150–300 words,
+original prose) and `core/extract.py` says the narrative fields are "populated by a later
+shadow-mode pass — left None here", but the pass that was eventually built
+(`core.llm_synthesis.synthesize_store`) produces `brief_description` and does not emit
+`full_description` at all. So this is not an extraction that fails; it is a field nobody ever
+fills. Same story for what_is_funded / what_is_not_funded / eligibility_countries /
+eligibility_other / applicant_fit_profile / project_stages / attachments / resource_links.
 
 WHAT IS ACTUALLY POPULATED TODAY (measured over 500 catalogue rows)
 -------------------------------------------------------------------
@@ -279,6 +298,30 @@ def normalise_link(v: Any) -> str:
     return str(v or "").strip().lower().rstrip("/")
 
 
+def link_query_patterns(link: str) -> tuple[str, ...]:
+    """Case-insensitive LIKE patterns that match a stored `opportunity_url` equal to `link`.
+
+    THE BUG THIS EXISTS FOR. A screened row is joined back to its extraction by call URL.
+    The join key is `normalise_link`, which LOWERCASES — but the lookup compared it with `=`
+    against a column that stores the URL as published, and half of those carry uppercase
+    (344 of 686 rows; a topic code like `PROG-…-RIA-03` sits right in the path). So the
+    equality could not hold: 134 of 257 pipeline rows found no extraction and rendered as
+    though none existed, which is most of why a screened call looked empty. Only 58 rows
+    were joining, against 192 that were actually reachable.
+
+    `ilike` with no wildcards is case-insensitive equality, so that is what these patterns
+    are for. `%` `_` and `\\` ARE wildcards to LIKE and appear in real URLs (a query string,
+    a slug), so they are escaped — an unescaped `_` would quietly match a different call.
+    Callers must still confirm `normalise_link(row) == link`: escaping makes over-matching
+    unlikely, not impossible, and a wrong extraction is worse than none.
+    """
+    link = str(link or "").strip()
+    if not link:
+        return ()
+    esc = link.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return (esc, esc + "/")          # the stored URL may keep a trailing slash
+
+
 def load(uid: str, *, pipeline_reader=None, catalog_reader=None,
          catalog_by_link_reader=None) -> dict:
     """Resolve `uid` to one opportunity.
@@ -391,26 +434,39 @@ def standard_view(kind: str, row: dict, extraction: dict | None = None) -> dict:
     return out
 
 
-# (section title, [(label, field, kind)]) in the order of DATA_SCHEMA_ETL.md §4.
-# kind: "text" · "money" · "money_range" · "date" · "list" · "bullets"
+# (section title, [(label, field, kind)]).
+# kind: "text" · "money" · "money_range" · "date" · "list" · "bullets" · "duration"
+#
+# WHAT IS AND ISN'T HERE
+# ---------------------
+# The page is a reviewer's read of the call, so the layout is organised by the QUESTIONS a
+# reviewer asks — how much, by when, can we apply, is it our kind of work, how do we submit
+# — rather than by the storage order of the schema.
+#
+# Nothing is shown twice. Three facts are owned by the header and the glance metrics, and
+# are therefore absent from the cards below:
+#
+#   funder_name / grantmaking_entity  the header line under the title
+#   opportunity_id                    the header reference, beside the funder
+#   solicitation_type                 appended to the title ("… : Request for Proposals")
+#   grant_amount / deadline /         the three glance metrics, which state them far more
+#   project_duration                  prominently than a table row could
+#
+# Anything a reviewer does not act on — internal keys, per-field confidence, crawl
+# timestamps — is in _TECHNICAL_SECTIONS and shown to a super_user only.
 _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
-    ("Funding", (
-        ("Award value", "grant_amount", "money"),
-        ("Award range", "_award_range", "money_range"),
+    ("Funding & awards", (
+        ("Award range (per award)", "_award_range", "money_range"),
         ("Total programme funding", "total_program_funding", "money"),
         ("Expected number of awards", "expected_awards", "text"),
         ("Funding tiers", "funding_tiers", "list"),
     )),
-    ("Dates & window", (
-        ("Deadline", "deadline", "date"),
-        ("Deadline confidence", "deadline_confidence", "text"),
+    ("Timeline", (
         ("Posted", "date_posted", "date"),
         ("Status", "funding_status", "text"),
         ("Window", "funding_window", "text"),
         ("Expected award date", "expected_award_date", "date"),
         ("Time to award", "time_to_award", "text"),
-        ("Project duration", "project_duration", "duration"),
-        ("Submission format", "submission_format", "text"),
     )),
     ("Who can apply", (
         ("Applicant types", "eligibility_applicant_types", "list"),
@@ -423,33 +479,93 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         # tenant-specific fact in a card headed "Who can apply" read as an eligibility rule
         # published by the funder. It lives in the decision aid (§2) instead.
     )),
-    ("Classification", (
-        ("Sector / focus themes", "focus_themes", "list"),
-        ("Programme areas", "call_domain_areas", "list"),
+    ("Scope & focus", (
         ("Geographic scope", "call_geographic_scope", "list"),
-        ("Solicitation type", "solicitation_type", "text"),
-        ("Instrument", "instrument_type", "text"),
-        ("Opportunity type", "opportunity_type", "text"),
+        ("Sector", "focus_themes", "list"),
+        ("Programme areas", "call_domain_areas", "list"),
         ("Project stages", "project_stages", "list"),
-        ("Language", "solicitation_language", "text"),
     )),
-    ("Funder", (
-        ("Funder", "funder_name", "text"),
-        ("Grantmaking entity", "grantmaking_entity", "text"),
-        ("Agency code", "agency_code", "text"),
+    ("Award type", (
+        ("Instrument", "instrument_type", "text"),
+        # The classifier writes this one in mixed case ("Grant/funding call" on some rows,
+        # "grant" / "announcement" on others), so it is sentence-cased for display.
+        ("Opportunity type", "opportunity_type", "sentence"),
     )),
-    ("Identity", (
+    ("How to apply", (
+        ("Submission format", "submission_format", "text"),
+        ("Language of the call", "solicitation_language", "text"),
+        # Only when the funder publishes a SECOND reference distinct from the header id.
+        ("Opportunity number", "_second_reference", "text"),
+    )),
+)
+
+# Shown to a super_user only. None of it changes a bid decision: it is the internal key, the
+# crawl's own bookkeeping, and the per-field confidence the training loop uses. On the page
+# it competed for attention with the call's actual terms.
+_TECHNICAL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
+    ("Record & provenance (super_user)", (
+        ("RFPIS uid", "uid", "text"),
         ("Opportunity ID", "opportunity_id", "text"),
         ("Opportunity number", "funding_opportunity_number", "text"),
-        ("RFPIS uid", "uid", "text"),
-    )),
-    ("Provenance", (
+        ("Agency code", "agency_code", "text"),
         ("Source", "source", "text"),
+        ("Source uid", "source_uid", "text"),
+        ("Solicitation type (raw)", "solicitation_type", "text"),
         ("Extraction confidence", "extraction_confidence", "text"),
+        ("Deadline confidence", "deadline_confidence", "text"),
         ("First seen", "scraped_at", "date"),
         ("Last updated", "updated_at", "date"),
     )),
 )
+
+# ---------------------------------------------------------------------------
+# solicitation type, spelled out beside the title
+# ---------------------------------------------------------------------------
+# The column stores the trade abbreviation (NOFO 135 rows, Tender 117, CFP 74, RFP 28 …) and
+# is blank on 244 of 686. A reviewer opening a page should not have to know that CfCN means
+# a concept-note round, so the abbreviation is expanded, and a blank one falls back to the
+# broader `opportunity_type` — which is populated on 99% of rows.
+_SOLICITATION_LABELS = {
+    "NOFO": "Notice of Funding Opportunity",
+    "RFP": "Request for Proposals",
+    "RFA": "Request for Applications",
+    "RFQ": "Request for Quotation",
+    "RFI": "Request for Information",
+    "CFP": "Call for Proposals",
+    "CFA": "Call for Applications",
+    "CFCN": "Call for Concept Notes",
+    "EOI": "Expression of Interest",
+    "LOI": "Letter of Intent",
+    "ITB": "Invitation to Bid",
+    "TENDER": "Tender",
+    "BID": "Bid",
+    "PRIZE": "Prize",
+    "CHALLENGE": "Challenge",
+    "GRANT": "Grant",
+}
+
+
+def solicitation_label(view: dict) -> str:
+    """"Request for Proposals" — the kind of solicitation, spelled out, or "" if unknown."""
+    raw = (view or {}).get("solicitation_type")
+    if not _blank(raw):
+        s = display_value(raw).strip()
+        hit = _SOLICITATION_LABELS.get(s.replace(" ", "").replace("-", "").upper())
+        if hit:
+            return hit
+        return s if len(s) > 5 else s.upper()   # unknown long form kept; short = acronym
+    # Fall back to the classifier's broader type ("Grant/funding call", "Procurement").
+    v = (view or {}).get("opportunity_type")
+    if _blank(v):
+        return ""
+    s = display_value(v).strip()
+    return s[:1].upper() + s[1:]
+
+
+def title_line(view: dict) -> tuple[str, str]:
+    """``(title, solicitation label)`` — the label is appended after a colon so the kind of
+    thing being read is settled before any of the detail is."""
+    return title_of(view), solicitation_label(view)
 
 # The narrative + bullet fields rendered as prose blocks rather than label/value rows.
 # All of these describe the CALL, so they are the same for every tenant that opens the page.
@@ -484,10 +600,32 @@ DECISION_AID_NARRATIVE = (
 )
 
 
+def _second_reference(view: dict) -> str:
+    """`funding_opportunity_number` only when it is genuinely a SECOND reference.
+
+    Many sources put the same string in both columns, which printed the identifier twice —
+    once in the header, once as "Opportunity number" — and invited the reader to look for a
+    difference that wasn't there.
+    """
+    num = view.get("funding_opportunity_number")
+    if _blank(num):
+        return ""
+    num_s = display_value(num).strip()
+    oid = "" if _blank(view.get("opportunity_id")) else display_value(
+        view.get("opportunity_id")).strip()
+    return "" if num_s.lower() == oid.lower() else num_s
+
+
 def _render(view: dict, field: str, kind: str) -> str:
     if field == "_award_range":
-        return format_money_range(view.get("call_award_floor"),
-                                  view.get("call_award_ceiling"), view.get("currency"))
+        rng = format_money_range(view.get("call_award_floor"),
+                                 view.get("call_award_ceiling"), view.get("currency"))
+        # The glance metric already states a single award value; a "range" that repeats it
+        # is noise, so only a real span shows here.
+        return "" if rng == format_money(view.get("grant_amount"),
+                                         view.get("currency")) else rng
+    if field == "_second_reference":
+        return _second_reference(view)
     v = view.get(field)
     if _blank(v):
         return ""
@@ -497,24 +635,36 @@ def _render(view: dict, field: str, kind: str) -> str:
         return str(v)[:10]
     if kind == "duration":
         return format_duration(v)
+    if kind == "sentence":
+        s = display_value(v)
+        return s[:1].upper() + s[1:] if s else s
     if kind in ("list", "bullets"):
         return display_value(v)
     return display_value(v)
 
 
-def sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
-    """[(section title, [(label, formatted value)])] in schema order, blanks dropped.
-
-    An empty section is dropped whole: a card of em dashes tells a reviewer nothing, and
-    the point of this page is the detail that IS there.
-    """
+def _lay_out(view: dict, spec) -> list[tuple[str, list[tuple[str, str]]]]:
     out: list[tuple[str, list[tuple[str, str]]]] = []
-    for title, fields in _SECTIONS:
+    for title, fields in spec:
         rows = [(label, _render(view, f, k)) for label, f, k in fields]
         rows = [(lb, v) for lb, v in rows if v]
         if rows:
             out.append((title, rows))
     return out
+
+
+def sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
+    """[(section title, [(label, formatted value)])] — the reviewer's read of the call.
+
+    An empty section is dropped whole: a card of em dashes tells a reviewer nothing, and
+    the point of this page is the detail that IS there.
+    """
+    return _lay_out(view, _SECTIONS)
+
+
+def technical_sections(view: dict) -> list[tuple[str, list[tuple[str, str]]]]:
+    """The internal bookkeeping — super_user only. Same shape as `sections`."""
+    return _lay_out(view, _TECHNICAL_SECTIONS)
 
 
 def narrative_blocks(view: dict) -> list[tuple[str, list[str]]]:
@@ -628,15 +778,37 @@ def documents(view: dict) -> list[tuple[str, str, str]]:
     return out
 
 
-# Fields the schema defines for a full read. `coverage` reports how much of it this
-# opportunity actually carries, so a thin page is visibly a DATA gap and not a layout that
-# forgot to show something.
-_COVERAGE_FIELDS = tuple(
-    f for _t, fields in _SECTIONS for _lb, f, _k in fields
-    if f not in ("_award_range", "uid", "source", "scraped_at", "updated_at",
-                 "extraction_confidence")
-) + ("brief_description", "full_description", "what_is_funded", "what_is_not_funded",
-     "attachments", "resource_links", "raw_text")
+# Every field of DATA_SCHEMA_ETL.md §4 that carries CALL CONTENT — what the extraction is
+# supposed to come back with. Stated explicitly rather than derived from the layout above:
+# coverage measures EXTRACTION, and while it was derived from the sections, rearranging a
+# card silently moved the score. Excluded are the columns that are system-set and therefore
+# always populated (uid, source, content_hash, timestamps) or derived rather than extracted
+# (funding_status, the *_confidence pair, field_provenance).
+_COVERAGE_FIELDS = (
+    # §4.1 identity & links
+    "opportunity_name", "opportunity_id", "opportunity_url", "apply_url",
+    "funding_opportunity_number",
+    # §4.2 funder
+    "funder_name", "agency_code", "grantmaking_entity",
+    # §4.3 narrative
+    "brief_description", "full_description", "applicant_fit_profile", "project_stages",
+    # §4.4 eligibility
+    "what_is_funded", "what_is_not_funded", "eligibility_applicant_types",
+    "eligibility_countries", "eligibility_other",
+    # §4.5 money
+    "grant_amount", "currency", "call_award_floor", "call_award_ceiling",
+    "total_program_funding", "expected_awards", "funding_tiers",
+    # §4.6 dates & window
+    "date_posted", "deadline", "funding_window", "expected_award_date", "time_to_award",
+    "project_duration", "submission_format",
+    # §4.7 classification
+    "solicitation_type", "instrument_type", "opportunity_type", "focus_themes",
+    "call_domain_areas", "call_geographic_scope", "solicitation_language",
+    # §4.8 documents
+    "attachments", "resource_links",
+    # §4.9 the audit copy — the fallback full read
+    "raw_text",
+)
 
 
 def coverage(view: dict) -> tuple[int, int, list[str]]:
@@ -656,10 +828,17 @@ def call_url(view: dict) -> str:
 
 
 def apply_url(view: dict) -> str:
-    """The actual "Apply" link when the extraction found one, else "" — never the listing
-    page, so an Apply button never quietly sends someone back to the summary."""
+    """Where to go to apply — the extracted apply link, FALLING BACK to the call page.
+
+    `apply_url` is specified as required but is populated on no row at all: the button is a
+    different shape on every portal (a form POST, a JS modal, a login wall), so pinning it
+    reliably per source is its own project. Returning "" meant the page offered no way to
+    act at all, which is worse than sending someone to the call page — where the real button
+    is, one click further on. The caller still distinguishes the two: an "Apply" link is only
+    rendered separately when it differs from the call URL.
+    """
     v = (view or {}).get("apply_url")
-    return "" if _blank(v) else str(v).strip()
+    return call_url(view) if _blank(v) else str(v).strip()
 
 
 def is_screened(kind: str, row: dict) -> bool:
