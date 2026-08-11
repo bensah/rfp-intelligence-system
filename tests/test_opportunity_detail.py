@@ -560,7 +560,11 @@ class TestPartOneIsTenantVoid(unittest.TestCase):
         row = dict(PIPELINE_ROW, key_risks="Lacks presence in the eligible regions.")
         v = od.standard_view(od.KIND_PIPELINE, row, None)
         rows, prose = od.decision_aid(v)
-        self.assertIn(("Our role on a bid", "Sub"), rows)
+        # "Our role on a bid" no longer has a card: a one-row card holding a single word is
+        # furniture, and the criteria below state the same fact (owner, 2026-08-11). The
+        # field is still resolved on the view.
+        self.assertEqual(rows, [])
+        self.assertEqual(v["applicant_role"], "Sub")
         self.assertEqual([h for h, _l in prose], ["Key risks for this entity"])
 
     def test_a_catalogue_call_has_no_decision_aid(self):
