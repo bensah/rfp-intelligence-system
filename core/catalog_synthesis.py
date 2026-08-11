@@ -506,6 +506,80 @@ def _overview_is_padded(text: Any, source: str) -> bool:
     return bool(src) and len(str(text or "").strip()) > src * _MAX_OVERVIEW_RATIO
 
 
+# ---------------------------------------------------------------------------
+# the body the model reads
+# ---------------------------------------------------------------------------
+# THE REAL CEILING ON EVERY FIELD HERE. `raw_text` is written by core/extract.py as
+#     text = candidate["_page_text"] or candidate["brief_description"] or ""
+# so a row discovered from a listing, with no page fetch behind it, stores the BRIEF as its
+# source text — a couple of sentences. Median stored source across the catalogue is 802
+# characters, and 247 rows hold under 400. No prompt can extract institution types, eligible
+# countries or project stages from text that never mentioned them.
+#
+# --fetch-html already re-fetches the page, but only mined it for links. The page's TEXT is
+# the far more valuable half, and a guidance PDF linked from it is usually where eligibility
+# and the application steps actually live.
+_MAX_BODY = 20000          # matches core/extract.py's cap on the column
+_PDF_MAX = 8000            # a guidance PDF can be book-length; the front matter is the call
+# Only replace the stored text when the new read is MATERIALLY better, so a flaky fetch that
+# returns a cookie banner can never shrink a good row.
+_BODY_GAIN = 500
+
+
+def page_text(html: str | None) -> str:
+    """The visible text of a fetched call page, scripts and navigation removed."""
+    if not html:
+        return ""
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "header", "footer", "noscript"]):
+            tag.decompose()
+        return " ".join(soup.get_text(" ", strip=True).split())
+    except Exception:
+        return ""
+
+
+def guidance_text(html: str | None, base_url: str | None) -> tuple[str, str | None]:
+    """``(text, pdf_url)`` from the guidance / application PDF linked on the page.
+
+    Reuses the scraper's own PDF finder rather than a second heuristic, so "which PDF is the
+    guidance" has one answer in this codebase.
+    """
+    if not html or not base_url:
+        return "", None
+    try:
+        from bs4 import BeautifulSoup
+        from core.scraper import _find_application_pdf, fetch_pdf_text
+        pdf = _find_application_pdf(BeautifulSoup(html, "html.parser"), base_url)
+        if not pdf:
+            return "", None
+        text = " ".join(str(fetch_pdf_text(pdf) or "").split())
+        return (text[:_PDF_MAX], pdf) if text else ("", pdf)
+    except Exception:
+        return "", None
+
+
+def best_body(row: dict, html: str | None) -> tuple[str, dict]:
+    """``(body, provenance)`` — the fullest text available for this row, and where it came
+    from. Never shorter than what is already stored."""
+    stored = str((row or {}).get("raw_text") or "").strip()
+    parts, prov = [], {"stored": len(stored)}
+    page = page_text(html)
+    prov["page"] = len(page)
+    if page:
+        parts.append(page)
+    pdf_text, pdf_url = guidance_text(html, (row or {}).get("opportunity_url"))
+    prov["pdf"] = len(pdf_text)
+    if pdf_text:
+        prov["pdf_url"] = pdf_url
+        parts.append("Guidance document: " + pdf_text)
+    fetched = " ".join(parts).strip()
+    body = fetched if len(fetched) > len(stored) else stored
+    prov["used"] = len(body[:_MAX_BODY])
+    return body[:_MAX_BODY], prov
+
+
 def synthesize_row(row: dict, *, html: str | None = None) -> dict:
     """The §4 fields this row is missing, ready to write. ``{}`` when nothing could be got.
 
@@ -516,7 +590,15 @@ def synthesize_row(row: dict, *, html: str | None = None) -> dict:
     """
     global _CALLS
     out: dict[str, Any] = {}
-    body = str(row.get("raw_text") or "").strip()
+    # The FULLEST text available, not just what happens to be stored — see `best_body`.
+    body, _prov = best_body(row, html)
+    # Persist the better read so every later pass, gate and backfill benefits from the fetch
+    # this run already paid for, rather than each one re-fetching the same page.
+    if len(body) >= len(str(row.get("raw_text") or "")) + _BODY_GAIN:
+        out["raw_text"] = body
+        log.info("catalog_synthesis: %s source text %d -> %d chars%s", row.get("uid"),
+                 _prov["stored"], _prov["used"],
+                 f" (+guidance PDF {_prov['pdf']} chars)" if _prov.get("pdf") else "")
 
     def _missing(field: str) -> bool:
         v = row.get(field)

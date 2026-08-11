@@ -486,3 +486,70 @@ class ProjectStagesAreStoredAsTextTests(unittest.TestCase):
                          "Research\nPilot")
         self.assertEqual(od.as_bullets(CS._stages(["Research", "Pilot"])),
                          ["Research", "Pilot"])
+
+
+class TheFullestSourceTextIsUsedTests(unittest.TestCase):
+    """THE CEILING ON EVERY FIELD IN THIS MODULE. `raw_text` is written by core/extract.py as
+    `_page_text or brief_description`, so a row discovered from a listing stores its BRIEF as
+    the source text — a couple of sentences. Median stored source is 802 characters and 247
+    rows hold under 400, which is why institution types, eligible countries and project stages
+    came back empty: the text never mentioned them.
+
+    Sampled live, 6 of 8 thin rows went from under 400 characters to between 1,300 and 5,200
+    once the page itself was read. The other two are aggregator paywall stubs — nothing to
+    recover, and the thin-text guard still declines to spend a call on them."""
+
+    PAGE = ("<html><head><style>x{}</style></head><body><nav>Home About</nav>"
+            "<p>Eligible applicants are NGOs and academic institutions registered in "
+            "eligible countries. Only invited organisations may apply.</p>"
+            "<footer>Cookies</footer></body></html>")
+
+    def test_navigation_and_scripts_are_stripped(self):
+        text = CS.page_text(self.PAGE)
+        self.assertIn("Eligible applicants are NGOs", text)
+        for junk in ("Home About", "Cookies", "x{}"):
+            self.assertNotIn(junk, text)
+
+    def test_the_page_beats_a_short_stored_brief(self):
+        body, prov = CS.best_body({"raw_text": "A short brief."}, self.PAGE)
+        self.assertIn("Eligible applicants", body)
+        self.assertGreater(prov["used"], prov["stored"])
+
+    def test_A_LONGER_STORED_TEXT_IS_NEVER_REPLACED(self):
+        # A flaky fetch that returns a cookie banner must not shrink a good row.
+        stored = "y" * 6000
+        body, _prov = CS.best_body({"raw_text": stored}, self.PAGE)
+        self.assertEqual(body, stored)
+
+    def test_no_html_changes_nothing(self):
+        body, _p = CS.best_body({"raw_text": "Stored."}, None)
+        self.assertEqual(body, "Stored.")
+
+    def test_the_body_is_capped(self):
+        body, _p = CS.best_body({"raw_text": ""}, "<p>" + "z" * 40000 + "</p>")
+        self.assertLessEqual(len(body), CS._MAX_BODY)
+
+    def test_the_recovered_text_is_written_back(self):
+        # So the next pass, and every gate downstream, reads the fuller call instead of each
+        # one re-fetching the same page.
+        CS.reset_calls()
+        row = dict(ROW, raw_text="A short brief.", full_description=None)
+        with _reply(GOOD):
+            got = CS.synthesize_row(row, html="<p>" + ("Real call detail. " * 60) + "</p>")
+        self.assertIn("raw_text", got)
+        self.assertGreater(len(got["raw_text"]), len("A short brief.") + CS._BODY_GAIN)
+
+    def test_a_trivial_gain_is_not_written_back(self):
+        CS.reset_calls()
+        row = dict(ROW, raw_text="x" * 3000)
+        with _reply(GOOD):
+            got = CS.synthesize_row(row, html="<p>tiny</p>")
+        self.assertNotIn("raw_text", got)
+
+    def test_a_paywall_stub_still_costs_no_call(self):
+        # The page is as empty as the stored text, so the thin guard still applies AFTER the
+        # fetch rather than before it.
+        CS.reset_calls()
+        with _reply(GOOD) as c:
+            CS.synthesize_row(dict(ROW, raw_text="Premium"), html="<p>Premium</p>")
+        self.assertEqual(c.calls, 0)
