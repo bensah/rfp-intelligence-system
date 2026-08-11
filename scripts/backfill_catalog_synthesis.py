@@ -60,6 +60,13 @@ def _fetch(url: str) -> str | None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=10)
+    ap.add_argument("--include-expired", action="store_true",
+                    help="also synthesise calls whose deadline has passed (default: skip "
+                         "them — nobody can bid on a closed call)")
+    ap.add_argument("--screened", action="store_true",
+                    help="only calls this tenant has ingested into its pipeline")
+    ap.add_argument("--decided", action="store_true",
+                    help="only calls with a recorded Proceed / Park / Decline")
     ap.add_argument("--redo", action="store_true",
                     help="re-ask rows that already have an answer (use after a prompt "
                          "change); by default those are skipped so a run advances")
@@ -74,6 +81,7 @@ def main() -> int:
     _load_env()
     from db.supabase_client import service_client
     from core import catalog_synthesis as CS
+    from core import opportunity_detail as _od
 
     sb = service_client()
 
@@ -106,11 +114,55 @@ def main() -> int:
         q = q.eq("uid", args.uid)
     rows = q.limit(5000).execute().data or []
 
+    # DON'T SPEND A CALL ON A CLOSED CALL. Nobody can bid on it, so an overview for it is pure
+    # cost: 78 of the 357 outstanding rows are expired — 22% of the work, removed by default
+    # rather than hidden behind a flag.
+    from datetime import date as _date
+    _today = _date.today()
+
+    def _expired(r):
+        if str(r.get("funding_status") or "").strip().lower() == "closed":
+            return True
+        d = str(r.get("deadline") or "")[:10]
+        if not d:
+            return False            # unknown is not the same as passed
+        try:
+            return _date.fromisoformat(d) < _today
+        except ValueError:
+            return False
+
+    # Optional narrowing to what the tenant has taken an interest in. Measured live, from 357
+    # outstanding rows:
+    #     default (live only)      279   ~93 min
+    #     --screened                81   ~27 min   in the pipeline at all
+    #     --decided                  8   ~3 min    Proceed / Park / Decline recorded
+    # --decided is that small because only 73 pipeline rows carry a decision and most were
+    # already synthesised. It leaves every call a reviewer might BROWSE unsynthesised —
+    # including the whole Live Opportunity Feed, which is where an unscreened call gets read.
+    _pipe_links: set = set()
+    if args.screened or args.decided:
+        _dec = {"proceed", "park", "decline"}
+        for srow in (sb.table("rfp_submissions").select("opportunity_link,decision")
+                     .limit(5000).execute().data or []):
+            link = _od.normalise_link(srow.get("opportunity_link"))
+            if not link:
+                continue
+            if args.decided and str(srow.get("decision") or "").strip().lower() not in _dec:
+                continue
+            _pipe_links.add(link)
+
     with_text = [r for r in rows if str(r.get("raw_text") or "").strip()]
     thin = [r for r in with_text if len(str(r.get("raw_text") or "")) < CS._MIN_TEXT]
     readable = [r for r in with_text if r not in thin]
     done = [r for r in readable if _already_asked(r)]
     pending = readable if args.redo else [r for r in readable if not _already_asked(r)]
+    _expired_n = len([r for r in pending if _expired(r)])
+    if not args.include_expired:
+        pending = [r for r in pending if not _expired(r)]
+    _before_scope = len(pending)
+    if args.screened or args.decided:
+        pending = [r for r in pending
+                   if _od.normalise_link(r.get("opportunity_url")) in _pipe_links]
     todo = pending[:args.limit]
 
     print(f"model      : {CS._model()}")
@@ -121,6 +173,11 @@ def main() -> int:
     print(f"  no text / boilerplate only : {len(rows) - len(readable)}"
           f"  (under {CS._MIN_TEXT} chars — no call spent)")
     print(f"  already synthesised        : {len(done)}")
+    print(f"  expired / closed           : {_expired_n}"
+          + ("  (INCLUDED)" if args.include_expired else "  (skipped — nobody can bid)"))
+    if args.screened or args.decided:
+        print(f"  outside the chosen scope   : {_before_scope - len(pending)}"
+              f"  ({'decided P/P/D only' if args.decided else 'in the pipeline only'})")
     print(f"  still to do                : {len(pending)}")
     print(f"this batch : {len(todo)}")
     print()
