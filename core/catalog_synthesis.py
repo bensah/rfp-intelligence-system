@@ -72,6 +72,19 @@ _MAX_OUTPUT_TOKENS = int(os.environ.get("RFPIS_SYNTH_MAX_TOKENS", "2000"))
 _MAX_CALLS = int(os.environ.get("RFPIS_SYNTH_MAX_CALLS", "800"))
 _CALLS = 0
 
+# BELOW THIS, THERE IS NOTHING TO READ, so spending a call is pure waste. Measured on a
+# 20-row batch, 4 rows produced no field at all and every one of them had a raw_text that was
+# boilerplate rather than a call: 20 chars ("fundsforNGOs Premium" — an aggregator paywall
+# stub), 74, 96 and 108 chars of UNGM site furniture. That is 20% of a free-tier batch spent
+# on rows that could not have answered. The model behaved correctly by returning nothing; the
+# fix is not to ask.
+#
+# 400 characters is about two sentences of substance. The threshold is deliberately generous:
+# a short-but-real call still gets its call, because a false skip loses a row permanently
+# while a wasted call costs seconds.
+_MIN_TEXT = int(os.environ.get("RFPIS_SYNTH_MIN_TEXT", "400"))
+_SKIPPED_THIN = 0
+
 # House-style caps (§7). Long enough to be useful, short enough that a model padding
 # its answer cannot turn a card into an essay.
 _LIMITS = {
@@ -452,6 +465,14 @@ def synthesize_row(row: dict, *, html: str | None = None) -> dict:
     wanted = [f for f in LLM_FIELDS if _missing(f) and f not in out]
     if not wanted or not body or not is_enabled():
         return out
+    if len(body) < _MIN_TEXT:
+        # Boilerplate, a paywall stub or a footer — not a call. The regex fields above still
+        # stand, and they are free.
+        global _SKIPPED_THIN
+        _SKIPPED_THIN += 1
+        log.info("catalog_synthesis: %s has only %d chars of text — no call made",
+                 row.get("uid"), len(body))
+        return out
     if _CALLS >= _MAX_CALLS:
         log.info("catalog_synthesis: call ceiling %d reached", _MAX_CALLS)
         return out
@@ -505,6 +526,13 @@ def calls_made() -> int:
     return _CALLS
 
 
+def skipped_thin() -> int:
+    """Rows that had too little text to be worth a call — reported so a thin batch reads as
+    a source problem rather than as the model failing."""
+    return _SKIPPED_THIN
+
+
 def reset_calls() -> None:
-    global _CALLS
+    global _CALLS, _SKIPPED_THIN
     _CALLS = 0
+    _SKIPPED_THIN = 0
