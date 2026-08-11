@@ -86,9 +86,12 @@ def main() -> int:
         return str(v).strip() in ("", "[]", "{}")
 
     # Rows worth spending a call on: some text to read, and something still missing.
-    todo = [r for r in rows
-            if str(r.get("raw_text") or "").strip()
-            and any(_blank(r.get(f)) for f in CS.ALL_FIELDS)][:args.limit]
+    eligible = [r for r in rows
+                if str(r.get("raw_text") or "").strip()
+                and any(_blank(r.get(f)) for f in CS.ALL_FIELDS)]
+    # A row whose raw_text is site boilerplate cannot answer, so it does not consume a call.
+    thin = [r for r in eligible if len(str(r.get("raw_text") or "")) < CS._MIN_TEXT]
+    todo = [r for r in eligible if r not in thin][:args.limit]
 
     print(f"model      : {CS._model()}")
     print(f"mode       : {'APPLY (writes)' if args.apply else 'DRY RUN (no writes)'}")
@@ -124,7 +127,8 @@ def main() -> int:
 
     n = len(todo)
     print(f"\nelapsed {time.time() - t_start:.0f}s  ({(time.time() - t_start) / n:.1f}s per row)")
-    print(f"LLM calls {CS.calls_made()}   rows written {written}   failures {failed}")
+    print(f"LLM calls {CS.calls_made()}   rows written {written}   failures {failed}"
+          f"   thin-skipped mid-run {CS.skipped_thin()}")
     print("\nPER-FIELD YIELD")
     for f in CS.ALL_FIELDS:
         c = filled.get(f, 0)
