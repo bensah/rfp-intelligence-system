@@ -150,6 +150,59 @@ with st.container(border=True):
         "call surfaces wherever it fits. An opportunity **submitted by any user** joins "
         "that pool too, becoming available to everyone on their next scan.")
 
+# ── How scoring works ────────────────────────────────────────────────────────
+# MOVED HERE from the opportunity page (owner, 2026-08-11). The per-criterion notes explained
+# the weighting model inline, between one criterion and the next — true, and useful to somebody
+# editing components, but a paragraph of scoring internals for a reader who only wants the
+# verdict. Explained once here instead of on every call.
+_MUSTS = [
+    "**The five MUSTs** (65% of the score)", "",
+    "1. Legal status & qualification",
+    "2. Strategic fit",
+    "3. Implementation capacity",
+    "4. Geographic fit",
+    "5. Compliance requirements", "",
+    "**The four PREFERs** (35%)", "",
+    "6. Funding quality",
+    "7. Donor relationship",
+    "8. Competitiveness",
+    "9. Bid effort",
+]
+_VERDICTS = [
+    "**What the verdicts mean**", "",
+    "- **Proceed** — 90 or above",
+    "- **Park** — 70 to 89, worth a human look",
+    "- **Decline** — below 70",
+    "- a fatal gate declines outright: a structural ineligibility that cannot be fixed "
+    "before the deadline",
+    "- **not scored** means the call stated nothing to score — it takes the Park midpoint "
+    "rather than counting against you",
+]
+_DIVERGE = [
+    "The count is the EVIDENCE — how many of the criterion's components were met. The "
+    "verdict is the SCORE. They are not the same measure, and two things make them diverge:",
+    "",
+    "- **Gate criteria.** MUST-5 spans compliance requirements, and any unmet requirement "
+    "makes it *Not met* — so it shows what is unmet rather than a percentage, because a "
+    "percentage would imply partial credit the score does not give.",
+    "- **Weighted criteria.** Funding quality and Competitiveness are models, not averages: "
+    "a track record counts one and a half times, and unmet donor requirements subtract. A "
+    "flat ratio over the components cannot express that, so the model names the verdict and "
+    "the ratio stays beside it as evidence.",
+]
+with st.container(border=True):
+    st.subheader("How an opportunity is scored")
+    st.markdown("Every opportunity is read against **nine criteria** — five MUSTs and four "
+                "PREFERs — and each contributes points out of its own weight.")
+    _sL, _sR = st.columns(2)
+    _sL.markdown(chr(10).join(_MUSTS))
+    _sR.markdown(chr(10).join(_VERDICTS))
+    st.markdown("**Why a verdict can differ from the count beside it**")
+    st.markdown(chr(10).join(_DIVERGE))
+    st.caption("Reviewers can change any component in **Update Decision**, and the verdict "
+               "follows. A human who has read the call outranks the derivation.")
+
+
 # ── Account + contact (side by side) ──────────────────────────────────────────
 _aL, _aR = st.columns(2)
 with _aL:
