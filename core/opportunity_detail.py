@@ -486,10 +486,14 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ("Project stages", "project_stages", "list"),
     )),
     ("Award type", (
-        ("Instrument", "instrument_type", "text"),
-        # The classifier writes this one in mixed case ("Grant/funding call" on some rows,
-        # "grant" / "announcement" on others), so it is sentence-cased for display.
-        ("Opportunity type", "opportunity_type", "sentence"),
+        # ONE reconciled line, not two labels the reader has to reconcile themselves.
+        # "Instrument: Contract" sitting above "Opportunity type: grant" read as the
+        # extraction contradicting itself, when the two answer different questions: what
+        # pursuing this IS before the award, and the vehicle it becomes after one. A grant
+        # is contracted once awarded, so that pair is ordinary — 30 live rows are it.
+        # `core.award_type` also fills a missing half from the half present (187 rows) and
+        # flags only the combinations that are genuinely hard to explain (7 rows).
+        ("Award type", "_award_type", "text"),
     )),
     ("How to apply", (
         ("Submission format", "submission_format", "text"),
@@ -600,6 +604,20 @@ DECISION_AID_NARRATIVE = (
 )
 
 
+def award_pairing(view: dict) -> dict:
+    """The two award axes reconciled into one answer — see `core.award_type`.
+
+    Imported lazily so this module keeps rendering if the type vocabularies move; a page
+    that loses one card row is better than a page that will not load.
+    """
+    try:
+        from core import award_type
+        return award_type.pairing(view.get("opportunity_type"),
+                                  view.get("instrument_type"))
+    except Exception:
+        return {"text": "", "verdict": "unknown", "note": "", "inferred": []}
+
+
 def _second_reference(view: dict) -> str:
     """`funding_opportunity_number` only when it is genuinely a SECOND reference.
 
@@ -626,6 +644,8 @@ def _render(view: dict, field: str, kind: str) -> str:
                                          view.get("currency")) else rng
     if field == "_second_reference":
         return _second_reference(view)
+    if field == "_award_type":
+        return award_pairing(view).get("text") or ""
     v = view.get(field)
     if _blank(v):
         return ""
