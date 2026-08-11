@@ -38,7 +38,10 @@ LABELS = {
     "strategic_fit": "MUST 2 · Strategic fit",
     "capacity": "MUST 3 · Implementation capacity",
     "geographic_fit": "MUST 4 · Geographic fit",
-    "cofinancing": "MUST 5 · Cofinancing & compliance",
+    # The criterion spans co-financing AND the compliance gates, but "Compliance requirements"
+    # is the phrase the calls themselves use and the one a reviewer recognises; co-financing is
+    # one requirement among them rather than a separate heading.
+    "cofinancing": "MUST 5 · Compliance requirements",
     "funding_quality": "PREFER 6 · Funding quality",
     "funder_relationship": "PREFER 7 · Donor relationship",
     "competitiveness": "PREFER 8 · Competitiveness",
@@ -60,6 +63,26 @@ def decide(composite: float, *, fatal: bool = False,
         return "Decline"
     rec = "Proceed" if composite >= 90 else "Park" if composite >= 70 else "Decline"
     return "Park" if (rec == "Proceed" and below_award_floor) else rec
+
+
+def failing_components(criterion: dict) -> list[str]:
+    """The names of the ACTIVE components a criterion did not meet.
+
+    "What's against it: Compliance requirements, Donor relationship" named the criteria but not
+    the reason, so a reviewer had to open each one to learn what actually failed. The component
+    names are the actionable part — "Authorized signatory (this donor)" tells you what to go and
+    get; the criterion title does not.
+    """
+    out: list[str] = []
+    for f in (criterion or {}).get("components") or []:
+        if not f.get("active"):
+            continue
+        sc, met = f.get("score"), f.get("met")
+        failed = (sc is not None and float(sc) <= 0.0) or (sc is None and met is False)
+        name = str(f.get("name") or f.get("key") or "").strip()
+        if failed and name and name not in out:
+            out.append(name)
+    return out
 
 
 def analyse(rfp: dict, org: dict | None, donor: dict | None,

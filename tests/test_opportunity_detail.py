@@ -561,16 +561,20 @@ class TestPartOneIsTenantVoid(unittest.TestCase):
         v = od.standard_view(od.KIND_PIPELINE, row, None)
         rows, prose = od.decision_aid(v)
         # "Our role on a bid" no longer has a card: a one-row card holding a single word is
-        # furniture, and the criteria below state the same fact (owner, 2026-08-11). The
-        # field is still resolved on the view.
+        # furniture, and the criteria below state the same fact. The field is still resolved
+        # on the view. The risk heading now carries the entity's name.
         self.assertEqual(rows, [])
         self.assertEqual(v["applicant_role"], "Sub")
-        self.assertEqual([h for h, _l in prose], ["Key risks for this entity"])
+        self.assertEqual([h for h, _l in prose], ["Key risks for your organisation"])
 
-    def test_a_catalogue_call_has_no_decision_aid(self):
-        # Nobody has screened it, so there is no tenant view of it to show.
+    def test_a_catalogue_call_shows_the_risk_heading_with_a_dash(self):
+        # The rows are empty (nobody has screened it) but the HEADING still renders, dash under
+        # it — section 2 is meant to read as three subsections every time, and one of them
+        # disappearing changes the page's shape between calls.
         v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
-        self.assertEqual(od.decision_aid(v), ([], []))
+        rows, prose = od.decision_aid(v, "An Entity")
+        self.assertEqual(rows, [])
+        self.assertEqual(prose, [("Key risks for An Entity", [od.MISSING])])
 
     def test_our_role_no_longer_counts_toward_extraction_completeness(self):
         # It is not an extracted field, so counting it inflated the score.

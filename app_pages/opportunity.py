@@ -22,6 +22,7 @@ import streamlit as st
 
 from core import opportunity_detail as _od
 from core import opportunity_scoring as _osc
+from core import settings as _settings_mod
 from db.supabase_client import get_client
 
 user = st.session_state.get("app_user") or {}
@@ -386,7 +387,14 @@ with _main:
     # "Scoring analysis" and "This entity against this opportunity" were two headings saying
     # the same thing, and "entity" is our internal word for a tenant — a reader who has not
     # met it does not know whether it means them, the funder, or something else.
-    st.markdown("##### How this opportunity fares against your organisation")
+    # The tenant's own name, so the heading names WHO is being assessed. "your organisation"
+    # is correct but generic, and this page is read beside others.
+    try:
+        _entity = str((_settings_mod.get_org() or {}).get("org_name") or "").strip()
+    except Exception:
+        _entity = ""
+    _who = _entity or "your organisation"
+    st.markdown(f"##### How this opportunity fares against {_txt(_who)}")
 
     from core import criteria_derive as _cd
     from core import org_profile as _orgp
@@ -447,16 +455,21 @@ with _main:
         st.markdown(
             f"<div style='background:{_tone[0]};border-radius:10px;padding:12px 16px;"
             f"display:flex;gap:28px;align-items:center;flex-wrap:wrap'>"
-            f"<div><span style='color:{_tone[1]};font-weight:700;font-size:1.25rem'>"
-            f"Bid Strength {_an['bid_strength']}/100 — {_txt(_an['fit'])}</span></div>"
-            f"<div style='color:#31403a;font-size:1.1rem;font-weight:700'>Suggestion: "
-            f"<span style='font-size:1.25rem'>{_txt(_an['suggested_decision'])}</span>"
+            f"<div><span style='color:{_tone[1]};font-size:1.05rem;font-weight:400'>"
+            f"Bid Strength: </span>"
+            f"<span style='color:{_tone[1]};font-weight:700;font-size:1.25rem'>"
+            f"{_an['bid_strength']}/100 — {_txt(_an['fit'])}</span></div>"
+            f"<div style='color:#31403a;font-size:1.05rem;font-weight:400'>Suggestion: "
+            f"<span style='font-size:1.25rem;font-weight:700'>"
+            f"{_txt(_an['suggested_decision'])}</span>"
             + (f" <span style='color:#8a6d00'>(was {_txt(_an['system_decision'])})</span>"
                if _an["suggested_decision"] != _an["system_decision"] else "")
             + "</div>"
-            f"<div style='color:#31403a;font-size:1.1rem;font-weight:700'>Confidence "
-            f"<span style='font-size:1.25rem'>{_txt(_conf['band'])}</span>"
-            f"<span style='font-weight:400;font-size:0.86rem'> · data {_conf['pct']}% "
+            f"<div style='color:#31403a;font-size:1.05rem;font-weight:400'>Confidence: "
+            f"<span style='font-size:1.25rem;font-weight:700'>{_txt(_conf['band'])}</span>"
+            # the data share carries the same weight as the band: it is what says whether the
+            # band can be trusted, and at 0.86rem it read as a footnote to its own headline
+            f"<span style='font-size:1.05rem'> · data {_conf['pct']}% "
             f"(donor {_txt(_dtxt)} · call {_conf['call_pct']}%)</span></div>"
             "</div>", unsafe_allow_html=True)
         if _an["fatal"]:
@@ -470,29 +483,7 @@ with _main:
                     "would-be Proceed at Park.")
 
         _COL = {2: "#1a7f37", 1: "#b8860b", 0: "#c0392b"}
-
-    # ── decision aid: the facts about US, not about the call ────────────────
-    # Both of these used to sit in Part 1 — "Our role" inside the "Who can apply" card,
-    # where it read as an eligibility rule the funder had published, and "Key risks" as a
-    # call narrative even though it describes this entity's exposure. Part 1 is the call;
-    # this is us against it.
-    _aid_rows, _aid_prose = _od.decision_aid(_view)
-    if _aid_rows or _aid_prose:
-        if _aid_rows:
-            st.markdown(
-                "<div class='opp-card'>"
-                + "".join(f"<div class='opp-kv'><span class='opp-k'>{_txt(lb)}</span>"
-                          f"<span class='opp-v'>{_txt(v)}</span></div>"
-                          for lb, v in _aid_rows)
-                + "</div>", unsafe_allow_html=True)
-        for _heading, _lines in _aid_prose:
-            st.markdown(f"**{_heading}**")
-            if len(_lines) == 1:
-                st.markdown(f"<div class='opp-prose'>{_txt(_lines[0])}</div>",
-                            unsafe_allow_html=True)
-            else:
-                st.markdown("\n".join(f"- {l}" for l in _lines))
-        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+        st.markdown("##### Eligibility screening criteria")
 
     if _an:
         for _c in _an["criteria"]:
@@ -512,10 +503,44 @@ with _main:
                    "scored\" means this call stated nothing to score — it takes the "
                    "Park midpoint.")
 
-        if _an["blockers"]:
-            st.markdown("**What's against it:** "
-                        + ", ".join(_txt(b["title"].split(" · ", 1)[-1])
-                                    for b in _an["blockers"]))
+
+    # ── decision aid: the facts about US, not about the call ────────────────
+    # Both of these used to sit in Part 1 — "Our role" inside the "Who can apply" card,
+    # where it read as an eligibility rule the funder had published, and "Key risks" as a
+    # call narrative even though it describes this entity's exposure. Part 1 is the call;
+    # this is us against it.
+    _aid_rows, _aid_prose = _od.decision_aid(_view, _who)
+    if _aid_rows or _aid_prose or _an:
+        if _aid_rows:
+            st.markdown(
+                "<div class='opp-card'>"
+                + "".join(f"<div class='opp-kv'><span class='opp-k'>{_txt(lb)}</span>"
+                          f"<span class='opp-v'>{_txt(v)}</span></div>"
+                          for lb, v in _aid_rows)
+                + "</div>", unsafe_allow_html=True)
+        for _heading, _lines in _aid_prose:
+            st.markdown(f"##### {_heading}")
+            if len(_lines) == 1:
+                st.markdown(f"<div class='opp-prose'>{_txt(_lines[0])}</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown("\n".join(f"- {l}" for l in _lines))
+        if _an and _an.get("blockers"):
+            # NAME THE COMPONENTS, not just the criteria. "Compliance requirements, Donor
+            # relationship" told a reviewer which criteria failed but not what failed inside
+            # them; "Authorized signatory (this donor)" is the thing you can go and get.
+            # NOT `_lines`: that name belongs to the narrative loop just above. Reusing a
+            # name already live in this scope is what produced the blank section 2 (#189).
+            _blk = []
+            for _b in _an["blockers"]:
+                _crit = _b["title"].split(" · ", 1)[-1]
+                _parts = _osc.failing_components(_b)
+                _blk.append(f"- **{_txt(_crit)}** — "
+                            + (", ".join(_txt(p) for p in _parts) if _parts
+                               else "no component met"))
+            st.markdown("**What's against it**")
+            st.markdown(chr(10).join(_blk))
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
     # ── decision ────────────────────────────────────────────────────────────
     st.divider()
