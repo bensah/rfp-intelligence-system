@@ -55,6 +55,10 @@ st.markdown("""
              text-transform:uppercase; margin:26px 0 8px; font-weight:700; }
   /* The summary is PROSE, not a data card — a border round it made a paragraph look like
      one more table. */
+  .opp-line { display:flex; gap:18px; padding:5px 0; align-items:baseline;
+              border-bottom:1px dashed #eef1ef; max-width:62em; }
+  .opp-line:last-child { border-bottom:none; }
+  .opp-v2 { color:#1f2a24; font-size:1rem; font-weight:600; line-height:1.5; }
   .opp-lede { color:#2b332e; line-height:1.7; font-size:1.05rem; margin:2px 0 4px;
               max-width:62em; }
   .opp-prose { background:#fff; border:1px solid #e6e6e6; border-radius:10px;
@@ -164,12 +168,16 @@ with _main:
     # The KIND of solicitation is settled before any of the detail: a reviewer reads a
     # tender differently from a concept-note round, and the column stores only the trade
     # abbreviation (and is blank on a third of rows), so it is spelled out here.
+    # The kind of solicitation is a CHIP, not a title suffix: appending it produced
+    # "DIV Fund – Request for Proposals: Request for Proposals" whenever the funder had
+    # already named the kind, which they usually have. title_line returns "" in that case.
     _title, _sol = _od.title_line(_view)
-    st.title(f"{_title}: {_sol}" if _sol else _title)
+    st.title(_title)
     _dl_txt, _dl_tone = _od.deadline_status(_view.get("deadline"),
                                            _view.get("funding_status"))
     _chips = [(_dl_txt, _dl_tone)]
-    # solicitation_type is NOT a chip — it is in the title now.
+    if _sol:
+        _chips.append((_sol, ""))          # ahead of the instrument, per the owner
     for _f in ("instrument_type", "funding_window"):
         if _view.get(_f):
             _chips.append((_od.display_value(_view[_f]), ""))
@@ -217,25 +225,9 @@ with _main:
     # ── PART 1 — the opportunity, in our standard format ────────────────────
     st.markdown("<div class='opp-sec'>1 · The opportunity</div>",
                 unsafe_allow_html=True)
-
-    # OVERVIEW FIRST, and borderless. The reader needs to know what this thing IS before any
-    # number about it; and the box around the summary made a paragraph of prose look like one
-    # more data card, which it is not.
-    st.markdown("##### Project overview")
-    _summary = _od.summary_of(_view)
-    if _summary:
-        st.markdown(f"<div class='opp-lede'>{_txt(_summary)}</div>",
-                    unsafe_allow_html=True)
-    else:
-        st.caption("_No summary has been synthesised for this opportunity yet._")
-    for _heading, _lines, _is_missing in _od.overview_blocks(_view):
-        if _is_missing:
-            st.caption(f"_{_lines[0]}_")
-        elif len(_lines) == 1:
-            st.markdown(f"<div class='opp-lede'>{_txt(_lines[0])}</div>",
-                        unsafe_allow_html=True)
-        else:
-            st.markdown(chr(10).join(f"- {l}" for l in _lines))
+    _brief = _od.summary_of(_view)
+    if _brief:
+        st.markdown(f"<div class='opp-lede'>{_txt(_brief)}</div>", unsafe_allow_html=True)
 
     # Headline money + deadline, the two facts a reviewer looks for first.
     _money = _od.format_money(_view.get("grant_amount"), _view.get("currency"))
@@ -259,15 +251,39 @@ with _main:
                _od.format_duration(_view.get("project_duration")) or "—",
                _od.display_value(_view.get("funding_window")) or "—")
 
+    # THE PUBLISHER'S OWN SUMMARY, below the three numbers a reviewer reads first. Borderless:
+    # a box round a paragraph made prose look like one more data card.
+    st.markdown("##### Project overview")
+    _ov = _od.overview_text(_view)
+    if _ov:
+        st.markdown(f"<div class='opp-lede'>{_txt(_ov)}</div>", unsafe_allow_html=True)
+        if _od.overview_is_truncated(_view) and _call:
+            st.markdown(f"[Learn more ↗]({_call})")
+    else:
+        # NOT a fallback to brief_description: that already leads the section a few lines
+        # above, and printing it twice under two different headings is exactly the
+        # in-card/out-of-card repetition being removed.
+        st.markdown(f"<div class='opp-lede'>{_od.MISSING}</div>", unsafe_allow_html=True)
+
     # THE BODY, in reading order — cards and prose interleaved so the page walks the reader
     # through the opportunity instead of presenting all the prose and then all the tables.
     # See opportunity_detail.page_blocks.
     _blocks = _od.page_blocks(_view)
-    _secs = [b for b in _blocks if b[0] == "cards"]
+    _secs = [b for b in _blocks if b[0] in ("cards", "facts")]
     _col_i = 0
     _cols = st.columns(2, gap="medium")
     for _b in _blocks:
-        if _b[0] == "cards":
+        if _b[0] == "facts":
+            # Open text, not a box. A card is worth its chrome only for a tight column of
+            # numbers and dates; round a sentence it is just furniture.
+            st.markdown(f"##### {_txt(_b[1])}")
+            st.markdown(
+                "".join(f"<div class='opp-line'><span class='opp-k'>{_txt(lb)}</span>"
+                        f"<span class='opp-v2'>{_txt(v)}</span></div>"
+                        for lb, v in _b[2]), unsafe_allow_html=True)
+            _col_i = 0
+            _cols = st.columns(2, gap="medium")
+        elif _b[0] == "cards":
             _title, _fields = _b[1], _b[2]
             with _cols[_col_i % 2]:
                 st.markdown(
