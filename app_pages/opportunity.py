@@ -53,6 +53,10 @@ st.markdown("""
            line-height:1.45; }
   .opp-sec { color:#778; font-size:0.72rem; letter-spacing:.08em;
              text-transform:uppercase; margin:26px 0 8px; font-weight:700; }
+  /* The summary is PROSE, not a data card — a border round it made a paragraph look like
+     one more table. */
+  .opp-lede { color:#2b332e; line-height:1.7; font-size:1.05rem; margin:2px 0 4px;
+              max-width:62em; }
   .opp-prose { background:#fff; border:1px solid #e6e6e6; border-radius:10px;
                padding:16px 20px; color:#2b332e; line-height:1.65; font-size:1rem; }
   .opp-crit { display:flex; align-items:center; gap:10px; padding:7px 12px;
@@ -214,12 +218,24 @@ with _main:
     st.markdown("<div class='opp-sec'>1 · The opportunity</div>",
                 unsafe_allow_html=True)
 
+    # OVERVIEW FIRST, and borderless. The reader needs to know what this thing IS before any
+    # number about it; and the box around the summary made a paragraph of prose look like one
+    # more data card, which it is not.
+    st.markdown("##### Project overview")
     _summary = _od.summary_of(_view)
     if _summary:
-        st.markdown(f"<div class='opp-prose'>{_txt(_summary)}</div>",
+        st.markdown(f"<div class='opp-lede'>{_txt(_summary)}</div>",
                     unsafe_allow_html=True)
     else:
-        st.caption("_No summary has been synthesised for this call yet._")
+        st.caption("_No summary has been synthesised for this opportunity yet._")
+    for _heading, _lines, _is_missing in _od.overview_blocks(_view):
+        if _is_missing:
+            st.caption(f"_{_lines[0]}_")
+        elif len(_lines) == 1:
+            st.markdown(f"<div class='opp-lede'>{_txt(_lines[0])}</div>",
+                        unsafe_allow_html=True)
+        else:
+            st.markdown(chr(10).join(f"- {l}" for l in _lines))
 
     # Headline money + deadline, the two facts a reviewer looks for first.
     _money = _od.format_money(_view.get("grant_amount"), _view.get("currency"))
@@ -243,24 +259,17 @@ with _main:
                _od.format_duration(_view.get("project_duration")) or "—",
                _od.display_value(_view.get("funding_window")) or "—")
 
-    # EVERY narrative section, whether or not this call has one. A section that vanishes when
-    # empty makes the page change shape between calls, so a reader cannot tell "silent on
-    # this" from "we do not track this" — and cannot compare two calls by eye.
-    for _heading, _lines, _is_missing in _od.narrative_sections(_view):
-        st.markdown(f"##### {_heading}")
-        if _is_missing:
-            st.caption(f"_{_lines[0]}_")
-        elif len(_lines) == 1:
-            st.markdown(f"<div class='opp-prose'>{_txt(_lines[0])}</div>",
-                        unsafe_allow_html=True)
-        else:
-            st.markdown("\n".join(f"- {l}" for l in _lines))
-
-    _secs = _od.sections(_view)
-    if _secs:
-        _cols = st.columns(2, gap="medium")
-        for _i, (_title, _fields) in enumerate(_secs):
-            with _cols[_i % 2]:
+    # THE BODY, in reading order — cards and prose interleaved so the page walks the reader
+    # through the opportunity instead of presenting all the prose and then all the tables.
+    # See opportunity_detail.page_blocks.
+    _blocks = _od.page_blocks(_view)
+    _secs = [b for b in _blocks if b[0] == "cards"]
+    _col_i = 0
+    _cols = st.columns(2, gap="medium")
+    for _b in _blocks:
+        if _b[0] == "cards":
+            _title, _fields = _b[1], _b[2]
+            with _cols[_col_i % 2]:
                 st.markdown(
                     f"<div class='opp-card'><h4>{_txt(_title)}</h4>"
                     + "".join(f"<div class='opp-kv'><span class='opp-k'>{_txt(lb)}</span>"
@@ -268,6 +277,20 @@ with _main:
                               for lb, v in _fields)
                     + "</div>", unsafe_allow_html=True)
                 st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+            _col_i += 1
+        else:
+            _heading, _lines, _is_missing = _b[1], _b[2], _b[3]
+            st.markdown(f"##### {_heading}")
+            if _is_missing:
+                st.caption(f"_{_lines[0]}_")
+            elif len(_lines) == 1:
+                st.markdown(f"<div class='opp-prose'>{_txt(_lines[0])}</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(chr(10).join(f"- {l}" for l in _lines))
+            # Prose breaks the two-column run, so the next card starts a fresh row.
+            _col_i = 0
+            _cols = st.columns(2, gap="medium")
 
     # Kept as a section rather than appearing only when it has content, for the same reason
     # as the rest of the skeleton.
@@ -327,8 +350,9 @@ with _main:
                            "read on this page.")
 
     # ── PART 2 — scoring analysis ───────────────────────────────────────────
-    st.markdown("<div class='opp-sec'>2 · Scoring analysis — is this worth bidding?"
+    st.markdown("<div class='opp-sec'>2 · Decision aid — is this worth bidding?"
                 "</div>", unsafe_allow_html=True)
+    st.markdown("##### Scoring analysis")
 
     from core import criteria_derive as _cd
     from core import org_profile as _orgp
@@ -386,14 +410,15 @@ with _main:
             f"display:flex;gap:28px;align-items:center;flex-wrap:wrap'>"
             f"<div><span style='color:{_tone[1]};font-weight:700;font-size:1.25rem'>"
             f"Bid Strength {_an['bid_strength']}/100 — {_txt(_an['fit'])}</span></div>"
-            f"<div style='color:#31403a;font-size:0.9rem'>Suggestion: "
-            f"<b>{_txt(_an['suggested_decision'])}</b>"
+            f"<div style='color:#31403a;font-size:1.1rem;font-weight:700'>Suggestion: "
+            f"<span style='font-size:1.25rem'>{_txt(_an['suggested_decision'])}</span>"
             + (f" <span style='color:#8a6d00'>(was {_txt(_an['system_decision'])})</span>"
                if _an["suggested_decision"] != _an["system_decision"] else "")
             + "</div>"
-            f"<div style='color:#31403a;font-size:0.84rem'>Confidence "
-            f"<b>{_txt(_conf['band'])}</b> · data {_conf['pct']}% "
-            f"(donor {_txt(_dtxt)} · call {_conf['call_pct']}%)</div>"
+            f"<div style='color:#31403a;font-size:1.1rem;font-weight:700'>Confidence "
+            f"<span style='font-size:1.25rem'>{_txt(_conf['band'])}</span>"
+            f"<span style='font-weight:400;font-size:0.86rem'> · data {_conf['pct']}% "
+            f"(donor {_txt(_dtxt)} · call {_conf['call_pct']}%)</span></div>"
             "</div>", unsafe_allow_html=True)
         if _an["fatal"]:
             st.error(f"🔒 **Fatal gate — {_od.display_value(_an['fatal_trigger'])}.** "
@@ -414,7 +439,7 @@ with _main:
     # this is us against it.
     _aid_rows, _aid_prose = _od.decision_aid(_view)
     if _aid_rows or _aid_prose:
-        st.markdown("##### Decision aid — this entity against this call")
+        st.markdown("##### This entity against this opportunity")
         if _aid_rows:
             st.markdown(
                 "<div class='opp-card'>"

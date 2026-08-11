@@ -775,6 +775,58 @@ def narrative_blocks(view: dict) -> list[tuple[str, list[str]]]:
 NOT_EXTRACTED = "Not extracted for this call yet."
 
 
+# ---------------------------------------------------------------------------
+# the reading order of the page
+# ---------------------------------------------------------------------------
+# A reviewer should be walked through the opportunity from the top: what it IS, then how much
+# and by when, then whether they qualify, then what it pays for, then how to submit. The prose
+# and the cards therefore have to INTERLEAVE — the narrative blocks used to be rendered as one
+# run before every card, so "What is funded" arrived long before "Who can apply" and the page
+# read as two unrelated halves. Keeping the order here rather than in the page keeps it
+# testable.
+OVERVIEW_FIELDS = (
+    ("Project overview", "full_description"),
+)
+# heading of the card section -> narrative blocks that belong immediately AFTER it
+NARRATIVE_AFTER = {
+    "Eligibility requirements": (("Compliance & hard gates", "compliance_requirements"),),
+    "Who can apply": (("What is funded", "what_is_funded"),
+                      ("What is NOT funded", "what_is_not_funded")),
+    "How to apply": (("How to apply in detail", "how_to_apply"),),
+}
+# The card sections in reading order. Anything in _SECTIONS but not named here still renders,
+# after these, so adding a section can never make it silently disappear.
+CARD_ORDER = ("Funding & awards", "Timeline", "Eligibility requirements", "Who can apply",
+              "Scope & focus", "Type of opportunity", "How to apply")
+
+
+def overview_blocks(view: dict) -> list[tuple[str, list[str], bool]]:
+    """The prose that belongs above the headline metrics — what this opportunity IS."""
+    return _named_blocks(view, OVERVIEW_FIELDS)
+
+
+def page_blocks(view: dict) -> list[tuple]:
+    """The body of section 1 in reading order: ``("cards", title, rows)`` and
+    ``("prose", heading, lines, is_missing)`` interleaved."""
+    by_title = {t: rows for t, rows in sections(view)}
+    out: list[tuple] = []
+    ordered = [t for t in CARD_ORDER if t in by_title]
+    ordered += [t for t in by_title if t not in CARD_ORDER]
+    for title in ordered:
+        out.append(("cards", title, by_title[title]))
+        for heading, lines, missing in _named_blocks(view, NARRATIVE_AFTER.get(title, ())):
+            out.append(("prose", heading, lines, missing))
+    return out
+
+
+def _named_blocks(view: dict, spec) -> list[tuple[str, list[str], bool]]:
+    out = []
+    for heading, field in spec:
+        lines = as_bullets(view.get(field))
+        out.append((heading, lines or [NOT_EXTRACTED], not lines))
+    return out
+
+
 def narrative_sections(view: dict) -> list[tuple[str, list[str], bool]]:
     """``[(heading, lines, is_missing)]`` for EVERY narrative section in the schema.
 
