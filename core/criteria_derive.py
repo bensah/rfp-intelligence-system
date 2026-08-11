@@ -1864,6 +1864,33 @@ def _foreign_pi_partner(org: dict, donor: dict | None) -> bool:
     return False
 
 
+# A closed round — "by invitation only". Read from the CALL's own words (and the donor
+# record when it carries the same rule), never inferred: an open call that merely mentions
+# the word "invite" in a sentence like "we invite applications" must not trip this, which is
+# why the pattern requires the restriction to be stated, not the verb.
+_INVITATION_ONLY_RE = re.compile(
+    r"(by[ -]invitation[ -]only|invitation[ -]only|"
+    r"(?:formal(?:ly)?\s+)?invit(?:ation|ed)\s+(?:organi[sz]ations?|applicants?|partners?)\s+"
+    r"(?:only|may\s+apply)|"
+    r"only\s+(?:those|organi[sz]ations?|applicants?)\s+(?:who|that)\s+have\s+(?:received|been\s+"
+    r"(?:sent|issued))\s+(?:a\s+)?(?:formal\s+)?invitation|"
+    r"received\s+a\s+formal\s+invitation\s+from|"
+    # "Only organisations that have been formally invited by <funder> may apply" — the
+    # wording on the call this came from, and the commonest form of the rule.
+    r"only\s+(?:\w+\s+){0,3}(?:who|that)\s+have\s+been\s+(?:formal(?:ly)?\s+)?invited|"
+    r"closed\s+(?:call|round|competition))", re.I)
+
+
+def _invitation_only(rfp: dict, donor: dict | None = None) -> bool:
+    """True when the call states that applying requires an invitation."""
+    if _truthy((donor or {}).get("donor_invitation_only")):
+        return True
+    text = " ".join(str((rfp or {}).get(f) or "") for f in
+                    ("opportunity_title", "brief_description", "eligibility_specifics",
+                     "eligibility_other", "compliance_requirements", "notes", "raw_text"))
+    return bool(_INVITATION_ONLY_RE.search(text))
+
+
 def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
                           org_settings: dict | None = None) -> list[dict]:
     """MUST-1 — LEGAL STATUS & QUALIFICATION (reworked 2026-06-28; D/F revised
@@ -2016,6 +2043,43 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
         sc, active_f = None, False
     items.append(_qfactor("prior_beneficiary", "Repeat-applicant restriction",
                           active=active_f, score=sc, hard=True, default=False))
+
+    # --- G. INVITATION-ONLY (added 2026-08-11, owner-reported from a live call) ---------
+    # Some funders run closed rounds: "only organisations that have received a formal
+    # invitation may apply". That is a qualification test in exactly the sense MUST-1
+    # measures — whether we are formally eligible to submit at all — and it had no
+    # component, so a call that bars everyone uninvited scored the same as an open one.
+    #
+    # ACTIVE only when the CALL says so, like every other item here. Scored 0 by default
+    # because an invitation is something we either hold or do not, and the extraction cannot
+    # know: absence of evidence is not an invitation. A reviewer who has one sets it to 1
+    # through Update Decision, and that override is what the roll-up then reads.
+    #
+    # Deliberately NOT a fatal gate. `fatal_decline` ends the assessment outright, which
+    # would be wrong for a fact only the reviewer can confirm — the call is unwinnable
+    # WITHOUT an invitation, but we cannot tell from the page whether one exists.
+    # `org_has_invitation` is NOT a profile column today, and deliberately so: whether we
+    # hold an invitation is per-call, not a standing property of the organisation, so it
+    # cannot live on the profile. The read is left in place for the day a per-call field
+    # exists; until then it is always falsy, the component scores 0, and the reviewer's
+    # component override is the only thing that can raise it — which is exactly the
+    # behaviour asked for. Same for `donor_invitation_only` on the donor record.
+    # `hard=False` IS THE POINT, and it is the one place this departs from "a hard gate that
+    # declines it". `hard=True` routes a component into `fatal_decline`, which ends the
+    # assessment — and `fatal_decline` does not read `criteria_component_overrides`, so a
+    # reviewer who ACTUALLY HOLDS an invitation could never rescue the call: the override
+    # would raise the component while the fatal gate kept declining. Since the requirement is
+    # that a human can correct this, it cannot be fatal.
+    #
+    # It loses nothing. MUST-1 rolls up as a mean over active components, so an unmet
+    # invitation still takes the criterion to 0 of 15 on its own when it is the only active
+    # one, and the call still reads Decline — the difference is that the rest of the criteria
+    # stay legible, which is what a reviewer needs in order to judge whether the invitation is
+    # worth chasing.
+    items.append(_qfactor("invitation_only", "Invitation received (closed round)",
+                          active=_invitation_only(rfp, donor),
+                          score=(1.0 if _truthy(org.get("org_has_invitation")) else 0.0),
+                          hard=False, default=False))
 
     return items
 
@@ -2369,6 +2433,13 @@ def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dic
     ]
 
 
+# MUST-1 components that must NOT end the assessment, because their true value is something
+# the reviewer supplies rather than something the call states. `fatal_decline` ignores
+# component overrides, so a fatal gate on one of these could never be cleared by the human who
+# holds the answer.
+_NON_FATAL_QUALIFICATION = frozenset({"invitation_only"})
+
+
 def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
                   org_settings: dict | None = None,
                   rfp_compliance: dict | None = None) -> tuple[bool, str | None]:
@@ -2381,7 +2452,19 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     # MUST-1 — identity / qualification gates.
+    #
+    # EXCEPT the ones a reviewer is expected to answer. This loop declines outright on any
+    # unmet active factor, and it does NOT read `criteria_component_overrides` — so for a
+    # component whose true value only the reviewer holds, a fatal gate can never be cleared:
+    # the override raises the component in the panel while the gate keeps declining, which
+    # looks like the app ignoring the reviewer.
+    #
+    # `invitation_only` is exactly that: whether we hold an invitation to a closed round is
+    # not visible on the call page. It still takes MUST-1 to 0 through the ordinary mean, so
+    # an uninvited org still reads Decline — it is simply reviewable rather than closed.
     for f in qualification_factors(org, rfp, eff, org_settings):
+        if f["key"] in _NON_FATAL_QUALIFICATION:
+            continue
         if f["active"] and f["met"] is False:
             return True, f["name"]
     # MUST-2 (strategic fit) is intentionally NOT a hard auto-Decline gate: unlike legal
