@@ -200,7 +200,7 @@ def drop_concluded(df):
 # submitted RFPs — Total Submitted, Approved, Under Review, Not Approved, win rate — must use
 # this weight so the whole app tells the same story.
 #
-#   weight = (Progress == Completed OR a real donor decision) * Submissions[N]
+#   weight = (Progress == Completed) * Submissions[N]
 #
 # Progress = Completed is the ONLY thing that opens the gate, and Submissions counts from 1
 # upwards once it does. Nothing else qualifies a row: an earlier version also accepted a
@@ -216,35 +216,10 @@ def drop_concluded(df):
 # row that isn't marked Completed must not inflate the totals.
 
 
-# THE DECISIONS THAT PROVE A SUBMISSION. A donor cannot approve, review or reject an
-# application it never received, so any of these three IS evidence the row was submitted —
-# whatever `progress_status` says. "Not submitted" is deliberately absent, which is what keeps
-# the migration-089 intent intact: the phantom-1 problem was a *Not submitted* donor_decision
-# counting as an application, not a real one.
-SUBMITTED_DECISIONS = frozenset({"approved", "under review", "not approved"})
-
-
 def submission_weight(row) -> int:
-    """Donor-side submissions this row contributes, else 0.
-
-    N when Progress = Completed OR the donor has recorded a real decision.
-
-    THE SECOND CLAUSE IS THE FIX for a count that disagreed with its own list. The Grants page
-    included a row in the applied-funding log on `donor_decision in SUBMITTED_DECISIONS` OR
-    Completed — 13 rows — while this weight counted only the Completed ones, so the KPI read
-    12 above a list of 13. Two rows sat in the list uncounted, both with a donor decision of
-    "Under Review" over a `progress_status` still saying "Not Started": the donor plainly had
-    the application and the progress field was simply stale.
-
-    A field somebody forgot to advance must not silently remove an application from the
-    ledger, and one page must not hold two definitions of "submitted". Weighted by
-    `submissions`, the union now reads 14 — 13 rows, one of which carries two applications to
-    the same call.
-    """
+    """Donor-side submissions this row contributes: N when Progress = Completed, else 0."""
     get = row.get if hasattr(row, "get") else (lambda k, d=None: getattr(row, k, d))
-    completed = str(get("progress_status") or "").strip().lower() == "completed"
-    decided = str(get("donor_decision") or "").strip().lower() in SUBMITTED_DECISIONS
-    if not (completed or decided):
+    if str(get("progress_status") or "").strip().lower() != "completed":
         return 0
     n = get("submissions")
     try:
@@ -254,6 +229,54 @@ def submission_weight(row) -> int:
     # A Completed row counts at least once — "Submissions naturally start counting from 1+
     # if Progress = Completed" — which is also the floor migration 089 enforces in the data.
     return max(1, n)
+
+
+# ---------------------------------------------------------------------------
+# consistency check over the submission ledger
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS. Total Submitted read 12 above an applied-funding list of 13 rows. The two
+# numbers came from two rules — the list counts a real donor decision OR Progress = Completed,
+# the weight above counts Completed only — and two rows carried a donor decision of "Under
+# Review" over a `progress_status` still saying "Not Started". A donor cannot review an
+# application it never received, so the progress field was simply stale from an edit.
+#
+# The owner's rule stands: only Progress = Completed opens the gate, because a
+# donor_decision alone once resurrected counts that migration 089 had deliberately reset. That
+# makes the DATA the thing to keep honest — so the discrepancy has to be visible rather than
+# waiting for somebody to notice two numbers disagreeing on a dashboard.
+#
+# Nothing here writes. It reports, so a human decides.
+SUBMITTED_DECISIONS = frozenset({"approved", "under review", "not approved"})
+
+
+def submission_inconsistencies(rows) -> list[dict]:
+    """Rows whose donor decision and progress status tell different stories.
+
+    ``[{"uid", "donor_decision", "progress_status", "submissions", "issue"}]``:
+
+      decided_not_completed — the donor has approved / is reviewing / has rejected it, so it
+                              WAS submitted, but Progress never reached Completed. These are
+                              missing from Total Submitted and from every submission-derived
+                              figure, and the fix is to advance the progress field.
+      completed_not_sent    — the reverse: marked Completed while the donor decision still
+                              says "Not submitted". One of the two is wrong; counted as
+                              submitted today, so it may be inflating the total.
+    """
+    out: list[dict] = []
+    for r in rows or []:
+        get = r.get if hasattr(r, "get") else (lambda k, d=None: getattr(r, k, d))
+        ps = str(get("progress_status") or "").strip().lower()
+        dd = str(get("donor_decision") or "").strip().lower()
+        issue = None
+        if dd in SUBMITTED_DECISIONS and ps != "completed":
+            issue = "decided_not_completed"
+        elif ps == "completed" and dd == "not submitted":
+            issue = "completed_not_sent"
+        if issue:
+            out.append({"uid": get("uid"), "donor_decision": get("donor_decision"),
+                        "progress_status": get("progress_status"),
+                        "submissions": get("submissions"), "issue": issue})
+    return out
 
 
 def submission_weights(df):

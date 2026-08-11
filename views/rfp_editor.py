@@ -290,7 +290,18 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
         c5, c6 = st.columns(2)
         with c5:
             donor_dec = _opt("Donor decision", "dd", dropdowns.get("donor_decision"), row.get("donor_decision"))
-        assigned = c6.text_input("Assigned to", value=_str(row.get("assigned_to")), key=f"e_assn_{row['uid']}")
+        # THE ROSTER, not a free-text box. Typing a name each time produced the same person
+        # under several spellings, which then split every per-person figure on the Report —
+        # the roster already exists (Admin > Settings > Team members) and is what every other
+        # people field in the app uses. A value already on the row that is NOT on the roster is
+        # kept and offered, so an edit never silently reassigns somebody.
+        _roster = [m for m in (dropdowns.get("team_members") or []) if str(m).strip()]
+        _cur_assn = _str(row.get("assigned_to"))
+        _opts = [""] + _roster + ([_cur_assn] if _cur_assn and _cur_assn not in _roster else [])
+        assigned = c6.selectbox("Assigned to", _opts,
+                                index=_opts.index(_cur_assn) if _cur_assn in _opts else 0,
+                                key=f"e_assn_{row['uid']}",
+                                help="From Admin > Settings > Team members.")
         c7, c8 = st.columns(2)
         action_dl = c7.date_input("Action deadline", value=_date(row.get("action_deadline")), key=f"e_actdl_{row['uid']}")
         last_upd = c8.date_input("Last update", value=_date(row.get("last_update")), key=f"e_lu_{row['uid']}")

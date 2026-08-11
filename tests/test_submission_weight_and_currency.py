@@ -21,6 +21,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from core import records                                            # noqa: E402
 from core.records import (submission_weight, submission_weights,      # noqa: E402
                           requested_currency)
 
@@ -35,36 +36,18 @@ class SubmissionWeightTests(unittest.TestCase):
                 submission_weight({"progress_status": "Completed", "submissions": v}), 1, repr(v))
 
     def test_never_submitted_contributes_nothing(self):
-        # No progress AND no donor decision — nothing was ever sent.
         for ps in ("Not Started", "In Progress", "Discontinued", "Missed", "", None):
             self.assertEqual(
                 submission_weight({"progress_status": ps, "submissions": 5}), 0, repr(ps))
 
-    def test_A_REAL_DONOR_DECISION_ALSO_OPENS_THE_GATE(self):
-        # REVERSED on 2026-08-11, at the owner's request and with a measured reason. This
-        # asserted that only Progress = Completed counted, out of a fear of "phantom 1s" —
-        # migration 089 had reset a count that a bare donor_decision would resurrect.
-        #
-        # But the Grants page put its KPI strip directly above a list built on a DIFFERENT
-        # rule: the list counts a row on `donor_decision in SUBMITTED_DECISIONS` or Completed.
-        # So the strip read 12 above a list of 13, and the two rows it dropped both carried a
-        # donor decision of "Under Review" over a `progress_status` still saying "Not Started".
-        # A donor cannot review an application it never received — the progress field was
-        # simply stale, and a field somebody forgot to advance must not remove an application
-        # from the ledger.
+    def test_only_progress_completed_opens_the_gate(self):
+        # A donor decision (or a recorded date) does NOT qualify a row on its own. An earlier
+        # version accepted them, which would have resurrected a phantom 1 on exactly the rows
+        # migration 089 reset to 0 — e.g. donor_decision set while Progress is "Not Started".
         for dd in ("Approved", "Under Review", "Not Approved"):
             self.assertEqual(
                 submission_weight({"progress_status": "Not Started",
-                                   "donor_decision": dd, "submissions": 0}), 1, dd)
-
-    def test_the_phantom_ONE_this_replaces_is_still_prevented(self):
-        # The original concern, kept: the phantom-1 was a *Not submitted* decision counting as
-        # an application. Only the three decisions that PROVE a donor received something
-        # qualify, so migration 089's zeros stay zero.
-        for dd in ("Not submitted", "not submitted", "Withdrawn", "", None, "Pending"):
-            self.assertEqual(
-                submission_weight({"progress_status": "Not Started",
-                                   "donor_decision": dd, "submissions": 5}), 0, repr(dd))
+                                   "donor_decision": dd, "submissions": 0}), 0, dd)
         self.assertEqual(submission_weight({"date_completed": "2026-04-03"}), 0)
 
     def test_bad_data_cannot_leak_through_the_gate(self):
@@ -153,50 +136,61 @@ class ExcelSubmissionsImportTests(unittest.TestCase):
         self.assertEqual(self.f(-3, "Completed"), 0)
 
 
-class TheStripAgreesWithItsOwnListTests(unittest.TestCase):
-    """The property that was visibly broken: Approved + Under Review + Not Approved must equal
-    Total Submitted, and Total Submitted must equal what the list beneath it shows."""
+class TheLedgerFlagsItsOwnInconsistenciesTests(unittest.TestCase):
+    """Total Submitted read 12 above a list of 13 rows, and nothing in the app said so — the
+    discrepancy was found by a human comparing two numbers on a dashboard.
 
-    ROWS = [
-        # one call, two applications — the multi-submit shape
-        {"progress_status": "Completed", "submissions": 2, "donor_decision": "Under Review"},
-        # submitted, donor reviewing, progress never advanced — was dropped
-        {"progress_status": "Not Started", "donor_decision": "Under Review",
-         "submissions": 0},
-        {"progress_status": "Not Started", "donor_decision": "Approved", "submissions": 0},
-        {"progress_status": "Completed", "donor_decision": "", "submissions": 1},
-        {"progress_status": "Not Started", "donor_decision": "Not Approved"},
-        # never sent — must stay out of every bucket
-        {"progress_status": "Not Started", "donor_decision": "Not submitted",
-         "submissions": 4},
-        {"progress_status": "Discontinued", "donor_decision": ""},
-    ]
+    The owner's rule stands: only Progress = Completed opens the gate, because a bare
+    donor_decision once resurrected counts migration 089 had deliberately reset. That makes the
+    DATA the thing to keep honest, so the mismatch has to be reportable rather than waiting to
+    be noticed. This reports; it never writes."""
 
-    def _w(self, r):
-        return submission_weight(r)
+    def test_a_donor_decision_over_an_unfinished_progress_is_flagged(self):
+        bad = records.submission_inconsistencies([
+            {"uid": "A", "progress_status": "Not Started", "donor_decision": "Under Review"}])
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0]["issue"], "decided_not_completed")
+        self.assertEqual(bad[0]["uid"], "A")
 
-    def test_the_total_matches_the_rows_the_list_would_show(self):
-        listed = [r for r in self.ROWS
-                  if str(r.get("progress_status") or "").strip().lower() == "completed"
-                  or str(r.get("donor_decision") or "").strip().lower()
-                  in ("approved", "under review", "not approved")]
-        self.assertEqual(len(listed), 5)                       # rows in the list
-        self.assertEqual(sum(self._w(r) for r in listed), 6)   # applications, one row x2
+    def test_every_decision_that_proves_receipt_is_flagged(self):
+        for dd in ("Approved", "Under Review", "Not Approved"):
+            with self.subTest(decision=dd):
+                self.assertEqual(len(records.submission_inconsistencies(
+                    [{"uid": "A", "progress_status": "In Progress",
+                      "donor_decision": dd}])), 1)
 
-    def test_nothing_outside_the_list_contributes(self):
-        outside = [r for r in self.ROWS
-                   if str(r.get("progress_status") or "").strip().lower() != "completed"
-                   and str(r.get("donor_decision") or "").strip().lower()
-                   not in ("approved", "under review", "not approved")]
-        self.assertEqual(sum(self._w(r) for r in outside), 0)
+    def test_the_reverse_is_flagged_too(self):
+        # Marked Completed while the donor decision still says nothing was sent. One of the two
+        # is wrong, and this one COUNTS today, so it may be inflating the total.
+        bad = records.submission_inconsistencies([
+            {"uid": "B", "progress_status": "Completed",
+             "donor_decision": "Not submitted"}])
+        self.assertEqual([b["issue"] for b in bad], ["completed_not_sent"])
 
-    def test_the_buckets_add_up_to_the_total(self):
-        dd = lambda r: str(r.get("donor_decision") or "").strip().lower()
-        comp = lambda r: str(r.get("progress_status") or "").strip().lower() == "completed"
-        total = sum(self._w(r) for r in self.ROWS)
-        approved = sum(self._w(r) for r in self.ROWS if dd(r) == "approved")
-        not_appr = sum(self._w(r) for r in self.ROWS if dd(r) == "not approved")
-        pending = sum(self._w(r) for r in self.ROWS
-                      if dd(r) == "under review"
-                      or (comp(r) and dd(r) not in ("approved", "not approved")))
-        self.assertEqual(approved + pending + not_appr, total)
+    def test_a_consistent_ledger_reports_nothing(self):
+        self.assertEqual(records.submission_inconsistencies([
+            {"uid": "A", "progress_status": "Completed", "donor_decision": "Under Review"},
+            {"uid": "B", "progress_status": "Completed", "donor_decision": "Approved"},
+            {"uid": "C", "progress_status": "Not Started", "donor_decision": "Not submitted"},
+            {"uid": "D", "progress_status": "Discontinued", "donor_decision": ""},
+            {"uid": "E", "progress_status": "In Progress", "donor_decision": None},
+        ]), [])
+
+    def test_it_reports_and_never_writes(self):
+        # A validation check that mutates is a migration wearing a disguise.
+        rows = [{"uid": "A", "progress_status": "Not Started",
+                 "donor_decision": "Approved", "submissions": 0}]
+        before = [dict(r) for r in rows]
+        records.submission_inconsistencies(rows)
+        self.assertEqual(rows, before)
+
+    def test_the_flagged_row_carries_what_a_human_needs_to_fix_it(self):
+        bad = records.submission_inconsistencies([
+            {"uid": "A", "progress_status": "Not Started", "donor_decision": "Approved",
+             "submissions": 2}])[0]
+        for key in ("uid", "donor_decision", "progress_status", "submissions", "issue"):
+            self.assertIn(key, bad)
+
+    def test_empty_and_none_are_safe(self):
+        self.assertEqual(records.submission_inconsistencies([]), [])
+        self.assertEqual(records.submission_inconsistencies(None), [])
