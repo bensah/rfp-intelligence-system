@@ -17,6 +17,8 @@ from urllib.parse import quote as _quote
 
 import streamlit as st
 
+from core import ui_links as _links
+
 from core import opportunity_feed as _feed
 from db.supabase_client import get_client, _tenant_scope_tid
 
@@ -145,7 +147,10 @@ def _render_item(item: dict) -> None:
     title = (item["title"][:70] + "…") if len(item["title"]) > 70 else item["title"]
     uid = str(item.get("uid") or "").strip()
     if uid:
-        st.markdown(f"**[{title}](/opportunity?uid={_quote(uid)})**")
+        # SAME TAB: this is another page of this app, and a markdown link would have opened a
+        # new browser tab (Streamlit renders markdown links with target=_blank).
+        st.markdown(_links.internal_link(title, "opportunity", bold=True, uid=uid),
+                    unsafe_allow_html=True)
     else:
         # No uid to link to (shouldn't happen — both stores carry one). Don't emit a link
         # that goes nowhere useful; the external ↗ below is still offered.
