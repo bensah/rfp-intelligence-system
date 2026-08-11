@@ -14,6 +14,7 @@ from datetime import date, datetime, timezone
 
 import pandas as pd
 import plotly.graph_objects as go
+from urllib.parse import quote as _quote
 import streamlit as st
 
 from core import dropdowns, settings
@@ -909,6 +910,19 @@ if not edit_mode:
         f"</div>",
         unsafe_allow_html=True,
     )
+    # VIEW sits beside the decision buttons and is available to EVERY role, including a
+    # reader who cannot edit: it opens the full opportunity page — the whole extracted call
+    # laid out in our own structure, plus the scoring — which until now was only reachable
+    # from the opportunity rail. A reviewer looking at a decision is exactly who needs to
+    # read the call it is about.
+    st.markdown("<div style='margin-top:18px'></div>", unsafe_allow_html=True)
+    _vc1, _vc2, _vc3 = st.columns([1, 1, 3])
+    _vc1.markdown(
+        f"<a href='/opportunity?uid={_quote(str(row.get('uid') or ''))}' target='_self' "
+        "style='display:block;text-align:center;padding:8px 12px;border-radius:8px;"
+        "border:1px solid #16734a;color:#16734a;font-weight:600;text-decoration:none'>"
+        "🔍 View opportunity</a>", unsafe_allow_html=True)
+
     if can_edit:
         # Breathing room between the decision card and the Update Decision button.
         st.markdown("<div style='margin-top:18px'></div>", unsafe_allow_html=True)
