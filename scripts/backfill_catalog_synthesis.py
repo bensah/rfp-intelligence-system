@@ -60,6 +60,9 @@ def _fetch(url: str) -> str | None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=10)
+    ap.add_argument("--redo", action="store_true",
+                    help="re-ask rows that already have an answer (use after a prompt "
+                         "change); by default those are skipped so a run advances")
     ap.add_argument("--apply", action="store_true",
                     help="write to the database (default is a dry run)")
     ap.add_argument("--fetch-html", action="store_true",
@@ -73,10 +76,6 @@ def main() -> int:
     from core import catalog_synthesis as CS
 
     sb = service_client()
-    q = sb.table("extracted_solicitations").select("*")
-    if args.uid:
-        q = q.eq("uid", args.uid)
-    rows = q.limit(max(args.limit * 4, 40)).execute().data or []
 
     def _blank(v):
         if v is None:
@@ -85,18 +84,46 @@ def main() -> int:
             return len(v) == 0
         return str(v).strip() in ("", "[]", "{}")
 
-    # Rows worth spending a call on: some text to read, and something still missing.
-    eligible = [r for r in rows
-                if str(r.get("raw_text") or "").strip()
-                and any(_blank(r.get(f)) for f in CS.ALL_FIELDS)]
-    # A row whose raw_text is site boilerplate cannot answer, so it does not consume a call.
-    thin = [r for r in eligible if len(str(r.get("raw_text") or "")) < CS._MIN_TEXT]
-    todo = [r for r in eligible if r not in thin][:args.limit]
+    # A ROW IS "ALREADY ASKED" IF ANY HIGH-YIELD FIELD CAME BACK.
+    #
+    # The selector used to be "any field still blank", which meant every completed row
+    # re-qualified for ever: what_is_not_funded returns on 14% of rows, attachments on 4%,
+    # eligibility_countries on 2%, so those stay blank on nearly everything. A second visit
+    # spends a call to re-attempt exactly the fields the model already declined — observed
+    # live as 7 calls buying 2 fields, on rows finished in the previous batch.
+    #
+    # These three come back on 94-100% of rows, so one of them present means the model has
+    # read this page. --redo forces a re-ask when the prompt has changed and you WANT that.
+    _ASKED = ("full_description", "applicant_fit_profile", "what_is_funded")
+
+    def _already_asked(r):
+        return any(not _blank(r.get(f)) for f in _ASKED)
+
+    # ORDERED, so consecutive runs advance through the catalogue instead of re-reading
+    # whatever the database happened to return first.
+    q = sb.table("extracted_solicitations").select("*").order("uid")
+    if args.uid:
+        q = q.eq("uid", args.uid)
+    rows = q.limit(5000).execute().data or []
+
+    with_text = [r for r in rows if str(r.get("raw_text") or "").strip()]
+    thin = [r for r in with_text if len(str(r.get("raw_text") or "")) < CS._MIN_TEXT]
+    readable = [r for r in with_text if r not in thin]
+    done = [r for r in readable if _already_asked(r)]
+    pending = readable if args.redo else [r for r in readable if not _already_asked(r)]
+    todo = pending[:args.limit]
 
     print(f"model      : {CS._model()}")
     print(f"mode       : {'APPLY (writes)' if args.apply else 'DRY RUN (no writes)'}")
-    print(f"fetch html : {args.fetch_html}")
-    print(f"candidates : {len(todo)} of {len(rows)} scanned\n")
+    print(f"fetch html : {args.fetch_html}"
+          + ("   REDO: re-asking rows already answered" if args.redo else ""))
+    print(f"catalogue  : {len(rows)} rows")
+    print(f"  no text / boilerplate only : {len(rows) - len(readable)}"
+          f"  (under {CS._MIN_TEXT} chars — no call spent)")
+    print(f"  already synthesised        : {len(done)}")
+    print(f"  still to do                : {len(pending)}")
+    print(f"this batch : {len(todo)}")
+    print()
     if not todo:
         print("Nothing to do.")
         return 0
