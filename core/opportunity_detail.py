@@ -646,7 +646,9 @@ NARRATIVE_FIELDS = (
     ("How to apply", "how_to_apply"),
     ("What is funded", "what_is_funded"),
     ("What is NOT funded", "what_is_not_funded"),
-    ("Compliance & hard gates", "compliance_requirements"),
+    # "Compliance requirements" — the phrase the call itself uses. "Hard gates" is our
+    # screening vocabulary and meant nothing to a reader looking at the funder's terms.
+    ("Compliance requirements", "compliance_requirements"),
 )
 
 # ---------------------------------------------------------------------------
@@ -843,22 +845,35 @@ def overview_text(view: dict) -> str:
     cut = t[:OVERVIEW_MAX_CHARS]
     stop = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
     return (cut[:stop + 1] if stop > OVERVIEW_MAX_CHARS // 2 else cut).rstrip() + " …"
-# heading of the card section -> narrative blocks that belong immediately AFTER it
-NARRATIVE_AFTER = {
-    "Eligibility requirements": (("Compliance & hard gates", "compliance_requirements"),),
-    "Who can apply": (("What is funded", "what_is_funded"),
-                      ("What is NOT funded", "what_is_not_funded")),
-    "How to apply": (("How to apply in detail", "how_to_apply"),),
+# Prose that belongs INSIDE a subsection, under its fact rows and with no heading of its own.
+# "How to apply" followed by "How to apply in detail" was two headings for one subject; the
+# narrative is simply the detail of the thing above it.
+INLINE_PROSE = {
+    "How to apply": ("how_to_apply",),
+    "Eligibility requirements": ("compliance_requirements",),
 }
-# The card sections in reading order. Anything in _SECTIONS but not named here still renders,
-# after these, so adding a section can never make it silently disappear.
-CARD_ORDER = ("Funding & awards", "Timeline", "Type of opportunity",
-              "Eligibility requirements", "Who can apply", "Scope & focus", "How to apply")
 
+# Prose that gets its own full-width row, because it is long enough to deserve the measure.
+# (heading, field) pairs; a row holding two of them renders them side by side.
+PROSE_ROWS = (
+    (("What is funded", "what_is_funded"), ("What is NOT funded", "what_is_not_funded")),
+)
+
+# THE VISUAL ROWS OF SECTION 1. Stated explicitly because the previous approach — stream the
+# sections into a two-column run and reset the run whenever prose appeared — left holes all
+# down the page: a card on the left with nothing beside it, then a heading, then another lone
+# card. Pairing is a layout decision, so it is made here where it can be read and tested.
 # Only these render with card chrome. Seven cards turned the page into a wall of boxes, and a
-# box is only worth it for a tight column of key/value facts — numbers and dates a reader
-# scans rather than reads. Everything else reads better as labelled lines in open text.
+# box is only worth it for a tight column of numbers and dates a reader scans rather than
+# reads. Everything else reads better as labelled lines in open text.
 AS_CARDS = frozenset({"Funding & awards", "Timeline", "Type of opportunity"})
+
+LAYOUT_ROWS = (
+    ("Funding & awards", "Timeline"),
+    ("Eligibility requirements", "Type of opportunity"),
+    ("Who can apply", "How to apply"),
+    ("Scope & focus",),
+)
 
 
 def overview_blocks(view: dict) -> list[tuple[str, list[str], bool]]:
@@ -866,17 +881,43 @@ def overview_blocks(view: dict) -> list[tuple[str, list[str], bool]]:
     return _named_blocks(view, OVERVIEW_FIELDS)
 
 
-def page_blocks(view: dict) -> list[tuple]:
-    """The body of section 1 in reading order: ``("cards", title, rows)`` and
-    ``("prose", heading, lines, is_missing)`` interleaved."""
+def page_rows(view: dict) -> list[list[dict]]:
+    """Section 1 as VISUAL ROWS. Each row holds one or two blocks, rendered side by side.
+
+    A block is either a fact block —
+        ``{"kind": "cards"|"facts", "title", "rows": [(label, value)], "prose": [lines]}``
+    — where `prose` is the subsection's own detail, shown under its rows without a second
+    heading; or a prose block —
+        ``{"kind": "prose", "title", "lines", "missing": bool}``.
+
+    Sections not named in LAYOUT_ROWS still appear, paired up after the named ones, so adding
+    one can never make it silently vanish.
+    """
     by_title = {t: rows for t, rows in sections(view)}
-    out: list[tuple] = []
-    ordered = [t for t in CARD_ORDER if t in by_title]
-    ordered += [t for t in by_title if t not in CARD_ORDER]
-    for title in ordered:
-        out.append(("cards" if title in AS_CARDS else "facts", title, by_title[title]))
-        for heading, lines, missing in _named_blocks(view, NARRATIVE_AFTER.get(title, ())):
-            out.append(("prose", heading, lines, missing))
+    planned = [t for row in LAYOUT_ROWS for t in row]
+    extra = [t for t in by_title if t not in planned]
+
+    def _block(title: str) -> dict:
+        prose: list[str] = []
+        for field in INLINE_PROSE.get(title, ()):
+            prose.extend(as_bullets(view.get(field)))
+        return {"kind": "cards" if title in AS_CARDS else "facts", "title": title,
+                "rows": by_title[title], "prose": prose}
+
+    out: list[list[dict]] = []
+    for row in LAYOUT_ROWS:
+        blocks = [_block(t) for t in row if t in by_title]
+        if blocks:
+            out.append(blocks)
+    for i in range(0, len(extra), 2):                 # pair the leftovers, never orphan them
+        out.append([_block(t) for t in extra[i:i + 2]])
+    for prose_row in PROSE_ROWS:
+        blocks = []
+        for heading, field in prose_row:
+            lines = as_bullets(view.get(field))
+            blocks.append({"kind": "prose", "title": heading,
+                           "lines": lines or [MISSING], "missing": not lines})
+        out.append(blocks)
     return out
 
 
