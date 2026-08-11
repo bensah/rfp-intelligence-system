@@ -161,6 +161,84 @@ def _ok_primary(url: str | None) -> bool:
         return True
 
 
+# A host the registry already classes as a primary source is not a guess — a human curated
+# that list (73 hosts, 59 carrying the funder's name), so it deserves weight the
+# domain-spelling heuristic cannot give.
+#
+# CALIBRATED TO EXACTLY THE ACCEPTANCE THRESHOLD, deliberately. Registry membership alone is
+# then JUST enough to accept a host, which fixes the real failure — a funder whose domain
+# does not echo its name scored nothing, fell below the bar, and the aggregator hit was
+# dropped rather than resolved. It is not enough to DOMINATE: the registry holds large
+# portals that each carry thousands of unrelated calls, and at a higher weight a small
+# foundation's call resolved to a government portal that never hosted it. Membership says
+# the host is a legitimate primary; the name match says the page is about THIS call, and
+# relevance has to win.
+_REGISTRY_PRIMARY_BONUS = _MIN_DOMAIN_SCORE
+
+
+def _registry_bonus(url: str) -> float:
+    try:
+        from core import source_registry
+        return _REGISTRY_PRIMARY_BONUS if source_registry.is_registry_primary(url) else 0.0
+    except Exception:
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+# the funder must come from the RESOLVED page, never from the aggregator
+# ---------------------------------------------------------------------------
+# THE LEAK THIS CLOSES. Resolution already replaced the aggregator URL with the donor's own
+# page, and the pipeline drops any hit that fails to resolve — so no aggregator URL is
+# stored. But `funding_agency` was never re-derived, so the aggregator's own label rode along
+# into the store: 20 catalogue rows and 7 pipeline rows read "DevelopmentAid Aggregator",
+# "FundsForNGOs", or even a bare host as the funder. On the page and in the opportunity rail
+# that is exactly what a reviewer sees as the donor.
+_AGG_FUNDER_RE = re.compile(
+    r"(developmentaid|fundsforngos?|fundsforngo|devex|grantwatch|grantstation|"
+    r"grantforward|instrumentl|opengrants|grantbite|grantgopher|aggregator)", re.I)
+# "www2.fundsforngos.org" as a funder name — the scraper falling back to the host.
+_HOSTLIKE_RE = re.compile(r"^(https?://)?(www\d?\.)?[a-z0-9-]+(\.[a-z0-9-]+){1,}/?$", re.I)
+
+
+def is_aggregator_funder(name: str | None) -> bool:
+    """True when a funder string is an aggregator's label or a bare hostname rather than an
+    actual funder — neither may be stored as the donor."""
+    s = str(name or "").strip()
+    if not s:
+        return False
+    return bool(_AGG_FUNDER_RE.search(s) or _HOSTLIKE_RE.match(s))
+
+
+def _funder_from_page(url: str, soup) -> str | None:
+    """The site's own name for itself: the curated registry name first (a human wrote it),
+    then `og:site_name`, then the tail of the `<title>` — publishers put the site name
+    after a dash or pipe. Returns None rather than a guess when nothing is trustworthy."""
+    try:
+        from core import source_registry
+        curated = source_registry.primary_donor_name(url)
+        if curated:
+            return curated
+    except Exception:
+        pass
+    if soup is None:
+        return None
+    try:
+        og = soup.find("meta", attrs={"property": "og:site_name"})
+        val = (og.get("content") or "").strip() if og else ""
+        if 2 < len(val) <= 80 and not is_aggregator_funder(val):
+            return val
+        t = soup.find("title")
+        raw = (t.get_text(" ", strip=True) if t else "") or ""
+        for sep in ("|", " - ", " – ", " — ", "::"):
+            if sep in raw:
+                tail = raw.rsplit(sep, 1)[-1].strip()
+                if 2 < len(tail) <= 80 and not is_aggregator_funder(tail):
+                    return tail
+    except Exception:
+        return None
+    return None
+
+
 def _resolve_via_backlink(items: list[dict], name_tokens: set[str]) -> str | None:
     """Hard case — the primary's domain doesn't echo the name. Fetch the top
     results (even aggregators) and pull their best OUTBOUND link to the funder's
@@ -191,7 +269,7 @@ def _resolve_via_backlink(items: list[dict], name_tokens: set[str]) -> str | Non
                 continue
             if not _ok_primary(href):
                 continue
-            s = _score_domain(href, name_tokens)
+            s = _score_domain(href, name_tokens) + _registry_bonus(href)
             atext = (a.get_text(" ", strip=True) or "").lower()
             if any(k in atext for k in ("official", "donor_website", "apply",
                                         "source", "visit", "homepage", "learn more")):
@@ -240,7 +318,7 @@ def resolve(title: str, funder: str | None = None, *, num: int = 10) -> str | No
             url = it.get("link") or it.get("url") or ""
             if not _ok_primary(url):
                 continue
-            s = _score_domain(url, name_tokens)
+            s = _score_domain(url, name_tokens) + _registry_bonus(url)
             blob = f"{it.get('title','')} {it.get('snippet') or it.get('content','')}"
             if _RFP_HINT_RE.search(blob):
                 s += 1.0
@@ -290,6 +368,16 @@ def resolve_and_enrich(cand: dict) -> bool:
     cand["_aggregator_link"] = cand.get("opportunity_link")
     cand["opportunity_link"] = src
     cand["_resolved_from_aggregator"] = True
+    # THE FUNDER COMES FROM THE RESOLVED PAGE. Without this the aggregator's own label
+    # survived as the donor even though its URL was replaced — a reviewer then read
+    # "FundsForNGOs" as the funder in the rail and on the opportunity page. Only overwrite
+    # when what we hold IS an aggregator label or a bare host: a real funder name that the
+    # listing happened to get right must not be traded for a page's <title> tail.
+    if is_aggregator_funder(cand.get("funding_agency")) or not cand.get("funding_agency"):
+        better = _funder_from_page(src, soup)
+        if better:
+            cand["_funder_from_aggregator"] = cand.get("funding_agency")
+            cand["funding_agency"] = better
     dl = _extract_deadline_from_text(text)
     if dl:
         cand["call_submission_deadline"] = dl

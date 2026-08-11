@@ -69,6 +69,75 @@ def confirmed_class(host: str) -> str | None:
 
 def clear_cache() -> None:
     _CACHE.update(t=0.0, rows=None)
+    _PRIMARY_CACHE.update(t=0.0, rows=None)
+
+
+# ---------------------------------------------------------------------------
+# the verified primary-source list, for resolving an aggregator hit
+# ---------------------------------------------------------------------------
+# `get_all` deliberately selects only the four columns the detector needs, and is
+# keyed on `classification`. The registry ALSO carries the curated catalogue
+# columns — `source_class` ("Primary source" on 73 hosts) and `donor_name`
+# (populated on 59 of them) — which is the verified/unverified list a human has
+# been maintaining. Resolving an aggregator hit should prefer those hosts over a
+# domain-name guess, and can take the funder's real name straight from the row.
+_PRIMARY_CACHE: dict = {"t": 0.0, "rows": None}
+
+
+def primary_hosts(force: bool = False) -> dict[str, str]:
+    """``{host: donor_name}`` for every registry host classed as a PRIMARY source.
+
+    `donor_name` is "" when the row has none. Verified rows and pending ones are both
+    included: a pending row is a host a human has not got to yet, not a rejected one, and
+    it is still a far better answer than a guess off the domain spelling. A host explicitly
+    marked `rejected` is excluded.
+    """
+    now = time.time()
+    if not force and _PRIMARY_CACHE["rows"] is not None \
+            and now - _PRIMARY_CACHE["t"] < _TTL:
+        return _PRIMARY_CACHE["rows"]
+    out: dict[str, str] = {}
+    try:
+        data = (get_client().table(_TABLE)
+                .select("host,source_class,status,donor_name").execute().data or [])
+        for r in data:
+            host = (r.get("host") or "").strip().lower()
+            if not host or (r.get("status") or "").lower() == "rejected":
+                continue
+            if str(r.get("source_class") or "").strip().lower().startswith("primary"):
+                out[host] = (r.get("donor_name") or "").strip()
+    except Exception as exc:
+        log.debug("source_registry.primary_hosts unavailable: %s", exc)
+        out = {}
+    _PRIMARY_CACHE.update(t=now, rows=out)
+    return out
+
+
+def primary_donor_name(url: str | None) -> str | None:
+    """The curated funder name for `url`'s host when the registry knows it as a primary
+    source, else None. This is how a resolved page gets the FUNDER's name instead of
+    keeping the aggregator's label."""
+    host = normalize_host(url)
+    if not host:
+        return None
+    hosts = primary_hosts()
+    name = hosts.get(host)
+    if name:
+        return name
+    # A call often sits on a subdomain of a registered host (portal.funder.org).
+    for h, n in hosts.items():
+        if n and (host == h or host.endswith("." + h)):
+            return n
+    return None
+
+
+def is_registry_primary(url: str | None) -> bool:
+    """True when the host is in the registry's primary-source list (name or not)."""
+    host = normalize_host(url)
+    if not host:
+        return False
+    hosts = primary_hosts()
+    return host in hosts or any(host.endswith("." + h) for h in hosts)
 
 
 # Pre-037 columns (always present) + the 037 additions (opportunity_types /
