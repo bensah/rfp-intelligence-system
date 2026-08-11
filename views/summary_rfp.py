@@ -20,6 +20,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from core import records as _records
+
 from core import settings
 from core.currency import format_money
 from core.pipeline import (
@@ -221,14 +223,23 @@ park = int(dec_lower.eq("park").sum())
 decline = int(dec_lower.eq("decline").sum())
 
 # Row 1 — counts
+# The submission total, computed HERE so the card can show it — the figure further down uses
+# the same rule (records.submission_weight: Progress = Completed, times Submissions), so the
+# two cannot drift. Over `unique`, not `rfps`, because a duplicate row is not a second
+# application: the Duplicates card is where duplication is reported.
+_snapshot_submitted = int(_records.submission_weights(unique).sum()) if len(unique) else 0
+
+# "Total Found" is gone: it counted rows INCLUDING duplicates, so it was the unique count
+# plus the duplicate count and said nothing the other two cards did not already say —
+# while reading like the headline figure. The ledger's own total takes its place at the end.
 r1c = st.columns(6)
 for col, (label, val) in zip(r1c, [
-    ("Total Found", len(rfps)),
-    ("Unique Found", len(unique)),
+    ("Total Unique Found", len(unique)),
     ("Proceed", proceed),
     ("Parked", park),
     ("Declined", decline),
     ("Duplicates", dup_count),
+    ("Total Submitted", _snapshot_submitted),
 ]):
     with col:
         _kpi(label, val)

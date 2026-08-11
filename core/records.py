@@ -231,6 +231,54 @@ def submission_weight(row) -> int:
     return max(1, n)
 
 
+# ---------------------------------------------------------------------------
+# consistency check over the submission ledger
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS. Total Submitted read 12 above an applied-funding list of 13 rows. The two
+# numbers came from two rules — the list counts a real donor decision OR Progress = Completed,
+# the weight above counts Completed only — and two rows carried a donor decision of "Under
+# Review" over a `progress_status` still saying "Not Started". A donor cannot review an
+# application it never received, so the progress field was simply stale from an edit.
+#
+# The owner's rule stands: only Progress = Completed opens the gate, because a
+# donor_decision alone once resurrected counts that migration 089 had deliberately reset. That
+# makes the DATA the thing to keep honest — so the discrepancy has to be visible rather than
+# waiting for somebody to notice two numbers disagreeing on a dashboard.
+#
+# Nothing here writes. It reports, so a human decides.
+SUBMITTED_DECISIONS = frozenset({"approved", "under review", "not approved"})
+
+
+def submission_inconsistencies(rows) -> list[dict]:
+    """Rows whose donor decision and progress status tell different stories.
+
+    ``[{"uid", "donor_decision", "progress_status", "submissions", "issue"}]``:
+
+      decided_not_completed — the donor has approved / is reviewing / has rejected it, so it
+                              WAS submitted, but Progress never reached Completed. These are
+                              missing from Total Submitted and from every submission-derived
+                              figure, and the fix is to advance the progress field.
+      completed_not_sent    — the reverse: marked Completed while the donor decision still
+                              says "Not submitted". One of the two is wrong; counted as
+                              submitted today, so it may be inflating the total.
+    """
+    out: list[dict] = []
+    for r in rows or []:
+        get = r.get if hasattr(r, "get") else (lambda k, d=None: getattr(r, k, d))
+        ps = str(get("progress_status") or "").strip().lower()
+        dd = str(get("donor_decision") or "").strip().lower()
+        issue = None
+        if dd in SUBMITTED_DECISIONS and ps != "completed":
+            issue = "decided_not_completed"
+        elif ps == "completed" and dd == "not submitted":
+            issue = "completed_not_sent"
+        if issue:
+            out.append({"uid": get("uid"), "donor_decision": get("donor_decision"),
+                        "progress_status": get("progress_status"),
+                        "submissions": get("submissions"), "issue": issue})
+    return out
+
+
 def submission_weights(df):
     """Vectorised `submission_weight` → an int Series aligned to `df` (0 for an empty df)."""
     import pandas as _pd
