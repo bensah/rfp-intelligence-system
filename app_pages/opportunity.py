@@ -310,9 +310,14 @@ with _main:
     # Each row is N side-by-side COLUMNS, and each column STACKS its blocks — so a short card
     # is followed straight away by the next one in the same column instead of leaving dead
     # space until the tallest block in the row ends.
-    for _row in _rows:
-        _cols = st.columns(len(_row), gap="medium") if len(_row) > 1 else [st.container()]
-        for _stack, _c in zip(_row, _cols):
+    # NOT `_row`: that name holds the OPPORTUNITY row for the whole page, and shadowing it
+    # here left section 2 scoring a list instead of the record — which raised, and a raised
+    # exception with error details suppressed renders as BLANK SPACE under the heading. That
+    # is the empty "Decision aid" section, and it broke both the catalogue and pipeline paths.
+    for _layout_row in _rows:
+        _cols = (st.columns(len(_layout_row), gap="medium")
+                 if len(_layout_row) > 1 else [st.container()])
+        for _stack, _c in zip(_layout_row, _cols):
             with _c:
                 for _b in _stack:
                     _render(_b)
