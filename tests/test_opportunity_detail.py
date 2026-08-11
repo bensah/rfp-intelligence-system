@@ -278,23 +278,47 @@ class TestDurationCarriesItsUnit(unittest.TestCase):
 
 
 class TestTheStandardLayout(unittest.TestCase):
-    def test_blank_and_placeholder_fields_are_dropped(self):
+    def test_a_blank_field_shows_a_DASH_rather_than_vanishing(self):
+        # Reversed deliberately (owner, 2026-08-11). Dropping empty rows read better on one
+        # call but changed the page's SHAPE between calls, so a reader could not tell "this
+        # funder said nothing about it" from "this app does not track it", and could not
+        # compare two calls by eye. A dash is a statement; a missing row is ambiguous.
         v = od.standard_view(od.KIND_PIPELINE, PIPELINE_ROW, None)
         flat = _flat(v)
-        self.assertNotIn("Instrument", flat)          # None
-        self.assertNotIn("Key risks", flat)           # ""
+        self.assertEqual(flat["Expected award date"], od.MISSING)   # not on the row
+        self.assertEqual(flat["Institution types accepted"], od.MISSING)
+        self.assertNotIn("Key risks", flat)      # tenant-specific, in the decision aid
 
-    def test_a_serialised_empty_collection_is_dropped(self):
+    def test_a_serialised_empty_collection_still_counts_as_blank(self):
+        # The jsonb columns arrive as the literal "[]" — which must read as a dash, never as
+        # a value. That detection is what this test has always been about.
         v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
-        self.assertNotIn("Funding tiers", _flat(v))   # was the literal "[]"
+        self.assertEqual(_flat(v)["Funding tiers"], od.MISSING)
 
     def test_placeholder_strings_count_as_blank(self):
         v = {"funder_name": "Not stated", "instrument_type": "n/a",
              "opportunity_type": "unknown", "agency_code": "  ", "deadline": "TBD"}
-        self.assertEqual(od.sections(v), [])
+        values = {val for _t, rows in od.sections(v) for _lb, val in rows}
+        self.assertEqual(values, {od.MISSING})
 
-    def test_empty_sections_are_dropped_whole(self):
-        self.assertEqual(od.sections({}), [])
+    def test_the_whole_skeleton_renders_even_for_an_empty_view(self):
+        # The page must show what it TRACKS, not only what this call happened to state.
+        titles = [t for t, _rows in od.sections({})]
+        self.assertIn("Funding & awards", titles)
+        self.assertIn("Who can apply", titles)
+        self.assertTrue(all(val == od.MISSING
+                            for _t, rows in od.sections({}) for _lb, val in rows))
+
+    def test_a_row_suppressed_as_a_DUPLICATE_is_not_shown_as_a_gap(self):
+        # The layout pseudo-fields are the exception: an award "range" that merely repeats the
+        # single award value, or a second reference identical to the header one, were
+        # suppressed because they are redundant — printing a dash would invent a gap.
+        v = {"opportunity_name": "A Call", "grant_amount": 500000, "currency": "USD",
+             "call_award_floor": 500000, "call_award_ceiling": 500000,
+             "opportunity_id": "X-1", "funding_opportunity_number": "X-1"}
+        flat = _flat(v)
+        self.assertNotIn("Award range (per award)", flat)
+        self.assertNotIn("Opportunity number", flat)
 
     def test_sections_follow_THE_REVIEWERS_QUESTIONS(self):
         # Not the schema's storage order: how much, by when, can we apply, is it our kind
@@ -303,7 +327,8 @@ class TestTheStandardLayout(unittest.TestCase):
         v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
         titles = [t for t, _ in od.sections(v)]
         expected = ["Funding & awards", "Timeline", "Who can apply", "Scope & focus",
-                    "Award type", "How to apply"]
+                    "Type of opportunity", "How to apply"]
+        expected.insert(2, "Eligibility requirements")
         self.assertEqual(titles, [t for t in expected if t in titles])
         self.assertNotIn("Provenance", titles)
         self.assertNotIn("Identity", titles)
@@ -311,7 +336,7 @@ class TestTheStandardLayout(unittest.TestCase):
     def test_a_list_field_renders_as_text_not_a_python_repr(self):
         v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
         self.assertEqual(_flat(v)["Geographic scope"], "Countryland")
-        self.assertEqual(_flat(v)["Applicant types"], "NGO")
+        self.assertEqual(_flat(v)["Institution types accepted"], "NGO")
 
 
 class TestNarrativeAndRawRead(unittest.TestCase):
@@ -788,3 +813,155 @@ class TestTheExtractionJoinIsCaseInsensitive(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheFullSchemaIsAlwaysOnScreen(unittest.TestCase):
+    """Owner's call, 2026-08-11: show every section a user can see, even where the data is
+    not extracted yet.
+
+    The reason is comparability. A page that hides what it has nothing for changes shape from
+    call to call, so a reader cannot tell "this funder said nothing about project duration"
+    from "this app does not track project duration", and cannot scan two calls for the same
+    row because it sits in a different place in each. The cost is a card with dashes in it;
+    the benefit is that the dash carries information."""
+
+    THIN = {"opportunity_name": "A Sparse Call", "funder_name": "A Funder",
+            "deadline": "2026-09-01"}
+
+    def test_every_section_appears_however_little_the_call_stated(self):
+        titles = [t for t, _rows in od.sections(self.THIN)]
+        for expected in ("Funding & awards", "Timeline", "Who can apply",
+                         "Scope & focus", "Type of opportunity", "How to apply"):
+            with self.subTest(section=expected):
+                self.assertIn(expected, titles)
+
+    def test_every_tracked_field_appears(self):
+        flat = _flat(self.THIN)
+        for label in ("Total programme funding", "Expected number of awards",
+                      "Funding tiers", "Posted", "Status", "Window",
+                      "Expected award date", "Time to award",
+                      # the call's OWN eligibility, in its own section
+                      "Institution types accepted", "Eligible countries (applicants)",
+                      "Other conditions", "Compliance requirements",
+                      "Ideal applicant",
+                      "Geographic scope", "Sector", "Programme areas", "Project stages",
+                      "Submission format", "Application language", "Application steps"):
+            with self.subTest(label=label):
+                self.assertIn(label, flat)
+
+    def test_the_placeholder_is_a_single_consistent_mark(self):
+        self.assertEqual(od.MISSING, "—")
+        vals = {v for _t, rows in od.sections(self.THIN) for _lb, v in rows}
+        self.assertIn(od.MISSING, vals)
+
+    def test_a_populated_field_still_shows_its_value(self):
+        # The skeleton must not flatten real data into dashes.
+        v = dict(self.THIN, funding_status="Open", solicitation_language="English")
+        flat = _flat(v)
+        self.assertEqual(flat["Status"], "Open")
+        self.assertEqual(flat["Application language"], "English")
+
+    def test_every_narrative_section_appears_too(self):
+        got = od.narrative_sections(self.THIN)
+        self.assertEqual([h for h, _l, _m in got],
+                         [h for h, _f in od.NARRATIVE_FIELDS])
+        self.assertTrue(all(m for _h, _l, m in got))          # all missing here
+        self.assertEqual(got[0][1], [od.NOT_EXTRACTED])
+
+    def test_a_narrative_section_with_content_is_not_marked_missing(self):
+        v = dict(self.THIN, what_is_funded="Equipment\nTraining")
+        by_heading = {h: (lines, missing) for h, lines, missing
+                      in od.narrative_sections(v)}
+        lines, missing = by_heading["What is funded"]
+        self.assertFalse(missing)
+        self.assertEqual(lines, ["Equipment", "Training"])
+
+    def test_the_narrative_placeholder_names_OUR_gap_not_the_funders(self):
+        # These are the LLM-synthesis fields, so "not extracted" is the honest word: the gap
+        # is ours, and a reviewer should read it that way rather than as funder silence.
+        self.assertIn("Not extracted", od.NOT_EXTRACTED)
+
+
+class TestTheSourcesOwnTextIsNotInTheUserView(unittest.TestCase):
+    """A different publisher's structure on screen beside ours undid the one thing this page
+    is for — that every call reads the same way. It stays available for audit."""
+
+    def test_the_raw_extract_is_still_reachable_for_audit(self):
+        v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
+        self.assertEqual(od.as_published(v),
+                         "The full page text as published by the funder.")
+
+    def test_it_is_not_one_of_the_user_sections(self):
+        v = od.standard_view(od.KIND_CATALOG, CATALOG_ROW, CATALOG_ROW)
+        labels = {lb for _t, rows in od.sections(v) for lb, _v in rows}
+        self.assertNotIn("As published", labels)
+        self.assertNotIn("raw_text", labels)
+
+    def test_a_row_without_it_is_not_an_error(self):
+        self.assertEqual(od.as_published({}), "")
+
+    def test_the_award_type_row_shows_a_gap_when_neither_axis_is_known(self):
+        # It is a layout pseudo-field, but it stands for two REAL schema columns, so its
+        # emptiness is a gap — unlike the two rows suppressed for redundancy.
+        self.assertEqual(_flat({"opportunity_name": "A Call"})["Award type"], od.MISSING)
+
+    def test_only_the_redundancy_rows_are_allowed_to_vanish(self):
+        self.assertEqual(od._SUPPRESSED_WHEN_REDUNDANT,
+                         frozenset({"_award_range", "_second_reference"}))
+
+
+class TestGeographyIsWhatTheCALLPublished(unittest.TestCase):
+    """A migrated or hand-entered row carries the countries the SUBMITTER had in mind, not the
+    scope the funder published. Measured live: 34 of 63 migrated rows and both manual rows
+    name one of the tenant's own countries in this column, against 3 of 192 auto-scanned ones.
+    Shown as "Geographic scope" that told a reviewer the funder had restricted the call to
+    their countries when it may well have said "Global"."""
+
+    HAND = {"uid": "YA-1", "source": "migration",
+            "opportunity_title": "A Migrated Call",
+            "call_geographic_scope": ["Countryland", "Otherland", "Global"]}
+
+    def test_a_hand_entered_scope_is_not_published_as_the_calls(self):
+        v = od.standard_view(od.KIND_PIPELINE, self.HAND, None)
+        self.assertEqual(_flat(v)["Geographic scope"], od.MISSING)
+
+    def test_it_is_kept_as_the_submitters_note_rather_than_discarded(self):
+        v = od.standard_view(od.KIND_PIPELINE, self.HAND, None)
+        self.assertEqual(v["_submitter_geographic_scope"],
+                         ["Countryland", "Otherland", "Global"])
+
+    def test_an_extraction_is_always_preferred_over_the_typed_value(self):
+        ext = {"uid": "es_1", "call_geographic_scope": ["Global / worldwide"]}
+        v = od.standard_view(od.KIND_PIPELINE, self.HAND, ext)
+        self.assertEqual(_flat(v)["Geographic scope"], "Global / worldwide")
+        self.assertNotIn("_submitter_geographic_scope", v)
+
+    def test_an_auto_scanned_row_is_trusted(self):
+        # The scan reads geography off the call, so its value IS the call's.
+        auto = dict(self.HAND, uid="AS-1", source="auto")
+        v = od.standard_view(od.KIND_PIPELINE, auto, None)
+        self.assertIn("Countryland", _flat(v)["Geographic scope"])
+
+    def test_the_hand_entered_sources_are_named_explicitly(self):
+        self.assertEqual(od._HAND_ENTERED, frozenset({"migration", "manual", "form"}))
+
+
+class TestTheAwardCardAlwaysCarriesAUsdFigure(unittest.TestCase):
+    """The card was a line shorter than its neighbours whenever the call was already in USD,
+    so the row of three sat unevenly — and a reader comparing calls wants the dollar figure in
+    the same place on both, not only on the foreign-currency ones."""
+
+    def test_a_usd_award_shows_the_usd_figure(self):
+        self.assertEqual(od.usd_reference(1500000, "USD"), "=US $1,500,000")
+
+    def test_a_foreign_award_shows_the_conversion(self):
+        got = od.usd_reference(33000000, "EUR")
+        self.assertTrue(got.startswith("≈US $") or got == "", got)
+
+    def test_no_amount_yields_nothing(self):
+        for v in (None, "", 0, "n/a"):
+            with self.subTest(value=v):
+                self.assertEqual(od.usd_reference(v, "USD"), "")
+
+    def test_a_messy_currency_string_still_counts_as_usd(self):
+        self.assertEqual(od.usd_reference(500, "USD $"), "=US $500")

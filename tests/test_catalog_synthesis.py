@@ -365,3 +365,40 @@ class AThinRowNeverCostsACallTests(unittest.TestCase):
             CS.synthesize_row(dict(ROW, raw_text="too short"))
             CS.synthesize_row(dict(ROW, raw_text="also short"))
         self.assertEqual((CS.calls_made(), CS.skipped_thin()), (0, 2))
+
+class TheThingIsNamedByWhatItIsTests(unittest.TestCase):
+    """"The call" is our internal shorthand. A reader outside the system does not refer to a
+    tender as a call, so generated prose uses the funder's own register — "the request for
+    proposals", "the tender" — which is also what makes the text read as though a person wrote
+    it about that specific opportunity."""
+
+    def test_the_solicitation_type_decides_the_phrase(self):
+        for raw, want in [("RFP", "request for proposals"),
+                          ("RFA", "request for applications"),
+                          ("CFP", "call for proposals"),
+                          ("CfCN", "call for concept notes"),
+                          ("EOI", "expression of interest"),
+                          ("Tender", "tender"),
+                          ("ITB", "invitation to bid")]:
+            with self.subTest(raw=raw):
+                self.assertEqual(CS._kind_phrase({"solicitation_type": raw}), want)
+
+    def test_the_pursuit_class_is_the_fallback(self):
+        self.assertEqual(CS._kind_phrase({"opportunity_type": "Procurement"}), "tender")
+        self.assertEqual(CS._kind_phrase({"opportunity_type": "Prize/Challenge"}),
+                         "prize competition")
+        self.assertEqual(CS._kind_phrase({"opportunity_type": "Consultancy"}),
+                         "consultancy assignment")
+
+    def test_nothing_known_falls_back_to_a_neutral_phrase(self):
+        # Never "the call": that is the shorthand being removed.
+        self.assertEqual(CS._kind_phrase({}), "funding call")
+        self.assertNotEqual(CS._kind_phrase({}), "call")
+
+    def test_the_phrase_reaches_the_prompt(self):
+        CS.reset_calls()
+        with _reply(GOOD) as c:
+            CS.synthesize_row(dict(ROW, solicitation_type="Tender"))
+        sent = c.client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        self.assertIn("Read this tender", sent)
+        self.assertIn('refer to it as "the tender"', sent)
