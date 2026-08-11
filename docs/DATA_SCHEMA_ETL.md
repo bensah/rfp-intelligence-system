@@ -142,11 +142,42 @@ are complemented from `donor_intel` via §5.)*
 |---|---|---|---|
 | `solicitation_type` | enum | regex→LLM | RFP/CFP/EOI/NOFO/Tender… |
 | `instrument_type` | enum | regex→LLM | Grant/Contract/Award… |
-| `opportunity_type` | enum | classifier | grant/tender/award/job/scholarship → **gate** |
+| `opportunity_type` | enum | classifier | grant/tender/award/job/scholarship → **gate**. See the note below — this and `instrument_type` are two axes, not two guesses at one answer |
 | `focus_themes` (a.k.a. **Sector**) | array | LLM | reflect whole RFP; "Sector" is the public synonym |
 | `program_areas` | array | LLM + taxonomy | canonical map (strip `Category -` prefix; `ID → Infectious Diseases`) |
 | `geographic_scope` | array | regex-capture **+ LLM-validate** | **exact as listed**, all geos |
 | `solicitation_language` | text | detector | default **English** |
+
+#### `opportunity_type` vs `instrument_type` — two axes, not a contradiction
+
+These answer different questions, separated by the moment of award:
+
+| field | question | when | values |
+|---|---|---|---|
+| `opportunity_type` | **what pursuing this IS** — the coarse pursuit class the eligibility gate opts out of | BEFORE the award | Grant/funding call · Procurement · Consultancy · Training · Loan · Prize/Challenge · Announcement · Other |
+| `instrument_type` | **the vehicle if you win** — what the donor↔beneficiary relationship becomes | AFTER the award | Grant · Cooperative Agreement · Contract · Loan · Equity/Investment · Prize/Award · Fellowship · Scholarship · Seed fund · In-kind/TA |
+| `solicitation_type` | **how it is announced / how you apply** | — | NOFO · RFP · CFP · EOI · Tender · … |
+
+So **"a grant call awarded as a Contract" is ordinary**, not a data error: a grant is
+contracted once awarded, and a funder that words its agreement as a contract has not changed
+what the opportunity was. 30 of 686 catalogue rows are that shape and none is wrong.
+
+`core/award_type.py` is the single place this relationship lives. It:
+
+* **canonicalises** `opportunity_type`, which drifted across code paths — "Grant/funding
+  call" on 325 rows but bare "grant" on 23, "Announcement" on 11 and "announcement" on 44
+* **complements** a missing axis from the one present, since they imply each other (187 rows;
+  e.g. 148 say Procurement with no instrument, and a procurement is awarded via a contract).
+  Inferred values are labelled as such and never written back as extracted facts.
+* renders **one line** — "Grant/funding call, awarded as a grant" — instead of two rows a
+  reviewer has to reconcile
+* flags only combinations that are genuinely hard to explain. Over 686 rows: **623
+  consistent, 55 unclassified** (an "Announcement" asserts no class), **7 unusual**
+  (a procurement issuing a grant or equity), 1 with neither axis.
+
+`Announcement` and `Other` mean "could not tell" and are never judged — a pairing rule must
+not evaluate a value that was never asserted. Warning on the 30 legitimate grant-contract
+rows would teach a reviewer to ignore the warning that matters on the 7.
 
 ### 4.8 Attachments & referenced documents (multi-collection-point)
 Extracted just like the apply button — direct links + a clear hyperlinked label each.
