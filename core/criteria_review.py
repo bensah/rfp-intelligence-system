@@ -66,6 +66,12 @@ OR_KEYS = frozenset({"funder_relationship"})
 # Criteria counted as Σ(component scores) ÷ activated components (a gate roll-up).
 SUM_OVER_ACTIVE = frozenset({"qualification", "capacity", "cofinancing"})
 
+# Criteria whose rule is a GATE rather than a ratio: any unmet active component decides the
+# verdict outright (see `_cofin_rule`). They must not display a percentage, because the
+# percentage looks like partial credit and the score gives none. Contrast PREFER-8, where
+# 5 of 6 components genuinely earns the top band.
+ALL_OR_NOTHING = frozenset({"cofinancing"})
+
 # Criteria that are ONE component scored 0 / 0.5 / 1.
 SINGLE_COMPONENT = frozenset({"strategic_fit", "geographic_fit"})
 
@@ -412,4 +418,19 @@ def count_text(key: str, facts: Iterable[dict], label: Any,
     _num, total, pct = criterion_count(key, facts, label)
     if not total or (key == "funding_quality" and label_is_unsure):
         return NOT_SCORED
+    # `criterion_count` formats the numerator for display (SUM_OVER_ACTIVE criteria can
+    # yield "1.5"), so compare numerically rather than trusting the type.
+    try:
+        _shortfall = float(total) - float(_num) > 0
+    except (TypeError, ValueError):
+        _shortfall = False
+    if key in ALL_OR_NOTHING and _shortfall:
+        # A PERCENTAGE HERE MISLEADS. This criterion's rule is a gate: any unmet component
+        # makes the verdict "Not met", which scores zero points. Printing "2/3 · 67%" beside
+        # "0.0/10" invited the reading that the points were miscalculated — they are not, but
+        # the two numbers measure different things, and only one of them drives the score.
+        # Naming what is unmet says the same thing without implying partial credit.
+        missing = float(total) - float(_num)
+        n = int(missing) if float(missing).is_integer() else missing
+        return f"{n} unmet · all required"
     return f"{_num}/{total} · {pct}%"
