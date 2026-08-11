@@ -201,16 +201,11 @@ def render_opportunity_rail() -> None:
     # The old caption sent the reader to Pipelines → Review to open an item, which stopped
     # being true once every entry here linked straight to its own opportunity page.
     st.caption("Every title opens that opportunity in full.")
-    _card("💰 Top Funding", "Biggest / most-urgent calls your entity is geographically "
-          "eligible for.",
-          groups["top_funding"], "No live opportunities yet — run a scan.")
-    _card("✅ Top Matches", "Strong fit for this entity (Proceed / Park / high alignment).",
-          groups["top_matches"], "No strong matches yet.")
-    _card("✨ Also Interesting", "Fresh calls that aren't a match but are worth a look.",
-          groups["other"], "Nothing else new right now.")
-
-    # FEATURED — ranked from the SHARED catalog, not this tenant's pipeline, so a call that
-    # screening dropped (or never reached) is still discoverable by a human.
+    # ORDER: discovery first, then fit, then size, then the rest (owner, 2026-08-11).
+    # Featured leads because it is ranked from the WHOLE catalogue rather than this tenant's
+    # pipeline, so it is the only card that can surface a call screening never reached — the
+    # thing a reader is least likely to find any other way. Top Matches then answers "is it
+    # for us", and Top Funding "how big is it", which only matters once the first two do.
     try:
         _featured = _feed.featured(
             _load_catalog(), _tenant_prefs(f"t:{scope}"),
@@ -221,3 +216,10 @@ def render_opportunity_rail() -> None:
           "Ranked from the whole catalog against your geography, programme areas and the "
           "funders you work with — including calls your screening didn't pick up.",
           _featured, "Nothing to feature yet — run an extraction.")
+    _card("✅ Top Matches", "Strong fit for this entity (Proceed / Park / high alignment).",
+          groups["top_matches"], "No strong matches yet.")
+    _card("💰 Top Funding", "Biggest / most-urgent calls your entity is geographically "
+          "eligible for.",
+          groups["top_funding"], "No live opportunities yet — run a scan.")
+    _card("✨ Also Interesting", "Fresh calls that aren't a match but are worth a look.",
+          groups["other"], "Nothing else new right now.")
