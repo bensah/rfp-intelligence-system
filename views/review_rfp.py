@@ -17,6 +17,8 @@ import plotly.graph_objects as go
 from urllib.parse import quote as _quote
 import streamlit as st
 
+from core import ui_links as _links
+
 from core import dropdowns, settings
 from core.review_week import all_weeks_for_year, review_week_label, upcoming_review_week_label
 from core.scorer import (
@@ -917,11 +919,9 @@ if not edit_mode:
     # read the call it is about.
     st.markdown("<div style='margin-top:18px'></div>", unsafe_allow_html=True)
     _vc1, _vc2, _vc3 = st.columns([1, 1, 3])
-    _vc1.markdown(
-        f"<a href='/opportunity?uid={_quote(str(row.get('uid') or ''))}' target='_self' "
-        "style='display:block;text-align:center;padding:8px 12px;border-radius:8px;"
-        "border:1px solid #16734a;color:#16734a;font-weight:600;text-decoration:none'>"
-        "🔍 View opportunity</a>", unsafe_allow_html=True)
+    _vc1.markdown(_links.internal_button("🔍 View opportunity", "opportunity",
+                                        uid=str(row.get("uid") or "")),
+                  unsafe_allow_html=True)
 
     if can_edit:
         # Breathing room between the decision card and the Update Decision button.

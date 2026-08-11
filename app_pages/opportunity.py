@@ -22,6 +22,10 @@ import streamlit as st
 
 from core import opportunity_detail as _od
 from core import opportunity_scoring as _osc
+# NOT `_links`: this module already uses that name for the external-link list a
+# few lines further down, and shadowing it would break every internal link
+# rendered after that assignment — the same fault as #189.
+from core import ui_links as _uilinks
 from core import settings as _settings_mod
 from db.supabase_client import get_client
 
@@ -139,7 +143,8 @@ if not _uid:
     st.title("Opportunity")
     st.info("No opportunity selected. Open one from the **Live Opportunity Feed** on "
             "Home or Pipelines.")
-    st.markdown("[📚 Go to Pipelines](/pipelines)")
+    st.markdown(_uilinks.internal_link("📚 Go to Pipelines", "pipelines"),
+                unsafe_allow_html=True)
     st.stop()
 
 try:
@@ -155,7 +160,8 @@ if not _kind:
     st.title("Opportunity")
     st.warning(f"Couldn't find an opportunity with uid `{_uid}`. It may have been "
                "deleted, or it belongs to another entity.")
-    st.markdown("[📚 Back to Pipelines](/pipelines)")
+    st.markdown(_uilinks.internal_link("📚 Back to Pipelines", "pipelines"),
+                unsafe_allow_html=True)
     st.stop()
 
 _view = _od.standard_view(_kind, _row, _ext)
@@ -545,7 +551,9 @@ with _main:
     # ── decision ────────────────────────────────────────────────────────────
     st.divider()
     if _kind == _od.KIND_PIPELINE:
-        st.markdown(f"#### [✏️ Open in Review](/pipelines?uid={_quote(_uid)})")
+        st.markdown(_uilinks.internal_link("✏️ Open in Review", "pipelines", uid=_uid,
+                                         style="font-size:1.15rem;font-weight:700"),
+                    unsafe_allow_html=True)
         st.caption("Already in your pipeline — score the criteria and record the team "
                    "decision there.")
     else:
@@ -560,10 +568,14 @@ with _main:
         _rejected = st.session_state.get(f"_opp_rejected_{_uid}")
         if _tracked:
             st.success(f"✓ In your pipeline as `{_tracked}`.")
-            st.markdown(f"#### [✏️ Open in Review](/pipelines?uid={_quote(_tracked)})")
+            st.markdown(_uilinks.internal_link("✏️ Open in Review", "pipelines",
+                                             uid=_tracked,
+                                             style="font-size:1.15rem;font-weight:700"),
+                        unsafe_allow_html=True)
         elif _rejected:
             st.info("Marked not relevant — noted for the learning engine.")
-            st.markdown("[📚 Back to Pipelines](/pipelines)")
+            st.markdown(_uilinks.internal_link("📚 Back to Pipelines", "pipelines"),
+                        unsafe_allow_html=True)
         else:
             st.markdown("**Add this to your pipeline?** Adding scores it against your "
                         "eligibility criteria and queues it for review — nothing is "
