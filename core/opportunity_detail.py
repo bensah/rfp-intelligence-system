@@ -671,8 +671,11 @@ NARRATIVE_FIELDS = (
 # criteria below, which is where a reviewer is already looking. The field is still resolved on
 # the view for anything else that wants it; it just is not given a card of its own.
 DECISION_AID_FIELDS: tuple[tuple[str, str, str], ...] = ()
+
+# "{who}" is filled with the tenant's own name by `decision_aid`, so the heading says WHOSE
+# risks these are. "this entity" is our internal word and told the reader nothing.
 DECISION_AID_NARRATIVE = (
-    ("Key risks for this entity", "key_risks"),
+    ("Key risks for {who}", "key_risks"),
 )
 
 
@@ -968,14 +971,21 @@ def _blocks(view: dict, spec) -> list[tuple[str, list[str]]]:
     return out
 
 
-def decision_aid(view: dict) -> tuple[list[tuple[str, str]], list[tuple[str, list[str]]]]:
+def decision_aid(view: dict, who: str = "your organisation"
+                 ) -> tuple[list[tuple[str, str]], list[tuple[str, list[str]]]]:
     """The TENANT-SPECIFIC material for §2: ``(rows, narrative blocks)``.
 
     Kept out of Part 1 so that part is a read of the call alone. Empty when the page is
     showing a catalogue call nobody has screened — there is no tenant view of it yet.
     """
     rows = [(label, _render(view, f, k)) for label, f, k in DECISION_AID_FIELDS]
-    return [(lb, v) for lb, v in rows if v], _blocks(view, DECISION_AID_NARRATIVE)
+    # ALWAYS return the heading, dash when there is nothing under it — the same rule as the
+    # rest of the page. Section 2 is meant to read as three subsections every time, so one of
+    # them disappearing when a row has no recorded risks changes the page's shape again.
+    prose = [(h.format(who=who or "your organisation"),
+              as_bullets(view.get(f)) or [MISSING])
+             for h, f in DECISION_AID_NARRATIVE]
+    return [(lb, v) for lb, v in rows if v], prose
 
 
 # ---------------------------------------------------------------------------
