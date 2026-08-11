@@ -248,3 +248,47 @@ class EmptyMeetingLogRowsAreNotNotesTests(unittest.TestCase):
         kept, dropped = records.drop_empty_notes(pd.DataFrame())
         self.assertEqual(dropped, 0)
         self.assertEqual(records.drop_empty_notes(None), (None, 0))
+
+
+class OneValidationRuleNotTwoTests(unittest.TestCase):
+    """The Summary page had its own copy of the donor_decision <-> progress_status check and
+    `core.records` grew a second — two implementations of one rule, which is how they drift.
+    Consolidating had to ADOPT the page's semantics, not just delete one of them: the page's
+    version was broader in two ways the core helper had missed."""
+
+    def test_a_BLANK_decision_means_not_submitted(self):
+        # The page assumed this; losing it would have quietly narrowed the rule.
+        for dd in ("", None, "   "):
+            with self.subTest(decision=dd):
+                bad = records.submission_inconsistencies(
+                    [{"uid": "A", "donor_decision": dd, "progress_status": "Completed"}])
+                self.assertEqual([b["issue"] for b in bad], ["completed_not_sent"])
+
+    def test_ANY_progress_outside_the_pre_submit_set_contradicts_not_submitted(self):
+        # Not only "Completed": a value nobody recognises is also a contradiction, and the
+        # page's version caught it.
+        bad = records.submission_inconsistencies(
+            [{"uid": "A", "donor_decision": "Not submitted",
+              "progress_status": "Weird Value"}])
+        self.assertEqual([b["issue"] for b in bad], ["completed_not_sent"])
+
+    def test_the_pre_submit_states_are_all_consistent_with_not_submitted(self):
+        for ps in ("", "Not Started", "In Progress", "Discontinued", "Missed", "missing"):
+            with self.subTest(progress=ps):
+                self.assertEqual(records.submission_inconsistencies(
+                    [{"uid": "A", "donor_decision": "Not submitted",
+                      "progress_status": ps}]), [])
+
+    def test_the_vocabularies_have_one_home(self):
+        self.assertEqual(records.POST_SUBMIT_PROGRESS, frozenset({"completed"}))
+        self.assertIn("missing", records.PRE_SUBMIT_PROGRESS)   # legacy spelling tolerated
+
+    def test_the_summary_page_no_longer_defines_its_own_copy(self):
+        import os
+        path = os.path.join(_ROOT, "views", "summary_rfp.py")
+        with open(path, encoding="utf-8") as fh:
+            page = fh.read()
+        for name in ("SUBMITTED_DECISIONS =", "PRE_SUBMIT_PROGRESS =",
+                     "POST_SUBMIT_PROGRESS ="):
+            self.assertNotIn(name, page, f"{name} is defined twice again")
+        self.assertIn("submission_inconsistencies", page)

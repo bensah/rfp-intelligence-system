@@ -491,29 +491,30 @@ st.subheader("C · Proposal development status")
 st.caption("Deduplicated **Proceed** RFPs only — Park / Decline are excluded.")
 
 # Validation alerts — donor_decision vs progress_status consistency
-SUBMITTED_DECISIONS = {"approved", "under review", "not approved"}
-# Pre-submit progress states (never submitted to donor):
-#   Not Started, In Progress       — still being worked on
-#   Discontinued                   — team chose to drop
-#   Missed                         — deadline lapsed without submission
-PRE_SUBMIT_PROGRESS = {"", "not started", "in progress", "discontinued",
-                       "missed", "missing"}
-POST_SUBMIT_PROGRESS = {"completed"}  # "Completed" = submitted to donor
-
-# Only the Proceed pipeline is in scope for this section (Park/Decline never get submitted).
-alerts: list[tuple[str, str]] = []
-for _, r in proceed_df.iterrows():
-    dd_raw = _safe_str(r.get("donor_decision")).strip()
-    dd = dd_raw.lower() or "not submitted"
-    ps_raw = _safe_str(r.get("progress_status")).strip()
-    ps = ps_raw.lower()
-    if dd == "not submitted" and ps not in PRE_SUBMIT_PROGRESS:
-        alerts.append((r["uid"], f"donor_decision = 'Not submitted' but progress = '{ps_raw or '(blank)'}'"))
-    elif dd in SUBMITTED_DECISIONS and ps not in POST_SUBMIT_PROGRESS:
-        alerts.append((r["uid"], f"donor_decision = '{dd_raw}' but progress = '{ps_raw or '(blank)'}' (expected Completed)"))
+# ONE RULE, one place. This block had its own copy of the donor_decision <-> progress_status
+# check and core/records grew a second — two implementations of the same rule, which is how
+# they drift. The rule (and the pre/post-submit vocabularies it needs) now lives in
+# core.records.submission_inconsistencies; the wording below stays here, because how an alert
+# READS is this page's business.
+#
+# Scope is unchanged: only the Proceed pipeline. Park and Decline never get submitted, so a
+# progress/decision mismatch on one of them is not a submission-ledger problem.
+_ISSUE_TEXT = {
+    "decided_not_completed":
+        "donor_decision = '{dd}' but progress = '{ps}' (expected Completed)",
+    "completed_not_sent":
+        "donor_decision = 'Not submitted' but progress = '{ps}'",
+}
+alerts = [
+    (a["uid"], _ISSUE_TEXT[a["issue"]].format(
+        dd=_safe_str(a["donor_decision"]).strip() or "Not submitted",
+        ps=_safe_str(a["progress_status"]).strip() or "(blank)"))
+    for a in _records.submission_inconsistencies(proceed_df.to_dict("records"))
+]
 
 if alerts:
-    with st.expander(f"⚠ {len(alerts)} data-validation alert(s) — donor_decision ↔ progress_status mismatch"):
+    with st.expander(f"⚠ {len(alerts)} data-validation alert(s) — donor_decision ↔ "
+                     "progress_status mismatch"):
         for uid, msg in alerts:
             st.markdown(f"- `{uid}` — {msg}")
 
