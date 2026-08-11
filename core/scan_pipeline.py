@@ -508,6 +508,21 @@ def ingest_candidates(
             _reject_records.append({**cand, "_reject_reason":
                                     "aggregator: not resolved to a primary source (dropped)"})
             continue
+        # THE FUNDER IS PART OF THE SAME RULE. Dropping the aggregator's URL is only half
+        # of "never store an aggregator": its LABEL was still riding along as the donor,
+        # because resolution replaced the link and left funding_agency alone. 20 catalogue
+        # rows and 7 pipeline rows ended up reading "DevelopmentAid Aggregator",
+        # "FundsForNGOs", or a bare host as the funder — which is what a reviewer sees on
+        # the opportunity page and in the rail. source_resolver now re-derives the name from
+        # the resolved page; this is the backstop for any path that does not go through it.
+        if source_resolver.is_aggregator_funder(cand.get("funding_agency")):
+            rejected += 1
+            log.info("reject (aggregator named as the funder): %s — %s",
+                     (cand.get("funding_agency") or "")[:40],
+                     (cand.get("opportunity_title") or "")[:50])
+            _reject_records.append({**cand, "_reject_reason":
+                                    "aggregator/host named as the funder (not a donor)"})
+            continue
         # Classify on both axes — solicitation (how to apply: NOFO/RFP/CFA/EOI/…)
         # and instrument (the contract: Grant/Cooperative Agreement/Loan/…). Carried
         # onto the inserted row + the reject record, and aggregated onto the source.
