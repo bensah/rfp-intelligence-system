@@ -18,11 +18,15 @@ than disappearing — important for the search-activity chart which would
 otherwise only show the days a scan was triggered.
 
 Export:
-  * **Print** button uses window.print() + @media print CSS that hides the
-    Streamlit sidebar / toolbar so the printable / save-as-PDF output is
-    just the report body.
-  * **Excel export** writes every section's underlying data to a single
-    .xlsx workbook (one sheet per section + a Summary sheet on top).
+  * **Export Report** builds a shareable PDF from the collected Document — cover page, one
+    section per page, charts laid out at page width. It does NOT print this page: every
+    Streamlit ancestor is a flex container, where Chrome will not honour `break-inside`, so
+    charts split across page boundaries no matter what CSS is added. See core.report_pdf.
+  * **Export Data** writes every section's underlying data to a single .xlsx workbook (one
+    sheet per section + a Summary sheet on top).
+
+There is no Print button. The @media print CSS and the beforeprint hook remain, so Ctrl+P
+still fits the charts for anyone who reaches for it, but it cannot produce a shareable file.
 """
 from __future__ import annotations
 
@@ -1055,7 +1059,9 @@ def _bucketed_sum(date_series: pd.Series, value_series: pd.Series,
 # (right-aligned so they sit near the natural eye-line for "actions"
 # in a left-to-right reading layout).
 # ===========================================================================
-ac_tip, ac_pdf, ac_excel, ac_print = st.columns([4.6, 1.6, 1.4, 1.4])
+# The hook component still needs a home, but it draws nothing (height 0), so it goes
+# in the tip column rather than taking a slot of its own.
+ac_tip, ac_pdf, ac_excel = st.columns([5.4, 1.8, 1.6])
 
 
 def _safe_for_excel(df: pd.DataFrame) -> pd.DataFrame:
@@ -1175,9 +1181,9 @@ def _build_excel_export() -> bytes:
 
 
 ac_tip.caption(
-    "💡 Print works best with **landscape** orientation. Save as PDF via "
-    "your browser's print dialog → 'Save as PDF' destination. The Excel "
-    "export ships every section's raw data as separate sheets."
+    "💡 **Export Report** builds a shareable PDF — cover page, one section per page, and every "
+    "chart laid out to fit. **Export Data** ships each section's underlying rows as a separate "
+    "sheet in one workbook."
 )
 
 ac_excel.download_button(
@@ -1189,39 +1195,33 @@ ac_excel.download_button(
     width='stretch',
 )
 
-# Print button — rendered via st.components.v1.html so the inline
-# onclick handler isn't stripped (Streamlit's markdown sanitiser drops
-# event handlers even with unsafe_allow_html=True). The button lives in
-# its own iframe, so window.print() inside the iframe would print just
-# the iframe — call window.parent.print() to print the main Streamlit
-# page where the @media print CSS rules at the top of this file apply.
-# A NATIVE Streamlit button, not one drawn inside the component iframe.
+# NO Print / PDF button. It was the browser's own print dialog, which cannot control page
+# breaks in a flexbox layout, cannot size a Plotly chart to paper, and names the file after the
+# document title. Export Report replaces it. The @media print CSS and the beforeprint hook below
+# stay, so Ctrl+P still produces something sane for anyone who reaches for it out of habit.
 #
-# The iframe button was reported dead twice, and the second report included the decisive
-# detail: hovering it did not even change its colour, while the buttons beside it did. A
-# hand-styled <button> inside a sandboxed iframe has no hover styling of its own and depends
-# on a click landing inside that iframe and on same-origin reach back to the parent — a chain
-# with several ways to fail silently, none of which the page can see.
-#
-# So the click is handled by Streamlit instead: a real button (its own hover, focus ring and
-# keyboard access) sets a flag, and on the rerun a ZERO-HEIGHT component runs the print call
-# as it loads. No click has to cross the iframe boundary, and window.print() does not need a
-# user gesture.
-if ac_print.button("🖨 Print / PDF", width="stretch", key="report_print_btn",
-                   help="Opens your browser's print dialog — choose 'Save as PDF' to keep a copy."):
-    st.session_state["_rfpis_print_now"] = True
-
-if ac_pdf.button("📄 Build PDF", width="stretch", key="report_pdf_btn",
-                 help="Builds a shareable A4 report — cover page, one section per page, charts "
-                      "laid out at page width. Takes a few seconds."):
+# "Export Report", not "Build PDF": the user is exporting a report and then downloading it.
+# Whether we build it is our concern, not theirs.
+if ac_pdf.button("📄 Export Report", width="stretch", key="report_pdf_btn",
+                 help="Exports a shareable PDF — cover page, one section per page, charts laid "
+                      "out to fit. Takes a few seconds, then a download button appears here."):
     st.session_state["_rfpis_make_pdf"] = True
     st.rerun()
+
+# The RESULT lands here, beside the button that asked for it.
+#
+# It used to render at the end of the script, because the document is only complete once the
+# page has drawn. On a five-section report that put the download button several screens below
+# the button the user had just pressed — so from the top of the page, clicking Export Report
+# looked like it reran the page and did nothing. A placeholder reserves the spot now and is
+# filled in at the end.
+_pdf_slot = ac_pdf.empty()
 
 # Tenant- and period-specific document title. Chrome stamps document.title into the printed
 # page header, so this is what makes the PDF header identify the report rather than the product.
 _doc_title = f"{_org_name} · Activity Report · {_period_label_str}"
 
-with ac_print:
+with ac_tip:
     components.html(
         "<script>window.RFPIS_DOC_TITLE = "
         + json.dumps(_doc_title)
@@ -1417,50 +1417,6 @@ with ac_print:
         # it cannot occupy space beside the button or intercept a click meant for it.
         height=0,
     )
-
-    # The print call itself, on the rerun after the button was pressed. It runs as this
-    # component loads, so no click has to cross the iframe boundary.
-    #
-    # THE NONCE MATTERS. Streamlit keys a component off its content and position, so rendering
-    # byte-identical HTML again reuses the existing iframe WITHOUT re-executing its script. That
-    # is why the button printed the first time and then never again: the second click reran the
-    # page (which is why it looked like Generate) but the component was considered unchanged, so
-    # nothing ran. A counter in the payload makes each render a new component.
-    if st.session_state.pop("_rfpis_print_now", False):
-        _print_nonce = int(st.session_state.get("_rfpis_print_seq", 0)) + 1
-        st.session_state["_rfpis_print_seq"] = _print_nonce
-        components.html(
-            f"<!-- print request {_print_nonce} -->" + r"""
-            <script>
-            (function () {
-              function go() {
-                // The parent-realm entry point installed by the hook above.
-                try {
-                  if (typeof window.parent.rfpisPrintNow === 'function') {
-                    if (window.parent.rfpisPrintNow() === true) return;
-                  }
-                } catch (e) { /* fall through */ }
-                // Direct: fit what we can reach, then print the parent.
-                try {
-                  if (typeof window.parent.rfpisFitPlots === 'function') {
-                    window.parent.rfpisFitPlots(700);
-                  }
-                  window.parent.print();
-                  return;
-                } catch (e) { /* fall through */ }
-                // Last resort - print this document. Reached only when the parent is
-                // genuinely unreachable, in which case doing nothing is worse.
-                try { window.print(); } catch (e) {}
-              }
-              // One frame's delay so the hook script above has run and the charts are laid
-              // out; printing mid-render can capture a half-drawn page.
-              if (document.readyState === 'complete') { setTimeout(go, 60); }
-              else { window.addEventListener('load', function () { setTimeout(go, 60); }); }
-            })();
-            </script>
-            """,
-            height=0,
-        )
 
 st.divider()
 
@@ -2851,24 +2807,26 @@ if st.session_state.pop("_rfpis_make_pdf", False):
         st.session_state["_rfpis_pdf_bytes"] = None
         st.error(f"Couldn't build the PDF: {_pdf_exc}")
 
-with st.container(key="report_pdf_actions"):
-    if st.session_state.get("_rfpis_pdf_bytes"):
-        st.download_button(
-            f"⬇ Download {st.session_state.get('_rfpis_pdf_name') or _pdf_name}",
-            data=st.session_state["_rfpis_pdf_bytes"],
-            file_name=st.session_state.get("_rfpis_pdf_name") or _pdf_name,
-            mime="application/pdf", width="stretch",
-        )
-        st.caption(f"{len(st.session_state['_rfpis_pdf_bytes']) / 1024:,.0f} KB · "
-                   f"{_pdf_doc.chart_count} charts · A4 portrait, one section per page.")
+if st.session_state.get("_rfpis_pdf_bytes"):
+    # Into the placeholder reserved beside the Export Report button.
+    _pdf_slot.download_button(
+        "⬇ Download PDF",
+        data=st.session_state["_rfpis_pdf_bytes"],
+        file_name=st.session_state.get("_rfpis_pdf_name") or _pdf_name,
+        mime="application/pdf", width="stretch", key="report_pdf_download",
+        help=(f"{st.session_state.get('_rfpis_pdf_name') or _pdf_name} · "
+              f"{len(st.session_state['_rfpis_pdf_bytes']) / 1024:,.0f} KB · "
+              f"{_pdf_doc.chart_count} charts"),
+    )
 
 st.divider()
 
 
 st.success(
     f"✅ **End of report** — {len(_selected_items)} of {len(_ALL_KEYS)} "
-    f"metric blocks shown for **{_period_label_str}**. Export with "
-    f"**Print / PDF** or **Excel** at the top of the page."
+    f"metric blocks shown for **{_period_label_str}**. Use "
+    f"**Export Report** for a shareable PDF, or **Export Data** for the underlying rows — "
+    f"both at the top of the page."
 )
 
 

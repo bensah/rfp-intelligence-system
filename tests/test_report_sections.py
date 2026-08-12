@@ -161,20 +161,41 @@ class ThePrintLayoutTests(unittest.TestCase):
         # Plotly.relayout is async; printing before it settles captures the old width.
         self.assertIn("if (p && p.then) { p.then(function () { window.print(); }); }", _source())
 
-    def test_the_click_is_handled_by_a_native_streamlit_button(self):
-        # The hand-drawn button inside the component iframe was reported dead twice. It has no
-        # hover styling of its own and needs a click to land inside a sandboxed frame — and when
-        # its script failed to parse, its onclick handler simply did not exist. A real Streamlit
-        # button gets hover, focus and keyboard handling, and its click cannot be lost.
+    def test_there_is_no_print_pdf_button(self):
+        # Removed: it was the browser's own print dialog, which cannot paginate a flexbox
+        # layout, cannot size a Plotly chart to paper, and names the file after the document
+        # title. Export Report replaces it.
         src = _source()
-        self.assertIn('ac_print.button("🖨 Print / PDF"', src)
-        self.assertIn('st.session_state["_rfpis_print_now"] = True', src)
-        self.assertNotIn('onclick="rfpisPrint()"', src)
+        # The BUTTON, not any mention: the comment explaining why it went is worth keeping.
+        self.assertNotIn('button("🖨 Print / PDF"', src)
+        self.assertNotIn('key="report_print_btn"', src)
+        self.assertNotIn("_rfpis_print_now", src)
 
-    def test_printing_happens_in_a_component_rendered_on_the_rerun(self):
+    def test_the_export_button_says_export_not_build(self):
+        # Whether we "build" anything is our concern; the user is exporting a report.
         src = _source()
-        self.assertIn('st.session_state.pop("_rfpis_print_now", False)', src)
-        self.assertIn("window.parent.print()", src)
+        self.assertIn('ac_pdf.button("\U0001F4C4 Export Report"', src)
+        # The BUTTON, not any mention — the comment recording why it was renamed stays.
+        self.assertNotIn('button("\U0001F4C4 Build PDF"', src)
+
+    def test_the_download_appears_beside_the_button_that_asked_for_it(self):
+        # THE reported bug. The document is only complete once the page has drawn, so the
+        # download button used to render at the END of a five-section page — several screens
+        # below the button just pressed. From the top, Export Report looked like it reran the
+        # page and did nothing. A placeholder reserves the spot and is filled at the end.
+        src = _source()
+        i_button = src.index('ac_pdf.button("\U0001F4C4 Export Report"')
+        i_slot = src.index("_pdf_slot = ac_pdf.empty()")
+        i_fill = src.index("_pdf_slot.download_button(")
+        self.assertLess(i_button, i_slot, "the slot must sit beside the button")
+        self.assertLess(i_slot, i_fill, "the slot is filled after the page has rendered")
+
+    def test_ctrl_p_still_gets_the_print_hook(self):
+        # The button is gone but the beforeprint hook stays, so anyone reaching for Ctrl+P out
+        # of habit still gets charts fitted rather than cut off.
+        src = _source()
+        self.assertIn("beforeprint", src)
+        self.assertIn("rfpis-print-hook", src)
 
     def test_the_hook_id_is_versioned_and_replaces_older_ones(self):
         # THE reason the button was dead. The previous guard was
@@ -185,24 +206,6 @@ class ThePrintLayoutTests(unittest.TestCase):
         self.assertRegex(src, r"RFPIS_HOOK_ID = 'rfpis-print-hook-v\d+'")
         self.assertIn("""querySelectorAll('[id^="rfpis-print-hook"]')""", src)
         self.assertIn("stale[i].remove()", src)
-
-    def test_the_print_call_prefers_the_verifiable_path(self):
-        # The parent-realm entry point returns true, so the caller knows it ran. A fire-and-forget
-        # path cannot tell delivery from silence, which is how a missing hook became an inert
-        # button the first time round.
-        src = _source()
-        self.assertIn("window.parent.rfpisPrintNow() === true", src)
-        i_call = src.index("rfpisPrintNow() === true")
-        i_direct = src.index("window.parent.print()", i_call)
-        self.assertLess(i_call, i_direct)
-
-    def test_it_still_works_when_the_hook_is_missing_entirely(self):
-        # Verified in a browser against a real Streamlit component with a stale hook planted:
-        # the direct parent path fits the charts and prints.
-        trigger = _source()
-        trigger = trigger[trigger.index('_rfpis_print_now", False'):]
-        self.assertIn("window.parent.print()", trigger)
-        self.assertIn("rfpisFitPlots", trigger)
 
 
 class ThePageStillRunsTests(unittest.TestCase):
