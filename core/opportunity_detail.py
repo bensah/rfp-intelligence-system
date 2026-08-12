@@ -523,7 +523,7 @@ _SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
     ("Scope & focus", (
         ("Geographic scope", "call_geographic_scope", "list"),
         ("Sector", "focus_themes", "list"),
-        ("Programme areas", "call_domain_areas", "list"),
+        ("Programme areas", "call_domain_areas", "areas"),
         ("Project stages", "project_stages", "list"),
     )),
     ("Type of opportunity", (
@@ -693,6 +693,25 @@ def award_pairing(view: dict) -> dict:
         return {"text": "", "verdict": "unknown", "note": "", "inferred": []}
 
 
+# The classifier returns grouped labels — "Cross-cutting - Digital Health (+AI)". The group is
+# useful for MATCHING (it is how a programme area is filed) and noise on a page: a reader wants
+# to know the call is about digital health, not which of our internal buckets it sits in. The
+# prefix is dropped for DISPLAY ONLY; the stored value is untouched, because the matcher reads it.
+_AREA_PREFIX = "cross-cutting - "
+
+
+def format_programme_areas(v) -> str:
+    """Programme areas as a reader sees them, without the internal grouping prefix."""
+    out = []
+    for part in display_value(v).split(", "):
+        t = part.strip()
+        if t.lower().startswith(_AREA_PREFIX):
+            t = t[len(_AREA_PREFIX):].strip()
+        if t and t not in out:
+            out.append(t)
+    return ", ".join(out)
+
+
 def _second_reference(view: dict) -> str:
     """`funding_opportunity_number` only when it is genuinely a SECOND reference.
 
@@ -730,6 +749,8 @@ def _render(view: dict, field: str, kind: str) -> str:
         return str(v)[:10]
     if kind == "duration":
         return format_duration(v)
+    if kind == "areas":
+        return format_programme_areas(v)
     if kind == "sentence":
         s = display_value(v)
         return s[:1].upper() + s[1:] if s else s
