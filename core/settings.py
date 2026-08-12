@@ -466,6 +466,62 @@ def get_team_members() -> Optional[list]:
     return None
 
 
+def _name_map_setting(key: str) -> dict[str, str]:
+    """A {input -> canonical} name map from app_settings, keys lowercased.
+
+    Person names are DATA, not code. They belong here — in the database, behind the same
+    access controls as the roster — and never in a source file that gets pushed. This mirrors
+    `get_team_members`, whose YAML counterpart holds only placeholders for the same reason.
+
+    Returns {} when unset or malformed, so name handling degrades to "leave the input alone"
+    rather than failing.
+    """
+    import json
+    raw = get_setting(key)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in data.items():
+        key_s, val_s = str(k).strip().lower(), str(v).strip()
+        if key_s and val_s:
+            out[key_s] = val_s
+    return out
+
+
+def get_member_name_aliases() -> dict[str, str]:
+    """{"shortform": "Canonical Full Name"} — whole-string aliases.
+
+    For the case the token map cannot reach: a first-name-only mention that must roll up to a
+    specific person even though that first name is also a roster entry in its own right.
+    """
+    return _name_map_setting("member_name_aliases_json")
+
+
+def get_member_nicknames() -> dict[str, str]:
+    """{"nickname": "formal"} — single TOKEN map, applied inside names as well as to whole ones."""
+    return {k: v.lower() for k, v in _name_map_setting("member_nicknames_json").items()}
+
+
+def set_member_name_aliases(aliases: dict, updated_by: Optional[str] = None) -> None:
+    import json
+    clean = {str(k).strip().lower(): str(v).strip()
+             for k, v in (aliases or {}).items() if str(k).strip() and str(v).strip()}
+    set_setting("member_name_aliases_json", json.dumps(clean), updated_by)
+
+
+def set_member_nicknames(nicknames: dict, updated_by: Optional[str] = None) -> None:
+    import json
+    clean = {str(k).strip().lower(): str(v).strip().lower()
+             for k, v in (nicknames or {}).items() if str(k).strip() and str(v).strip()}
+    set_setting("member_nicknames_json", json.dumps(clean), updated_by)
+
+
 def set_team_members(members: list, updated_by: Optional[str] = None) -> None:
     """Persist the team roster. De-duplicates (case-insensitive), preserves
     order, drops blanks and any stray 'Other'/'All' tokens (added by the forms)."""

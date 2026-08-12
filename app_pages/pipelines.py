@@ -26,7 +26,7 @@ def _submit_rfp_modal():
 
 # The page title only. The Submit New Funding + Eligibility Scan actions live on the
 # "Weekly Screening Pipeline" header inside the Screen tab (see views/screened_rfp.py).
-st.title("Your Funding Eligibility Pipeline")
+st.title("Your Funding Opportunity Pipeline")
 
 # Outcome banner from the last run (survives the post-run rerun).
 _pipe_banner = st.session_state.pop("admin_scan_banner", None)

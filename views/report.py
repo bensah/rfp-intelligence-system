@@ -1,7 +1,7 @@
 """Report view — KPI dashboard of the full RFPIS pipeline.
 
 Story arc, top → bottom:
-  1. Search activity     — scanner output (top of funnel)
+  1. Scan activity     — scanner output (top of funnel)
   2. Insights funnel     — eligibility / decision breakdown
   3. Reviews & decisions — triage outcomes + velocity
   4. Engagements         — meetings + donor touchpoints
@@ -38,215 +38,12 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dropdowns, report_snapshots, settings
+from core import chart_theme as _theme
+from core import dropdowns, partner_names, report_snapshots, settings
+from core.member_names import (first_name_display_map, normalize_member_name,
+                              split_and_normalize_names)
 from core.records import clean_df
 from db.supabase_client import get_client
-
-
-# ---------------------------------------------------------------------------
-# Team-member name normalization
-# ---------------------------------------------------------------------------
-# Different submitters spell their names inconsistently across the
-# Excel workbook and the Submit form. Common cases:
-#   "First"             → should resolve to "First Last"
-#   "Nickname"          → should resolve to canonical "First Last"
-#   "FIRST LAST"        → should normalise to "First Last"  (case)
-#   "first last"        → should normalise to "First Last"
-# Without normalisation, the "Submissions by team member" chart shows
-# the same person two or three times as separate stacked-bar series.
-#
-# Strategy: build a normaliser keyed on the canonical team_members
-# dropdown. For each input name:
-#   1. Trim + collapse whitespace + title-case (handles ALL-CAPS).
-#   2. If the normalised name is an exact canonical match → return canonical.
-#   3. Tokenise both. After applying the nickname map, if the input
-#      tokens are a subset of any canonical name's tokens → return that
-#      canonical name. Subset rule handles single-name → full-name.
-#   4. Tie-break: longest canonical wins (so "First Last" beats "First").
-#   5. Fall back to the title-cased input if nothing matches.
-#
-# The team-is-small assumption (no two members share first OR last name)
-# makes the subset rule safe — when two members DO share a token, the
-# subset rule could incorrectly merge them. Re-evaluate this strategy
-# if the team grows past ~30 members.
-# ---------------------------------------------------------------------------
-_NICKNAME_TO_FULL = {
-    # nickname (lowercase) → full first name (lowercase)
-    # Add new mappings here as the team grows. Bidirectional — applies
-    # both to incoming nicknames AND to nicknames inside canonical names.
-    "ben": "bernard",
-    "bernie": "bernard",
-    # room to grow: "avery": "avery"  (no-op — placeholder)
-}
-
-# ---------------------------------------------------------------------------
-# Full-name aliases — maps an INPUT string (lowercased, whitespace-normalised)
-# to the canonical full name it should resolve to.
-#
-# Why this exists in addition to _NICKNAME_TO_FULL: the nickname dict is
-# keyed on individual TOKENS ("ben" → "bernard"), but some cases need to
-# override an exact-match-on-itself. If "Morgan" is also present in the
-# team_members dropdown as a standalone entry, the exact-match shortcut
-# in `normalize_member_name` returns "Morgan" before the subset rule
-# can match it to "Morgan Ellis". This alias dict short-circuits that
-# trap so first-name-only mentions roll up to the right person.
-#
-# Add new entries when two people don't share a first name AND the
-# shorter form keeps showing up in the data (Excel imports, old form
-# submissions, etc.). Format: lowercased input → exact canonical name.
-# ---------------------------------------------------------------------------
-_FULLNAME_ALIASES = {
-    "morgan": "Morgan Ellis",
-}
-
-
-def _title_case(s: str) -> str:
-    """ALL CAPS / lower / Mixed → Sentence Case per word. Keeps hyphens and
-    apostrophes intact (so 'O'Brien' stays 'O'Brien' rather than 'O'brien')."""
-    if not s:
-        return ""
-    parts = []
-    for word in str(s).strip().split():
-        # Preserve apostrophe casing: O'BRIEN → O'Brien
-        if "'" in word:
-            chunks = word.split("'")
-            parts.append("'".join(c.capitalize() for c in chunks))
-        else:
-            parts.append(word.capitalize())
-    return " ".join(parts)
-
-
-def _tokenize_name(s: str) -> set[str]:
-    """Lowercase token set, with nicknames expanded to their full form."""
-    out: set[str] = set()
-    for tok in str(s or "").lower().replace("-", " ").split():
-        out.add(_NICKNAME_TO_FULL.get(tok, tok))
-    return out
-
-
-@st.cache_data(ttl=300)
-def _build_name_resolver(canonical_list: tuple[str, ...]) -> dict[str, str]:
-    """Pre-compute a lookup so each lookup at chart-render time is O(1)
-    rather than O(n_team_members). Cached for 5 minutes."""
-    return {c: c for c in canonical_list}  # identity map seed; resolver does the work
-
-
-def normalize_member_name(raw: str | None) -> str:
-    """Map a raw name string to the canonical team-member name.
-
-    None / empty → "(unknown)" so it still buckets cleanly.
-    """
-    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-        return "(unknown)"
-    s = str(raw).strip()
-    if not s:
-        return "(unknown)"
-    tidy = _title_case(s)
-    canonical_list = tuple(dropdowns.get("team_members") or [])
-    if not canonical_list:
-        return tidy
-
-    # Full-name alias check (runs BEFORE the exact-match shortcut so
-    # collisions like "Morgan" → "Riley Vance" win even when
-    # "Morgan" is also a dropdown entry on its own).
-    alias_target = _FULLNAME_ALIASES.get(tidy.lower())
-    if alias_target:
-        for c in canonical_list:
-            if c.lower() == alias_target.lower():
-                return c
-        # Alias target isn't in the dropdown — return it anyway so the
-        # rollup happens; downstream chart code doesn't require canonical
-        # membership.
-        return alias_target
-
-    # Exact match on the cleaned-up form
-    for c in canonical_list:
-        if c.lower() == tidy.lower():
-            return c
-
-    # Subset / nickname match
-    input_tokens = _tokenize_name(tidy)
-    if not input_tokens:
-        return tidy
-    matches: list[str] = []
-    for c in canonical_list:
-        c_tokens = _tokenize_name(c)
-        if not c_tokens:
-            continue
-        # Input ⊆ canonical (e.g. single-name ⊆ full-name) OR
-        # canonical ⊆ input (rare — when a fuller form is submitted)
-        if input_tokens <= c_tokens or c_tokens <= input_tokens:
-            matches.append(c)
-    if matches:
-        # Tie-break: prefer the canonical name with MORE tokens (the
-        # fully-specified form). "First Last" beats "First".
-        matches.sort(key=lambda x: (-len(_tokenize_name(x)), x))
-        return matches[0]
-
-    return tidy
-
-
-def split_and_normalize_names(value) -> list[str]:
-    """Split a comma-separated name (or list-of-strings) into a flat
-    list of canonical names.
-
-    Cases handled:
-      * None / NaN / empty                  → []
-      * "Jane Doe"                       → ["Jane Doe"]
-      * "Alex Kim, Jane Doe"        → ["Alex Kim", "Jane Doe"]
-      * ["Alex Kim", "Jane Doe"]    → ["Alex Kim", "Jane Doe"]
-        (Postgres text[] arrays — contributors column)
-      * ["Alex Kim, Jane Doe"]      → ["Alex Kim", "Jane Doe"]
-        (one list element that ITSELF contains commas — common when a
-        sloppy form submission packed two names into one entry)
-
-    Each split piece is run through `normalize_member_name()` so
-    nickname / case / partial variants collapse to the canonical form.
-    "(unknown)" results are filtered out — they only appear when the
-    input was empty/None.
-    """
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return []
-    if isinstance(value, (list, tuple)):
-        out: list[str] = []
-        for v in value:
-            out.extend(split_and_normalize_names(v))
-        return out
-    parts = [p.strip() for p in str(value).split(",")]
-    normalized = [normalize_member_name(p) for p in parts if p]
-    return [n for n in normalized if n and n != "(unknown)"]
-
-
-def first_name_display_map(canonical_names) -> dict[str, str]:
-    """Return {canonical_name → display_name} where display is the
-    FIRST name only when it's unique, or the full name if two
-    canonical members share a first name.
-
-    Example: given ["Jane Doe", "Drew Hall", "Alex Kim"]
-      → {"Jane Doe": "Jane", "Drew Hall": "Drew", "Alex Kim": "Alex"}
-
-    Example with a collision (two Bernards on the team):
-      ["Jane Doe", "Bernard Smith"]
-      → {"Jane Doe": "Jane Doe", "Bernard Smith": "Bernard Smith"}
-
-    Shorter labels mean narrower chart legends — important for
-    print-to-PDF where wide right-side legends get cut off.
-    """
-    canonical = [n for n in set(canonical_names) if n and n != "(unknown)"]
-    by_first: dict[str, list[str]] = {}
-    for name in canonical:
-        first = name.split()[0]
-        by_first.setdefault(first, []).append(name)
-    display: dict[str, str] = {}
-    for first, names in by_first.items():
-        if len(names) == 1:
-            display[names[0]] = first       # unique first name → use it
-        else:
-            for n in names:
-                display[n] = n               # collision → fall back to full
-    # Pass through "(unknown)" so it still groups
-    display["(unknown)"] = "(unknown)"
-    return display
 
 
 # ---------------------------------------------------------------------------
@@ -378,8 +175,46 @@ st.markdown(
           display: block !important;
         }
         .block-container { padding: 0.5rem !important; max-width: 100% !important; }
-        h1, h2, h3 { page-break-after: avoid; }
-        .stPlotlyChart, [data-testid="stMetric"] { page-break-inside: avoid; }
+        /* PORTRAIT with real margins, so nothing sits in the unprintable edge. Orientation
+           only — the paper SIZE is left to the user's print dialog, since forcing A4 would
+           be wrong on Letter and vice versa. */
+        @page { size: portrait; margin: 12mm; }
+
+        /* Side-by-side columns do not fit a portrait page: two half-width charts each get
+           ~340px, and the funnels were being cut off mid-plot. Stacking gives every chart
+           the FULL page width, which is what makes the JS scaling below sufficient. */
+        [data-testid="stHorizontalBlock"] { display: block !important; }
+        [data-testid="stColumn"] {
+          width: 100% !important; flex: none !important;
+          display: block !important; margin-bottom: 0.4rem !important;
+        }
+        /* ...except KPI tile rows, which are small and read better left as a row. */
+        [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
+          display: flex !important;
+        }
+        [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"])
+          [data-testid="stColumn"] { width: auto !important; flex: 1 1 0 !important; }
+
+        /* Nothing may exceed the page box. Plotly draws into a fixed-size SVG, so without
+           this a wide chart silently extends past the paper edge. */
+        .block-container, .stPlotlyChart, [data-testid="stPlotlyChart"],
+        .js-plotly-plot, .plot-container, .svg-container, .main-svg,
+        [data-testid="stDataFrame"], table {
+          max-width: 100% !important;
+        }
+        [data-testid="stDataFrame"] { overflow: visible !important; }
+
+        /* A heading must not be the last thing on a page, and must never be drawn over the
+           chart it labels - the "Lead & Sub Applicant partners" overlap. h4/h5/h6 were
+           missing here, which is why subsection headings behaved differently from h1-h3. */
+        h1, h2, h3, h4, h5, h6 {
+          page-break-after: avoid; break-after: avoid-page;
+          page-break-inside: avoid;
+        }
+        .stPlotlyChart, [data-testid="stPlotlyChart"], [data-testid="stMetric"],
+        [data-testid="stDataFrame"], [data-testid="stTable"] {
+          page-break-inside: avoid; break-inside: avoid;
+        }
         body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       }
       /* Slightly compact the metric tiles so the report fits on one printed page. */
@@ -756,8 +591,12 @@ def _load_grants(_scope: str) -> pd.DataFrame:
 # checkboxes show full label text — readable + tappable on a phone, unlike a
 # flat 20-item multiselect whose pills truncate to "1 · Search — RFPs d…".
 # Everything defaults to on, so Generate with no changes = the full report.
+# The first element is a STABLE ID, not the display number. Saved reports persist these ids
+# (and the `sN_` metric keys), so a shared or refreshed report restores the sections it was
+# generated with — renumbering them to match a new running order would silently change what an
+# existing report shows. Display order is this list's order; the display number is in the label.
 _REPORT_SECTIONS = [
-    ("1", "1 · Search activity", [
+    ("1", "1 · Scan activity", [
         ("s1_discovery",  "Funding discovered by member"),
         ("s1_donor",      "Funding by donor (top 15)"),
         ("s1_keywords",   "Search keyword cloud"),
@@ -765,21 +604,22 @@ _REPORT_SECTIONS = [
         ("s1_sources",    "Top sources by yield"),
         ("s1_cycle",      "Search → Submission cycle time"),
     ]),
-    ("2", "2 · Insights", [
-        ("s2_funnel",   "Conversion funnel"),
-        ("s2_progress", "Progress status"),
-    ]),
-    ("3", "3 · Reviews & decisions", [
-        ("s3_decdist", "Decision distribution"),
-        ("s3_dectime", "Decisions over time"),
-        ("s3_autorec", "Auto-recommendation vs decision"),
-    ]),
-    ("4", "4 · Team & partners", [
+    ("4", "2 · Team & partners", [
         ("s4_eng_ts",    "Donor engagements over time"),
         ("s4_topdonors", "Top donors by touchpoints"),
         ("s4_leads",     "Proposal leads"),
         ("s4_contrib",   "Contributors"),
         ("s4_partners",  "Lead & sub applicant partners"),
+    ]),
+    ("2", "3 · Insights — status & eligibility funnel", [
+        ("s2_funnel",   "Conversion funnel"),
+        ("s2_progress", "Progress status"),
+    ]),
+    ("3", "4 · Reviews & decisions", [
+        ("s3_decdist",  "Decision distribution"),
+        ("s3_dectime",  "Decisions over time"),
+        ("s3_autorec",  "Auto-recommendation vs decision"),
+        ("s3_donordec", "Donor decisions"),
     ]),
     ("5", "5 · Our results", [
         ("s5_cumusd", "Cumulative USD secured"),
@@ -833,6 +673,21 @@ def _show(key: str) -> bool:
     """True when a report item is selected (its section is included AND its
     metric checkbox is ticked) in the advanced filter."""
     return key in _selected_items
+
+
+def _boxed(fig, **kw):
+    """Render a chart inside its own bordered frame.
+
+    Charts used to sit directly on the page background, so with several in a row the eye had
+    nothing to separate one from the next — the funnel pair in particular read as one wide
+    graphic. The frame also gives print a block it can keep together.
+
+    Every chart also goes through `_theme.style`, which strips Plotly's grey plot area: inside a
+    bordered container that reads as a box within a box.
+    """
+    _theme.style(fig)
+    with st.container(border=True):
+        st.plotly_chart(fig, width="stretch", **kw)
 
 
 def _show_sec(sid: str) -> bool:
@@ -1118,7 +973,7 @@ ac_tip.caption(
 )
 
 ac_excel.download_button(
-    "📥 Excel",
+    "📥 Export Data",
     data=_build_excel_export(),
     file_name=(
         f"rfpis-report-{_org.get('org_short') or 'org'}-"
@@ -1135,42 +990,227 @@ ac_excel.download_button(
 # its own iframe, so window.print() inside the iframe would print just
 # the iframe — call window.parent.print() to print the main Streamlit
 # page where the @media print CSS rules at the top of this file apply.
+# A NATIVE Streamlit button, not one drawn inside the component iframe.
+#
+# The iframe button was reported dead twice, and the second report included the decisive
+# detail: hovering it did not even change its colour, while the buttons beside it did. A
+# hand-styled <button> inside a sandboxed iframe has no hover styling of its own and depends
+# on a click landing inside that iframe and on same-origin reach back to the parent — a chain
+# with several ways to fail silently, none of which the page can see.
+#
+# So the click is handled by Streamlit instead: a real button (its own hover, focus ring and
+# keyboard access) sets a flag, and on the rerun a ZERO-HEIGHT component runs the print call
+# as it loads. No click has to cross the iframe boundary, and window.print() does not need a
+# user gesture.
+if ac_print.button("🖨 Print / PDF", width="stretch", key="report_print_btn",
+                   help="Opens your browser's print dialog — choose 'Save as PDF' to keep a copy."):
+    st.session_state["_rfpis_print_now"] = True
+
 with ac_print:
     components.html(
-        """
+        r"""
         <script>
-        function rfpisPrint() {
-          try {
-            // Print the parent window (main Streamlit app, with our print CSS)
-            window.parent.print();
-          } catch (e) {
-            // Cross-origin block (unlikely on Streamlit Cloud since both
-            // are same-origin, but possible in some embed scenarios) —
-            // fall back to printing the iframe so something happens.
-            window.print();
-          }
+        // -- Fit Plotly charts to the printed page ------------------------------------
+        // Plotly bakes a PIXEL width into its <svg> at render time, measured from the
+        // browser window. Printing narrows the page box but does NOT re-render the
+        // chart, so a chart laid out at ~1200px was being cut off by a ~700px page.
+        //
+        // CSS alone cannot fix it: the SVGs carry width/height attributes and NO
+        // viewBox, so `width:100%` resizes the viewport and CLIPS the drawing instead
+        // of scaling it. Measured in a standalone repro: container 704px, svg still
+        // width="1200", document 1488px wide - cut off at about half.
+        //
+        // So give each SVG a viewBox derived from its natural size, then set its box to
+        // the printable width, which scales the whole drawing, text included. This
+        // deliberately does NOT call Plotly's own resize API: Streamlit bundles Plotly
+        // as a module, so `window.Plotly` is not reliably reachable from here and a fix
+        // depending on it would fail silently.
+        //
+        // The target width is computed from PAPER, not measured: `beforeprint` fires
+        // before print layout, so measuring then returns SCREEN widths. 700px ~ 185mm,
+        // which fits both A4 and Letter portrait inside 12mm margins.
+        var RFPIS_PRINT_W = 700;
+
+        function rfpisDoc() {
+          try { return window.parent.document; } catch (e) { return document; }
         }
+
+        function rfpisFitPlots(maxW) {
+          var doc = rfpisDoc();
+          doc.querySelectorAll('.js-plotly-plot').forEach(function (plot) {
+            var cont = plot.querySelector('.svg-container');
+            var svgs = plot.querySelectorAll('svg.main-svg');
+            if (!cont || !svgs.length) return;
+            // Record the natural size ONCE, so afterprint restores the screen layout and
+            // a second print does not re-scale an already-scaled chart.
+            if (!plot.dataset.rfpisNatW) {
+              plot.dataset.rfpisNatW =
+                parseFloat(svgs[0].getAttribute('width')) || cont.offsetWidth || 0;
+              plot.dataset.rfpisNatH =
+                parseFloat(svgs[0].getAttribute('height')) || cont.offsetHeight || 0;
+            }
+            var natW = parseFloat(plot.dataset.rfpisNatW);
+            var natH = parseFloat(plot.dataset.rfpisNatH);
+            if (!natW || !natH) return;
+            var k = maxW / natW;
+            if (k >= 1) return;                 // already fits - never enlarge
+            var w = Math.floor(natW * k), h = Math.floor(natH * k);
+            cont.style.width = w + 'px';  cont.style.height = h + 'px';
+            plot.style.width = w + 'px';  plot.style.height = h + 'px';
+            svgs.forEach(function (svg) {
+              if (!svg.getAttribute('viewBox')) {
+                svg.setAttribute('viewBox', '0 0 ' +
+                  (svg.getAttribute('width') || natW) + ' ' +
+                  (svg.getAttribute('height') || natH));
+              }
+              svg.setAttribute('width', w);  svg.setAttribute('height', h);
+              svg.style.width = w + 'px';    svg.style.height = h + 'px';
+            });
+          });
+        }
+
+        function rfpisRestorePlots() {
+          var doc = rfpisDoc();
+          doc.querySelectorAll('.js-plotly-plot').forEach(function (plot) {
+            var natW = parseFloat(plot.dataset.rfpisNatW);
+            var natH = parseFloat(plot.dataset.rfpisNatH);
+            if (!natW || !natH) return;
+            var cont = plot.querySelector('.svg-container');
+            if (cont) { cont.style.width = ''; cont.style.height = ''; }
+            plot.style.width = ''; plot.style.height = '';
+            plot.querySelectorAll('svg.main-svg').forEach(function (svg) {
+              svg.setAttribute('width', natW); svg.setAttribute('height', natH);
+              svg.style.width = ''; svg.style.height = '';
+            });
+          });
+        }
+
+        // Hook Ctrl+P / the browser menu, not just our button.
+        //
+        // The listener is INJECTED INTO THE PARENT as its own script element rather
+        // than registered from in here.
+        //
+        // NOTE, and this cost two rounds of "the button does nothing": never write a
+        // literal script tag inside inline script text. This comment used to spell one
+        // out, and the HTML parser stopped treating the rest as script, so the whole
+        // block never executed. The button then rendered (it is plain HTML), had no
+        // hover (it is not a Streamlit button) and did nothing at all, because its
+        // onclick handler was never defined. Nothing in the page could report it.
+        //
+        // Streamlit destroys and recreates this iframe on every
+        // rerun, so a listener added by `window.parent.addEventListener` from inside the
+        // iframe keeps pointing at functions in a torn-down realm - it survives the guard
+        // that stops re-registration and then does nothing when the user prints. Injected
+        // code lives in the parent's own realm, so it outlives any rerun.
+        // The id carries a VERSION. The previous build guarded with
+        // `if (getElementById('rfpis-print-hook')) return;`, so once a page had been
+        // loaded with an older build, the parent kept that older hook forever and the
+        // newer one never installed — the button then posted a message nothing was
+        // listening for, and clicking it did nothing at all. Bump this whenever the
+        // injected body changes, and remove any earlier hook on the way in.
+        var RFPIS_HOOK_ID = 'rfpis-print-hook-v2';
+
+        (function () {
+          var pdoc;
+          try { pdoc = window.parent.document; } catch (e) { return; }  // cross-origin
+          if (pdoc.getElementById(RFPIS_HOOK_ID)) return;               // this version is in
+          // Drop hooks from earlier builds so their stale listeners stop firing.
+          var stale = pdoc.querySelectorAll('[id^="rfpis-print-hook"]');
+          for (var i = 0; i < stale.length; i++) { stale[i].remove(); }
+          var el = pdoc.createElement('script');
+          el.id = RFPIS_HOOK_ID;
+          // Rebuild the two helpers plus their listeners inside the parent. The function
+          // bodies are carried across as source text, so what runs there is parent code.
+          el.textContent = [
+            'window.RFPIS_PRINT_W = ' + RFPIS_PRINT_W + ';',
+            'window.rfpisDoc = function () { return document; };',
+            'window.rfpisFitPlots = ' + rfpisFitPlots.toString() + ';',
+            'window.rfpisRestorePlots = ' + rfpisRestorePlots.toString() + ';',
+            'window.addEventListener("beforeprint", function () {',
+            '  window.rfpisFitPlots(window.RFPIS_PRINT_W); });',
+            'window.addEventListener("afterprint", function () {',
+            '  window.rfpisRestorePlots(); });',
+            // The button posts up to here, so the print originates in the parent realm.
+            // One entry point the button can CALL, so success is observable rather than
+            // fired-and-forgotten into a message channel.
+            'window.rfpisPrintNow = function () {',
+            '  window.rfpisFitPlots(window.RFPIS_PRINT_W);',
+            '  window.print();',
+            '  return true; };',
+            'window.addEventListener("message", function (ev) {',
+            '  if (!ev.data || ev.data.rfpis !== "print") return;',
+            '  window.rfpisPrintNow();',
+            '});'
+          ].join('\n');
+          pdoc.head.appendChild(el);
+        })();
+
+        // Ask the PARENT to print itself, rather than reaching across and calling
+        // print() from in here.
+        //
+        // Why: this button lives in a sandboxed iframe. Every step of the old path -
+        // touching window.parent, calling its print() from a sandboxed context - is a
+        // place a browser may refuse, and the old code's `catch` then fell through to
+        // `window.print()`, which prints the IFRAME: a page containing one button.
+        // A blank-looking printout is indistinguishable from a dead button, which is
+        // the most likely reason this reads as 'not working'.
+        //
+        // postMessage has no such failure mode. The handler was installed by the
+        // injected parent-realm script above, so the print call originates in the
+        // parent, where nothing is sandboxed. If the hook is missing we still try the
+        // direct route, and only then fall back - now telling the user rather than
+        // printing a button.
         </script>
-        <button onclick="rfpisPrint()" style="
-          background:#003366; color:#fff; border:none;
-          padding:0.31rem 0.75rem; border-radius:0.5rem; cursor:pointer;
-          font-size:0.875rem; width:100%; line-height:1.6;
-          font-weight:400;
-          font-family: 'Source Sans Pro', 'Segoe UI', sans-serif;">
-          🖨 Print / PDF
-        </button>
         """,
-        height=40,
+        # Zero height: this component now only INSTALLS the hook. Nothing is drawn in it, so
+        # it cannot occupy space beside the button or intercept a click meant for it.
+        height=0,
     )
+
+    # The print call itself, on the rerun after the button was pressed. It runs as this
+    # component loads, so no click has to cross the iframe boundary.
+    if st.session_state.pop("_rfpis_print_now", False):
+        components.html(
+            r"""
+            <script>
+            (function () {
+              function go() {
+                // The parent-realm entry point installed by the hook above.
+                try {
+                  if (typeof window.parent.rfpisPrintNow === 'function') {
+                    if (window.parent.rfpisPrintNow() === true) return;
+                  }
+                } catch (e) { /* fall through */ }
+                // Direct: fit what we can reach, then print the parent.
+                try {
+                  if (typeof window.parent.rfpisFitPlots === 'function') {
+                    window.parent.rfpisFitPlots(700);
+                  }
+                  window.parent.print();
+                  return;
+                } catch (e) { /* fall through */ }
+                // Last resort - print this document. Reached only when the parent is
+                // genuinely unreachable, in which case doing nothing is worse.
+                try { window.print(); } catch (e) {}
+              }
+              // One frame's delay so the hook script above has run and the charts are laid
+              // out; printing mid-render can capture a half-drawn page.
+              if (document.readyState === 'complete') { setTimeout(go, 60); }
+              else { window.addEventListener('load', function () { setTimeout(go, 60); }); }
+            })();
+            </script>
+            """,
+            height=0,
+        )
 
 st.divider()
 
 
 # ===========================================================================
-# SECTION 1 — Search activity (top of funnel)
+# SECTION 1 — Scan activity (top of funnel)
 # ===========================================================================
 if _show_sec("1"):
-    st.subheader("1 · Search activity")
+    st.subheader("1 · Scan activity")
     st.caption(
         "How the automated scanner is performing. KPI tiles come from "
         "`scan_logs` (one row per source per run). The time-series chart "
@@ -1276,7 +1316,7 @@ if _show_sec("1"):
                         legend=dict(orientation="h", yanchor="top", y=-0.18,
                                     xanchor="center", x=0.5, font=dict(size=11)),
                     )
-                    st.plotly_chart(fig, width='stretch')
+                    _boxed(fig)
 
                     # ─── Submission leaderboard ─────────────────────────────
                     # Moved here from Section 4 (Team & Partnership Activity)
@@ -1301,7 +1341,7 @@ if _show_sec("1"):
                     )
                     fig.update_layout(height=320, margin=dict(t=40, b=10),
                                       xaxis=_fmt_bucket_ticks(bucket_mode))
-                    st.plotly_chart(fig, width='stretch')
+                    _boxed(fig)
             elif _show("s1_discovery"):
                 st.info(f"No RFPs discovered in this {period_mode.lower()} period yet.")
 
@@ -1320,14 +1360,14 @@ if _show_sec("1"):
                         donor_counts, x="RFPs", y="Donor", orientation="h",
                         text="RFPs",
                         title=f"RFPs by donor — top 15 ({_period_label_str})",
-                        color_discrete_sequence=["#10b981"],
+                        color_discrete_sequence=[_theme.rgba(0.9)],
                     )
                     fig_dn.update_layout(
                         height=max(280, 28 * len(donor_counts) + 80),
                         margin=dict(t=40, b=10),
                         yaxis={"categoryorder": "total ascending"},
                     )
-                    st.plotly_chart(fig_dn, width='stretch')
+                    _boxed(fig_dn)
 
             # ───── Keyword cloud — niche-vocabulary, frequency-sized ────────
             # Replaces the old "by program area" bar chart. Source is the
@@ -1381,7 +1421,8 @@ if _show_sec("1"):
                         ax.imshow(wc, interpolation="bilinear")
                         ax.axis("off")
                         fig_wc.tight_layout(pad=0)
-                        st.pyplot(fig_wc, width='stretch')
+                        with st.container(border=True):
+                            st.pyplot(fig_wc, width='stretch')
                         plt.close(fig_wc)
                     except ImportError:
                         # Graceful fallback when WordCloud / matplotlib not
@@ -1535,7 +1576,7 @@ if _show_sec("1"):
                     labels={"days": "Days", "count": "RFPs"},
                 )
                 fig_cyc.update_layout(height=280, margin=dict(t=40, b=10))
-                st.plotly_chart(fig_cyc, width='stretch')
+                _boxed(fig_cyc)
             else:
                 st.info("No RFPs with both search_date and date_completed yet — "
                         "cycle time chart will populate as proposals get submitted.")
@@ -1544,10 +1585,329 @@ if _show_sec("1"):
 
 
 # ===========================================================================
-# SECTION 2 — Pipeline funnel (insights from triage)
+# SECTION 4 (displayed 2nd) — Team & Partnership Activity
+# Single umbrella covering everything about WHO does the work and WHO we
+# do it with: internal meetings, donor engagements, individual member
+# activity, proposal leads / contributors, lead & sub applicant partners,
+# status mix, requested-vs-secured economics, conversion + cycle time.
+# ===========================================================================
+if _show_sec("4"):
+    st.subheader("2 · Team & Partnership Activity")
+    st.caption(
+        "Everything about WHO does the work and WHO we do it with — internal "
+        "triage meetings (**Team Touchpoints**), donor-facing engagements "
+        "(**Donor Touchpoints**), member-level submission activity, proposal "
+        "leadership, partner trends, status mix, funding economics, and the "
+        "Proceed-to-Submitted conversion."
+    )
+
+    # ─── Team Touchpoints (internal team meetings) ─────────────────────────────
+    st.markdown("##### Team Touchpoints")
+    n_meetings_total = int(len(meetings))
+    n_resolved = int(meetings["is_resolved"].sum()) if not meetings.empty else 0
+    n_open = n_meetings_total - n_resolved
+    pct_unresolved = (n_open / n_meetings_total * 100) if n_meetings_total > 0 else 0.0
+
+    bk1, bk2, bk3, bk4 = st.columns(4)
+    bk1.metric("Meeting items logged", n_meetings_total,
+               help="Total action items captured across weekly team-call notes.")
+    bk2.metric("Open action items", n_open,
+               help="Items where `is_resolved = False`. Still awaiting closure.")
+    bk3.metric("Resolved action items", n_resolved,
+               help="Items where `is_resolved = True`. Closed out.")
+    bk4.metric("% Unresolved",
+               f"{pct_unresolved:.1f}%" if n_meetings_total > 0 else "—",
+               delta_color="inverse" if pct_unresolved > 50 else "off",
+               help="Open ÷ Total. High values = follow-up debt building up.")
+
+    st.markdown("")  # vertical spacer between the two sub-sections
+
+    # ─── Donor Touchpoints (external donor engagements) ───────────────────────
+    st.markdown("##### Donor Touchpoints")
+    n_engagements = int(len(engagements))
+    n_donors = (int(engagements["donor"].nunique())
+                if (not engagements.empty and "donor" in engagements.columns) else 0)
+
+    dk1, dk2, dk3, dk4 = st.columns(4)
+    dk1.metric("Donor engagements", n_engagements,
+               help="Total engagement entries logged in the period.")
+    dk2.metric("Distinct donors engaged", n_donors,
+               help="Unique donor names across all engagement entries.")
+    # Avg touchpoints per donor — useful "depth" signal alongside breadth
+    avg_per_donor = (n_engagements / n_donors) if n_donors > 0 else 0.0
+    dk3.metric("Avg touchpoints / donor",
+               f"{avg_per_donor:.1f}" if n_donors else "—",
+               help="Engagements ÷ Distinct donors. >2 suggests durable relationships.")
+    # Engagements linked to specific RFPs vs general
+    n_linked = int(engagements["linked_rfp_uid"].notna().sum()) if not engagements.empty and "linked_rfp_uid" in engagements.columns else 0
+    dk4.metric("Tied to an RFP", n_linked,
+               help="Engagement entries that linked to a specific opportunity_uid.")
+
+    if _show("s4_eng_ts") and not engagements.empty and engagements["engagement_date"].notna().any():
+        eng_df = _bucketed_count(engagements["engagement_date"].dropna(), "engagements")
+        fig = px.bar(eng_df, x="bucket", y="engagements",
+                     title=f"Donor engagements ({_period_label_str}, {bucket_mode.lower()})",
+                     labels={"bucket": _bucket_label(bucket_mode)})
+        fig.update_layout(height=280, margin=dict(t=40, b=10),
+                          xaxis=_fmt_bucket_ticks(bucket_mode))
+        _boxed(fig)
+
+    if _show("s4_topdonors") and not engagements.empty and "donor" in engagements.columns:
+        top_donors = (
+            engagements.groupby("donor")
+            .agg(touchpoints=("engagement_date", "count"),
+                 types=("engagement_type",
+                        lambda x: ", ".join(sorted(set(filter(None, x))))[:80]))
+            .reset_index()
+            .sort_values("touchpoints", ascending=False)
+            .head(10)
+        )
+        with st.expander("Top 10 donors by touchpoints", expanded=False):
+            st.dataframe(
+                top_donors.rename(columns={
+                    "donor": "Donor", "touchpoints": "Touchpoints",
+                    "types": "Engagement types",
+                }),
+                width='stretch', hide_index=True,
+            )
+
+    # ─── Team activity, partners, financial mix, conversion (consolidated) ────
+    # These used to live in a standalone "Section 6"; consolidated under
+    # Section 4 since they all share the umbrella theme of WHO does the work
+    # and WHO we do it with. Counts include manual + Excel-migration rows
+    # since auto-scanned rows have most of these fields blank.
+    if rfps_all.empty:
+        st.info("No RFPs in the database yet — team / partner charts will populate "
+                "as data lands.")
+    else:
+        # Section 4 RFP distributions reflect the PROCEED pipeline only (the actionable
+        # RFPs found) — consistent with the convention that everything after the Section-2
+        # eligibility/conversion funnels is Proceed-scoped.
+        _ded_all = rfps_all[~rfps_all["is_duplicate"]]
+        activity_rows = _ded_all[
+            _ded_all["decision"].fillna("").str.lower().str.startswith("proceed")].copy()
+
+        # ───────────── Submissions by team member ─────────────────────────────
+        # REMOVED 2026-06-05: chart + leaderboard moved to Section 1, directly
+        # under "RFPs discovered by member" — same data presented twice was
+        # redundant. The leaderboard expander now sits inline with the
+        # discovery chart, and Section 4 jumps straight from KPIs to the
+        # stacked Submitted/Unsubmitted views.
+
+        # ───────────── Helpers for stacked Submitted / Unsubmitted bars ───────
+        # "Submitted" uses the shared app-wide definition (Completed OR a donor decision) —
+        # computed per RFP via _submitted_mask before exploding names, so it matches every
+        # other page. Everything else goes into "Unsubmitted".
+        def _stacked_chart_df(name_value_pairs: pd.DataFrame,
+                              name_col: str) -> pd.DataFrame:
+            """Build a tidy DataFrame ready for px.bar(barmode='stack').
+
+            Input: a 2-column frame [name_col, is_submitted (bool)] —
+            one row per RFP-person mention.
+            Output: long-form [name, Status, count] with two rows per
+            person (Submitted + Unsubmitted), suitable for stacked plotting.
+            """
+            if name_value_pairs.empty:
+                return pd.DataFrame(columns=[name_col, "Status", "RFPs"])
+            agg = (
+                name_value_pairs
+                .assign(Status=name_value_pairs["is_submitted"]
+                        .map({True: "Submitted", False: "Unsubmitted"}))
+                .groupby([name_col, "Status"]).size().reset_index(name="RFPs")
+            )
+            # Pre-compute per-person total so we can rank top-15 by total.
+            totals = agg.groupby(name_col)["RFPs"].sum().sort_values(ascending=False)
+            top_names = totals.head(15).index.tolist()
+            agg = agg[agg[name_col].isin(top_names)]
+            # Force both stack components to exist for every person — keeps
+            # the legend stable and the bars visually consistent.
+            all_rows = []
+            for n in top_names:
+                for s in ("Submitted", "Unsubmitted"):
+                    match = agg[(agg[name_col] == n) & (agg["Status"] == s)]
+                    all_rows.append({
+                        name_col: n, "Status": s,
+                        "RFPs": int(match["RFPs"].iloc[0]) if not match.empty else 0,
+                    })
+            return clean_df(pd.DataFrame(all_rows))
+        # One hue at two opacities: submitted is the emphatic half of the same bar.
+        _STACK_COLORS = _theme.sequence_for(list(_theme.SUBMITTED_ORDER),
+                                            order=_theme.SUBMITTED_ORDER)
+
+        # ───────── Proposal Leads + Contributors, SIDE BY SIDE ────────────────
+        # Two charts of the same shape — people on the y-axis, submitted vs unsubmitted
+        # stacked — so they belong in one row where the same person's two bars can be
+        # compared at a glance. Stacked vertically they were a scroll apart.
+        #
+        # Each stays INDEPENDENTLY toggleable, so when only one section is enabled it takes
+        # the full width instead of rendering half a row with a gap beside it. That is why
+        # the figures are BUILT first and rendered afterwards: the layout can only be chosen
+        # once we know how many charts there are.
+        #
+        # `proposal_lead` is free text that may hold one name or a comma-separated list
+        # ("Alice, Bob"); `contributors` is a Postgres text[] whose elements can themselves
+        # carry comma-separated names from sloppy form submissions.
+        # split_and_normalize_names handles both shapes, and the per-row set() dedupe means
+        # one RFP never counts the same person twice.
+        def _people_stack(col: str, y_title: str, x_title: str, chart_title: str,
+                          empty_msg: str):
+            """(figure|None, message|None, row_count) for one people-vs-status chart."""
+            if col not in activity_rows.columns:
+                return None, empty_msg, 0
+            rows = activity_rows[[col, "progress_status", "donor_decision"]].copy()
+            rows["is_submitted"] = _submitted_mask(rows).to_numpy()
+            rows["_members"] = rows[col].apply(
+                lambda v: sorted(set(split_and_normalize_names(v))))
+            rows = rows.explode("_members").dropna(subset=["_members"])
+            rows = rows[rows["_members"] != ""]
+            if rows.empty:
+                return None, empty_msg, 0
+            disp = first_name_display_map(rows["_members"])
+            rows["display"] = rows["_members"].map(disp).fillna(rows["_members"])
+            stacked = _stacked_chart_df(rows[["display", "is_submitted"]], "display")
+            if stacked.empty:
+                return None, empty_msg, 0
+            fig = px.bar(
+                stacked, x="RFPs", y="display",
+                color="Status", orientation="h",
+                color_discrete_map=_STACK_COLORS,
+                title=chart_title, text="RFPs",
+                category_orders={"Status": ["Submitted", "Unsubmitted"]},
+            )
+            return fig, None, int(stacked["display"].nunique())
+
+        _pl_fig = _ct_fig = None
+        _pl_msg = _ct_msg = None
+        _pl_n = _ct_n = 0
+        if _show("s4_leads"):
+            _pl_fig, _pl_msg, _pl_n = _people_stack(
+                "proposal_lead", "Proposal lead", "RFPs",
+                "Top 15 by RFP count (Submitted vs Unsubmitted)",
+                "No proposal_lead values recorded yet.")
+        if _show("s4_contrib"):
+            _ct_fig, _ct_msg, _ct_n = _people_stack(
+                "contributors", "Contributor", "RFP contributions",
+                "Top 15 by RFPs supported (Submitted vs Unsubmitted)",
+                "No contributors recorded yet.")
+
+        # ONE height for both, from whichever has more people, so the two panels line up
+        # instead of one floating short beside the other.
+        _people_h = max(280, 30 * max(_pl_n, _ct_n) + 100)
+
+        def _finish(fig, y_title: str, x_title: str):
+            fig.update_layout(
+                height=_people_h, margin=dict(t=54, b=10), barmode="stack",
+                yaxis={"categoryorder": "total ascending", "title": y_title},
+                xaxis={"title": x_title},
+                title={"font": dict(size=13)},
+                legend={"orientation": "h", "yanchor": "bottom", "y": 1.02,
+                        "xanchor": "right", "x": 1, "font": dict(size=11)},
+            )
+            return fig
+
+        def _panel(heading: str, fig, msg, y_title: str, x_title: str):
+            st.markdown(f"##### {heading}")
+            if fig is not None:
+                _boxed(_finish(fig, y_title, x_title))
+            elif msg:
+                st.info(msg)
+
+        if _show("s4_leads") and _show("s4_contrib"):
+            _pc1, _pc2 = st.columns(2, gap="medium")
+            with _pc1:
+                _panel("Proposal Leads", _pl_fig, _pl_msg, "Proposal lead", "RFPs")
+            with _pc2:
+                _panel("Contributors", _ct_fig, _ct_msg, "Contributor",
+                       "RFP contributions")
+        elif _show("s4_leads"):
+            _panel("Proposal Leads", _pl_fig, _pl_msg, "Proposal lead", "RFPs")
+        elif _show("s4_contrib"):
+            _panel("Contributors", _ct_fig, _ct_msg, "Contributor", "RFP contributions")
+
+        # ───────────── Lead & Sub Applicant partners ──────────────────────────
+        # Over the PROCEED RFPs (activity_rows), each applicant cell can list MULTIPLE partners
+        # who applied jointly on the SAME grant, separated by ";" or "," (e.g. "Org North;
+        # Org South"). We split them → one count each, canonicalise the deploying org's own name
+        # (its short form / hyphenated variant → its full canonical name, while a distinct
+        # sibling org is left alone), and DE-DUP per RFP → the number of distinct lead/sub applicants
+        # per Proceed RFP. BLANK cells and the literal "N/A" (Not Applicable — a real, distinct
+        # value) are BOTH dropped: neither is an applicant, so neither belongs on the chart.
+        # A separator INSIDE one org's own name (a legal suffix after a comma, or an
+        # abbreviation after a ";") does not make a second applicant — see core.partner_names.
+        if _show("s4_partners"):
+            st.markdown("##### Lead & Sub Applicant partners")
+        _NA_VALUES = partner_names.NA_VALUES
+        _org_full = (settings.get_org_name() or "").strip()
+        _org_short = (settings.get_org_short() or "").strip()
+        _org_full_key = re.sub(r"\s+", " ", _org_full.replace("-", " ")).strip().lower()
+        # The bare acronym = the org's first word (the full name's leading token). A bare
+        # acronym rolls up to the full name; a qualified sibling (two tokens) does NOT.
+        _org_first = _org_full.split()[0].lower() if _org_full else ""
+
+        def _norm_org(raw) -> str:
+            s = re.sub(r"\s+", " ", str(raw or "").replace("-", " ")).strip()
+            if not s or s.strip().lower() in _NA_VALUES:
+                return ""                          # blank OR "N/A"/"Not Applicable" → drop
+            # Canonicalise on the name WITHOUT its own trailing abbreviation, so the deploying
+            # org still resolves to one bar when its cell was written "Full Name; (FN)" and the
+            # splitter re-attached the abbreviation.
+            low = partner_names.strip_trailing_acronym(s).lower()
+            if _org_short and low == _org_short.lower():
+                return _org_full or s              # bare short name → canonical full name
+            if _org_full and low == _org_full_key:
+                return _org_full                   # variant/hyphen/case → canonical casing
+            if _org_first and low == _org_first:
+                return _org_full                   # bare acronym → canonical full name
+            return s                               # distinct sibling org untouched
+
+        def _split_orgs(v) -> list[str]:
+            # Separator splitting + re-attachment lives in core.partner_names so it can be
+            # tested; this page is script-scope and cannot be imported.
+            return sorted({o for o in (_norm_org(p) for p in partner_names.split_pieces(v)) if o})
+
+        ap_l, ap_r = st.columns(2)
+        for col_name, col_label, container in [
+            ("lead_applicant", "Lead applicant", ap_l),
+            ("sub_applicant",  "Sub applicant",  ap_r),
+        ]:
+            if _show("s4_partners") and col_name in activity_rows.columns:
+                _rows = activity_rows[[col_name]].copy()
+                _rows["_orgs"] = _rows[col_name].apply(_split_orgs)   # blank/N/A already dropped
+                _rows = _rows.explode("_orgs").dropna(subset=["_orgs"])
+                _rows = _rows[_rows["_orgs"].astype(str).str.strip() != ""]
+                counts = (_rows["_orgs"].value_counts().head(10)
+                          .rename_axis(col_label).reset_index(name="RFPs"))
+                with container:
+                    if not counts.empty:
+                        fig = px.bar(
+                            counts, x="RFPs", y=col_label, orientation="h",
+                            title=f"{col_label} — top 10 (Proceed RFPs)", text="RFPs",
+                        )
+                        fig.update_layout(
+                            height=max(250, 30 * len(counts) + 60),
+                            margin=dict(t=40, b=10),
+                            yaxis={"categoryorder": "total ascending"},
+                        )
+                        _boxed(fig)
+                    else:
+                        st.info(f"No {col_label.lower()} values recorded yet.")
+
+        # Progress status chart relocated to Section 2 (Insights) — same
+        # narrative beat as the eligibility funnel. Not re-rendered here.
+
+        # The Requested-vs-Secured scatter + Conversion rates blocks
+        # relocated to Section 5 (Our Results) — that's the natural home for
+        # outcome-shaped metrics. The Search → Submission cycle time block
+        # relocated to Section 1 (Scan Activity) — Search Date is the
+        # anchor, so it fits the search-narrative beat.
+
+    st.divider()
+
+# ===========================================================================
+# SECTION 2 (displayed 3rd) — Status & eligibility funnel (insights from triage)
 # ===========================================================================
 if _show_sec("2"):
-    st.subheader("2 · Insights — Eligibility Funnel")
+    st.subheader("3 · Insights — Status & Eligibility Funnel")
     st.caption(
         "**Current pipeline state across ALL stored RFPs** — auto-scanned, "
         "manually submitted, AND imported from the legacy Excel workbook. "
@@ -1635,8 +1995,11 @@ if _show_sec("2"):
                                    title="Conversion funnel — value (USD)")
         if _show("s2_funnel"):
             _fc1, _fc2 = st.columns(2)
-            _fc1.plotly_chart(fig_funnel, width='stretch')
-            _fc2.plotly_chart(fig_funnel_v, width='stretch')
+            # Framed individually — side by side and unframed, the pair read as one graphic.
+            with _fc1:
+                _boxed(fig_funnel)
+            with _fc2:
+                _boxed(fig_funnel_v)
             st.caption("Value funnel: Discovered / Proceed = estimated award value; Submitted "
                        "= amount requested; Approved = amount secured.")
         # Decision-distribution chart used to live here; moved to Section 3
@@ -1680,18 +2043,17 @@ if _show_sec("2"):
                 )
                 # Traffic-light semantics: Not Started (red) → In Progress (amber) →
                 # Completed (green); Discontinued / Missed are muted greys.
-                _PS_COLORS = {
-                    "Not Started": "#ef4444", "In Progress": "#eab308",
-                    "Completed": "#1e8e3e", "Discontinued": "#9ca3af",
-                    "Missed": "#6b7280",
-                }
+                # Shaded along pipeline progression (Completed most emphatic), so the ink
+                # carries the ordering the old red/amber/green only implied.
+                _PS_COLORS = _theme.sequence_for(list(ps["Status"]),
+                                                 order=_theme.PROGRESS_ORDER)
                 fig_ps = px.bar(ps, x="Status", y="RFPs", text="RFPs",
                                 title="Progress status — Proceed RFPs", color="Status",
                                 category_orders={"Status": _order},
                                 color_discrete_map=_PS_COLORS)
                 fig_ps.update_layout(height=300, showlegend=False,
                                      margin=dict(t=40, b=10), xaxis_title=None)
-                st.plotly_chart(fig_ps, width='stretch')
+                _boxed(fig_ps)
                 st.caption(f"_{len(_proc_ps)} Proceed RFPs (blank progress counts as "
                            f"'Not Started'). Completed = submitted to donor._")
 
@@ -1699,13 +2061,14 @@ if _show_sec("2"):
 
 
 # ===========================================================================
-# SECTION 3 — Reviews & Decisions
+# SECTION 3 (displayed 4th) — Reviews & Decisions
 # ===========================================================================
 if _show_sec("3"):
-    st.subheader("3 · Reviews & Decisions")
+    st.subheader("4 · Reviews & Decisions")
     st.caption(
-        "Triage outcomes — velocity from RFP discovery to decision, and where "
-        "the auto-recommendation needed manual override."
+        "Triage outcomes — velocity from RFP discovery to decision, where "
+        "the auto-recommendation needed manual override, and the funder's own "
+        "decision on what we submitted."
     )
 
     if rfps_all.empty:
@@ -1740,10 +2103,24 @@ if _show_sec("3"):
         k4.metric("Overridden", int(len(overridden)),
                   help="Decisions where the reviewer disagreed with the auto-recommendation.")
 
-        # Decision Distribution — across ALL stored RFPs (not period-restricted).
-        # Placed BEFORE the time-series so the eye sees the static "where we
-        # land overall" snapshot first, then descends into the time-bucketed
-        # cadence of "when decisions happened in this period".
+        # Proceed-only for the lower charts: §3 drills into the RFPs the team chose to pursue
+        # (consistent with §4+). The KPI row and Decision Distribution stay full-triage — they
+        # describe the whole review process, and the distribution chart IS the
+        # Proceed/Park/Decline split.
+        _proc_dec = decided[
+            decided["decision"].fillna("").str.lower().str.startswith("proceed")
+        ]
+
+        # ── Decision Distribution + Proceed decisions over time, ONE ROW ──────────────
+        # They answer two halves of the same question — where decisions land, and when they
+        # happened — so they belong side by side rather than a scroll apart.
+        #
+        # The split is 1:3. The time series is a monthly run across the period and needs the
+        # width or its buckets crowd; the distribution is four bars and does not. That also makes
+        # VERTICAL bars right for the distribution: in a narrow column horizontal bars waste the
+        # height and squeeze the value labels, and four categories never collide on the x-axis.
+        fig_dec = fig_time = None
+
         if _show("s3_decdist") and not rfps_all.empty:
             _unique_all = rfps_all[~rfps_all["is_duplicate"]]
             _proceed = int(_unique_all["decision"].fillna("").str.lower().str.startswith("proceed").sum())
@@ -1754,44 +2131,41 @@ if _show_sec("3"):
                 "decision": ["Proceed", "Park", "Decline", "No decision"],
                 "count": [_proceed, _park, _decline, _no_dec],
             })
-            # Horizontal bars — easier to scan + labels never collide on
-            # narrow widths. Order by count descending so the dominant
-            # decision sits at the top.
             fig_dec = px.bar(
-                dec_df, x="count", y="decision", text="count",
-                orientation="h",
+                dec_df, x="decision", y="count", text="count",
                 title="Decision Distribution",
                 color="decision",
-                color_discrete_map={
-                    "Proceed": "#10b981", "Park": "#f59e0b",
-                    "Decline": "#ef4444", "No decision": "#9ca3af",
-                },
+                # Fixed semantic order, not frequency order: the shade then means the same thing
+                # on every report instead of tracking whichever decision happens to dominate.
+                category_orders={"decision": _theme.DECISION_ORDER},
+                color_discrete_map=_theme.sequence_for(
+                    list(dec_df["decision"]), order=_theme.DECISION_ORDER),
             )
-            fig_dec.update_layout(height=280, showlegend=False,
-                                  margin=dict(t=40, b=10),
-                                  xaxis_title="RFPs", yaxis_title=None,
-                                  yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(fig_dec, width='stretch')
-
-        # Proceed-only from here down: §3's lower charts drill into the RFPs the
-        # team chose to pursue (consistent with §4+). The KPI row and Decision
-        # Distribution above stay full-triage — they describe the whole review
-        # process, and the distribution chart IS the Proceed/Park/Decline split.
-        _proc_dec = decided[
-            decided["decision"].fillna("").str.lower().str.startswith("proceed")
-        ]
+            fig_dec.update_layout(height=300, showlegend=False,
+                                  xaxis_title=None, yaxis_title="RFPs")
 
         if _show("s3_dectime") and not _proc_dec.empty:
             dec_dates = pd.to_datetime(_proc_dec["decision_date"], errors="coerce").dropna()
             if not dec_dates.empty:
                 ts_df = _bucketed_count(dec_dates, "decisions")
-                fig = px.bar(ts_df, x="bucket", y="decisions",
-                             title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
-                             labels={"bucket": _bucket_label(bucket_mode),
-                                     "decisions": "Proceed decisions"})
-                fig.update_layout(height=280, margin=dict(t=40, b=10),
-                                  xaxis=_fmt_bucket_ticks(bucket_mode))
-                st.plotly_chart(fig, width='stretch')
+                fig_time = px.bar(ts_df, x="bucket", y="decisions",
+                                  title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
+                                  labels={"bucket": _bucket_label(bucket_mode),
+                                          "decisions": "Proceed decisions"},
+                                  color_discrete_sequence=[_theme.rgba(0.9)])
+                fig_time.update_layout(height=300, xaxis=_fmt_bucket_ticks(bucket_mode))
+
+        if fig_dec is not None and fig_time is not None:
+            _dc1, _dc2 = st.columns([1, 3], gap="medium")
+            with _dc1:
+                _boxed(fig_dec)
+            with _dc2:
+                _boxed(fig_time)
+        elif fig_dec is not None:
+            # Alone it gets the full width, rather than a quarter-row with a gap beside it.
+            _boxed(fig_dec)
+        elif fig_time is not None:
+            _boxed(fig_time)
 
         if _show("s3_autorec") and not _proc_dec.empty:
             # Of the RFPs we chose to pursue, what had the auto-scorer recommended?
@@ -1823,332 +2197,44 @@ if _show_sec("3"):
                     width='stretch', hide_index=True,
                 )
 
+        # ───────────── Donor Decisions ─────────────────────────────────────────
+        # The charts above are OUR decisions (Proceed / Park / Decline — whether to bid).
+        # `donor_decision` is the FUNDER's decision on what we submitted, which is the other
+        # half of the same review story and belongs in this section rather than under results.
+        #
+        # Proceed-scoped, like the rest of §3's lower charts. "Not submitted" is excluded: it is
+        # the default for everything still in flight, so leaving it in produces one bar that
+        # dwarfs every real outcome and says nothing about donor decisions. The count of those
+        # awaiting a decision is stated as a caption instead.
+        if _show("s3_donordec") and "donor_decision" in _proc_dec.columns:
+            st.markdown("##### Donor Decisions")
+            _dd = _proc_dec["donor_decision"].fillna("").astype(str).str.strip()
+            _pending = int((_dd.str.lower().isin(["", "not submitted"])).sum())
+            _dd = _dd[~_dd.str.lower().isin(["", "not submitted"])]
+            if _dd.empty:
+                st.info("No donor decisions recorded yet.")
+            else:
+                _ddc = (_dd.str.title().value_counts()
+                        .rename_axis("Donor decision").reset_index(name="RFPs"))
+                fig_dd = px.bar(
+                    _ddc, x="RFPs", y="Donor decision", orientation="h",
+                    title="Donor decisions on submitted proposals", text="RFPs",
+                    color="Donor decision",
+                    color_discrete_map=_theme.sequence_for(
+                        list(_ddc["Donor decision"]), order=_theme.DONOR_DECISION_ORDER),
+                )
+                fig_dd.update_layout(height=max(220, 34 * len(_ddc) + 70), showlegend=False,
+                                     margin=dict(t=40, b=10), yaxis_title=None,
+                                     yaxis={"categoryorder": "total ascending"})
+                _boxed(fig_dd)
+            if _pending:
+                st.caption(
+                    f"{_pending} Proceed RFP(s) have no donor decision yet — not submitted, or "
+                    "submitted and awaiting an outcome. They are excluded from the chart above."
+                )
+
     st.divider()
 
-
-# ===========================================================================
-# SECTION 4 — Team & Partnership Activity
-# Single umbrella covering everything about WHO does the work and WHO we
-# do it with: internal meetings, donor engagements, individual member
-# activity, proposal leads / contributors, lead & sub applicant partners,
-# status mix, requested-vs-secured economics, conversion + cycle time.
-# ===========================================================================
-if _show_sec("4"):
-    st.subheader("4 · Team & Partnership Activity")
-    st.caption(
-        "Everything about WHO does the work and WHO we do it with — internal "
-        "triage meetings (**Team Touchpoints**), donor-facing engagements "
-        "(**Donor Touchpoints**), member-level submission activity, proposal "
-        "leadership, partner trends, status mix, funding economics, and the "
-        "Proceed-to-Submitted conversion."
-    )
-
-    # ─── Team Touchpoints (internal team meetings) ─────────────────────────────
-    st.markdown("##### Team Touchpoints")
-    n_meetings_total = int(len(meetings))
-    n_resolved = int(meetings["is_resolved"].sum()) if not meetings.empty else 0
-    n_open = n_meetings_total - n_resolved
-    pct_unresolved = (n_open / n_meetings_total * 100) if n_meetings_total > 0 else 0.0
-
-    bk1, bk2, bk3, bk4 = st.columns(4)
-    bk1.metric("Meeting items logged", n_meetings_total,
-               help="Total action items captured across weekly team-call notes.")
-    bk2.metric("Open action items", n_open,
-               help="Items where `is_resolved = False`. Still awaiting closure.")
-    bk3.metric("Resolved action items", n_resolved,
-               help="Items where `is_resolved = True`. Closed out.")
-    bk4.metric("% Unresolved",
-               f"{pct_unresolved:.1f}%" if n_meetings_total > 0 else "—",
-               delta_color="inverse" if pct_unresolved > 50 else "off",
-               help="Open ÷ Total. High values = follow-up debt building up.")
-
-    st.markdown("")  # vertical spacer between the two sub-sections
-
-    # ─── Donor Touchpoints (external donor engagements) ───────────────────────
-    st.markdown("##### Donor Touchpoints")
-    n_engagements = int(len(engagements))
-    n_donors = (int(engagements["donor"].nunique())
-                if (not engagements.empty and "donor" in engagements.columns) else 0)
-
-    dk1, dk2, dk3, dk4 = st.columns(4)
-    dk1.metric("Donor engagements", n_engagements,
-               help="Total engagement entries logged in the period.")
-    dk2.metric("Distinct donors engaged", n_donors,
-               help="Unique donor names across all engagement entries.")
-    # Avg touchpoints per donor — useful "depth" signal alongside breadth
-    avg_per_donor = (n_engagements / n_donors) if n_donors > 0 else 0.0
-    dk3.metric("Avg touchpoints / donor",
-               f"{avg_per_donor:.1f}" if n_donors else "—",
-               help="Engagements ÷ Distinct donors. >2 suggests durable relationships.")
-    # Engagements linked to specific RFPs vs general
-    n_linked = int(engagements["linked_rfp_uid"].notna().sum()) if not engagements.empty and "linked_rfp_uid" in engagements.columns else 0
-    dk4.metric("Tied to an RFP", n_linked,
-               help="Engagement entries that linked to a specific opportunity_uid.")
-
-    if _show("s4_eng_ts") and not engagements.empty and engagements["engagement_date"].notna().any():
-        eng_df = _bucketed_count(engagements["engagement_date"].dropna(), "engagements")
-        fig = px.bar(eng_df, x="bucket", y="engagements",
-                     title=f"Donor engagements ({_period_label_str}, {bucket_mode.lower()})",
-                     labels={"bucket": _bucket_label(bucket_mode)})
-        fig.update_layout(height=280, margin=dict(t=40, b=10),
-                          xaxis=_fmt_bucket_ticks(bucket_mode))
-        st.plotly_chart(fig, width='stretch')
-
-    if _show("s4_topdonors") and not engagements.empty and "donor" in engagements.columns:
-        top_donors = (
-            engagements.groupby("donor")
-            .agg(touchpoints=("engagement_date", "count"),
-                 types=("engagement_type",
-                        lambda x: ", ".join(sorted(set(filter(None, x))))[:80]))
-            .reset_index()
-            .sort_values("touchpoints", ascending=False)
-            .head(10)
-        )
-        with st.expander("Top 10 donors by touchpoints", expanded=False):
-            st.dataframe(
-                top_donors.rename(columns={
-                    "donor": "Donor", "touchpoints": "Touchpoints",
-                    "types": "Engagement types",
-                }),
-                width='stretch', hide_index=True,
-            )
-
-    # ─── Team activity, partners, financial mix, conversion (consolidated) ────
-    # These used to live in a standalone "Section 6"; consolidated under
-    # Section 4 since they all share the umbrella theme of WHO does the work
-    # and WHO we do it with. Counts include manual + Excel-migration rows
-    # since auto-scanned rows have most of these fields blank.
-    if rfps_all.empty:
-        st.info("No RFPs in the database yet — team / partner charts will populate "
-                "as data lands.")
-    else:
-        # Section 4 RFP distributions reflect the PROCEED pipeline only (the actionable
-        # RFPs found) — consistent with the convention that everything after the Section-2
-        # eligibility/conversion funnels is Proceed-scoped.
-        _ded_all = rfps_all[~rfps_all["is_duplicate"]]
-        activity_rows = _ded_all[
-            _ded_all["decision"].fillna("").str.lower().str.startswith("proceed")].copy()
-
-        # ───────────── Submissions by team member ─────────────────────────────
-        # REMOVED 2026-06-05: chart + leaderboard moved to Section 1, directly
-        # under "RFPs discovered by member" — same data presented twice was
-        # redundant. The leaderboard expander now sits inline with the
-        # discovery chart, and Section 4 jumps straight from KPIs to the
-        # stacked Submitted/Unsubmitted views.
-
-        # ───────────── Helpers for stacked Submitted / Unsubmitted bars ───────
-        # "Submitted" uses the shared app-wide definition (Completed OR a donor decision) —
-        # computed per RFP via _submitted_mask before exploding names, so it matches every
-        # other page. Everything else goes into "Unsubmitted".
-        def _stacked_chart_df(name_value_pairs: pd.DataFrame,
-                              name_col: str) -> pd.DataFrame:
-            """Build a tidy DataFrame ready for px.bar(barmode='stack').
-
-            Input: a 2-column frame [name_col, is_submitted (bool)] —
-            one row per RFP-person mention.
-            Output: long-form [name, Status, count] with two rows per
-            person (Submitted + Unsubmitted), suitable for stacked plotting.
-            """
-            if name_value_pairs.empty:
-                return pd.DataFrame(columns=[name_col, "Status", "RFPs"])
-            agg = (
-                name_value_pairs
-                .assign(Status=name_value_pairs["is_submitted"]
-                        .map({True: "Submitted", False: "Unsubmitted"}))
-                .groupby([name_col, "Status"]).size().reset_index(name="RFPs")
-            )
-            # Pre-compute per-person total so we can rank top-15 by total.
-            totals = agg.groupby(name_col)["RFPs"].sum().sort_values(ascending=False)
-            top_names = totals.head(15).index.tolist()
-            agg = agg[agg[name_col].isin(top_names)]
-            # Force both stack components to exist for every person — keeps
-            # the legend stable and the bars visually consistent.
-            all_rows = []
-            for n in top_names:
-                for s in ("Submitted", "Unsubmitted"):
-                    match = agg[(agg[name_col] == n) & (agg["Status"] == s)]
-                    all_rows.append({
-                        name_col: n, "Status": s,
-                        "RFPs": int(match["RFPs"].iloc[0]) if not match.empty else 0,
-                    })
-            return clean_df(pd.DataFrame(all_rows))
-        _STACK_COLORS = {"Submitted": "#10b981", "Unsubmitted": "#cbd5e1"}
-
-        # ───────── Proposal Leads + Contributors, SIDE BY SIDE ────────────────
-        # Two charts of the same shape — people on the y-axis, submitted vs unsubmitted
-        # stacked — so they belong in one row where the same person's two bars can be
-        # compared at a glance. Stacked vertically they were a scroll apart.
-        #
-        # Each stays INDEPENDENTLY toggleable, so when only one section is enabled it takes
-        # the full width instead of rendering half a row with a gap beside it. That is why
-        # the figures are BUILT first and rendered afterwards: the layout can only be chosen
-        # once we know how many charts there are.
-        #
-        # `proposal_lead` is free text that may hold one name or a comma-separated list
-        # ("Alice, Bob"); `contributors` is a Postgres text[] whose elements can themselves
-        # carry comma-separated names from sloppy form submissions.
-        # split_and_normalize_names handles both shapes, and the per-row set() dedupe means
-        # one RFP never counts the same person twice.
-        def _people_stack(col: str, y_title: str, x_title: str, chart_title: str,
-                          empty_msg: str):
-            """(figure|None, message|None, row_count) for one people-vs-status chart."""
-            if col not in activity_rows.columns:
-                return None, empty_msg, 0
-            rows = activity_rows[[col, "progress_status", "donor_decision"]].copy()
-            rows["is_submitted"] = _submitted_mask(rows).to_numpy()
-            rows["_members"] = rows[col].apply(
-                lambda v: sorted(set(split_and_normalize_names(v))))
-            rows = rows.explode("_members").dropna(subset=["_members"])
-            rows = rows[rows["_members"] != ""]
-            if rows.empty:
-                return None, empty_msg, 0
-            disp = first_name_display_map(rows["_members"])
-            rows["display"] = rows["_members"].map(disp).fillna(rows["_members"])
-            stacked = _stacked_chart_df(rows[["display", "is_submitted"]], "display")
-            if stacked.empty:
-                return None, empty_msg, 0
-            fig = px.bar(
-                stacked, x="RFPs", y="display",
-                color="Status", orientation="h",
-                color_discrete_map=_STACK_COLORS,
-                title=chart_title, text="RFPs",
-                category_orders={"Status": ["Submitted", "Unsubmitted"]},
-            )
-            return fig, None, int(stacked["display"].nunique())
-
-        _pl_fig = _ct_fig = None
-        _pl_msg = _ct_msg = None
-        _pl_n = _ct_n = 0
-        if _show("s4_leads"):
-            _pl_fig, _pl_msg, _pl_n = _people_stack(
-                "proposal_lead", "Proposal lead", "RFPs",
-                "Top 15 by RFP count (Submitted vs Unsubmitted)",
-                "No proposal_lead values recorded yet.")
-        if _show("s4_contrib"):
-            _ct_fig, _ct_msg, _ct_n = _people_stack(
-                "contributors", "Contributor", "RFP contributions",
-                "Top 15 by RFPs supported (Submitted vs Unsubmitted)",
-                "No contributors recorded yet.")
-
-        # ONE height for both, from whichever has more people, so the two panels line up
-        # instead of one floating short beside the other.
-        _people_h = max(280, 30 * max(_pl_n, _ct_n) + 100)
-
-        def _finish(fig, y_title: str, x_title: str):
-            fig.update_layout(
-                height=_people_h, margin=dict(t=54, b=10), barmode="stack",
-                yaxis={"categoryorder": "total ascending", "title": y_title},
-                xaxis={"title": x_title},
-                title={"font": dict(size=13)},
-                legend={"orientation": "h", "yanchor": "bottom", "y": 1.02,
-                        "xanchor": "right", "x": 1, "font": dict(size=11)},
-            )
-            return fig
-
-        def _panel(heading: str, fig, msg, y_title: str, x_title: str):
-            st.markdown(f"##### {heading}")
-            if fig is not None:
-                st.plotly_chart(_finish(fig, y_title, x_title), width="stretch")
-            elif msg:
-                st.info(msg)
-
-        if _show("s4_leads") and _show("s4_contrib"):
-            _pc1, _pc2 = st.columns(2, gap="medium")
-            with _pc1:
-                _panel("Proposal Leads", _pl_fig, _pl_msg, "Proposal lead", "RFPs")
-            with _pc2:
-                _panel("Contributors", _ct_fig, _ct_msg, "Contributor",
-                       "RFP contributions")
-        elif _show("s4_leads"):
-            _panel("Proposal Leads", _pl_fig, _pl_msg, "Proposal lead", "RFPs")
-        elif _show("s4_contrib"):
-            _panel("Contributors", _ct_fig, _ct_msg, "Contributor", "RFP contributions")
-
-        # ───────────── Lead & Sub Applicant partners ──────────────────────────
-        # Over the PROCEED RFPs (activity_rows), each applicant cell can list MULTIPLE partners
-        # who applied jointly on the SAME grant, separated by ";" or "," (e.g. "Org North;
-        # Org South"). We split them → one count each, canonicalise the deploying org's own name
-        # (its short form / hyphenated variant → its full canonical name, while a distinct
-        # sibling org is left alone), and DE-DUP per RFP → the number of distinct lead/sub applicants
-        # per Proceed RFP. BLANK cells and the literal "N/A" (Not Applicable — a real, distinct
-        # value) are BOTH dropped: neither is an applicant, so neither belongs on the chart.
-        if _show("s4_partners"):
-            st.markdown("##### Lead & Sub Applicant partners")
-        _NA_VALUES = {"n/a", "na", "not applicable", "none", "nil", "tbd", "-", "—", "nan"}
-        # Legal-entity suffixes that follow a COMMA inside ONE org name ("Attune Media Labs,
-        # Inc.") — these must NOT be treated as a second applicant when splitting on ",".
-        _LEGAL_SUFFIX = re.compile(
-            r"^(inc|llc|l\.l\.c|ltd|co|corp|pbc|gmbh|s\.?a|plc|llp|pte|bv|ag|nv|"
-            r"limited|incorporated|company)\.?$", re.I)
-        _org_full = (settings.get_org_name() or "").strip()
-        _org_short = (settings.get_org_short() or "").strip()
-        _org_full_key = re.sub(r"\s+", " ", _org_full.replace("-", " ")).strip().lower()
-        # The bare acronym = the org's first word (the full name's leading token). A bare
-        # acronym rolls up to the full name; a qualified sibling (two tokens) does NOT.
-        _org_first = _org_full.split()[0].lower() if _org_full else ""
-
-        def _norm_org(raw) -> str:
-            s = re.sub(r"\s+", " ", str(raw or "").replace("-", " ")).strip()
-            if not s or s.strip().lower() in _NA_VALUES:
-                return ""                          # blank OR "N/A"/"Not Applicable" → drop
-            low = s.lower()
-            if _org_short and low == _org_short.lower():
-                return _org_full or s              # bare short name → canonical full name
-            if _org_full and low == _org_full_key:
-                return _org_full                   # variant/hyphen/case → canonical casing
-            if _org_first and low == _org_first:
-                return _org_full                   # bare acronym → canonical full name
-            return s                               # distinct sibling org untouched
-
-        def _split_orgs(v) -> list[str]:
-            merged: list[str] = []
-            for p in re.split(r"[;,]", str(v or "")):
-                p = p.strip()
-                if not p:
-                    continue
-                if merged and _LEGAL_SUFFIX.match(p):
-                    merged[-1] = f"{merged[-1]}, {p}"   # re-attach "Inc." to the prior name
-                else:
-                    merged.append(p)
-            return sorted({o for o in (_norm_org(p) for p in merged) if o})
-
-        ap_l, ap_r = st.columns(2)
-        for col_name, col_label, container in [
-            ("lead_applicant", "Lead applicant", ap_l),
-            ("sub_applicant",  "Sub applicant",  ap_r),
-        ]:
-            if _show("s4_partners") and col_name in activity_rows.columns:
-                _rows = activity_rows[[col_name]].copy()
-                _rows["_orgs"] = _rows[col_name].apply(_split_orgs)   # blank/N/A already dropped
-                _rows = _rows.explode("_orgs").dropna(subset=["_orgs"])
-                _rows = _rows[_rows["_orgs"].astype(str).str.strip() != ""]
-                counts = (_rows["_orgs"].value_counts().head(10)
-                          .rename_axis(col_label).reset_index(name="RFPs"))
-                with container:
-                    if not counts.empty:
-                        fig = px.bar(
-                            counts, x="RFPs", y=col_label, orientation="h",
-                            title=f"{col_label} — top 10 (Proceed RFPs)", text="RFPs",
-                        )
-                        fig.update_layout(
-                            height=max(250, 30 * len(counts) + 60),
-                            margin=dict(t=40, b=10),
-                            yaxis={"categoryorder": "total ascending"},
-                        )
-                        st.plotly_chart(fig, width='stretch')
-                    else:
-                        st.info(f"No {col_label.lower()} values recorded yet.")
-
-        # Progress status chart relocated to Section 2 (Insights) — same
-        # narrative beat as the eligibility funnel. Not re-rendered here.
-
-        # The Requested-vs-Secured scatter + Conversion rates blocks
-        # relocated to Section 5 (Our Results) — that's the natural home for
-        # outcome-shaped metrics. The Search → Submission cycle time block
-        # relocated to Section 1 (Search Activity) — Search Date is the
-        # anchor, so it fits the search-narrative beat.
-
-    st.divider()
 
 
 # ===========================================================================
@@ -2266,7 +2352,7 @@ if _show_sec("5"):
                                       "cumulative": "USD (cumulative)"})
                 fig.update_layout(height=280, margin=dict(t=40, b=10),
                                   xaxis=_fmt_bucket_ticks(bucket_mode))
-                st.plotly_chart(fig, width='stretch')
+                _boxed(fig)
 
         # (The "Submitted Grants" table was moved to the END of this section — see below.)
 
@@ -2324,7 +2410,7 @@ if _show_sec("5"):
                     height=430, margin=dict(t=40, b=120), xaxis_tickangle=-40,
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                 xanchor="right", x=1, title_text=""))
-                st.plotly_chart(fig_amt, width='stretch')
+                _boxed(fig_amt)
             else:
                 st.info("No submitted RFPs with monetary amounts recorded yet.")
 

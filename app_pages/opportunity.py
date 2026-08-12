@@ -159,7 +159,7 @@ _kind, _row, _ext = _res["kind"], _res["row"], _res["extraction"]
 if not _kind:
     st.title("Opportunity")
     st.warning(f"Couldn't find an opportunity with uid `{_uid}`. It may have been "
-               "deleted, or it belongs to another entity.")
+               "deleted, or it belongs to another tenant.")
     st.markdown(_uilinks.internal_link("📚 Back to Pipelines", "pipelines"),
                 unsafe_allow_html=True)
     st.stop()
@@ -448,7 +448,7 @@ with _main:
     if not _an:
         # Never leave the section as a bare heading over white space: if scoring produced
         # nothing, say so, because a blank section reads as a broken page.
-        st.info("No scoring is available for this opportunity yet. It needs an entity "
+        st.info("No scoring is available for this opportunity yet. It needs a tenant "
                 "profile and a screened row before the criteria can be evaluated.")
 
     if _an:
