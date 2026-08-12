@@ -92,7 +92,7 @@ class TheRenamedAndAddedItemsTests(unittest.TestCase):
     def test_donor_decisions_renders_under_reviews_and_decisions(self):
         src = _source()
         i_reviews = src.index('st.subheader("4 · Reviews & Decisions")')
-        i_donor = src.index('_h5("Donor Decisions")')
+        i_donor = src.index("_h5(\"Donor decisions")
         i_results = src.index("# SECTION 5 — Our Results")
         self.assertLess(i_reviews, i_donor)
         self.assertLess(i_donor, i_results)
@@ -260,7 +260,10 @@ class ThePageStillRunsTests(unittest.TestCase):
         self.assertGreater(self.result["n_charts"], 10, "charts were not built")
 
     def test_donor_decisions_renders_when_there_is_data(self):
-        self.assertIn("Donor Decisions", self.result["markdown"])
+        # The heading now distinguishes the funder's response from the team's own decision — the
+        # two were both called "decisions" and the section read ambiguously.
+        self.assertIn("Donor decisions", self.result["markdown"])
+        self.assertIn("funder's response", self.result["markdown"])
 
     def test_the_section_that_moved_renders_its_own_subsections(self):
         # The block move is the risky change: a name defined by a section it jumped over would

@@ -127,7 +127,7 @@ class Document:
         # into each other and into the plot area. Stepped down here rather than on the figure the
         # page shows, so the two are independent.
         font = layout.setdefault("font", {})
-        font["size"] = 9
+        font["size"] = 10
         # Lift the title out of the plot; it becomes the caption below.
         _title_obj = layout.get("title") or {}
         caption = ""
@@ -138,14 +138,21 @@ class Document:
         layout["title"] = {"text": ""}
         for axis in ("xaxis", "yaxis"):
             ax = layout.setdefault(axis, {})
-            ax.setdefault("tickfont", {})["size"] = 8
+            ax.setdefault("tickfont", {})["size"] = 9
+            # AUTOMARGIN is the fix for clipped labels. A fixed left margin cannot know how long
+            # "Bill & Melinda Gates Foundation — UNICEF" is, so donor names were cut off and the
+            # axis title sat on top of the category labels; on the requested-vs-secured chart the
+            # x labels disappeared entirely. Plotly measures the rendered text and reserves the
+            # room itself, and it also pushes the axis TITLE clear of the tick labels — which is
+            # the separation asked for.
+            ax["automargin"] = True
             if isinstance(ax.get("title"), dict):
-                ax["title"].setdefault("font", {})["size"] = 9
+                ax["title"].setdefault("font", {})["size"] = 10
+                ax["title"]["standoff"] = 12
         legend = layout.setdefault("legend", {})
-        legend.setdefault("font", {})["size"] = 8
-        # Room for the legend and tick labels, so nothing sits on the plot frame.
-        # No title inside the plot any more, so the top margin only has to clear the legend.
-        layout["margin"] = {"t": 14, "b": 34, "l": 46, "r": 16}
+        legend.setdefault("font", {})["size"] = 9
+        # Small fixed margins; automargin grows them where the labels need it.
+        layout["margin"] = {"t": 12, "b": 20, "l": 20, "r": 16, "pad": 4}
         self.blocks.append(Block("chart", fig_json=json.dumps(spec), height=h,
                                  title=caption.strip()))
 
@@ -213,7 +220,7 @@ _CSS = """
   html, body { margin: 0; padding: 0; }
   body {
     font-family: "Segoe UI", "Source Sans Pro", system-ui, sans-serif;
-    color: #1f2a24; font-size: 9pt; line-height: 1.4;
+    color: #1f2a24; font-size: 9.5pt; line-height: 1.45;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
   /* Normal block flow, deliberately: the app page could not paginate because every ancestor
@@ -222,11 +229,15 @@ _CSS = """
 
   /* ── cover ──────────────────────────────────────────────────────────────────────── */
   .cover { page-break-after: always; break-after: page; }
-  .cover .band { background: #0E5A70; color: #fff; padding: 26px 30px 22px;
-                 margin: -%(margin)dmm -%(margin)dmm 26px; }
+  /* NO negative margins. Pulling the band outside the page box put the first characters of the
+     title in the unprintable edge, so an organisation name lost its first letter or two. It is a
+     normal block that spans the content width instead. */
+  .cover .band { background: #0E5A70; color: #fff; padding: 24px 26px 20px;
+                 margin: 0 0 24px; border-radius: 4px; }
   .cover .eyebrow { font-size: 8.5pt; letter-spacing: .18em; text-transform: uppercase;
                     color: #A5C8D6; margin-bottom: 8px; }
-  .cover h1 { font-size: 27pt; margin: 0; font-weight: 700; letter-spacing: -0.015em; }
+  .cover h1 { font-size: 23pt; margin: 0; font-weight: 700; letter-spacing: -0.01em;
+              line-height: 1.18; overflow-wrap: break-word; }
   .cover .sub { font-size: 12pt; color: #D5E7EF; margin-top: 6px; }
   .cover .facts { display: table; width: 100%%; border-spacing: 10px 0; margin-top: 6px; }
   .cover .fact { display: table-cell; width: 25%%; border-top: 2px solid #117996;
@@ -254,7 +265,7 @@ _CSS = """
   .intro .h { font-size: 8pt; letter-spacing: .12em; text-transform: uppercase;
               color: #0E5A70; font-weight: 700; margin-bottom: 5px; }
   /* Figure label BELOW the chart, as a document labels a figure. */
-  p.figcap { font-size: 8pt; color: #24352c; margin: 4px 0 0; font-weight: 600; }
+  p.figcap { font-size: 8.5pt; color: #24352c; margin: 5px 0 0; font-weight: 600; }
   p.figcap .n { color: #117996; }
   h3.sub { font-size: 10.5pt; margin: 12px 0 5px; color: #24352c; font-weight: 700;
            page-break-after: avoid; break-after: avoid; }
@@ -275,7 +286,7 @@ _CSS = """
   .chart { border: 1px solid #E3EAEE; border-radius: 5px; padding: 4px 6px; background: #fff; }
 
   /* ── tables ─────────────────────────────────────────────────────────────────────── */
-  table.data { width: 100%%; border-collapse: collapse; font-size: 8pt; }
+  table.data { width: 100%%; border-collapse: collapse; font-size: 8.5pt; }
   table.data caption { text-align: left; font-size: 10.5pt; font-weight: 700; color: #24352c;
                        padding-bottom: 4px; caption-side: top; }
   table.data th { background: #EDF4F7; color: #0E5A70; text-align: left; font-size: 7.5pt;

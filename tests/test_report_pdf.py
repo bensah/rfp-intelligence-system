@@ -323,3 +323,58 @@ class TheOpeningSummaryTests(unittest.TestCase):
         doc = rp.Document()
         doc.intro("")
         self.assertEqual(len(doc.finish().blocks), 0)
+
+
+class ChartLabelsAreNotClippedTests(unittest.TestCase):
+    """Truncated axis labels were the most-reported visual fault, and a fixed margin cannot fix
+    them: nothing in the code knows how wide "Bill & Melinda Gates Foundation — UNICEF" renders.
+    Plotly measures the text itself when automargin is on, and it also pushes the axis TITLE
+    clear of the category labels — the separation that was asked for."""
+
+    def _layout(self, fig):
+        import json
+        doc = rp.Document()
+        doc.chart(fig)
+        return json.loads(doc.blocks[0].fig_json)["layout"]
+
+    def test_both_axes_reserve_room_for_their_labels(self):
+        layout = self._layout(_fig())
+        self.assertTrue(layout["xaxis"]["automargin"])
+        self.assertTrue(layout["yaxis"]["automargin"])
+
+    def test_the_fixed_margins_are_small_so_automargin_can_grow_them(self):
+        layout = self._layout(_fig())
+        self.assertLessEqual(layout["margin"]["l"], 24)
+
+    def test_an_axis_title_stands_off_its_tick_labels(self):
+        import plotly.express as px
+        fig = px.bar(x=[1, 2], y=["a", "b"], orientation="h",
+                     labels={"x": "Funding calls", "y": "Donor"}, title="t")
+        layout = self._layout(fig)
+        for axis in ("xaxis", "yaxis"):
+            title = layout[axis].get("title")
+            if isinstance(title, dict) and title.get("text"):
+                self.assertGreaterEqual(title.get("standoff", 0), 8)
+
+    def test_print_type_is_readable_rather_than_minimal(self):
+        layout = self._layout(_fig())
+        self.assertGreaterEqual(layout["font"]["size"], 10)
+        self.assertGreaterEqual(layout["xaxis"]["tickfont"]["size"], 9)
+
+
+class TheCoverFitsThePageTests(unittest.TestCase):
+    def test_the_band_does_not_reach_outside_the_page_box(self):
+        # Negative margins pulled it into the unprintable edge, so the first characters of the
+        # organisation name were cut off.
+        doc = rp.Document()
+        doc.section("S")
+        h = rp.build_html(doc.finish(), title="An Organisation With A Long Name",
+                          subtitle="Year-to-date 2026", meta={"Organization": "X"})
+        band = h[h.index(".cover .band {"):h.index("}", h.index(".cover .band {"))]
+        self.assertNotIn("-12mm", band)
+        self.assertNotIn("margin: -", band)
+
+    def test_a_long_name_wraps_instead_of_overflowing(self):
+        doc = rp.Document()
+        h = rp.build_html(doc.finish(), title="x", subtitle="y", meta={})
+        self.assertIn("overflow-wrap: break-word", h)

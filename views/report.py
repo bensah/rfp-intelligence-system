@@ -1524,46 +1524,69 @@ with ac_tip:
 # the story in a sentence or two, computed from the same rows the sections below chart, so it
 # cannot drift from them. It leads the PDF as well as the page.
 def _headline_summary() -> str:
-    """A plain-language summary of where this tenant's pipeline stands."""
+    """A plain-language summary of where this organisation's pipeline stands.
+
+    EVERY FIGURE HERE COMES FROM THE SAME HELPER THE SECTIONS BELOW USE. The first version did
+    its own arithmetic and disagreed with the report it introduces: it counted rows with any
+    submissions value (17) where the agreed rule is Progress = Completed × submissions (14), and
+    it summed `amount_secured` over every row where section 5 counts it only on donor-Approved
+    ones. A summary that contradicts the tables under it is worse than no summary.
+    """
     if rfps_all.empty:
         return (f"No funding calls are stored for {_org_name} yet. Run an eligibility scan or "
                 f"import the workbook, and this report will fill in.")
+
     _u = rfps_all[~rfps_all["is_duplicate"]]
     _dec = _u["decision"].fillna("").str.strip().str.lower()
     n_all = int(len(_u))
     n_proceed = int(_dec.str.startswith("proceed").sum())
     n_park = int((_dec == "park").sum())
     n_decline = int((_dec == "decline").sum())
-    n_undecided = n_all - (n_proceed + n_park + n_decline)
-    bits = [
-        f"**{_org_name}** has screened **{n_all:,} funding calls** to date, taking "
-        f"**{n_proceed:,} forward** as Proceed"
-        + (f" ({n_proceed / n_all:.0%} of everything screened)" if n_all else "")
-        + f", parking {n_park:,} and declining {n_decline:,}."
-    ]
-    if n_undecided:
-        bits.append(f"{n_undecided:,} are still awaiting a decision.")
+    n_open = n_all - (n_proceed + n_park + n_decline)
 
-    # Submitted / secured, where the data supports it.
+    bits = [f"{_org_name} screened {n_all:,} funding calls and proceeded with "
+            f"{n_proceed:,} of them"
+            + (f" — {n_proceed / n_all:.0%} of everything screened." if n_all else ".")]
+    _tail = []
+    if n_park:
+        _tail.append(f"{n_park:,} were parked")
+    if n_decline:
+        _tail.append(f"{n_decline:,} declined")
+    if n_open:
+        _tail.append(f"{n_open:,} are still open")
+    if _tail:
+        bits.append(" and ".join([", ".join(_tail[:-1]), _tail[-1]]).strip(", ")
+                    if len(_tail) > 1 else _tail[0] + ".")
+        if len(_tail) > 1:
+            bits[-1] = bits[-1] + "."
+
+    # SUBMITTED — the agreed rule, from the shared helper, so it matches section 5's tile.
     try:
-        _sub = int(_u["submissions"].fillna(0).astype(float).gt(0).sum())
-        if _sub:
-            bits.append(f"**{_sub:,}** of the Proceed calls have been submitted to a funder.")
+        from core.records import submission_weights as _sw
+        n_sub = int(_sw(_u).sum())
+        if n_sub:
+            bits.append(f"{n_sub:,} applications have gone to funders.")
     except Exception:
         pass
+
+    # SECURED — Approved rows only, exactly as section 5 computes it.
     try:
-        _secured = float(_series_to_usd(_u.get("amount_secured"),
-                                       _u.get("currency_secured")).sum())
-        if _secured > 0:
-            bits.append(f"Funding secured so far totals **${_secured:,.0f}**.")
+        _appr = _u[_u["donor_decision"].fillna("").str.strip().str.lower().eq("approved")]
+        if not _appr.empty:
+            _secured = float(_series_to_usd(_appr.get("amount_secured"),
+                                            _appr.get("currency_secured")).sum())
+            if _secured > 0:
+                bits.append(f"{len(_appr):,} were approved, securing ${_secured:,.0f}.")
     except Exception:
         pass
 
     _areas = _programme_area_freq(_u[_dec.str.startswith("proceed")])
     if _areas:
-        _top = ", ".join(k for k, _ in sorted(_areas.items(), key=lambda kv: -kv[1])[:3])
-        bits.append(f"Effort concentrates in **{_top}**.")
-    bits.append(f"Figures below cover **{_period_phrase()}** unless a caption says otherwise.")
+        _top = [k for k, _ in sorted(_areas.items(), key=lambda kv: -kv[1])[:3]]
+        _joined = (", ".join(_top[:-1]) + " and " + _top[-1]) if len(_top) > 1 else _top[0]
+        bits.append(f"The work sits mainly in {_joined}.")
+    bits.append(f"Unless a caption says otherwise, the figures below cover "
+                f"{_period_phrase().lower()}.")
     return " ".join(bits)
 
 
@@ -1637,8 +1660,8 @@ if _show_sec("1"):
     # scans, their manual submissions, and the rows migrated from the legacy workbook.
     if not rfps_all.empty and "source" in rfps_all.columns:
         _intake = rfps_all[~rfps_all["is_duplicate"]]["source"].fillna("(unknown)")
-        _labels = {"auto": "Eligibility scanner", "migration": "Excel migration",
-                   "manual": "Manually submitted"}
+        _labels = {"auto": "System eligibility auto-scan", "migration": "Excel imported",
+                   "manual": "Manually submitted via platform"}
         _counts = _intake.value_counts()
         if not _counts.empty:
             _ic = st.columns(min(4, len(_counts)))
@@ -1741,7 +1764,10 @@ if _show_sec("1"):
                 )
                 leader_series.columns = ["Member", "RFPs discovered"]
                 with st.expander("Submission leaderboard", expanded=False):
-                    _table(leader_series, "Top keywords by success rate",
+                    # Kept on the page, NOT collected into the PDF: it is the same counts as
+                    # the chart directly above it, and the export does not need the number twice.
+                    # (It was also mislabelled — these are members and discoveries, not keywords.)
+                    st.dataframe(leader_series,
                                   width='stretch', hide_index=True)
             else:
                 # No submitter data — fall back to a plain bucket count
@@ -2557,7 +2583,7 @@ if _show_sec("3"):
             })
             fig_dec = px.bar(
                 dec_df, x="decision", y="count", text="count",
-                title="Decision Distribution",
+                title="Team decisions — our own Proceed / Park / Decline",
                 color="decision",
                 # Fixed semantic order, not frequency order: the shade then means the same thing
                 # on every report instead of tracking whichever decision happens to dominate.
@@ -2573,7 +2599,8 @@ if _show_sec("3"):
             if not dec_dates.empty:
                 ts_df = _bucketed_count(dec_dates, "decisions")
                 fig_time = px.bar(ts_df, x="bucket", y="decisions",
-                                  title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
+                                  title=f"Team Proceed decisions over time "
+                                        f"({_period_label_str}, {bucket_mode.lower()})",
                                   labels={"bucket": _bucket_label(bucket_mode),
                                           "decisions": "Proceed decisions"},
                                   color_discrete_sequence=[_theme.TURQUOISE])
@@ -2617,9 +2644,12 @@ if _show_sec("3"):
                     "overrode a park/decline suggestion."
                 )
                 _table(
-                    _ar.rename(columns={"ar": "Auto-recommendation",
-                                        "count": "Proceed calls"}),
-                    title="Auto-recommendation vs the team's decision",
+                    _ar.rename(columns={"ar": "What the auto-scorer recommended",
+                                        "count": "Calls the team took forward anyway"}),
+                    # The old title promised a comparison the table did not show. Every row here
+                    # is already a TEAM Proceed; the column is what the scorer had said about it,
+                    # so a row other than "Proceed" is a place the team overrode the scorer.
+                    title="Auto-scorer recommendation on the calls the team chose to pursue",
                     width='stretch', hide_index=True,
                 )
 
@@ -2633,7 +2663,7 @@ if _show_sec("3"):
         # dwarfs every real outcome and says nothing about donor decisions. The count of those
         # awaiting a decision is stated as a caption instead.
         if _show("s3_donordec") and "donor_decision" in _proc_dec.columns:
-            _h5("Donor Decisions")
+            _h5("Donor decisions — the funder's response to what we submitted")
             _dd = _proc_dec["donor_decision"].fillna("").astype(str).str.strip()
             _pending = int((_dd.str.lower().isin(["", "not submitted"])).sum())
             _dd = _dd[~_dd.str.lower().isin(["", "not submitted"])]
@@ -2735,22 +2765,26 @@ if _show_sec("5"):
             n_missing_pipe_cur = 0
 
         # Consolidated KPI cards — counts on top, amounts below (no duplicate secured tile).
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Applied grants", n_submitted,
+        # Card order: counts and the ratio they produce on the first row, money on the second.
+        # "Secured ÷ Requested" sat alone at the end of a four-tile row of amounts, reading as an
+        # afterthought when it is the summary of them.
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Applications submitted", n_submitted,
                   help="Sum of donor-side submissions on Proceed RFPs whose Progress = "
                        "Completed (an RFP can be submitted to a donor more than once).")
         k2.metric("Approved", n_approved,
                   help="Submitted (Proceed + Completed) RFPs with donor_decision = Approved.")
         k3.metric("Win rate", f"{win_rate:.1f}%" if n_submitted else "—",
-                  help="Approved ÷ Applied grants. '—' with no submissions.")
-        m1, m2, m3, m4 = st.columns(4)
+                  help="Approved ÷ Applications submitted. '—' with no submissions.")
+        k4.metric("Secured ÷ Requested", f"{sec_ratio:.1f}%",
+                  help="Total secured ÷ total requested, in USD.")
+        m1, m2, m3 = st.columns(3)
         m1.metric("Total Requested (USD)", f"${total_req:,.0f}")
         m2.metric("Total Secured (USD)", f"${amt_secured:,.0f}",
-                  help="amount_secured on Approved RFPs, row-by-row to USD via the FX rates "
+                  help="amount_secured on Approved calls, row-by-row to USD via the FX rates "
                        "in Admin → Settings.")
         m3.metric("Total Unsecured (USD)", f"${total_unsec:,.0f}",
-                  help="amount_requested on Not-Approved (declined) RFPs.")
-        m4.metric("Secured ÷ Requested", f"{sec_ratio:.1f}%")
+                  help="amount_requested on Not-Approved (declined) calls.")
 
         if n_missing_secured_cur or n_missing_pipe_cur:
             st.warning(
@@ -2875,7 +2909,7 @@ if _show_sec("5"):
         # report / Owner columns aren't needed here). Not collapsible; the closing table of
         # the results story.
         if _show("s5_grants"):
-            _h5("Applied Grants")
+            _h5("Applied Funding Opportunities")
             st.caption("Every grant we've submitted (Proceed RFPs with Progress = "
                        "Completed) — requested amount and the donor's decision.")
             if _pc.empty:
@@ -2899,7 +2933,9 @@ if _show_sec("5"):
                     "Submitted": pd.to_datetime(_sg["date_completed"], errors="coerce").dt.date,
                 }).sort_values("Requested (USD)", ascending=False)
                 _table(
-                    _tbl, title="Applied grants", width='stretch', hide_index=True,
+                    # No title here: the subsection heading above already names it, and
+                    # passing both printed the label twice in the PDF.
+                    _tbl, width='stretch', hide_index=True,
                     column_config={
                         "Grant": st.column_config.TextColumn("Grant", width="large"),
                         "Requested (USD)": st.column_config.NumberColumn(

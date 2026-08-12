@@ -161,5 +161,38 @@ class ThePageUsesProceedOnlyTests(unittest.TestCase):
         self.assertIn("Park and Decline", src)
 
 
+
+class TheOpeningSummaryUsesSharedIndicatorsTests(unittest.TestCase):
+    """A summary that contradicts the tables under it is worse than no summary.
+
+    The first version did its own arithmetic and disagreed with the report it introduces: it
+    counted rows with any submissions value (17 on the live data) where the agreed rule is
+    Progress = Completed x submissions (14), and it summed `amount_secured` over EVERY row where
+    section 5 counts it only on donor-Approved ones.
+    """
+
+    def _block(self) -> str:
+        src = io.open(_REPORT, encoding="utf-8").read()
+        return src[src.index("def _headline_summary()"):src.index("_summary_text = ")]
+
+    def test_submissions_come_from_the_shared_helper(self):
+        block = self._block()
+        self.assertIn("from core.records import submission_weights", block)
+        self.assertNotIn('["submissions"].fillna(0).astype(float).gt(0)', block)
+
+    def test_secured_counts_approved_rows_only(self):
+        block = self._block()
+        self.assertIn('donor_decision', block)
+        self.assertIn('eq("approved")', block)
+
+    def test_it_reads_as_a_sentence_not_a_metric_dump(self):
+        block = self._block()
+        self.assertIn("proceeded with", block)
+        self.assertNotIn("**", block)          # emphasis is added for the page, not baked in
+
+    def test_the_period_is_stated_so_the_figures_can_be_placed(self):
+        self.assertIn("the figures below cover", self._block())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
