@@ -38,7 +38,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import dropdowns, report_snapshots, settings
+from core import dropdowns, partner_names, report_snapshots, settings
 from core.records import clean_df
 from db.supabase_client import get_client
 
@@ -378,8 +378,46 @@ st.markdown(
           display: block !important;
         }
         .block-container { padding: 0.5rem !important; max-width: 100% !important; }
-        h1, h2, h3 { page-break-after: avoid; }
-        .stPlotlyChart, [data-testid="stMetric"] { page-break-inside: avoid; }
+        /* PORTRAIT with real margins, so nothing sits in the unprintable edge. Orientation
+           only — the paper SIZE is left to the user's print dialog, since forcing A4 would
+           be wrong on Letter and vice versa. */
+        @page { size: portrait; margin: 12mm; }
+
+        /* Side-by-side columns do not fit a portrait page: two half-width charts each get
+           ~340px, and the funnels were being cut off mid-plot. Stacking gives every chart
+           the FULL page width, which is what makes the JS scaling below sufficient. */
+        [data-testid="stHorizontalBlock"] { display: block !important; }
+        [data-testid="stColumn"] {
+          width: 100% !important; flex: none !important;
+          display: block !important; margin-bottom: 0.4rem !important;
+        }
+        /* ...except KPI tile rows, which are small and read better left as a row. */
+        [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
+          display: flex !important;
+        }
+        [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"])
+          [data-testid="stColumn"] { width: auto !important; flex: 1 1 0 !important; }
+
+        /* Nothing may exceed the page box. Plotly draws into a fixed-size SVG, so without
+           this a wide chart silently extends past the paper edge. */
+        .block-container, .stPlotlyChart, [data-testid="stPlotlyChart"],
+        .js-plotly-plot, .plot-container, .svg-container, .main-svg,
+        [data-testid="stDataFrame"], table {
+          max-width: 100% !important;
+        }
+        [data-testid="stDataFrame"] { overflow: visible !important; }
+
+        /* A heading must not be the last thing on a page, and must never be drawn over the
+           chart it labels - the "Lead & Sub Applicant partners" overlap. h4/h5/h6 were
+           missing here, which is why subsection headings behaved differently from h1-h3. */
+        h1, h2, h3, h4, h5, h6 {
+          page-break-after: avoid; break-after: avoid-page;
+          page-break-inside: avoid;
+        }
+        .stPlotlyChart, [data-testid="stPlotlyChart"], [data-testid="stMetric"],
+        [data-testid="stDataFrame"], [data-testid="stTable"] {
+          page-break-inside: avoid; break-inside: avoid;
+        }
         body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       }
       /* Slightly compact the metric tiles so the report fits on one printed page. */
@@ -756,6 +794,10 @@ def _load_grants(_scope: str) -> pd.DataFrame:
 # checkboxes show full label text — readable + tappable on a phone, unlike a
 # flat 20-item multiselect whose pills truncate to "1 · Search — RFPs d…".
 # Everything defaults to on, so Generate with no changes = the full report.
+# The first element is a STABLE ID, not the display number. Saved reports persist these ids
+# (and the `sN_` metric keys), so a shared or refreshed report restores the sections it was
+# generated with — renumbering them to match a new running order would silently change what an
+# existing report shows. Display order is this list's order; the display number is in the label.
 _REPORT_SECTIONS = [
     ("1", "1 · Search activity", [
         ("s1_discovery",  "Funding discovered by member"),
@@ -765,21 +807,22 @@ _REPORT_SECTIONS = [
         ("s1_sources",    "Top sources by yield"),
         ("s1_cycle",      "Search → Submission cycle time"),
     ]),
-    ("2", "2 · Insights", [
-        ("s2_funnel",   "Conversion funnel"),
-        ("s2_progress", "Progress status"),
-    ]),
-    ("3", "3 · Reviews & decisions", [
-        ("s3_decdist", "Decision distribution"),
-        ("s3_dectime", "Decisions over time"),
-        ("s3_autorec", "Auto-recommendation vs decision"),
-    ]),
-    ("4", "4 · Team & partners", [
+    ("4", "2 · Team & partners", [
         ("s4_eng_ts",    "Donor engagements over time"),
         ("s4_topdonors", "Top donors by touchpoints"),
         ("s4_leads",     "Proposal leads"),
         ("s4_contrib",   "Contributors"),
         ("s4_partners",  "Lead & sub applicant partners"),
+    ]),
+    ("2", "3 · Insights — status & eligibility funnel", [
+        ("s2_funnel",   "Conversion funnel"),
+        ("s2_progress", "Progress status"),
+    ]),
+    ("3", "4 · Reviews & decisions", [
+        ("s3_decdist",  "Decision distribution"),
+        ("s3_dectime",  "Decisions over time"),
+        ("s3_autorec",  "Auto-recommendation vs decision"),
+        ("s3_donordec", "Donor decisions"),
     ]),
     ("5", "5 · Our results", [
         ("s5_cumusd", "Cumulative USD secured"),
@@ -1139,13 +1182,123 @@ with ac_print:
     components.html(
         """
         <script>
+        // -- Fit Plotly charts to the printed page ------------------------------------
+        // Plotly bakes a PIXEL width into its <svg> at render time, measured from the
+        // browser window. Printing narrows the page box but does NOT re-render the
+        // chart, so a chart laid out at ~1200px was being cut off by a ~700px page.
+        //
+        // CSS alone cannot fix it: the SVGs carry width/height attributes and NO
+        // viewBox, so `width:100%` resizes the viewport and CLIPS the drawing instead
+        // of scaling it. Measured in a standalone repro: container 704px, svg still
+        // width="1200", document 1488px wide - cut off at about half.
+        //
+        // So give each SVG a viewBox derived from its natural size, then set its box to
+        // the printable width, which scales the whole drawing, text included. This
+        // deliberately does NOT call Plotly's own resize API: Streamlit bundles Plotly
+        // as a module, so `window.Plotly` is not reliably reachable from here and a fix
+        // depending on it would fail silently.
+        //
+        // The target width is computed from PAPER, not measured: `beforeprint` fires
+        // before print layout, so measuring then returns SCREEN widths. 700px ~ 185mm,
+        // which fits both A4 and Letter portrait inside 12mm margins.
+        var RFPIS_PRINT_W = 700;
+
+        function rfpisDoc() {
+          try { return window.parent.document; } catch (e) { return document; }
+        }
+
+        function rfpisFitPlots(maxW) {
+          var doc = rfpisDoc();
+          doc.querySelectorAll('.js-plotly-plot').forEach(function (plot) {
+            var cont = plot.querySelector('.svg-container');
+            var svgs = plot.querySelectorAll('svg.main-svg');
+            if (!cont || !svgs.length) return;
+            // Record the natural size ONCE, so afterprint restores the screen layout and
+            // a second print does not re-scale an already-scaled chart.
+            if (!plot.dataset.rfpisNatW) {
+              plot.dataset.rfpisNatW =
+                parseFloat(svgs[0].getAttribute('width')) || cont.offsetWidth || 0;
+              plot.dataset.rfpisNatH =
+                parseFloat(svgs[0].getAttribute('height')) || cont.offsetHeight || 0;
+            }
+            var natW = parseFloat(plot.dataset.rfpisNatW);
+            var natH = parseFloat(plot.dataset.rfpisNatH);
+            if (!natW || !natH) return;
+            var k = maxW / natW;
+            if (k >= 1) return;                 // already fits - never enlarge
+            var w = Math.floor(natW * k), h = Math.floor(natH * k);
+            cont.style.width = w + 'px';  cont.style.height = h + 'px';
+            plot.style.width = w + 'px';  plot.style.height = h + 'px';
+            svgs.forEach(function (svg) {
+              if (!svg.getAttribute('viewBox')) {
+                svg.setAttribute('viewBox', '0 0 ' +
+                  (svg.getAttribute('width') || natW) + ' ' +
+                  (svg.getAttribute('height') || natH));
+              }
+              svg.setAttribute('width', w);  svg.setAttribute('height', h);
+              svg.style.width = w + 'px';    svg.style.height = h + 'px';
+            });
+          });
+        }
+
+        function rfpisRestorePlots() {
+          var doc = rfpisDoc();
+          doc.querySelectorAll('.js-plotly-plot').forEach(function (plot) {
+            var natW = parseFloat(plot.dataset.rfpisNatW);
+            var natH = parseFloat(plot.dataset.rfpisNatH);
+            if (!natW || !natH) return;
+            var cont = plot.querySelector('.svg-container');
+            if (cont) { cont.style.width = ''; cont.style.height = ''; }
+            plot.style.width = ''; plot.style.height = '';
+            plot.querySelectorAll('svg.main-svg').forEach(function (svg) {
+              svg.setAttribute('width', natW); svg.setAttribute('height', natH);
+              svg.style.width = ''; svg.style.height = '';
+            });
+          });
+        }
+
+        // Hook Ctrl+P / the browser menu, not just our button.
+        //
+        // The listener is INJECTED INTO THE PARENT as its own <script> rather than
+        // registered from in here. Streamlit destroys and recreates this iframe on every
+        // rerun, so a listener added by `window.parent.addEventListener` from inside the
+        // iframe keeps pointing at functions in a torn-down realm - it survives the guard
+        // that stops re-registration and then does nothing when the user prints. Injected
+        // code lives in the parent's own realm, so it outlives any rerun.
+        (function () {
+          var pdoc;
+          try { pdoc = window.parent.document; } catch (e) { return; }  // cross-origin
+          if (pdoc.getElementById('rfpis-print-hook')) return;          // already injected
+          var el = pdoc.createElement('script');
+          el.id = 'rfpis-print-hook';
+          // Rebuild the two helpers plus their listeners inside the parent. The function
+          // bodies are carried across as source text, so what runs there is parent code.
+          el.textContent = [
+            'window.RFPIS_PRINT_W = ' + RFPIS_PRINT_W + ';',
+            'window.rfpisDoc = function () { return document; };',
+            'window.rfpisFitPlots = ' + rfpisFitPlots.toString() + ';',
+            'window.rfpisRestorePlots = ' + rfpisRestorePlots.toString() + ';',
+            'window.addEventListener("beforeprint", function () {',
+            '  window.rfpisFitPlots(window.RFPIS_PRINT_W); });',
+            'window.addEventListener("afterprint", function () {',
+            '  window.rfpisRestorePlots(); });'
+          ].join('\n');
+          pdoc.head.appendChild(el);
+        })();
+
         function rfpisPrint() {
           try {
-            // Print the parent window (main Streamlit app, with our print CSS)
+            // Print the parent window (main Streamlit app, with our print CSS).
+            // Fit first in case beforeprint fires too late to affect layout.
+            if (window.parent.rfpisFitPlots) {
+              window.parent.rfpisFitPlots(RFPIS_PRINT_W);
+            } else {
+              rfpisFitPlots(RFPIS_PRINT_W);
+            }
             window.parent.print();
           } catch (e) {
             // Cross-origin block (unlikely on Streamlit Cloud since both
-            // are same-origin, but possible in some embed scenarios) —
+            // are same-origin, but possible in some embed scenarios) -
             // fall back to printing the iframe so something happens.
             window.print();
           }
@@ -1544,297 +1697,14 @@ if _show_sec("1"):
 
 
 # ===========================================================================
-# SECTION 2 — Pipeline funnel (insights from triage)
-# ===========================================================================
-if _show_sec("2"):
-    st.subheader("2 · Insights — Eligibility Funnel")
-    st.caption(
-        "**Current pipeline state across ALL stored RFPs** — auto-scanned, "
-        "manually submitted, AND imported from the legacy Excel workbook. "
-        "These KPIs ignore the period filter so the funnel always reflects "
-        "the full picture. Use the **'Discovered in period'** badge below to "
-        "see how many of these were added during the active period."
-    )
-
-    if rfps_all.empty:
-        st.info("No RFPs in the database yet.")
-    else:
-        unique_all = rfps_all[~rfps_all["is_duplicate"]].copy()
-        in_period = unique_all[unique_all["_discovered_in_period"]]
-
-        # All-time current pipeline state — what the user actually wants.
-        # Funnel stages are NESTED subsets so they can never invert:
-        #   Total ⊇ Proceed ⊇ Submitted ⊇ Approved.
-        total_all = int(len(unique_all))
-        _dec_all = unique_all["decision"].fillna("").str.lower()
-        proceed_df_all = unique_all[_dec_all.str.startswith("proceed")]
-        proceed_all = int(len(proceed_df_all))
-        park_all = int((_dec_all == "park").sum())
-        decline_all = int((_dec_all == "decline").sum())
-        no_decision_all = total_all - (proceed_all + park_all + decline_all)
-        # Submitted = submitted-per-app-def WITHIN the Proceed track; Approved = the
-        # approved subset OF those submitted — guarantees Approved ≤ Submitted ≤ Proceed.
-        _sub_proc = proceed_df_all[_submitted_mask(proceed_df_all)]
-        submitted_all = int(len(_sub_proc))
-        approved_all = int((_sub_proc["donor_decision"].fillna("").str.lower()
-                            == "approved").sum())
-
-        # Period-restricted: how many RFPs were *discovered* in this window
-        discovered_in_period = int(len(in_period))
-
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Total unique RFPs", total_all,
-                  help=f"All non-duplicate rows across every source (auto-scanned, "
-                       f"manually submitted, Excel migration). {discovered_in_period} "
-                       f"discovered in the active period.")
-        k2.metric("Proceed", proceed_all,
-                  help="Decision = Proceed. The actionable pipeline.")
-        k3.metric("Park", park_all,
-                  help="Held for later review — uncertain fit or no extractable deadline.")
-        k4.metric("Decline", decline_all,
-                  help="Filtered by the team or the decision tree.")
-
-        # By-source breakdown so the user can see how much came from where
-        if "source" in unique_all.columns:
-            src_counts = unique_all["source"].fillna("(unknown)").value_counts()
-            st.caption(
-                "**By source:**  "
-                + "  ·  ".join(f"`{k}` {v}" for k, v in src_counts.items())
-            )
-
-        _STAGES = ["Discovered (all-time)", "Proceed-track", "Submitted", "Approved"]
-        _FUNNEL_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#22c55e"]
-
-        # COUNT funnel — how many RFPs make it through each stage.
-        fig_funnel = go.Figure(go.Funnel(
-            y=_STAGES, x=[total_all, proceed_all, submitted_all, approved_all],
-            textinfo="value+percent initial", marker={"color": _FUNNEL_COLORS},
-        ))
-        fig_funnel.update_layout(height=340, margin=dict(t=40, b=10),
-                                 title="Conversion funnel — counts")
-
-        # VALUE funnel — the $ at each stage. Each stage uses the most meaningful amount:
-        #   Discovered  → Σ call_award_value across ALL unique RFPs (Proceed + Park + Decline)
-        #   Proceed     → Σ call_award_value across the Proceed track
-        #   Submitted   → Σ amount_requested (Estimated Value) across the submitted set
-        #   Approved    → Σ amount_secured across the approved subset (what we actually won)
-        _appr = _sub_proc[_sub_proc["donor_decision"].fillna("").str.lower() == "approved"]
-        _disc_v = float(_series_to_usd(
-            unique_all["call_award_value"], unique_all.get("currency", pd.Series(dtype=str))).sum())
-        _proc_v = float(_series_to_usd(
-            proceed_df_all["call_award_value"], proceed_df_all.get("currency", pd.Series(dtype=str))).sum())
-        _sub_v = float(_series_to_usd(
-            _sub_proc["amount_requested"], _sub_proc.get("currency", pd.Series(dtype=str))).sum())
-        _appr_v = float(_series_to_usd(
-            _appr["amount_secured"], _appr.get("currency_secured", pd.Series(dtype=str))).sum())
-        fig_funnel_v = go.Figure(go.Funnel(
-            y=_STAGES, x=[_disc_v, _proc_v, _sub_v, _appr_v],
-            texttemplate="$%{x:,.0f}", marker={"color": _FUNNEL_COLORS},
-        ))
-        fig_funnel_v.update_layout(height=340, margin=dict(t=40, b=10),
-                                   title="Conversion funnel — value (USD)")
-        if _show("s2_funnel"):
-            _fc1, _fc2 = st.columns(2)
-            _fc1.plotly_chart(fig_funnel, width='stretch')
-            _fc2.plotly_chart(fig_funnel_v, width='stretch')
-            st.caption("Value funnel: Discovered / Proceed = estimated award value; Submitted "
-                       "= amount requested; Approved = amount secured.")
-        # Decision-distribution chart used to live here; moved to Section 3
-        # since "where decisions land" belongs with the Reviews & Decisions
-        # narrative, not the funnel.
-
-        # ───────────── Progress status (relocated from Section 4) ─────────
-        # Belongs in Insights because it's another "where is each RFP in the
-        # pipeline?" view — the funnel above shows attrition, this shows the
-        # current workflow distribution. Same narrative beat.
-        #
-        # PROCEED-ONLY: progress_status is a lifecycle only Proceed RFPs have — a Park/Decline
-        # row has no proposal to progress, so including them produced a meaningless "(unset)"
-        # bar (which was really just one blank-progress Decline row, not a data gap). Scoping
-        # to Proceed removes that noise and matches the Summary reconciliation funnel. Any
-        # blank progress on a Proceed row defaults to "Not Started" (its correct default), so
-        # every Proceed RFP is accounted for and there is no "(unset)".
-        if _show("s2_progress") and "progress_status" in unique_all.columns:
-            _proc_ps = unique_all[
-                unique_all["decision"].fillna("").str.lower().str.startswith("proceed")
-            ].copy()
-            _PS_CANON = {
-                "not started": "Not Started", "in progress": "In Progress",
-                "completed": "Completed", "discontinued": "Discontinued",
-                "missed": "Missed", "missing": "Missed",
-            }
-
-            def _canon_progress(v) -> str:
-                s = str(v or "").strip().lower()
-                return _PS_CANON.get(s, "Not Started")  # blank/unknown → Not Started
-
-            if _proc_ps.empty:
-                st.caption("_No Proceed RFPs in scope._")
-            else:
-                _order = ["Not Started", "In Progress", "Completed",
-                          "Discontinued", "Missed"]
-                ps = (
-                    _proc_ps["progress_status"].apply(_canon_progress)
-                    .value_counts().reindex(_order, fill_value=0)
-                    .rename_axis("Status").reset_index(name="RFPs")
-                )
-                # Traffic-light semantics: Not Started (red) → In Progress (amber) →
-                # Completed (green); Discontinued / Missed are muted greys.
-                _PS_COLORS = {
-                    "Not Started": "#ef4444", "In Progress": "#eab308",
-                    "Completed": "#1e8e3e", "Discontinued": "#9ca3af",
-                    "Missed": "#6b7280",
-                }
-                fig_ps = px.bar(ps, x="Status", y="RFPs", text="RFPs",
-                                title="Progress status — Proceed RFPs", color="Status",
-                                category_orders={"Status": _order},
-                                color_discrete_map=_PS_COLORS)
-                fig_ps.update_layout(height=300, showlegend=False,
-                                     margin=dict(t=40, b=10), xaxis_title=None)
-                st.plotly_chart(fig_ps, width='stretch')
-                st.caption(f"_{len(_proc_ps)} Proceed RFPs (blank progress counts as "
-                           f"'Not Started'). Completed = submitted to donor._")
-
-    st.divider()
-
-
-# ===========================================================================
-# SECTION 3 — Reviews & Decisions
-# ===========================================================================
-if _show_sec("3"):
-    st.subheader("3 · Reviews & Decisions")
-    st.caption(
-        "Triage outcomes — velocity from RFP discovery to decision, and where "
-        "the auto-recommendation needed manual override."
-    )
-
-    if rfps_all.empty:
-        st.info("No RFPs to review yet.")
-    else:
-        decided = rfps_all[~rfps_all["is_duplicate"]].copy()
-        if _start:
-            decided = decided[decided["_decided_in_period"]]
-        overridden = decided[decided["decision_overridden_by"].notna()]
-
-        if not decided.empty and "search_date" in decided.columns:
-            dec_with_subm = decided.dropna(subset=["search_date", "decision_date"]).copy()
-            if not dec_with_subm.empty:
-                dec_with_subm["days_to_decide"] = dec_with_subm.apply(
-                    lambda r: (r["decision_date"] - r["search_date"].date()).days,
-                    axis=1,
-                )
-                avg_days = dec_with_subm["days_to_decide"].mean()
-                med_days = dec_with_subm["days_to_decide"].median()
-            else:
-                avg_days = med_days = None
-        else:
-            avg_days = med_days = None
-
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Decisions made", int(len(decided)))
-        k2.metric("Avg days to decide",
-                  f"{avg_days:.1f}" if avg_days is not None and not pd.isna(avg_days) else "—",
-                  help="Mean days from RFP discovery (search_date) to decision_date.")
-        k3.metric("Median days to decide",
-                  f"{med_days:.1f}" if med_days is not None and not pd.isna(med_days) else "—")
-        k4.metric("Overridden", int(len(overridden)),
-                  help="Decisions where the reviewer disagreed with the auto-recommendation.")
-
-        # Decision Distribution — across ALL stored RFPs (not period-restricted).
-        # Placed BEFORE the time-series so the eye sees the static "where we
-        # land overall" snapshot first, then descends into the time-bucketed
-        # cadence of "when decisions happened in this period".
-        if _show("s3_decdist") and not rfps_all.empty:
-            _unique_all = rfps_all[~rfps_all["is_duplicate"]]
-            _proceed = int(_unique_all["decision"].fillna("").str.lower().str.startswith("proceed").sum())
-            _park = int((_unique_all["decision"].fillna("").str.lower() == "park").sum())
-            _decline = int((_unique_all["decision"].fillna("").str.lower() == "decline").sum())
-            _no_dec = int(len(_unique_all)) - (_proceed + _park + _decline)
-            dec_df = pd.DataFrame({
-                "decision": ["Proceed", "Park", "Decline", "No decision"],
-                "count": [_proceed, _park, _decline, _no_dec],
-            })
-            # Horizontal bars — easier to scan + labels never collide on
-            # narrow widths. Order by count descending so the dominant
-            # decision sits at the top.
-            fig_dec = px.bar(
-                dec_df, x="count", y="decision", text="count",
-                orientation="h",
-                title="Decision Distribution",
-                color="decision",
-                color_discrete_map={
-                    "Proceed": "#10b981", "Park": "#f59e0b",
-                    "Decline": "#ef4444", "No decision": "#9ca3af",
-                },
-            )
-            fig_dec.update_layout(height=280, showlegend=False,
-                                  margin=dict(t=40, b=10),
-                                  xaxis_title="RFPs", yaxis_title=None,
-                                  yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(fig_dec, width='stretch')
-
-        # Proceed-only from here down: §3's lower charts drill into the RFPs the
-        # team chose to pursue (consistent with §4+). The KPI row and Decision
-        # Distribution above stay full-triage — they describe the whole review
-        # process, and the distribution chart IS the Proceed/Park/Decline split.
-        _proc_dec = decided[
-            decided["decision"].fillna("").str.lower().str.startswith("proceed")
-        ]
-
-        if _show("s3_dectime") and not _proc_dec.empty:
-            dec_dates = pd.to_datetime(_proc_dec["decision_date"], errors="coerce").dropna()
-            if not dec_dates.empty:
-                ts_df = _bucketed_count(dec_dates, "decisions")
-                fig = px.bar(ts_df, x="bucket", y="decisions",
-                             title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
-                             labels={"bucket": _bucket_label(bucket_mode),
-                                     "decisions": "Proceed decisions"})
-                fig.update_layout(height=280, margin=dict(t=40, b=10),
-                                  xaxis=_fmt_bucket_ticks(bucket_mode))
-                st.plotly_chart(fig, width='stretch')
-
-        if _show("s3_autorec") and not _proc_dec.empty:
-            # Of the RFPs we chose to pursue, what had the auto-scorer recommended?
-            # Rows other than "Proceed" are where human judgment overrode a
-            # park/decline suggestion — the most decision-relevant slice.
-            _ar = (
-                _proc_dec.assign(
-                    ar=_proc_dec["auto_recommendation"].fillna("—").replace("", "—").str.title()
-                )
-                .groupby("ar").size().reset_index(name="count")
-                .sort_values("count", ascending=False)
-            )
-            _n_proc = int(len(_proc_dec))
-            _n_agree = int(
-                _proc_dec["auto_recommendation"].fillna("").str.lower()
-                .str.startswith("proceed").sum()
-            )
-            with st.expander(
-                f"Auto-recommendation for Proceed RFPs — model agreed on "
-                f"{_n_agree} of {_n_proc}", expanded=False,
-            ):
-                st.caption(
-                    "Of the RFPs the team chose to pursue, what the auto-scorer had "
-                    "recommended. Rows other than *Proceed* are where human judgment "
-                    "overrode a park/decline suggestion."
-                )
-                st.dataframe(
-                    _ar.rename(columns={"ar": "Auto-recommendation", "count": "Proceed RFPs"}),
-                    width='stretch', hide_index=True,
-                )
-
-    st.divider()
-
-
-# ===========================================================================
-# SECTION 4 — Team & Partnership Activity
+# SECTION 4 (displayed 2nd) — Team & Partnership Activity
 # Single umbrella covering everything about WHO does the work and WHO we
 # do it with: internal meetings, donor engagements, individual member
 # activity, proposal leads / contributors, lead & sub applicant partners,
 # status mix, requested-vs-secured economics, conversion + cycle time.
 # ===========================================================================
 if _show_sec("4"):
-    st.subheader("4 · Team & Partnership Activity")
+    st.subheader("2 · Team & Partnership Activity")
     st.caption(
         "Everything about WHO does the work and WHO we do it with — internal "
         "triage meetings (**Team Touchpoints**), donor-facing engagements "
@@ -2072,14 +1942,11 @@ if _show_sec("4"):
         # sibling org is left alone), and DE-DUP per RFP → the number of distinct lead/sub applicants
         # per Proceed RFP. BLANK cells and the literal "N/A" (Not Applicable — a real, distinct
         # value) are BOTH dropped: neither is an applicant, so neither belongs on the chart.
+        # A separator INSIDE one org's own name (a legal suffix after a comma, or an
+        # abbreviation after a ";") does not make a second applicant — see core.partner_names.
         if _show("s4_partners"):
             st.markdown("##### Lead & Sub Applicant partners")
-        _NA_VALUES = {"n/a", "na", "not applicable", "none", "nil", "tbd", "-", "—", "nan"}
-        # Legal-entity suffixes that follow a COMMA inside ONE org name ("Attune Media Labs,
-        # Inc.") — these must NOT be treated as a second applicant when splitting on ",".
-        _LEGAL_SUFFIX = re.compile(
-            r"^(inc|llc|l\.l\.c|ltd|co|corp|pbc|gmbh|s\.?a|plc|llp|pte|bv|ag|nv|"
-            r"limited|incorporated|company)\.?$", re.I)
+        _NA_VALUES = partner_names.NA_VALUES
         _org_full = (settings.get_org_name() or "").strip()
         _org_short = (settings.get_org_short() or "").strip()
         _org_full_key = re.sub(r"\s+", " ", _org_full.replace("-", " ")).strip().lower()
@@ -2091,7 +1958,10 @@ if _show_sec("4"):
             s = re.sub(r"\s+", " ", str(raw or "").replace("-", " ")).strip()
             if not s or s.strip().lower() in _NA_VALUES:
                 return ""                          # blank OR "N/A"/"Not Applicable" → drop
-            low = s.lower()
+            # Canonicalise on the name WITHOUT its own trailing abbreviation, so the deploying
+            # org still resolves to one bar when its cell was written "Full Name; (FN)" and the
+            # splitter re-attached the abbreviation.
+            low = partner_names.strip_trailing_acronym(s).lower()
             if _org_short and low == _org_short.lower():
                 return _org_full or s              # bare short name → canonical full name
             if _org_full and low == _org_full_key:
@@ -2101,16 +1971,9 @@ if _show_sec("4"):
             return s                               # distinct sibling org untouched
 
         def _split_orgs(v) -> list[str]:
-            merged: list[str] = []
-            for p in re.split(r"[;,]", str(v or "")):
-                p = p.strip()
-                if not p:
-                    continue
-                if merged and _LEGAL_SUFFIX.match(p):
-                    merged[-1] = f"{merged[-1]}, {p}"   # re-attach "Inc." to the prior name
-                else:
-                    merged.append(p)
-            return sorted({o for o in (_norm_org(p) for p in merged) if o})
+            # Separator splitting + re-attachment lives in core.partner_names so it can be
+            # tested; this page is script-scope and cannot be imported.
+            return sorted({o for o in (_norm_org(p) for p in partner_names.split_pieces(v)) if o})
 
         ap_l, ap_r = st.columns(2)
         for col_name, col_label, container in [
@@ -2149,6 +2012,326 @@ if _show_sec("4"):
         # anchor, so it fits the search-narrative beat.
 
     st.divider()
+
+# ===========================================================================
+# SECTION 2 (displayed 3rd) — Status & eligibility funnel (insights from triage)
+# ===========================================================================
+if _show_sec("2"):
+    st.subheader("3 · Insights — Status & Eligibility Funnel")
+    st.caption(
+        "**Current pipeline state across ALL stored RFPs** — auto-scanned, "
+        "manually submitted, AND imported from the legacy Excel workbook. "
+        "These KPIs ignore the period filter so the funnel always reflects "
+        "the full picture. Use the **'Discovered in period'** badge below to "
+        "see how many of these were added during the active period."
+    )
+
+    if rfps_all.empty:
+        st.info("No RFPs in the database yet.")
+    else:
+        unique_all = rfps_all[~rfps_all["is_duplicate"]].copy()
+        in_period = unique_all[unique_all["_discovered_in_period"]]
+
+        # All-time current pipeline state — what the user actually wants.
+        # Funnel stages are NESTED subsets so they can never invert:
+        #   Total ⊇ Proceed ⊇ Submitted ⊇ Approved.
+        total_all = int(len(unique_all))
+        _dec_all = unique_all["decision"].fillna("").str.lower()
+        proceed_df_all = unique_all[_dec_all.str.startswith("proceed")]
+        proceed_all = int(len(proceed_df_all))
+        park_all = int((_dec_all == "park").sum())
+        decline_all = int((_dec_all == "decline").sum())
+        no_decision_all = total_all - (proceed_all + park_all + decline_all)
+        # Submitted = submitted-per-app-def WITHIN the Proceed track; Approved = the
+        # approved subset OF those submitted — guarantees Approved ≤ Submitted ≤ Proceed.
+        _sub_proc = proceed_df_all[_submitted_mask(proceed_df_all)]
+        submitted_all = int(len(_sub_proc))
+        approved_all = int((_sub_proc["donor_decision"].fillna("").str.lower()
+                            == "approved").sum())
+
+        # Period-restricted: how many RFPs were *discovered* in this window
+        discovered_in_period = int(len(in_period))
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Total unique RFPs", total_all,
+                  help=f"All non-duplicate rows across every source (auto-scanned, "
+                       f"manually submitted, Excel migration). {discovered_in_period} "
+                       f"discovered in the active period.")
+        k2.metric("Proceed", proceed_all,
+                  help="Decision = Proceed. The actionable pipeline.")
+        k3.metric("Park", park_all,
+                  help="Held for later review — uncertain fit or no extractable deadline.")
+        k4.metric("Decline", decline_all,
+                  help="Filtered by the team or the decision tree.")
+
+        # By-source breakdown so the user can see how much came from where
+        if "source" in unique_all.columns:
+            src_counts = unique_all["source"].fillna("(unknown)").value_counts()
+            st.caption(
+                "**By source:**  "
+                + "  ·  ".join(f"`{k}` {v}" for k, v in src_counts.items())
+            )
+
+        _STAGES = ["Discovered (all-time)", "Proceed-track", "Submitted", "Approved"]
+        _FUNNEL_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#22c55e"]
+
+        # COUNT funnel — how many RFPs make it through each stage.
+        fig_funnel = go.Figure(go.Funnel(
+            y=_STAGES, x=[total_all, proceed_all, submitted_all, approved_all],
+            textinfo="value+percent initial", marker={"color": _FUNNEL_COLORS},
+        ))
+        fig_funnel.update_layout(height=340, margin=dict(t=40, b=10),
+                                 title="Conversion funnel — counts")
+
+        # VALUE funnel — the $ at each stage. Each stage uses the most meaningful amount:
+        #   Discovered  → Σ call_award_value across ALL unique RFPs (Proceed + Park + Decline)
+        #   Proceed     → Σ call_award_value across the Proceed track
+        #   Submitted   → Σ amount_requested (Estimated Value) across the submitted set
+        #   Approved    → Σ amount_secured across the approved subset (what we actually won)
+        _appr = _sub_proc[_sub_proc["donor_decision"].fillna("").str.lower() == "approved"]
+        _disc_v = float(_series_to_usd(
+            unique_all["call_award_value"], unique_all.get("currency", pd.Series(dtype=str))).sum())
+        _proc_v = float(_series_to_usd(
+            proceed_df_all["call_award_value"], proceed_df_all.get("currency", pd.Series(dtype=str))).sum())
+        _sub_v = float(_series_to_usd(
+            _sub_proc["amount_requested"], _sub_proc.get("currency", pd.Series(dtype=str))).sum())
+        _appr_v = float(_series_to_usd(
+            _appr["amount_secured"], _appr.get("currency_secured", pd.Series(dtype=str))).sum())
+        fig_funnel_v = go.Figure(go.Funnel(
+            y=_STAGES, x=[_disc_v, _proc_v, _sub_v, _appr_v],
+            texttemplate="$%{x:,.0f}", marker={"color": _FUNNEL_COLORS},
+        ))
+        fig_funnel_v.update_layout(height=340, margin=dict(t=40, b=10),
+                                   title="Conversion funnel — value (USD)")
+        if _show("s2_funnel"):
+            _fc1, _fc2 = st.columns(2)
+            _fc1.plotly_chart(fig_funnel, width='stretch')
+            _fc2.plotly_chart(fig_funnel_v, width='stretch')
+            st.caption("Value funnel: Discovered / Proceed = estimated award value; Submitted "
+                       "= amount requested; Approved = amount secured.")
+        # Decision-distribution chart used to live here; moved to Section 3
+        # since "where decisions land" belongs with the Reviews & Decisions
+        # narrative, not the funnel.
+
+        # ───────────── Progress status (relocated from Section 4) ─────────
+        # Belongs in Insights because it's another "where is each RFP in the
+        # pipeline?" view — the funnel above shows attrition, this shows the
+        # current workflow distribution. Same narrative beat.
+        #
+        # PROCEED-ONLY: progress_status is a lifecycle only Proceed RFPs have — a Park/Decline
+        # row has no proposal to progress, so including them produced a meaningless "(unset)"
+        # bar (which was really just one blank-progress Decline row, not a data gap). Scoping
+        # to Proceed removes that noise and matches the Summary reconciliation funnel. Any
+        # blank progress on a Proceed row defaults to "Not Started" (its correct default), so
+        # every Proceed RFP is accounted for and there is no "(unset)".
+        if _show("s2_progress") and "progress_status" in unique_all.columns:
+            _proc_ps = unique_all[
+                unique_all["decision"].fillna("").str.lower().str.startswith("proceed")
+            ].copy()
+            _PS_CANON = {
+                "not started": "Not Started", "in progress": "In Progress",
+                "completed": "Completed", "discontinued": "Discontinued",
+                "missed": "Missed", "missing": "Missed",
+            }
+
+            def _canon_progress(v) -> str:
+                s = str(v or "").strip().lower()
+                return _PS_CANON.get(s, "Not Started")  # blank/unknown → Not Started
+
+            if _proc_ps.empty:
+                st.caption("_No Proceed RFPs in scope._")
+            else:
+                _order = ["Not Started", "In Progress", "Completed",
+                          "Discontinued", "Missed"]
+                ps = (
+                    _proc_ps["progress_status"].apply(_canon_progress)
+                    .value_counts().reindex(_order, fill_value=0)
+                    .rename_axis("Status").reset_index(name="RFPs")
+                )
+                # Traffic-light semantics: Not Started (red) → In Progress (amber) →
+                # Completed (green); Discontinued / Missed are muted greys.
+                _PS_COLORS = {
+                    "Not Started": "#ef4444", "In Progress": "#eab308",
+                    "Completed": "#1e8e3e", "Discontinued": "#9ca3af",
+                    "Missed": "#6b7280",
+                }
+                fig_ps = px.bar(ps, x="Status", y="RFPs", text="RFPs",
+                                title="Progress status — Proceed RFPs", color="Status",
+                                category_orders={"Status": _order},
+                                color_discrete_map=_PS_COLORS)
+                fig_ps.update_layout(height=300, showlegend=False,
+                                     margin=dict(t=40, b=10), xaxis_title=None)
+                st.plotly_chart(fig_ps, width='stretch')
+                st.caption(f"_{len(_proc_ps)} Proceed RFPs (blank progress counts as "
+                           f"'Not Started'). Completed = submitted to donor._")
+
+    st.divider()
+
+
+# ===========================================================================
+# SECTION 3 (displayed 4th) — Reviews & Decisions
+# ===========================================================================
+if _show_sec("3"):
+    st.subheader("4 · Reviews & Decisions")
+    st.caption(
+        "Triage outcomes — velocity from RFP discovery to decision, where "
+        "the auto-recommendation needed manual override, and the funder's own "
+        "decision on what we submitted."
+    )
+
+    if rfps_all.empty:
+        st.info("No RFPs to review yet.")
+    else:
+        decided = rfps_all[~rfps_all["is_duplicate"]].copy()
+        if _start:
+            decided = decided[decided["_decided_in_period"]]
+        overridden = decided[decided["decision_overridden_by"].notna()]
+
+        if not decided.empty and "search_date" in decided.columns:
+            dec_with_subm = decided.dropna(subset=["search_date", "decision_date"]).copy()
+            if not dec_with_subm.empty:
+                dec_with_subm["days_to_decide"] = dec_with_subm.apply(
+                    lambda r: (r["decision_date"] - r["search_date"].date()).days,
+                    axis=1,
+                )
+                avg_days = dec_with_subm["days_to_decide"].mean()
+                med_days = dec_with_subm["days_to_decide"].median()
+            else:
+                avg_days = med_days = None
+        else:
+            avg_days = med_days = None
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Decisions made", int(len(decided)))
+        k2.metric("Avg days to decide",
+                  f"{avg_days:.1f}" if avg_days is not None and not pd.isna(avg_days) else "—",
+                  help="Mean days from RFP discovery (search_date) to decision_date.")
+        k3.metric("Median days to decide",
+                  f"{med_days:.1f}" if med_days is not None and not pd.isna(med_days) else "—")
+        k4.metric("Overridden", int(len(overridden)),
+                  help="Decisions where the reviewer disagreed with the auto-recommendation.")
+
+        # Decision Distribution — across ALL stored RFPs (not period-restricted).
+        # Placed BEFORE the time-series so the eye sees the static "where we
+        # land overall" snapshot first, then descends into the time-bucketed
+        # cadence of "when decisions happened in this period".
+        if _show("s3_decdist") and not rfps_all.empty:
+            _unique_all = rfps_all[~rfps_all["is_duplicate"]]
+            _proceed = int(_unique_all["decision"].fillna("").str.lower().str.startswith("proceed").sum())
+            _park = int((_unique_all["decision"].fillna("").str.lower() == "park").sum())
+            _decline = int((_unique_all["decision"].fillna("").str.lower() == "decline").sum())
+            _no_dec = int(len(_unique_all)) - (_proceed + _park + _decline)
+            dec_df = pd.DataFrame({
+                "decision": ["Proceed", "Park", "Decline", "No decision"],
+                "count": [_proceed, _park, _decline, _no_dec],
+            })
+            # Horizontal bars — easier to scan + labels never collide on
+            # narrow widths. Order by count descending so the dominant
+            # decision sits at the top.
+            fig_dec = px.bar(
+                dec_df, x="count", y="decision", text="count",
+                orientation="h",
+                title="Decision Distribution",
+                color="decision",
+                color_discrete_map={
+                    "Proceed": "#10b981", "Park": "#f59e0b",
+                    "Decline": "#ef4444", "No decision": "#9ca3af",
+                },
+            )
+            fig_dec.update_layout(height=280, showlegend=False,
+                                  margin=dict(t=40, b=10),
+                                  xaxis_title="RFPs", yaxis_title=None,
+                                  yaxis={"categoryorder": "total ascending"})
+            st.plotly_chart(fig_dec, width='stretch')
+
+        # Proceed-only from here down: §3's lower charts drill into the RFPs the
+        # team chose to pursue (consistent with §4+). The KPI row and Decision
+        # Distribution above stay full-triage — they describe the whole review
+        # process, and the distribution chart IS the Proceed/Park/Decline split.
+        _proc_dec = decided[
+            decided["decision"].fillna("").str.lower().str.startswith("proceed")
+        ]
+
+        if _show("s3_dectime") and not _proc_dec.empty:
+            dec_dates = pd.to_datetime(_proc_dec["decision_date"], errors="coerce").dropna()
+            if not dec_dates.empty:
+                ts_df = _bucketed_count(dec_dates, "decisions")
+                fig = px.bar(ts_df, x="bucket", y="decisions",
+                             title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
+                             labels={"bucket": _bucket_label(bucket_mode),
+                                     "decisions": "Proceed decisions"})
+                fig.update_layout(height=280, margin=dict(t=40, b=10),
+                                  xaxis=_fmt_bucket_ticks(bucket_mode))
+                st.plotly_chart(fig, width='stretch')
+
+        if _show("s3_autorec") and not _proc_dec.empty:
+            # Of the RFPs we chose to pursue, what had the auto-scorer recommended?
+            # Rows other than "Proceed" are where human judgment overrode a
+            # park/decline suggestion — the most decision-relevant slice.
+            _ar = (
+                _proc_dec.assign(
+                    ar=_proc_dec["auto_recommendation"].fillna("—").replace("", "—").str.title()
+                )
+                .groupby("ar").size().reset_index(name="count")
+                .sort_values("count", ascending=False)
+            )
+            _n_proc = int(len(_proc_dec))
+            _n_agree = int(
+                _proc_dec["auto_recommendation"].fillna("").str.lower()
+                .str.startswith("proceed").sum()
+            )
+            with st.expander(
+                f"Auto-recommendation for Proceed RFPs — model agreed on "
+                f"{_n_agree} of {_n_proc}", expanded=False,
+            ):
+                st.caption(
+                    "Of the RFPs the team chose to pursue, what the auto-scorer had "
+                    "recommended. Rows other than *Proceed* are where human judgment "
+                    "overrode a park/decline suggestion."
+                )
+                st.dataframe(
+                    _ar.rename(columns={"ar": "Auto-recommendation", "count": "Proceed RFPs"}),
+                    width='stretch', hide_index=True,
+                )
+
+        # ───────────── Donor Decisions ─────────────────────────────────────────
+        # The charts above are OUR decisions (Proceed / Park / Decline — whether to bid).
+        # `donor_decision` is the FUNDER's decision on what we submitted, which is the other
+        # half of the same review story and belongs in this section rather than under results.
+        #
+        # Proceed-scoped, like the rest of §3's lower charts. "Not submitted" is excluded: it is
+        # the default for everything still in flight, so leaving it in produces one bar that
+        # dwarfs every real outcome and says nothing about donor decisions. The count of those
+        # awaiting a decision is stated as a caption instead.
+        if _show("s3_donordec") and "donor_decision" in _proc_dec.columns:
+            st.markdown("##### Donor Decisions")
+            _dd = _proc_dec["donor_decision"].fillna("").astype(str).str.strip()
+            _pending = int((_dd.str.lower().isin(["", "not submitted"])).sum())
+            _dd = _dd[~_dd.str.lower().isin(["", "not submitted"])]
+            if _dd.empty:
+                st.info("No donor decisions recorded yet.")
+            else:
+                _ddc = (_dd.str.title().value_counts()
+                        .rename_axis("Donor decision").reset_index(name="RFPs"))
+                fig_dd = px.bar(
+                    _ddc, x="RFPs", y="Donor decision", orientation="h",
+                    title="Donor decisions on submitted proposals", text="RFPs",
+                    color="Donor decision",
+                    color_discrete_map={"Approved": "#10b981", "Not Approved": "#ef4444",
+                                        "Under Review": "#f59e0b", "Submitted": "#3b82f6"},
+                )
+                fig_dd.update_layout(height=max(220, 34 * len(_ddc) + 70), showlegend=False,
+                                     margin=dict(t=40, b=10), yaxis_title=None,
+                                     yaxis={"categoryorder": "total ascending"})
+                st.plotly_chart(fig_dd, width='stretch')
+            if _pending:
+                st.caption(
+                    f"{_pending} Proceed RFP(s) have no donor decision yet — not submitted, or "
+                    "submitted and awaiting an outcome. They are excluded from the chart above."
+                )
+
+    st.divider()
+
 
 
 # ===========================================================================
