@@ -364,7 +364,7 @@ class Section1DoesNotDependOnScanLogsTests(unittest.TestCase):
         # got its own guard.
         self.assertEqual(self.result["exceptions"], [])
 
-    def test_the_keyword_cloud_still_renders(self):
+    def test_the_focus_area_cloud_still_renders(self):
         # The owner renamed this heading from "Focus areas" to "Focus areas"; assert
         # the heading the page actually renders.
         self.assertIn("Focus areas", self.result["markdown"])

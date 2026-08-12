@@ -738,6 +738,90 @@ def _pdf_hook_metrics() -> None:
 _pdf_hook_metrics()
 
 
+# Values that are not a programme area. "Unspecified Program Areas" is the extractor's
+# placeholder for "we could not tell", and drawing it in a focus-area cloud presents an absence
+# of information as a focus.
+_AREA_NON_VALUES = frozenset({
+    "n/a", "na", "none", "other", "unspecified", "unspecified program areas",
+    "unspecified programme areas", "not specified", "tbd",
+})
+
+
+def _canonical_area(label: str) -> str:
+    """Snap a stored area onto the taxonomy's own spelling where it unambiguously matches.
+
+    The pipeline stores "Digital Health" and "Digital Health (+AI)" for the same taxonomy
+    sub-area, so the cloud drew one area twice at half its weight each. Matching is EXACT first,
+    then a prefix match accepted only when exactly one sub-area matches — an ambiguous prefix is
+    left alone rather than guessed at, and an area the taxonomy has never heard of still appears
+    under its own name.
+    """
+    try:
+        from core import program_area_classifier as _pa
+        subs = [s for v in _pa.TAXONOMY.values() for s in v]
+    except Exception:
+        return label
+    low = label.lower()
+    for s in subs:
+        if s.lower() == low:
+            return s
+    hits = [s for s in subs if s.lower().startswith(low)]
+    return hits[0] if len(hits) == 1 else label
+
+
+def _programme_area_freq(rows) -> dict[str, int]:
+    """{programme area: number of calls} from the `call_domain_areas` a row actually carries.
+
+    NOT from titles and briefs, and NOT from the scan vocabulary. Those describe what we went
+    looking for; this describes what the team decided to pursue, which is the only version worth
+    putting in front of a reader.
+
+    The stored values carry an internal grouping prefix, and inconsistently — the same area
+    appears as "Cross-cutting - Digital Health (+AI)", "Cross-cutting  - Digital Health (+AI)"
+    (two spaces) and "Cross-cutting Expert Areas - Digital Health". Left as-is they would draw
+    as three separate areas at one count each instead of one area at three. Stripping the prefix
+    and collapsing whitespace merges them.
+    """
+    import collections
+
+    freq: collections.Counter = collections.Counter()
+    if rows is None or getattr(rows, "empty", True) or "call_domain_areas" not in rows.columns:
+        return {}
+    for raw in rows["call_domain_areas"]:
+        items = raw
+        if isinstance(items, str):
+            txt = items.strip()
+            if txt.startswith("["):
+                try:
+                    items = json.loads(txt)
+                except (ValueError, TypeError):
+                    items = [txt]
+            else:
+                items = [p for p in txt.split(",")] if txt else []
+        if not isinstance(items, (list, tuple, set)):
+            items = [items] if items else []
+        seen_this_row = set()
+        for item in items:
+            label = re.sub(r"\s+", " ", str(item or "")).strip()
+            if not label:
+                continue
+            # "<Category> - <Sub-area>" -> "<Sub-area>". Split on the LAST separator so an area
+            # whose own name contains a dash survives.
+            if " - " in label:
+                label = label.rsplit(" - ", 1)[-1].strip()
+            if not label or label.lower() in _AREA_NON_VALUES:
+                continue
+            label = _canonical_area(label)
+            if not label:
+                continue
+            # One call counts once for an area even if it lists it twice.
+            if label.lower() in seen_this_row:
+                continue
+            seen_this_row.add(label.lower())
+            freq[label] += 1
+    return dict(freq)
+
+
 def _period_slug() -> str:
     """A short, stable token for the selected period — "ytd", "2026", "last90d", "alltime".
 
@@ -1595,26 +1679,32 @@ if _show_sec("1"):
         #     top-200 English words.
         # Font size scales to frequency via WordCloud.generate_from_
         # frequencies — that IS the "size grows with count" effect.
-        if _show("s1_keywords") and not disc.empty:
-            from core.keyword_cloud import extract_keyword_frequencies
-
-            _titles_and_briefs = [
-                " ".join([
-                    str(r.get("opportunity_title") or ""),
-                    str(r.get("brief_description") or ""),
-                ])
-                for _, r in disc.iterrows()
-            ]
-            kw_freq = extract_keyword_frequencies(_titles_and_briefs)
+        # PROCEED ONLY, and from the areas the calls actually CARRY (owner, 2026-08-12).
+        #
+        # It used to match a curated global-health vocabulary against every discovered call's
+        # title and brief. That drew the search terms the scanner went looking for — including
+        # across Park and Decline rows — so the cloud was largest exactly where the team had
+        # decided NOT to bid. In a report a tenant sends to their leadership that is worse than
+        # uninformative: it presents rejected subject matter as the tenant's focus.
+        #
+        # Now it reads `call_domain_areas` off the tenant's PROCEED calls: what was pursued, in
+        # the words the pipeline recorded. All-time rather than period-filtered, because a
+        # Proceed decision is the durable signal and a short period would leave this near-empty —
+        # said plainly in the caption so it is not mistaken for period data.
+        _proceed_all = rfps_all[
+            (~rfps_all["is_duplicate"])
+            & rfps_all["decision"].fillna("").str.strip().str.lower().str.startswith("proceed")
+        ] if not rfps_all.empty and "decision" in rfps_all.columns else rfps_all.iloc[0:0]
+        kw_freq = _programme_area_freq(_proceed_all) if _show("s1_keywords") else {}
+        if _show("s1_keywords"):
             if kw_freq:
-                st.markdown(
-                    f"#### Focus areas"
-                )
+                st.markdown("#### Focus areas")
                 st.caption(
-                    "Word size scales to how often the keyword (or any of "
-                    "its variants — e.g. *Financing* covers finance / "
-                    "financed / financial) appears across RFP titles + "
-                    "briefs. Vocabulary is a curated global-health niche."
+                    f"Programme areas recorded on the **{len(_proceed_all)} calls this tenant "
+                    "chose to pursue** (Proceed) — all-time, not filtered by the period above. "
+                    "Word size is the number of those calls carrying the area. Park and Decline "
+                    "calls are excluded, and so are the keywords the scanner searches on: this "
+                    "shows where the team committed effort, not what it looked at."
                 )
                 try:
                     from wordcloud import WordCloud
@@ -1649,7 +1739,7 @@ if _show_sec("1"):
                     _kw_top = (
                         pd.DataFrame(
                             sorted(kw_freq.items(), key=lambda kv: -kv[1]),
-                            columns=["Keyword", "Hits"],
+                            columns=["Programme area", "Proceed calls"],
                         ).head(40)
                     )
                     st.dataframe(_kw_top, width='stretch',

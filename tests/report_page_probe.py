@@ -106,6 +106,17 @@ def _submissions() -> list[dict]:
             "call_submission_deadline": "2026-12-01",
             "solicitation_type": "RFP", "instrument_type": "Grant",
             "focus_theme": "Health Systems", "stage": "Screened",
+            # Programme areas, in the SHAPES the live column really holds: a real list, the
+            # internal category prefix, and the extractor's placeholder — so the focus-area
+            # cloud's merging and filtering are exercised rather than assumed.
+            "call_domain_areas": [
+                ["MNCH", "Cross-cutting - Digital Health (+AI)"],
+                ["IDs - Malaria & NTDs", "Digital Health"],
+                ["WCH - Vaccines", "Unspecified Program Areas"],
+                ["Cross-cutting - Research"],
+                ["WCH - Nutrition"],
+                None,
+            ][i % 6],
             "assigned_to": _TEAM[i % len(_TEAM)],
             "created_at": "2026-01-01T00:00:00", "updated_at": "2026-06-01T00:00:00",
             "date_completed": ("2026-04-01" if i < 4 else None),
