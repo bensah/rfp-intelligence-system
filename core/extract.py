@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 from datetime import date
 from typing import Any
@@ -367,6 +368,80 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     return rec, reason
 
 
+# ---------------------------------------------------------------------------
+# synthesis at SCAN TIME
+# ---------------------------------------------------------------------------
+# The nine §4 narrative/eligibility fields had a writer (core.catalog_synthesis) that only ever
+# ran from a backfill script. So every row a scan added arrived EMPTY and stayed empty until
+# somebody remembered to run the backfill by hand — the opportunity page showed dashes for the
+# newest calls, which are the ones anyone is actually looking at.
+#
+# Synthesis now runs inside the store path, before the upsert, so ONE write lands a populated
+# row rather than an empty one that a later pass has to come back and fill.
+#
+# THREE THINGS BOUND IT, because this is on the ingest path and a model call is ~12 seconds:
+#
+#   1. A PER-SCAN CEILING. Default 30 calls — about six minutes of added wall clock. A scan that
+#      brings in more than that leaves the remainder to the backfill, which is what it is for.
+#      `RFPIS_SCAN_SYNTH_MAX=0` turns scan-time synthesis off entirely.
+#   2. NOTHING IS RE-PAID FOR. `build_record` rebuilds these fields as None every time, so on a
+#      re-scan they look missing even when the stored row has them. Without checking the stored
+#      row first, every weekly scan would re-synthesise the whole catalogue. The existing values
+#      are read once and carried onto the record, which also means the upsert cannot regress
+#      them.
+#   3. IT NEVER RAISES. A synthesis failure — rate limit, timeout, bad JSON — must not cost the
+#      scan the row it just extracted. The row is stored either way; the fields stay blank and
+#      the backfill can fill them later.
+#
+# No HTML is available here (the scan carries page TEXT only), so `attachments` and
+# `resource_links` still need the backfill's `--fetch-html`. The reading fields do not.
+_SCAN_SYNTH_MAX = int(os.environ.get("RFPIS_SCAN_SYNTH_MAX", "30"))
+_scan_synth_calls = 0
+
+# Present on the stored row ⇒ the model has already read this call.
+_ALREADY_SYNTHESISED = ("full_description", "applicant_fit_profile", "what_is_funded")
+
+
+def scan_synthesis_calls() -> int:
+    """Model calls spent on synthesis during this scan — for the scan log."""
+    return _scan_synth_calls
+
+
+def reset_scan_synthesis() -> None:
+    global _scan_synth_calls
+    _scan_synth_calls = 0
+
+
+def _synthesise_in_place(rec: dict[str, Any]) -> None:
+    """Fill the §4 fields on `rec` before it is written. Best-effort; never raises."""
+    global _scan_synth_calls
+    if _SCAN_SYNTH_MAX <= 0 or _scan_synth_calls >= _SCAN_SYNTH_MAX:
+        return
+    try:
+        from core import catalog_synthesis as _cs
+        if not _cs.is_enabled():
+            return
+        # Carry what is already stored, so a re-scan neither re-pays for it nor regresses it.
+        existing = extracted_store.get_extracted(rec.get("uid") or "") or {}
+        # CARRY FIRST, then decide whether to spend a call. `extracted_store._clean` happens to
+        # drop None so an absent field could not regress a stored one anyway — but that is a
+        # guarantee living in another module, and this record should be correct on its own terms.
+        for k, v in existing.items():
+            if v is not None and rec.get(k) is None:
+                rec[k] = v
+        if any(str(existing.get(f) or "").strip() for f in _ALREADY_SYNTHESISED):
+            return                                 # the model has already read this call
+        got = _cs.synthesize_row(rec)
+        if got:
+            _scan_synth_calls += 1
+            rec.update(got)
+            log.info("extract: synthesised %d field(s) at scan time for %s",
+                     len(got), rec.get("uid"))
+    except Exception as exc:                       # never cost the scan the row
+        log.warning("extract: scan-time synthesis skipped for %s: %s",
+                    rec.get("uid"), exc)
+
+
 def extract_and_store(candidate: dict[str, Any], policies: dict[str, Any], *,
                       scan_year: int | None = None, use_llm: bool = True,
                       llm_arbiter=None) -> tuple[str | None, str]:
@@ -380,6 +455,7 @@ def extract_and_store(candidate: dict[str, Any], policies: dict[str, Any], *,
                                use_llm=use_llm, llm_arbiter=llm_arbiter)
     if rec is None:
         return None, reason                       # gate DECLINE — reason = gate verdict
+    _synthesise_in_place(rec)
     uid = extracted_store.upsert_extracted(rec)
     if uid is None:                               # gate PASSED but the write failed
         return None, "store-error: write to extracted_solicitations failed (see log)"
