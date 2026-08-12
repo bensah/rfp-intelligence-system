@@ -72,7 +72,15 @@ def _submissions() -> list[dict]:
         row = {c: None for c in _SUBMISSION_COLUMNS}
         row.update({
             "id": i + 1, "uid": f"rfp_{i:03d}", "tenant_id": "t_probe",
-            "opportunity_title": f"Programme Call {i}",
+            # Titles carry words from the curated niche vocabulary, or the keyword cloud
+            # extracts nothing and the card is legitimately absent — which would make a test
+            # asserting its presence unfalsifiable.
+            "opportunity_title": ["Malaria diagnostics scale-up",
+                                  "Immunization supply chain strengthening",
+                                  "Maternal and newborn health financing",
+                                  "Digital health information systems",
+                                  "Tuberculosis case finding",
+                                  "Nutrition and food security programme"][i % 6],
             "opportunity_link": f"https://funder.example/call/{i}",
             "opportunity_id": f"OPP-{i:04d}",
             "funding_agency": _DONORS[i % len(_DONORS)],
@@ -142,6 +150,10 @@ def _scans() -> list[dict]:
              "duration_sec": 120, "errors": None, "triggered_by": "cron"} for i in range(3)]
 
 
+# Set RFPIS_PROBE_EMPTY to a comma-separated list of tables to force empty, so a caller can
+# reproduce "this tenant has no scan runs in the period" while RFP data still exists.
+_FORCE_EMPTY = {t.strip() for t in os.environ.get("RFPIS_PROBE_EMPTY", "").split(",") if t.strip()}
+
 _TABLES = {
     "rfp_submissions": _submissions,
     "meeting_logs": _meetings,
@@ -167,6 +179,8 @@ class _Query:
     def limit(self, *a, **k): return self
 
     def execute(self):
+        if self._table in _FORCE_EMPTY:
+            return mock.Mock(data=[])
         rows = _TABLES.get(self._table, lambda: [])()
         return mock.Mock(data=rows)
 
