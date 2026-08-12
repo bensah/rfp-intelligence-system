@@ -49,9 +49,11 @@ class CollectingWhatThePageRenderedTests(unittest.TestCase):
         self.assertFalse(spec["layout"]["autosize"],
                          "autosize would let Plotly re-measure against a viewport")
 
-    def test_the_page_width_fits_a4_inside_its_margins(self):
-        self.assertLess(rp.CONTENT_PX, 794)          # A4 at 96dpi
-        self.assertGreater(rp.CONTENT_PX, 500)
+    def test_the_page_width_fits_a4_landscape_inside_its_margins(self):
+        # Landscape: portrait forced charts and wide tables into a column narrower than they
+        # were designed for, which is what pushed labels into each other.
+        self.assertLess(rp.CONTENT_PX, 1123)         # A4 landscape at 96dpi
+        self.assertGreater(rp.CONTENT_PX, 900)
 
     def test_a_figure_that_cannot_be_serialised_is_skipped_not_fatal(self):
         doc = rp.Document()
@@ -176,12 +178,12 @@ class ARealRenderTests(unittest.TestCase):
     def test_it_produces_a_pdf(self):
         self.assertTrue(self.pdf.startswith(b"%PDF"))
 
-    def test_it_is_a4_portrait(self):
+    def test_it_is_a4_landscape(self):
         from pypdf import PdfReader
         import io as _io
         page = PdfReader(_io.BytesIO(self.pdf)).pages[0]
-        self.assertGreater(float(page.mediabox.height), float(page.mediabox.width))
-        self.assertAlmostEqual(float(page.mediabox.width), 595, delta=3)
+        self.assertGreater(float(page.mediabox.width), float(page.mediabox.height))
+        self.assertAlmostEqual(float(page.mediabox.width), 842, delta=3)
 
     def test_nothing_is_rasterised_so_nothing_can_look_blurry(self):
         # The old complaint was blur on a PDF that was already vector — undersized type, not
@@ -230,3 +232,94 @@ class TheFilenameTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TheLiveDocumentTests(unittest.TestCase):
+    """The bug that emptied every PDF of its KPI cards.
+
+    Streamlit re-executes the page with a fresh namespace on every rerun. The metric hook was
+    installed once and closed over the FIRST run's Document, so every later render collected its
+    tiles into a dead object and produced a PDF with no cards at all. The first run in a process
+    looked perfect, which is why it survived an end-to-end test.
+    """
+
+    def test_starting_a_document_makes_it_the_live_one(self):
+        first = rp.new_document()
+        self.assertIs(rp.current(), first)
+        second = rp.new_document()
+        self.assertIs(rp.current(), second)
+        self.assertIsNot(second, first)
+
+    def test_a_hook_that_asks_for_the_live_document_writes_to_the_new_one(self):
+        rp.new_document()
+
+        def hook(label, value):                 # what the page's wrapper does
+            doc = rp.current()
+            if doc is not None:
+                doc.metric(label, value)
+
+        hook("First run", 1)
+        second = rp.new_document()              # the rerun
+        hook("Second run", 2)
+        labels = [k for b in second.finish().blocks for k, _ in b.items]
+        self.assertEqual(labels, ["Second run"],
+                         "the hook wrote into a stale document — this is the cards bug")
+
+
+class TablesAndFigureLabelsTests(unittest.TestCase):
+    def test_a_table_keeps_its_title_above_it(self):
+        import pandas as pd
+        doc = rp.Document()
+        doc.table(pd.DataFrame({"Grant": ["A"], "USD": [1]}), title="Applied grants")
+        h = rp.build_html(doc.finish(), title="t", subtitle="s", meta={})
+        self.assertIn("<caption>Applied grants</caption>", h)
+        self.assertIn("caption-side: top", h)
+
+    def test_a_long_table_is_truncated_with_the_count_kept(self):
+        import pandas as pd
+        doc = rp.Document()
+        doc.table(pd.DataFrame({"n": list(range(100))}), title="Big")
+        block = doc.finish().blocks[0]
+        self.assertEqual(len(block.rows), rp.TABLE_MAX_ROWS)
+        self.assertEqual(block.total_rows, 100)
+        h = rp.build_html(doc, title="t", subtitle="s", meta={})
+        self.assertIn(f"Showing {rp.TABLE_MAX_ROWS} of 100 rows", h)
+
+    def test_a_figure_title_becomes_a_numbered_caption_below_the_chart(self):
+        doc = rp.Document()
+        doc.chart(_fig("Intake by source"))
+        block = doc.finish().blocks[0]
+        self.assertEqual(block.title, "Intake by source")
+        import json
+        # and it is NOT left inside the plot, competing with the axis labels
+        self.assertEqual(json.loads(block.fig_json)["layout"]["title"], {"text": ""})
+        h = rp.build_html(doc, title="t", subtitle="s", meta={})
+        self.assertIn("Figure 1", h)
+        self.assertIn("Intake by source", h)
+        self.assertLess(h.index("id='fig0'"), h.index("Figure 1"), "caption must sit BELOW")
+
+    def test_a_chart_is_never_taller_than_a_page(self):
+        # Chrome splits an over-tall block regardless of break-inside, which is what left pages
+        # opening with bare axis numbers.
+        doc = rp.Document()
+        doc.chart(_fig(height=1200))
+        self.assertLessEqual(doc.blocks[0].height, rp.CHART_MAX_PX)
+        self.assertLess(rp.CHART_MAX_PX, rp.CONTENT_H_PX)
+
+
+class TheOpeningSummaryTests(unittest.TestCase):
+    def test_an_intro_leads_the_document(self):
+        doc = rp.Document()
+        doc.intro("Screened 243 calls, 30 Proceed.")
+        doc.section("1 · Scan activity")
+        h = rp.build_html(doc.finish(), title="t", subtitle="s", meta={})
+        self.assertIn("At a glance", h)
+        # Against the section HEADING, not the first mention: the cover's Contents list names
+        # every section, so a plain index() finds that instead.
+        self.assertLess(h.index("At a glance"),
+                        h.index("<h2 class='section'>1 · Scan activity"))
+
+    def test_an_empty_intro_is_not_an_empty_box(self):
+        doc = rp.Document()
+        doc.intro("")
+        self.assertEqual(len(doc.finish().blocks), 0)

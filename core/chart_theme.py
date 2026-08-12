@@ -177,7 +177,11 @@ def style(fig, *, height: int | None = None, showlegend: bool | None = None):
         fig.update_layout(height=height)
     if showlegend is not None:
         fig.update_layout(showlegend=showlegend)
+    # NO GRIDLINES. With a chart in a bordered frame and a value label on every bar, the grid
+    # was a third layer of ink competing with both — it made a simple chart look busy without
+    # helping anyone read a value. The axis line and the tick labels are enough; a bar chart is
+    # read against its own labels, not against a ruler.
     for axis in (fig.update_xaxes, fig.update_yaxes):
-        axis(gridcolor=GRID, zerolinecolor=GRID, linecolor=GRID,
+        axis(showgrid=False, zeroline=False, linecolor=GRID, linewidth=1,
              tickfont=dict(color=MUTED, size=11))
     return fig

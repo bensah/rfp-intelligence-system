@@ -702,44 +702,74 @@ def _show(key: str) -> bool:
 
 # ── PDF DOCUMENT COLLECTION ───────────────────────────────────────────────────────────
 # The page collects what it renders into a Document, and the PDF is built from THAT rather
-# than by printing the page. Printing the page cannot work: every Streamlit ancestor is a
-# flex container, and Chrome will not honour `break-inside` inside flexbox, so charts split
-# across page boundaries no matter what CSS is added. See core.report_pdf.
+# than by printing the page. Printing cannot work: every Streamlit ancestor is a flex
+# container, and Chrome will not honour `break-inside` inside flexbox, so charts split across
+# page boundaries no matter what CSS is added. See core.report_pdf.
 #
 # Collecting here also means the aggregations are not duplicated — one source of truth for
 # the numbers, two presentations of them.
-_PDF_DOC = _report_pdf.Document()
+#
+# THE DOCUMENT LIVES IN core.report_pdf, NOT HERE. Streamlit re-executes this page with a
+# fresh namespace on every rerun, so a hook installed once cannot close over a document
+# defined here: it would keep appending to the FIRST run's object while the page builds and
+# renders a new one. That is precisely what happened — the metric hook was installed on the
+# first run and every later PDF came out with no KPI cards at all, because the tiles were
+# going into a dead Document. The hooks ask `report_pdf.current()` for the live one on every
+# call instead.
+_PDF_DOC = _report_pdf.new_document()
 
 
-def _pdf_hook_metrics() -> None:
-    """Record every `st.metric` into the document as well as rendering it.
+def _pdf_hook_streamlit() -> None:
+    """Record KPI tiles and tables into the live document as well as rendering them.
 
-    Patched at the DeltaGenerator level because metrics are called on column handles
-    (`k1.metric(...)`), not on `st` — so wrapping `st.metric` alone would miss nearly all of
-    them, and adding a call beside thirty existing ones would be thirty chances to miss one.
-    Guarded: if Streamlit's internals move, the report still renders and only the PDF loses
-    its tiles.
+    Patched at the DeltaGenerator level because both are called on column and container
+    handles (`k1.metric(...)`, `expander.dataframe(...)`), not on `st` — so wrapping the `st.`
+    functions alone would miss nearly all of them, and adding a call beside forty existing
+    ones would be forty chances to miss one.
+
+    Guarded throughout: if Streamlit's internals move, the page still renders and only the
+    PDF loses content.
     """
     try:
         from streamlit.delta_generator import DeltaGenerator
     except Exception:
         return
-    if getattr(DeltaGenerator, "_rfpis_metric_hooked", False):
+    if getattr(DeltaGenerator, "_rfpis_pdf_hooked", False):
         return
-    _orig = DeltaGenerator.metric
+
+    _orig_metric = DeltaGenerator.metric
+    _orig_df = getattr(DeltaGenerator, "dataframe", None)
+    _orig_table = getattr(DeltaGenerator, "table", None)
 
     def _metric(self, label, value=None, *a, **kw):
         try:
-            _PDF_DOC.metric(label, value)
+            doc = _report_pdf.current()
+            if doc is not None:
+                doc.metric(label, value)
         except Exception:
             pass
-        return _orig(self, label, value, *a, **kw)
+        return _orig_metric(self, label, value, *a, **kw)
+
+    def _wrap_table(orig):
+        def _inner(self, data=None, *a, **kw):
+            try:
+                doc = _report_pdf.current()
+                if doc is not None and hasattr(data, "columns"):
+                    doc.table(data)
+            except Exception:
+                pass
+            return orig(self, data, *a, **kw)
+        return _inner
 
     DeltaGenerator.metric = _metric
-    DeltaGenerator._rfpis_metric_hooked = True
+    if _orig_df is not None:
+        DeltaGenerator.dataframe = _wrap_table(_orig_df)
+    if _orig_table is not None:
+        DeltaGenerator.table = _wrap_table(_orig_table)
+    DeltaGenerator._rfpis_pdf_hooked = True
 
 
-_pdf_hook_metrics()
+_pdf_hook_streamlit()
 
 
 # Values that are not a programme area. "Unspecified Program Areas" is the extractor's
@@ -866,6 +896,75 @@ def _export_filename(ext: str) -> str:
     return "_".join(p for p in parts if p) + f".{ext}"
 
 
+def _cadence_word() -> str:
+    """"Monthly" / "Quarterly" / … from the View-by selection.
+
+    The report is named after the cadence it was cut at, because that is what makes two exports
+    of the same period distinguishable to a reader who did not generate them.
+    """
+    m = str(bucket_mode or "").strip().lower()
+    return {"weekly": "Weekly", "monthly": "Monthly", "quarterly": "Quarterly",
+            "semestrial": "Semi-annual", "annually": "Annual"}.get(m, m.title() or "Periodic")
+
+
+def _report_name() -> str:
+    """"<Organisation> · Fund-raising Monthly Activity Report"."""
+    return f"{_org_name} · Fund-raising {_cadence_word()} Activity Report"
+
+
+def _period_phrase() -> str:
+    """The period as a reader says it: "Year-to-date 2026", not "YTD 2026".
+
+    The view-by word is deliberately NOT repeated here — it is already in the report's name, and
+    having both made the subtitle read like a settings dump.
+    """
+    label = str(_period_label_str or "").strip()
+    low = label.lower()
+    if low.startswith("ytd"):
+        return "Year-to-date " + label.split()[-1]
+    if low.startswith("last 90"):
+        return "Last 90 days"
+    if low.startswith("last 12"):
+        return "Last 12 months"
+    if low.startswith("all"):
+        return "All time"
+    return label
+
+
+def _h5(text: str) -> None:
+    """A subsection heading, on the page AND in the exported document.
+
+    Explicit rather than hooked. The table hook taught the lesson: `st.dataframe` does not route
+    through the `DeltaGenerator` attribute we patched, so tables silently never reached the PDF
+    while the hook reported itself installed. Nine call sites are cheap; a hook that lies is not.
+    """
+    # The hashes are built rather than written literally: a bulk rewrite of every
+    # `st.markdown("##### …")` call site into `_h5(…)` rewrote the one INSIDE this function too,
+    # and it called itself until the stack ran out.
+    st.markdown(("#" * 5) + " " + str(text))
+    try:
+        doc = _report_pdf.current()
+        if doc is not None:
+            doc.sub(text)
+    except Exception:
+        pass
+
+
+def _table(df, title: str = "", **kw) -> None:
+    """A dataframe on the page, and the same rows in the exported document.
+
+    The title goes ABOVE the table (a table is labelled above; a figure below), and it is passed
+    explicitly because a Streamlit dataframe carries no title of its own to lift out.
+    """
+    try:
+        doc = _report_pdf.current()
+        if doc is not None:
+            doc.table(df, title=title)
+    except Exception:
+        pass
+    st.dataframe(df, **kw)
+
+
 def _boxed(fig, **kw):
     """Render a chart inside its own bordered frame.
 
@@ -878,7 +977,9 @@ def _boxed(fig, **kw):
     """
     _theme.style(fig)
     try:
-        _PDF_DOC.chart(fig)          # same figure object the page shows
+        _doc = _report_pdf.current()
+        if _doc is not None:
+            _doc.chart(fig)          # same figure object the page shows
     except Exception:
         pass
     with st.container(border=True):
@@ -1219,7 +1320,7 @@ _pdf_slot = ac_pdf.empty()
 
 # Tenant- and period-specific document title. Chrome stamps document.title into the printed
 # page header, so this is what makes the PDF header identify the report rather than the product.
-_doc_title = f"{_org_name} · Activity Report · {_period_label_str}"
+_doc_title = f"{_report_name()} · {_period_phrase()}"
 
 with ac_tip:
     components.html(
@@ -1418,6 +1519,64 @@ with ac_tip:
         height=0,
     )
 
+# ── AT A GLANCE ───────────────────────────────────────────────────────────────────────
+# A report that opens on a KPI grid asks the reader to assemble the story themselves. This is
+# the story in a sentence or two, computed from the same rows the sections below chart, so it
+# cannot drift from them. It leads the PDF as well as the page.
+def _headline_summary() -> str:
+    """A plain-language summary of where this tenant's pipeline stands."""
+    if rfps_all.empty:
+        return (f"No funding calls are stored for {_org_name} yet. Run an eligibility scan or "
+                f"import the workbook, and this report will fill in.")
+    _u = rfps_all[~rfps_all["is_duplicate"]]
+    _dec = _u["decision"].fillna("").str.strip().str.lower()
+    n_all = int(len(_u))
+    n_proceed = int(_dec.str.startswith("proceed").sum())
+    n_park = int((_dec == "park").sum())
+    n_decline = int((_dec == "decline").sum())
+    n_undecided = n_all - (n_proceed + n_park + n_decline)
+    bits = [
+        f"**{_org_name}** has screened **{n_all:,} funding calls** to date, taking "
+        f"**{n_proceed:,} forward** as Proceed"
+        + (f" ({n_proceed / n_all:.0%} of everything screened)" if n_all else "")
+        + f", parking {n_park:,} and declining {n_decline:,}."
+    ]
+    if n_undecided:
+        bits.append(f"{n_undecided:,} are still awaiting a decision.")
+
+    # Submitted / secured, where the data supports it.
+    try:
+        _sub = int(_u["submissions"].fillna(0).astype(float).gt(0).sum())
+        if _sub:
+            bits.append(f"**{_sub:,}** of the Proceed calls have been submitted to a funder.")
+    except Exception:
+        pass
+    try:
+        _secured = float(_series_to_usd(_u.get("amount_secured"),
+                                       _u.get("currency_secured")).sum())
+        if _secured > 0:
+            bits.append(f"Funding secured so far totals **${_secured:,.0f}**.")
+    except Exception:
+        pass
+
+    _areas = _programme_area_freq(_u[_dec.str.startswith("proceed")])
+    if _areas:
+        _top = ", ".join(k for k, _ in sorted(_areas.items(), key=lambda kv: -kv[1])[:3])
+        bits.append(f"Effort concentrates in **{_top}**.")
+    bits.append(f"Figures below cover **{_period_phrase()}** unless a caption says otherwise.")
+    return " ".join(bits)
+
+
+_summary_text = _headline_summary()
+st.info(_summary_text)
+try:
+    _sdoc = _report_pdf.current()
+    if _sdoc is not None:
+        # Markdown emphasis is for the page; the PDF renders plain prose.
+        _sdoc.intro(_summary_text.replace("**", ""))
+except Exception:
+    pass
+
 st.divider()
 
 
@@ -1426,7 +1585,7 @@ st.divider()
 # ===========================================================================
 if _show_sec("1"):
     st.subheader("1 · Scan activity")
-    _PDF_DOC.section("1 · Scan activity")
+    (_report_pdf.current() or _PDF_DOC).section("1 · Scan activity")
     st.caption(
         "How the automated scanner is performing. KPI tiles come from "
         "`scan_logs` (one row per source per run). The time-series chart "
@@ -1582,7 +1741,7 @@ if _show_sec("1"):
                 )
                 leader_series.columns = ["Member", "RFPs discovered"]
                 with st.expander("Submission leaderboard", expanded=False):
-                    st.dataframe(leader_series,
+                    _table(leader_series, "Top keywords by success rate",
                                   width='stretch', hide_index=True)
             else:
                 # No submitter data — fall back to a plain bucket count
@@ -1698,7 +1857,7 @@ if _show_sec("1"):
                             columns=["Programme area", "Proceed calls"],
                         ).head(40)
                     )
-                    st.dataframe(_kw_top, width='stretch',
+                    _table(_kw_top, "Focus areas on Proceed calls", width='stretch',
                                  hide_index=True)
 
         # ───── Keyword cloud + success table ─────────────────────────────
@@ -1778,8 +1937,9 @@ if _show_sec("1"):
                         "donor searches on the topics that consistently win. "
                         "Sorted by Approved → Submitted → Proceed → Hits."
                     )
-                    st.dataframe(
+                    _table(
                         kw_agg.rename(columns={"keyword": "Keyword"}),
+                        title="Keywords driving success",
                         width='stretch', hide_index=True,
                     )
 
@@ -1803,12 +1963,13 @@ if _show_sec("1"):
         src["avg_dur"] = src["avg_dur"].round(1)
         src["yield_pct"] = ((src["new"] / src["found"].replace(0, 1)) * 100).round(1)
         with st.expander("Top 15 sources by new-RFP yield", expanded=False):
-            st.dataframe(
+            _table(
                 src.rename(columns={
                     "source": "Source", "runs": "Runs", "found": "Found",
                     "new": "New", "rejected": "Rejected",
                     "avg_dur": "Avg duration (s)", "yield_pct": "Yield %",
                 }),
+                title="Top 15 sources by new-call yield",
                 width='stretch', hide_index=True,
             )
 
@@ -1818,7 +1979,7 @@ if _show_sec("1"):
     # quality signal. (Originally placed in §4 Team Activity which was
     # the wrong narrative beat.)
     if _show("s1_cycle") and not rfps_all.empty:
-        st.markdown("##### Search → Submission cycle time")
+        _h5("Search → Submission cycle time")
         cyc_src = rfps_all[~rfps_all["is_duplicate"]].copy()
         cyc = cyc_src.dropna(subset=["search_date", "date_completed"]).copy()
         if not cyc.empty:
@@ -1856,7 +2017,7 @@ if _show_sec("1"):
 # ===========================================================================
 if _show_sec("4"):
     st.subheader("2 · Team & Partnership Activity")
-    _PDF_DOC.section("2 · Team & Partnership Activity")
+    (_report_pdf.current() or _PDF_DOC).section("2 · Team & Partnership Activity")
     st.caption(
         "Everything about WHO does the work and WHO we do it with — internal "
         "triage meetings (**Team Touchpoints**), donor-facing engagements "
@@ -1866,7 +2027,7 @@ if _show_sec("4"):
     )
 
     # ─── Team Touchpoints (internal team meetings) ─────────────────────────────
-    st.markdown("##### Team Touchpoints")
+    _h5("Team Touchpoints")
     n_meetings_total = int(len(meetings))
     n_resolved = int(meetings["is_resolved"].sum()) if not meetings.empty else 0
     n_open = n_meetings_total - n_resolved
@@ -1887,7 +2048,7 @@ if _show_sec("4"):
     st.markdown("")  # vertical spacer between the two sub-sections
 
     # ─── Donor Touchpoints (external donor engagements) ───────────────────────
-    st.markdown("##### Donor Touchpoints")
+    _h5("Donor Touchpoints")
     n_engagements = int(len(engagements))
     n_donors = (int(engagements["donor"].nunique())
                 if (not engagements.empty and "donor" in engagements.columns) else 0)
@@ -1927,11 +2088,12 @@ if _show_sec("4"):
             .head(10)
         )
         with st.expander("Top 10 donors by touchpoints", expanded=False):
-            st.dataframe(
+            _table(
                 top_donors.rename(columns={
                     "donor": "Donor", "touchpoints": "Touchpoints",
                     "types": "Engagement types",
                 }),
+                title="Top 10 donors by touchpoints",
                 width='stretch', hide_index=True,
             )
 
@@ -2070,7 +2232,7 @@ if _show_sec("4"):
             return fig
 
         def _panel(heading: str, fig, msg, y_title: str, x_title: str):
-            st.markdown(f"##### {heading}")
+            _h5(heading)
             if fig is not None:
                 _boxed(_finish(fig, y_title, x_title))
             elif msg:
@@ -2099,7 +2261,7 @@ if _show_sec("4"):
         # A separator INSIDE one org's own name (a legal suffix after a comma, or an
         # abbreviation after a ";") does not make a second applicant — see core.partner_names.
         if _show("s4_partners"):
-            st.markdown("##### Lead & Sub Applicant partners")
+            _h5("Lead & Sub Applicant partners")
         _NA_VALUES = partner_names.NA_VALUES
         _org_full = (settings.get_org_name() or "").strip()
         _org_short = (settings.get_org_short() or "").strip()
@@ -2176,7 +2338,7 @@ if _show_sec("4"):
 # ===========================================================================
 if _show_sec("2"):
     st.subheader("3 · Insights — Status & Eligibility Funnel")
-    _PDF_DOC.section("3 · Insights — Status & Eligibility Funnel")
+    (_report_pdf.current() or _PDF_DOC).section("3 · Insights — Status & Eligibility Funnel")
     st.caption(
         "**Current pipeline state across ALL stored RFPs** — auto-scanned, "
         "manually submitted, AND imported from the legacy Excel workbook. "
@@ -2326,7 +2488,7 @@ if _show_sec("2"):
 # ===========================================================================
 if _show_sec("3"):
     st.subheader("4 · Reviews & Decisions")
-    _PDF_DOC.section("4 · Reviews & Decisions")
+    (_report_pdf.current() or _PDF_DOC).section("4 · Reviews & Decisions")
     st.caption(
         "Triage outcomes — velocity from RFP discovery to decision, where "
         "the auto-recommendation needed manual override, and the funder's own "
@@ -2454,8 +2616,10 @@ if _show_sec("3"):
                     "recommended. Rows other than *Proceed* are where human judgment "
                     "overrode a park/decline suggestion."
                 )
-                st.dataframe(
-                    _ar.rename(columns={"ar": "Auto-recommendation", "count": "Proceed RFPs"}),
+                _table(
+                    _ar.rename(columns={"ar": "Auto-recommendation",
+                                        "count": "Proceed calls"}),
+                    title="Auto-recommendation vs the team's decision",
                     width='stretch', hide_index=True,
                 )
 
@@ -2469,7 +2633,7 @@ if _show_sec("3"):
         # dwarfs every real outcome and says nothing about donor decisions. The count of those
         # awaiting a decision is stated as a caption instead.
         if _show("s3_donordec") and "donor_decision" in _proc_dec.columns:
-            st.markdown("##### Donor Decisions")
+            _h5("Donor Decisions")
             _dd = _proc_dec["donor_decision"].fillna("").astype(str).str.strip()
             _pending = int((_dd.str.lower().isin(["", "not submitted"])).sum())
             _dd = _dd[~_dd.str.lower().isin(["", "not submitted"])]
@@ -2504,7 +2668,7 @@ if _show_sec("3"):
 # ===========================================================================
 if _show_sec("5"):
     st.subheader("5 · Our Results — Proposals Submitted & Grants Secured")
-    _PDF_DOC.section("5 · Our Results")
+    (_report_pdf.current() or _PDF_DOC).section("5 · Our Results")
     st.caption(
         "Bottom line across ALL stored RFPs — auto-scanned + manually "
         "submitted + Excel migration rows. Counts here ignore the period "
@@ -2630,7 +2794,7 @@ if _show_sec("5"):
         # The signed outcome view — the aggregate amounts are in the KPI cards above; this
         # chart shows the per-RFP secured (▲) vs unsecured/declined (▼) picture.
         if _show("s5_reqsec"):
-            st.markdown("##### Amount Requested vs Amount Secured (USD)")
+            _h5("Amount Requested vs Amount Secured (USD)")
         if _show("s5_reqsec") and {"amount_requested", "amount_secured"} <= set(unique.columns):
             out_df = outcome_df[(outcome_df["req_usd"] > 0)
                                 | (outcome_df["sec_usd"] > 0)].copy()
@@ -2683,7 +2847,7 @@ if _show_sec("5"):
         # how many did we actually submit, and how many won?" — IS the
         # outcomes question, not a team-activity question.
         if _show("s5_conv"):
-            st.markdown("##### Conversion rates")
+            _h5("Conversion rates")
         proceeded = unique[
             unique["decision"].fillna("").str.lower().str.startswith("proceed")
         ]
@@ -2711,7 +2875,7 @@ if _show_sec("5"):
         # report / Owner columns aren't needed here). Not collapsible; the closing table of
         # the results story.
         if _show("s5_grants"):
-            st.markdown("##### Applied Grants")
+            _h5("Applied Grants")
             st.caption("Every grant we've submitted (Proceed RFPs with Progress = "
                        "Completed) — requested amount and the donor's decision.")
             if _pc.empty:
@@ -2734,8 +2898,8 @@ if _show_sec("5"):
                     "Submissions": _sg["_subs"],
                     "Submitted": pd.to_datetime(_sg["date_completed"], errors="coerce").dt.date,
                 }).sort_values("Requested (USD)", ascending=False)
-                st.dataframe(
-                    _tbl, width='stretch', hide_index=True,
+                _table(
+                    _tbl, title="Applied grants", width='stretch', hide_index=True,
                     column_config={
                         "Grant": st.column_config.TextColumn("Grant", width="large"),
                         "Requested (USD)": st.column_config.NumberColumn(
@@ -2778,7 +2942,7 @@ if _gen_name and _gen_email:
 else:
     _gen_by = _gen_name or _gen_email or "unknown user"
 
-_pdf_doc = _PDF_DOC.finish()
+_pdf_doc = (_report_pdf.current() or _PDF_DOC).finish()
 _pdf_name = _export_filename("pdf")
 
 if st.session_state.pop("_rfpis_make_pdf", False):
@@ -2786,10 +2950,12 @@ if st.session_state.pop("_rfpis_make_pdf", False):
         with st.spinner("Building the PDF — laying out charts at page width…"):
             _html_doc = _report_pdf.build_html(
                 _pdf_doc,
-                title=f"{_org_name} · Activity Report",
-                subtitle=f"{_period_label_str} · view {bucket_mode.lower()}",
+                title=_report_name(),
+                subtitle=_period_phrase(),
                 meta={
-                    "Tenant": _org_name,
+                    # "Organization", not "Tenant": tenant is our word for the account, and a
+                    # reader of the PDF has no reason to know it.
+                    "Organization": _org_name,
                     "Period": (f"{_s_iso} → {_e_iso}" if _s_iso else "All time"),
                     "Report id": (_url_rid or "unsaved"),
                     "Generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -2799,7 +2965,7 @@ if st.session_state.pop("_rfpis_make_pdf", False):
             st.session_state["_rfpis_pdf_bytes"] = _report_pdf.render_pdf(
                 _html_doc,
                 chart_count=_pdf_doc.chart_count,
-                header_text=f"{_org_name} · Activity Report · {_period_label_str}",
+                header_text=f"{_report_name()} · {_period_phrase()}",
                 footer_text=f"Generated by {_gen_by} · report {_url_rid or 'unsaved'}",
             )
             st.session_state["_rfpis_pdf_name"] = _pdf_name

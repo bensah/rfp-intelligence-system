@@ -92,7 +92,7 @@ class TheRenamedAndAddedItemsTests(unittest.TestCase):
     def test_donor_decisions_renders_under_reviews_and_decisions(self):
         src = _source()
         i_reviews = src.index('st.subheader("4 · Reviews & Decisions")')
-        i_donor = src.index('st.markdown("##### Donor Decisions")')
+        i_donor = src.index('_h5("Donor Decisions")')
         i_results = src.index("# SECTION 5 — Our Results")
         self.assertLess(i_reviews, i_donor)
         self.assertLess(i_donor, i_results)
@@ -403,7 +403,10 @@ class TheReportIdentityTests(unittest.TestCase):
         # Chrome stamps document.title into the printed page header, which read
         # "RFP Intelligence System - RFPIS" on every tenant's PDF.
         src = _source()
-        self.assertIn('_doc_title = f"{_org_name} · Activity Report · {_period_label_str}"', src)
+        # The name now carries the CADENCE it was cut at ("Fund-raising Monthly Activity
+        # Report"), which is what distinguishes two exports of the same period.
+        self.assertIn('_doc_title = f"{_report_name()} · {_period_phrase()}"', src)
+        self.assertIn('Fund-raising {_cadence_word()} Activity Report', src)
         self.assertIn("window.RFPIS_DOC_TITLE", src)
         self.assertIn("window.parent.document.title = window.RFPIS_DOC_TITLE", src)
 
