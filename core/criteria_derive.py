@@ -652,13 +652,44 @@ _NON_GEO_SCOPE_LABELS = frozenset({
 })
 
 
+# Unicode dashes defeat every geography lookup. An LLM writes "Sub‑Saharan Africa" with a
+# NON-BREAKING hyphen (U+2011) and "Malaria–endemic" with an en dash, neither of which equals the
+# ASCII "-" in the canonical names — so a correct answer resolved to nothing.
+_DASHES = {"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-",
+           "−": "-"}
+
+
+def _ascii_dashes(v: Any) -> str:
+    s = str(v or "")
+    for bad, good in _DASHES.items():
+        s = s.replace(bad, good)
+    return s
+
+
+def _applicant_countries_label(apply_to: Any, limit: int = 3) -> str:
+    """Name the countries in the component itself.
+
+    The list is the call's own words and it is not always a clean place-list, so a bare
+    "Eligible to apply" would ask the reviewer to trust a verdict without showing its basis.
+    Naming them means an arguable one ("African malaria-endemic countries") is visibly
+    arguable and can be overridden on sight.
+    """
+    names = [_ascii_dashes(str(x)).strip() for x in _as_list(apply_to) if str(x).strip()]
+    if not names:
+        return "Eligible to apply"
+    shown = ", ".join(names[:limit])
+    if len(names) > limit:
+        shown += f" +{len(names) - limit} more"
+    return f"Eligible to apply ({shown})"
+
+
 def _drop_non_geographies(scope: Any) -> list:
     """`scope` without the labels that describe a scope instead of naming one."""
     out = []
     for s in _as_list(scope):
-        t = str(s or "").strip().lower()
-        if t and t not in _NON_GEO_SCOPE_LABELS:
-            out.append(s)
+        cleaned = _ascii_dashes(s).strip()      # "Sub‑Saharan Africa" -> "Sub-Saharan Africa"
+        if cleaned and cleaned.lower() not in _NON_GEO_SCOPE_LABELS:
+            out.append(cleaned)
     return out
 
 
@@ -713,15 +744,33 @@ def _geo_scope(rfp: dict, donor: dict | None) -> list[str]:
     ONLY when the call states none — donor intel must never WIDEN an explicit call
     restriction (e.g. a broad donor 'LMIC' scope must not turn an 'India-only' call into a
     pass for an org with no India presence). Deduped (case-insensitive)."""
-    raw = (_as_list(rfp.get("call_geographic_scope"))
-           or _as_list((donor or {}).get("donor_geographic_scope")))
-    seen, out = set(), []
-    for s in raw:
-        k = str(s).strip().lower()
-        if k and k not in seen:
-            seen.add(k)
-            out.append(s)
-    return out
+    #    LAST FALLBACK: the applicant-country list. A call that publishes only who may apply
+    #    and never says where the work happens leaves MUST-4 with nothing — 14 catalogue rows
+    #    are in that state. Using the apply-list there is a weaker signal than a real work
+    #    geography, so it is reached ONLY when both the call and the donor are silent, exactly
+    #    as the donor fallback above is. Where a work geography EXISTS it always wins, which is
+    #    what keeps the 37 rows whose two lists disagree from being scored on the wrong one.
+    return _geo_scope_with_source(rfp, donor)[0]
+
+
+def _geo_scope_with_source(rfp: dict, donor: dict | None) -> tuple[list[str], str]:
+    """`_geo_scope` plus WHICH source produced it: "call" | "donor" | "apply_list" | "none".
+
+    The caller needs this because the apply-list fallback is a weaker signal than a real work
+    geography, and MUST-4 must not auto-Decline on it. See `_geo_presence`.
+    """
+    for src, raw in (("call", _as_list(rfp.get("call_geographic_scope"))),
+                     ("donor", _as_list((donor or {}).get("donor_geographic_scope"))),
+                     ("apply_list", _as_list(rfp.get("eligibility_countries")))):
+        seen, out = set(), []
+        for s in raw:
+            k = str(s).strip().lower()
+            if k and k not in seen:
+                seen.add(k)
+                out.append(s)
+        if out:
+            return out, src
+    return [], "none"
 
 
 def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
@@ -732,7 +781,8 @@ def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
     sure' (active=False, excluded)."""
     # Strip the label-not-a-place values BEFORE deciding whether a scope exists, so a row
     # scoped only "Regional" reads as unstated rather than as somewhere we are not.
-    scope = _drop_non_geographies(_geo_scope(rfp, donor))
+    scope, scope_src = _geo_scope_with_source(rfp, donor)
+    scope = _drop_non_geographies(scope)
     if not scope:
         if _is_us_federal(rfp):
             scope = ["United States"]              # US-federal / US-only default scope
@@ -771,6 +821,20 @@ def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
                             or _geo_partner_in_scope(org, scope))
                         else "call is open to any country — no overlap with our own "
                              "operating countries")}
+    if scope_src == "apply_list":
+        # The scope came ONLY from the applicant-country list, because the call and the donor
+        # both state where the money is spent nowhere (14 catalogue rows). That list is who may
+        # APPLY, in the call's own prose — "African malaria-endemic countries", "Eureka
+        # countries" — so a non-match here is not a measured absence of reach, and MUST-4 is
+        # FATAL. Same reasoning as the unconfigured-profile case above: not determinable →
+        # "Not sure" → Park for review, never an invisible auto-Decline.
+        #
+        # Nothing is lost by declining to guess: the apply-list already carries its own score
+        # penalty on MUST-1 (`applicant_countries`), so scoring it here too would double-count
+        # one fact across two criteria — the exact mistake that removed the geographic-scope
+        # registration proxy on 2026-08-07.
+        return {"active": False, "score": None, "label": "Not sure", "scope": scope,
+                "via": "the call states who may apply but not where the work happens"}
     return {"active": True, "score": 0.0, "label": "No presence there", "scope": scope,
             "via": ""}
 
@@ -2018,7 +2082,8 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     #    Geographic reach is NOT lost: MUST-4 still auto-Declines an org with no presence
     #    or partner in scope — with the correct trigger name.
     reg_req = _as_list(donor.get("donor_registration_region"))
-    explicit_any = any(r.lower() == "any" for r in reg_req)
+    explicit_any = any(str(r).lower() in ("any", "any country", "worldwide", "global")
+                       for r in reg_req)
     region = [] if explicit_any else list(reg_req)
     if not region and not explicit_any and _is_us_federal(rfp):
         region = ["United States"]               # US-federal / US-only → must be US-registered
@@ -2108,6 +2173,32 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     # one, and the call still reads Decline — the difference is that the rest of the criteria
     # stay legible, which is what a reviewer needs in order to judge whether the invitation is
     # worth chasing.
+    # --- H. APPLICANT COUNTRIES stated by the CALL (added 2026-08-12) ------------------
+    # Schema §4.4: `eligibility_countries` is "who may APPLY (may differ from work geography)".
+    # That is MUST-1's question, not MUST-4's — across the 82 catalogue rows carrying both, 37
+    # disagree: one call may be applied to only from India while the work is in Africa, and
+    # several are open only to EU member states for work in sub-Saharan Africa.
+    #
+    # NON-FATAL, deliberately, and this is the whole design. The list is LLM prose: it arrives as
+    # "England", "Finland", "EU Member States", "African malaria-endemic countries". Scored as a
+    # HARD gate it auto-Declined all 33 live rows that carry one — including a call open to
+    # Sub-Saharan Africa, for an org registered in two Sub-Saharan countries.
+    #
+    # I first tried to tell a precise place-list from descriptive prose before letting it gate.
+    # That heuristic kept failing in both directions ("England" is not in the 196-country
+    # vocabulary; "Malaria-endemic regions in Africa" resolves to Africa's members), and a
+    # heuristic is the wrong instrument for a decision whose error mode is an invisible
+    # auto-Decline. So the component simply does not gate: an unmatched list lowers MUST-1 —
+    # which still reads Decline on score — while the other criteria stay legible and the reviewer
+    # can override it, exactly as with `invitation_only`.
+    # Coverage is `_region_covered` — the SAME helper item D uses, so registered-then-operating
+    # -then-inclusive-tier matching is not reimplemented here.
+    _apply_to = _drop_non_geographies(rfp.get("eligibility_countries"))
+    items.append(_qfactor("applicant_countries", _applicant_countries_label(_apply_to),
+                          active=bool(_apply_to),
+                          score=(1.0 if _region_covered(_apply_to, org) else 0.0),
+                          hard=False, default=False))
+
     items.append(_qfactor("invitation_only", "Invitation received (closed round)",
                           active=_invitation_only(rfp, donor),
                           score=(1.0 if _truthy(org.get("org_has_invitation")) else 0.0),
@@ -2469,7 +2560,7 @@ def _bid_effort_factors(rfp: dict, org_settings: dict | None = None) -> list[dic
 # the reviewer supplies rather than something the call states. `fatal_decline` ignores
 # component overrides, so a fatal gate on one of these could never be cleared by the human who
 # holds the answer.
-_NON_FATAL_QUALIFICATION = frozenset({"invitation_only"})
+_NON_FATAL_QUALIFICATION = frozenset({"invitation_only", "applicant_countries"})
 
 
 def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
