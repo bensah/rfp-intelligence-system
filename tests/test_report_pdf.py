@@ -105,6 +105,29 @@ class TheDocumentStructureTests(unittest.TestCase):
         self.assertIn("class='cover'", h)
         self.assertIn("page-break-after: always", h)
 
+    def test_the_contents_numbers_each_section_once(self):
+        # Was "1. 1 · Scan activity": the section name carries its own number and the <ol>
+        # marker added a second. The name's number is the one that matches the body heading,
+        # so the marker is the set that goes.
+        h = self._html()
+        self.assertRegex(h, r"\.cover \.contents ol \{[^}]*list-style: none")
+        self.assertIn("<li>1 · Scan activity</li>", h)
+
+    def test_the_contents_does_not_renumber_when_a_section_is_pruned(self):
+        # finish() drops a section that came out empty. With an <ol> marker the reader would
+        # see "2. 3 · Insights" — the marker counting kept sections, the name counting all of
+        # them. Only one number survives, and it is the one the body uses.
+        doc = rp.Document()
+        doc.section("1 · Scan activity")
+        doc.metric("Runs", 4)
+        doc.section("2 · Team")          # nothing added: pruned
+        doc.section("3 · Insights")
+        doc.chart(_fig("Funnel"))
+        h = rp.build_html(doc.finish(), title="t", subtitle="s", meta={})
+        self.assertIn("<li>1 · Scan activity</li>", h)
+        self.assertIn("<li>3 · Insights</li>", h)
+        self.assertNotIn("2 · Team", h)
+
     def test_each_section_starts_on_a_fresh_page_except_the_first(self):
         h = self._html()
         self.assertIn(".section-wrap { page-break-before: always", h)
