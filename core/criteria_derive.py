@@ -632,6 +632,36 @@ _GEO_PARTNER_STATUS = ("implementing partner", "collaborator")
 _US_NAMES = {"united states", "united states of america", "usa", "u.s.", "us"}
 
 
+# WORDS THAT DESCRIBE A SCOPE WITHOUT NAMING ONE. "Regional", "Multiple countries",
+# "Various" — a human filling a form reaches for these, and they expand to nothing, so a scope
+# consisting only of them behaves like a scope naming a country we are not in: MUST-4 scores 0
+# and the fatal gate DECLINES the call.
+#
+# Observed live: a call whose extraction reads ["Sub-Saharan Africa"] carried ["Regional"] on
+# its pipeline row and was declined for "No presence there" — with the org registered inside
+# that very region. The containment logic was never the problem; `expand("Sub-Saharan
+# Africa")` already yields all 50 member countries.
+#
+# A label that names nowhere is NOT a measured absence of reach. It is an unstated scope, which
+# MUST-4 already handles: "Not sure", excluded from the count, Park for review.
+_NON_GEO_SCOPE_LABELS = frozenset({
+    "regional", "region", "multi-country", "multicountry", "multiple", "multiple countries",
+    "various", "various countries", "several", "several countries", "country-specific",
+    "country specific", "other", "n/a", "na", "none", "not specified", "unspecified",
+    "not stated", "tbd", "worldwide?",
+})
+
+
+def _drop_non_geographies(scope: Any) -> list:
+    """`scope` without the labels that describe a scope instead of naming one."""
+    out = []
+    for s in _as_list(scope):
+        t = str(s or "").strip().lower()
+        if t and t not in _NON_GEO_SCOPE_LABELS:
+            out.append(s)
+    return out
+
+
 def _covers_scope(countries: Any, scope: Any) -> bool:
     """Any country in `countries` falls within `scope` (geo expansion), OR `scope` is
     an inclusive tier (LMIC/global/developing) reachable via the org's own presence.
@@ -700,7 +730,9 @@ def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
     (owner 2026-06-29b): a US-federal / US-only call (no intl cue) → scope = United
     States; a call/donor with a stated scope → tiered match; NO scope at all → 'Not
     sure' (active=False, excluded)."""
-    scope = _geo_scope(rfp, donor)
+    # Strip the label-not-a-place values BEFORE deciding whether a scope exists, so a row
+    # scoped only "Regional" reads as unstated rather than as somewhere we are not.
+    scope = _drop_non_geographies(_geo_scope(rfp, donor))
     if not scope:
         if _is_us_federal(rfp):
             scope = ["United States"]              # US-federal / US-only default scope
