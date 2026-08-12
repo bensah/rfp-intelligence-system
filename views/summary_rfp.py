@@ -307,7 +307,7 @@ with bc2:
 
 with bc3:
     # Label on top (like adjacent column headers), value below
-    st.markdown("**Total Pipeline Value (Proceed Only)**")
+    st.markdown("**Total Proceed Value**")
     st.markdown(
         f"<div style='font-size:1.65rem;font-weight:600;color:#00703C;"
         f"line-height:1.4;margin-top:6px'>${pipeline_value:,.0f} USD</div>",
