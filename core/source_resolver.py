@@ -209,6 +209,26 @@ def is_aggregator_funder(name: str | None) -> bool:
     return bool(_AGG_FUNDER_RE.search(s) or _HOSTLIKE_RE.match(s))
 
 
+# A page title's tail is USUALLY the site name, and sometimes it is the rest of the headline.
+# Applied to a live row it produced the funder "Riverton, 27 August [Deadline: 14 August] – RIPSA",
+# which is a date-stamped event title, not an organisation. A funder name is short, has no
+# digits, and is not a sentence — cheap tests, and each one rules out something observed.
+_ORG_MAX_WORDS = 8
+
+
+def _looks_like_an_org(text: str) -> bool:
+    s = (text or "").strip()
+    if not (2 < len(s) <= 80) or is_aggregator_funder(s):
+        return False
+    if any(ch.isdigit() for ch in s):
+        return False                       # a date, a year, a notice number — not a name
+    if len(s.split()) > _ORG_MAX_WORDS:
+        return False                       # a headline, not a name
+    if any(ch in s for ch in "[](){}·|"):
+        return False                       # leftover title punctuation
+    return True
+
+
 def _funder_from_page(url: str, soup) -> str | None:
     """The site's own name for itself: the curated registry name first (a human wrote it),
     then `og:site_name`, then the tail of the `<title>` — publishers put the site name
@@ -232,7 +252,7 @@ def _funder_from_page(url: str, soup) -> str | None:
         for sep in ("|", " - ", " – ", " — ", "::"):
             if sep in raw:
                 tail = raw.rsplit(sep, 1)[-1].strip()
-                if 2 < len(tail) <= 80 and not is_aggregator_funder(tail):
+                if _looks_like_an_org(tail):
                     return tail
     except Exception:
         return None
