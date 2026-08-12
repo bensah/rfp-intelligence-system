@@ -1,7 +1,7 @@
 """Report view — KPI dashboard of the full RFPIS pipeline.
 
 Story arc, top → bottom:
-  1. Search activity     — scanner output (top of funnel)
+  1. Scan activity     — scanner output (top of funnel)
   2. Insights funnel     — eligibility / decision breakdown
   3. Reviews & decisions — triage outcomes + velocity
   4. Engagements         — meetings + donor touchpoints
@@ -596,7 +596,7 @@ def _load_grants(_scope: str) -> pd.DataFrame:
 # generated with — renumbering them to match a new running order would silently change what an
 # existing report shows. Display order is this list's order; the display number is in the label.
 _REPORT_SECTIONS = [
-    ("1", "1 · Search activity", [
+    ("1", "1 · Scan activity", [
         ("s1_discovery",  "Funding discovered by member"),
         ("s1_donor",      "Funding by donor (top 15)"),
         ("s1_keywords",   "Search keyword cloud"),
@@ -990,9 +990,25 @@ ac_excel.download_button(
 # its own iframe, so window.print() inside the iframe would print just
 # the iframe — call window.parent.print() to print the main Streamlit
 # page where the @media print CSS rules at the top of this file apply.
+# A NATIVE Streamlit button, not one drawn inside the component iframe.
+#
+# The iframe button was reported dead twice, and the second report included the decisive
+# detail: hovering it did not even change its colour, while the buttons beside it did. A
+# hand-styled <button> inside a sandboxed iframe has no hover styling of its own and depends
+# on a click landing inside that iframe and on same-origin reach back to the parent — a chain
+# with several ways to fail silently, none of which the page can see.
+#
+# So the click is handled by Streamlit instead: a real button (its own hover, focus ring and
+# keyboard access) sets a flag, and on the rerun a ZERO-HEIGHT component runs the print call
+# as it loads. No click has to cross the iframe boundary, and window.print() does not need a
+# user gesture.
+if ac_print.button("🖨 Print / PDF", width="stretch", key="report_print_btn",
+                   help="Opens your browser's print dialog — choose 'Save as PDF' to keep a copy."):
+    st.session_state["_rfpis_print_now"] = True
+
 with ac_print:
     components.html(
-        """
+        r"""
         <script>
         // -- Fit Plotly charts to the printed page ------------------------------------
         // Plotly bakes a PIXEL width into its <svg> at render time, measured from the
@@ -1071,8 +1087,17 @@ with ac_print:
 
         // Hook Ctrl+P / the browser menu, not just our button.
         //
-        // The listener is INJECTED INTO THE PARENT as its own <script> rather than
-        // registered from in here. Streamlit destroys and recreates this iframe on every
+        // The listener is INJECTED INTO THE PARENT as its own script element rather
+        // than registered from in here.
+        //
+        // NOTE, and this cost two rounds of "the button does nothing": never write a
+        // literal script tag inside inline script text. This comment used to spell one
+        // out, and the HTML parser stopped treating the rest as script, so the whole
+        // block never executed. The button then rendered (it is plain HTML), had no
+        // hover (it is not a Streamlit button) and did nothing at all, because its
+        // onclick handler was never defined. Nothing in the page could report it.
+        //
+        // Streamlit destroys and recreates this iframe on every
         // rerun, so a listener added by `window.parent.addEventListener` from inside the
         // iframe keeps pointing at functions in a torn-down realm - it survives the guard
         // that stops re-registration and then does nothing when the user prints. Injected
@@ -1135,58 +1160,57 @@ with ac_print:
         // parent, where nothing is sandboxed. If the hook is missing we still try the
         // direct route, and only then fall back - now telling the user rather than
         // printing a button.
-        function rfpisPrint() {
-          // Ordered by how VERIFIABLE each path is, because the previous version's first
-          // step was postMessage followed by an unconditional `return`: a message with no
-          // listener is indistinguishable from success, so a missing hook meant a button
-          // that silently did nothing.
-          //
-          // 1. Call the parent's own entry point. It returns true, so we know it ran.
-          try {
-            if (typeof window.parent.rfpisPrintNow === 'function') {
-              if (window.parent.rfpisPrintNow() === true) return;
-            }
-          } catch (e) { /* fall through */ }
-
-          // 2. Fit and print the parent directly.
-          try {
-            if (typeof window.parent.rfpisFitPlots === 'function') {
-              window.parent.rfpisFitPlots(RFPIS_PRINT_W);
-            }
-            window.parent.print();
-            return;
-          } catch (e) { /* fall through */ }
-
-          // 3. Post upward, in case the parent is reachable only by message.
-          try { window.parent.postMessage({ rfpis: 'print' }, '*'); } catch (e) {}
-
-          // 4. Say so. Printing the IFRAME (the old fallback) yields a page containing one
-          //    button, which looks like a broken feature. Ctrl+P works regardless, because
-          //    the parent's beforeprint hook does the fitting.
-          var b = document.getElementById('rfpis-print-btn');
-          if (b) { b.textContent = '⌨ Use Ctrl+P'; b.title = 'Print via your browser (Ctrl+P)'; }
-        }
         </script>
-        <button id="rfpis-print-btn" onclick="rfpisPrint()" style="
-          background:#00703C; color:#fff; border:none;
-          padding:0.31rem 0.75rem; border-radius:0.5rem; cursor:pointer;
-          font-size:0.875rem; width:100%; line-height:1.6;
-          font-weight:400;
-          font-family: 'Source Sans Pro', 'Segoe UI', sans-serif;">
-          🖨 Print / PDF
-        </button>
         """,
-        height=40,
+        # Zero height: this component now only INSTALLS the hook. Nothing is drawn in it, so
+        # it cannot occupy space beside the button or intercept a click meant for it.
+        height=0,
     )
+
+    # The print call itself, on the rerun after the button was pressed. It runs as this
+    # component loads, so no click has to cross the iframe boundary.
+    if st.session_state.pop("_rfpis_print_now", False):
+        components.html(
+            r"""
+            <script>
+            (function () {
+              function go() {
+                // The parent-realm entry point installed by the hook above.
+                try {
+                  if (typeof window.parent.rfpisPrintNow === 'function') {
+                    if (window.parent.rfpisPrintNow() === true) return;
+                  }
+                } catch (e) { /* fall through */ }
+                // Direct: fit what we can reach, then print the parent.
+                try {
+                  if (typeof window.parent.rfpisFitPlots === 'function') {
+                    window.parent.rfpisFitPlots(700);
+                  }
+                  window.parent.print();
+                  return;
+                } catch (e) { /* fall through */ }
+                // Last resort - print this document. Reached only when the parent is
+                // genuinely unreachable, in which case doing nothing is worse.
+                try { window.print(); } catch (e) {}
+              }
+              // One frame's delay so the hook script above has run and the charts are laid
+              // out; printing mid-render can capture a half-drawn page.
+              if (document.readyState === 'complete') { setTimeout(go, 60); }
+              else { window.addEventListener('load', function () { setTimeout(go, 60); }); }
+            })();
+            </script>
+            """,
+            height=0,
+        )
 
 st.divider()
 
 
 # ===========================================================================
-# SECTION 1 — Search activity (top of funnel)
+# SECTION 1 — Scan activity (top of funnel)
 # ===========================================================================
 if _show_sec("1"):
-    st.subheader("1 · Search activity")
+    st.subheader("1 · Scan activity")
     st.caption(
         "How the automated scanner is performing. KPI tiles come from "
         "`scan_logs` (one row per source per run). The time-series chart "
@@ -1874,7 +1898,7 @@ if _show_sec("4"):
         # The Requested-vs-Secured scatter + Conversion rates blocks
         # relocated to Section 5 (Our Results) — that's the natural home for
         # outcome-shaped metrics. The Search → Submission cycle time block
-        # relocated to Section 1 (Search Activity) — Search Date is the
+        # relocated to Section 1 (Scan Activity) — Search Date is the
         # anchor, so it fits the search-narrative beat.
 
     st.divider()

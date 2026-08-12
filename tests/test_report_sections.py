@@ -50,7 +50,7 @@ def _registry() -> list:
 
 
 class TheDisplayOrderTests(unittest.TestCase):
-    def test_the_running_order_is_search_team_insights_reviews_results(self):
+    def test_the_running_order_is_scan_team_insights_reviews_results(self):
         self.assertEqual([sid for sid, _, _ in _registry()], ["1", "4", "2", "3", "5"])
 
     def test_the_display_numbers_run_one_to_five_without_a_gap(self):
@@ -66,7 +66,7 @@ class TheDisplayOrderTests(unittest.TestCase):
         # A report saved before the reorder stores these ids. They must still mean the same
         # sections, or reopening it would show something else.
         by_id = {sid: label for sid, label, _ in _registry()}
-        self.assertIn("Search", by_id["1"])
+        self.assertIn("Scan", by_id["1"])
         self.assertIn("Insights", by_id["2"])
         self.assertIn("Reviews", by_id["3"])
         self.assertIn("Team", by_id["4"])
@@ -100,7 +100,7 @@ class TheRenamedAndAddedItemsTests(unittest.TestCase):
     def test_the_headings_appear_in_the_file_in_display_order(self):
         src = _source()
         positions = [src.index(h) for h in (
-            'st.subheader("1 · Search activity")',
+            'st.subheader("1 · Scan activity")',
             'st.subheader("2 · Team & Partnership Activity")',
             'st.subheader("3 · Insights — Status & Eligibility Funnel")',
             'st.subheader("4 · Reviews & Decisions")',
@@ -147,13 +147,20 @@ class ThePrintLayoutTests(unittest.TestCase):
     def test_charts_are_never_enlarged_only_shrunk(self):
         self.assertIn("if (k >= 1) return;", _source())
 
-    def test_the_button_asks_the_parent_to_print_itself(self):
-        # The button lives in a SANDBOXED iframe. Reaching across to call the parent's print()
-        # from a sandboxed context is a step a browser may refuse; postMessage has no such
-        # failure mode, because the print then originates in the parent realm.
+    def test_the_click_is_handled_by_a_native_streamlit_button(self):
+        # The hand-drawn button inside the component iframe was reported dead twice. It has no
+        # hover styling of its own and needs a click to land inside a sandboxed frame — and when
+        # its script failed to parse, its onclick handler simply did not exist. A real Streamlit
+        # button gets hover, focus and keyboard handling, and its click cannot be lost.
         src = _source()
-        self.assertIn("postMessage({ rfpis: 'print' }", src)
-        self.assertIn('ev.data.rfpis !== "print"', src)
+        self.assertIn('ac_print.button("🖨 Print / PDF"', src)
+        self.assertIn('st.session_state["_rfpis_print_now"] = True', src)
+        self.assertNotIn('onclick="rfpisPrint()"', src)
+
+    def test_printing_happens_in_a_component_rendered_on_the_rerun(self):
+        src = _source()
+        self.assertIn('st.session_state.pop("_rfpis_print_now", False)', src)
+        self.assertIn("window.parent.print()", src)
 
     def test_the_hook_id_is_versioned_and_replaces_older_ones(self):
         # THE reason the button was dead. The previous guard was
@@ -165,33 +172,23 @@ class ThePrintLayoutTests(unittest.TestCase):
         self.assertIn("""querySelectorAll('[id^="rfpis-print-hook"]')""", src)
         self.assertIn("stale[i].remove()", src)
 
-    def test_the_button_prefers_a_call_whose_success_is_observable(self):
-        # postMessage-then-return cannot tell delivery from silence, which is how a missing
-        # listener became an inert button. The first path returns true when it ran.
+    def test_the_print_call_prefers_the_verifiable_path(self):
+        # The parent-realm entry point returns true, so the caller knows it ran. A fire-and-forget
+        # path cannot tell delivery from silence, which is how a missing hook became an inert
+        # button the first time round.
         src = _source()
         self.assertIn("window.parent.rfpisPrintNow() === true", src)
         i_call = src.index("rfpisPrintNow() === true")
-        i_post = src.index("postMessage({ rfpis: 'print' }")
-        self.assertLess(i_call, i_post, "the unverifiable path must not be tried first")
+        i_direct = src.index("window.parent.print()", i_call)
+        self.assertLess(i_call, i_direct)
 
     def test_it_still_works_when_the_hook_is_missing_entirely(self):
         # Verified in a browser against a real Streamlit component with a stale hook planted:
         # the direct parent path fits the charts and prints.
-        src = _source()
-        btn = src[src.index("function rfpisPrint()"):]
-        btn = btn[:btn.index("</script>")]
-        self.assertIn("window.parent.print()", btn)
-        self.assertIn("rfpisFitPlots", btn)
-
-    def test_it_never_falls_back_to_printing_the_iframe(self):
-        # The old fallback called window.print() inside the component, which prints a page
-        # containing one button. That looks identical to a dead button — the most likely reason
-        # the button was reported as not working.
-        src = _source()
-        btn = src[src.index("function rfpisPrint()"):]
-        btn = btn[:btn.index("</script>")]
-        self.assertNotIn("window.print()", btn)
-        self.assertIn("Ctrl+P", btn)
+        trigger = _source()
+        trigger = trigger[trigger.index('_rfpis_print_now", False'):]
+        self.assertIn("window.parent.print()", trigger)
+        self.assertIn("rfpisFitPlots", trigger)
 
 
 class ThePageStillRunsTests(unittest.TestCase):
@@ -225,7 +222,7 @@ class ThePageStillRunsTests(unittest.TestCase):
 
     def test_all_five_sections_arrive_in_display_order(self):
         heads = self.result["subheaders"]
-        wanted = ["1 · Search activity",
+        wanted = ["1 · Scan activity",
                   "2 · Team & Partnership Activity",
                   "3 · Insights — Status & Eligibility Funnel",
                   "4 · Reviews & Decisions"]
