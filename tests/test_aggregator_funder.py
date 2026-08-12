@@ -213,3 +213,38 @@ class TheCuratedPrimaryListIsPreferredTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ATitleTailMustLookLikeAnOrganisationTests(unittest.TestCase):
+    """The title-tail fallback is usually the site name and sometimes the rest of a headline.
+    Applied to a live row it produced the funder "Tartu, 27 August [Deadline: 14 August] –
+    RIPSA" — a date-stamped event title, not an organisation. Each test below rules out
+    something actually observed."""
+
+    def test_the_value_it_produced_is_now_rejected(self):
+        self.assertFalse(SR._looks_like_an_org(
+            "Riverton, 27 August [Deadline: 14 August] – RIPSA"))
+
+    def test_real_organisation_names_pass(self):
+        for name in ("National Churches Trust", "Cancer Research Trust New Zealand",
+                     "RIPSA", "A Health Foundation"):
+            with self.subTest(name=name):
+                self.assertTrue(SR._looks_like_an_org(name))
+
+    def test_anything_with_a_digit_is_rejected(self):
+        # A year, a date, a notice number — none of them are a funder's name.
+        for name in ("2026 Annual Round", "Notice 463051-2026", "Deadline 14 August 2026"):
+            with self.subTest(name=name):
+                self.assertFalse(SR._looks_like_an_org(name))
+
+    def test_a_headline_is_rejected(self):
+        self.assertFalse(SR._looks_like_an_org(
+            "Apply now for the flagship programme of our organisation today"))
+
+    def test_leftover_title_punctuation_is_rejected(self):
+        for name in ("[Deadline] Trust", "Foundation | Home", "Trust (2026)"):
+            with self.subTest(name=name):
+                self.assertFalse(SR._looks_like_an_org(name))
+
+    def test_an_aggregator_name_is_still_rejected(self):
+        self.assertFalse(SR._looks_like_an_org("FundsForNGOs"))
