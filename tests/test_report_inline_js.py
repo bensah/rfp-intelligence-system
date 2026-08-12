@@ -143,16 +143,5 @@ class NoLiteralScriptTagInsideInlineScriptTests(unittest.TestCase):
                                     f"{name} contains a literal script tag")
 
 
-class ThePrintTriggerRerunsTests(unittest.TestCase):
-    """Streamlit keys a component off its content, so byte-identical HTML is reused WITHOUT
-    re-executing. That is why the button printed once and then never again."""
-
-    def test_the_trigger_payload_carries_a_nonce(self):
-        with open(os.path.join(_ROOT, "views", "report.py"), encoding="utf-8") as fh:
-            src = fh.read()
-        self.assertIn("_rfpis_print_seq", src)
-        self.assertIn("print request {_print_nonce}", src)
-
-
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -33,6 +33,7 @@ sb = get_client()
 # -----------------------------------------------------------------------------
 year = settings.get_year()
 from core.scan_runner import run_screening_now
+from core.cache_scope import scope_key
 # Header: "Weekly Screening Pipeline" + the two compact page actions on the same level.
 _hl, _hspacer, _h_submit, _h_scan = st.columns([4.4, 1.2, 1.5, 1.6],
                                                vertical_alignment="center")
@@ -76,7 +77,10 @@ selected_week = st.selectbox(
 # Data fetch
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=30)
-def _fetch(week: str) -> pd.DataFrame:
+def _fetch(week: str, scope: str) -> pd.DataFrame:
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
     res = (
         get_client()
         .table("rfp_submissions")
@@ -88,7 +92,10 @@ def _fetch(week: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60)
-def _weeks_with_data() -> list[str]:
+def _weeks_with_data(scope: str) -> list[str]:
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
     res = (
         get_client()
         .table("rfp_submissions")
@@ -99,7 +106,7 @@ def _weeks_with_data() -> list[str]:
     return weeks.value_counts().index.tolist()
 
 
-df = _fetch(selected_week)
+df = _fetch(selected_week, scope_key())
 # Drop concluded grants (won/submitted) — they belong in Grants + the Home Summary,
 # not the active screening list (a row marked Completed + Approved).
 df = drop_concluded(df)
@@ -150,7 +157,7 @@ if canonical_df.empty:
             f"({len(df)} record(s) tagged to this week are duplicates of "
             "canonical RFPs in other weeks)."
         )
-    recent = _weeks_with_data()
+    recent = _weeks_with_data(scope_key())
     if recent:
         # Pick the most recent (by week number)
         def _num(label: str) -> int:

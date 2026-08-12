@@ -120,6 +120,10 @@ def _catalog_reader(uid: str):
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _catalog_by_link(link: str):
+    # No tenant in this cache key ON PURPOSE: the opportunity catalogue is
+    # org-agnostic and read via service_client, so every tenant sees the same rows
+    # and one shared entry is correct. Contrast the tenant-scoped loaders, which
+    # must carry scope_key() — see core.cache_scope.
     """The raw extraction behind a screened row, matched on call URL — so a pipeline
     opportunity shows the whole call, not just the fields matching kept.
 

@@ -110,7 +110,9 @@ SCALE = [[0.0, _mix(TURQUOISE, LIGHT_BLUE, _FAINTEST)],
 # Ordered category lists, so every chart of the same thing shades it the same way.
 DECISION_ORDER = ["Proceed", "Park", "Decline", "No decision"]
 PROGRESS_ORDER = ["Completed", "In Progress", "Not Started", "Discontinued", "Missed"]
-DONOR_DECISION_ORDER = ["Approved", "Under Review", "Submitted", "Not Approved"]
+# "Submitted" is deliberately absent: it is our own state, not a funder response,
+# so it is not one of the outcomes this ordering ranks.
+DONOR_DECISION_ORDER = ["Approved", "Under Review", "Not Approved"]
 SUBMITTED_ORDER = ["Submitted", "Unsubmitted"]
 
 
@@ -177,7 +179,11 @@ def style(fig, *, height: int | None = None, showlegend: bool | None = None):
         fig.update_layout(height=height)
     if showlegend is not None:
         fig.update_layout(showlegend=showlegend)
+    # NO GRIDLINES. With a chart in a bordered frame and a value label on every bar, the grid
+    # was a third layer of ink competing with both — it made a simple chart look busy without
+    # helping anyone read a value. The axis line and the tick labels are enough; a bar chart is
+    # read against its own labels, not against a ruler.
     for axis in (fig.update_xaxes, fig.update_yaxes):
-        axis(gridcolor=GRID, zerolinecolor=GRID, linecolor=GRID,
+        axis(showgrid=False, zeroline=False, linecolor=GRID, linewidth=1,
              tickfont=dict(color=MUTED, size=11))
     return fig
