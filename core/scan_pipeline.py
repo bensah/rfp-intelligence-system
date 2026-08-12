@@ -371,6 +371,13 @@ def ingest_candidates(
       * store_errors — extract_only rows that passed the gate but whose DB write
         failed (RLS/connectivity) — an infra error, surfaced apart from declines
     """
+    # Per-SCAN, not per-process: the ceiling is a budget for this run, so a long-lived worker
+    # does not carry a spent counter into the next scan and silently stop synthesising.
+    try:
+        extraction.reset_scan_synthesis()
+    except Exception:
+        pass
+
     if not candidates:
         return (0, 0, 0, 0)
 
@@ -1007,6 +1014,16 @@ def ingest_candidates(
 
     # Return the rejected count up the stack so it lands in scan_logs. The 4th value,
     # store_errors, is DB-write failures (extract_only) — surfaced apart from declines.
+    # Say how much of the scan's time went on synthesis, and whether the ceiling was reached —
+    # a scan that stops synthesising halfway should say so rather than look complete.
+    try:
+        _synth = extraction.scan_synthesis_calls()
+        if _synth:
+            log.info("scan ingest: synthesised %d row(s) at scan time%s", _synth,
+                     "  (per-scan ceiling reached — the rest is for the backfill)"
+                     if _synth >= extraction._SCAN_SYNTH_MAX else "")
+    except Exception:
+        pass
     log.info(
         "scan ingest: inserted=%d updated=%d unchanged_dups=%d "
         "suppressed_seen=%d rejected=%d store_errors=%d",
