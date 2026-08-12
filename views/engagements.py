@@ -14,6 +14,7 @@ import streamlit as st
 from core import dropdowns
 from core.records import clean_df
 from db.supabase_client import get_client
+from core.cache_scope import scope_key
 
 # auth handled by wrapper page
 user = st.session_state["app_user"]
@@ -28,7 +29,12 @@ st.subheader("Partner Engagements")
 # Data fetch
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=30)
-def _fetch() -> pd.DataFrame:
+def _fetch(scope: str) -> pd.DataFrame:
+    # `scope` is unused in the body ON PURPOSE: it is the tenant discriminator for the
+    # PROCESS-GLOBAL cache. Without it this cache serves whichever tenant rendered first
+    # to every other tenant. It must NOT be named with a leading underscore — Streamlit
+    # excludes underscore-prefixed arguments from the key, which is how the report's own
+    # `_scope` guard came to do nothing. See core.cache_scope.
     res = (
         get_client()
         .table("engagement_logs")
@@ -42,7 +48,7 @@ def _fetch() -> pd.DataFrame:
     return df
 
 
-df = _fetch()
+df = _fetch(scope_key())
 
 
 # -----------------------------------------------------------------------------

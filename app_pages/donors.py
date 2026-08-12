@@ -42,6 +42,7 @@ can_edit = permissions.is_developer_super(user)
 # A non-developer (client-tenant member, or single-tenant non-super admin) can PROPOSE
 # changes for a developer Super User to review & apply, instead of editing directly.
 from core import suggestions as _suggestions
+from core.cache_scope import scope_key
 can_suggest = _suggestions.can_suggest(user)
 sb = get_client()
 
@@ -79,7 +80,12 @@ _CONTACT_COLS = ["contact_name", "role_title", "email", "phone",
 
 
 @st.cache_data(ttl=60)
-def _load() -> pd.DataFrame:
+def _load(scope: str) -> pd.DataFrame:
+    # `scope` is unused in the body ON PURPOSE: it is the tenant discriminator for the
+    # PROCESS-GLOBAL cache. Without it this cache serves whichever tenant rendered first
+    # to every other tenant. It must NOT be named with a leading underscore — Streamlit
+    # excludes underscore-prefixed arguments from the key, which is how the report's own
+    # `_scope` guard came to do nothing. See core.cache_scope.
     try:
         res = safe_execute(get_client().table("donor_intel").select("*").order("donor"))
     except Exception as exc:
@@ -89,9 +95,12 @@ def _load() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=60)
-def _load_contacts(canonical_key: str) -> pd.DataFrame:
+def _load_contacts(canonical_key: str, scope: str) -> pd.DataFrame:
     """Focal-person / additional contacts for one donor (official channels
     first, then by name)."""
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
     try:
         res = safe_execute(get_client().table("donor_contacts").select("*")
                            .eq("canonical_key", canonical_key)
@@ -101,7 +110,7 @@ def _load_contacts(canonical_key: str) -> pd.DataFrame:
     return clean_df(pd.DataFrame(res.data or []))
 
 
-df = _load()
+df = _load(scope_key())
 if df.empty:
     st.info(
         "No donor records yet. Apply **migration 020** then run "
@@ -1011,7 +1020,7 @@ def _contact_line(cr: dict) -> str:
 def _render_contacts(row: dict) -> None:
     """Detail-view contacts block: institutional channels + focal persons."""
     inst = [(c, _disp(row.get(c))) for c in _CONTACT if _disp(row.get(c))]
-    contacts = _load_contacts(row["canonical_key"])
+    contacts = _load_contacts(row["canonical_key"], scope_key())
     if not inst and contacts.empty:
         return
     st.markdown("**📇 Contacts**")
@@ -1509,7 +1518,7 @@ def _edit_dialog(row: dict, *, suggest_mode: bool = False) -> None:
     with t_contacts:
         st.caption("Add as many as you like (＋ row). Official channels or people the "
                    "team has engaged. Sourced from public pages or first-party — never guessed.")
-        _existing = _load_contacts(row["canonical_key"])
+        _existing = _load_contacts(row["canonical_key"], scope_key())
         if _existing.empty:
             _base = pd.DataFrame({c: pd.Series(dtype=("bool" if c == "is_official" else "object"))
                                   for c in _CONTACT_COLS})
@@ -1842,7 +1851,7 @@ def _donor_pdf(lines: list) -> bytes:
 def _share_dialog(row: dict) -> None:
     st.markdown(f"### {row.get('donor')}")
     lines = _summary_lines(row)
-    _contacts = _load_contacts(row["canonical_key"])
+    _contacts = _load_contacts(row["canonical_key"], scope_key())
     if not _contacts.empty:
         lines.append("Contacts — focal persons")
         for _, cr in _contacts.iterrows():
@@ -2107,7 +2116,7 @@ def _view_dialog(row: dict) -> None:
                 st.markdown(_v)
 
     # ── 📇 Contacts — focal persons (donor_contacts) ─────────────────────────
-    _focal = _load_contacts(row["canonical_key"])
+    _focal = _load_contacts(row["canonical_key"], scope_key())
     if not _focal.empty:
         with st.container(border=True):
             _sec_header("📇", "Contacts — focal persons")

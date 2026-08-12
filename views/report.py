@@ -126,12 +126,17 @@ def _scope_key() -> str:
     PROCESS-GLOBAL (shared across all sessions), but the rows they load are tenant-scoped
     by the get_client() wrapper — so without the tenant in the key one tenant's report
     would be served to another. Mirror the wrapper's own scope: a tenant id for a scoped
-    tenant user, or 'all' for super_user / single-tenant (who see everything)."""
-    try:
-        from db.supabase_client import _tenant_scope_tid
-        return f"t:{_tenant_scope_tid() or 'all'}"
-    except Exception:
-        return "t:all"
+    tenant user, or 'all' for super_user / single-tenant (who see everything).
+
+    THE PARAMETER MUST NOT BE NAMED WITH A LEADING UNDERSCORE. Streamlit excludes
+    underscore-prefixed arguments from a cache key, so `def _load_rfps(_scope)` cached ONE
+    frame for every tenant and served whichever tenant rendered first in the process to all
+    the others. The safeguard this docstring describes was defeated by the parameter's name:
+    the report showed another tenant's rows (161 auto-scan rows across two months where the
+    tenant's own data spanned seven months and thirteen people). Verified against Streamlit:
+    changing an underscore-prefixed argument does not re-execute the function."""
+    from core.cache_scope import scope_key as _shared_scope_key
+    return _shared_scope_key()
 
 
 # ===========================================================================
@@ -476,7 +481,7 @@ _DT_KW = dict(errors="coerce", format="ISO8601")
 
 
 @st.cache_data(ttl=120)
-def _load_scan_logs(_scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
+def _load_scan_logs(scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     q = sb.table("scan_logs").select("*")
     if start_iso:
         q = q.gte("scan_date", start_iso)
@@ -509,7 +514,7 @@ def _load_scan_logs(_scope: str, start_iso: str | None, end_iso: str | None) -> 
 
 
 @st.cache_data(ttl=120)
-def _load_rfps(_scope: str) -> pd.DataFrame:
+def _load_rfps(scope: str) -> pd.DataFrame:
     # NOTE: every monetary field has its OWN currency column. Two
     # pairings matter on this page:
     #   estimated_value  ↔ currency           (the asked amount)
@@ -547,7 +552,7 @@ def _load_rfps(_scope: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=120)
-def _load_meetings(_scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
+def _load_meetings(scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     q = sb.table("meeting_logs").select("*")
     if start_iso:
         q = q.gte("meeting_date", start_iso)
@@ -562,7 +567,7 @@ def _load_meetings(_scope: str, start_iso: str | None, end_iso: str | None) -> p
 
 
 @st.cache_data(ttl=120)
-def _load_engagements(_scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
+def _load_engagements(scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     q = sb.table("engagement_logs").select("*")
     if start_iso:
         q = q.gte("engagement_date", start_iso)
@@ -576,7 +581,7 @@ def _load_engagements(_scope: str, start_iso: str | None, end_iso: str | None) -
 
 
 @st.cache_data(ttl=120)
-def _load_grants(_scope: str) -> pd.DataFrame:
+def _load_grants(scope: str) -> pd.DataFrame:
     res = sb.table("applied_funding").select("*").limit(10000).execute()
     df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty:

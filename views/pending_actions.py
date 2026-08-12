@@ -29,6 +29,7 @@ import pandas as pd  # noqa: E402
 
 from core.records import clean_df
 from db.supabase_client import get_client  # noqa: E402
+from core.cache_scope import scope_key
 
 # Wrapper page already gated auth; just pick up the user.
 user = st.session_state.get("app_user") or {}
@@ -258,13 +259,18 @@ st.markdown("### 🤝 Partner Engagements")
 
 # @st.cache_data removed for the same exec-namespace reason — see the
 # meetings fetch above.
-def _fetch_engagements() -> tuple[pd.DataFrame, bool]:
+def _fetch_engagements(scope: str) -> tuple[pd.DataFrame, bool]:
     """Returns (dataframe, has_is_resolved_column).
 
     Pre-migration-014, engagement_logs has no is_resolved column. We
     detect this by attempting the select and catching the error; if it
     fails we re-fetch without is_resolved and signal the caller. The UI
     then falls back to "outcome non-empty" as the pending proxy."""
+    # `scope` is unused in the body ON PURPOSE: it is the tenant discriminator for the
+    # PROCESS-GLOBAL cache. Without it this cache serves whichever tenant rendered first
+    # to every other tenant. It must NOT be named with a leading underscore — Streamlit
+    # excludes underscore-prefixed arguments from the key, which is how the report's own
+    # `_scope` guard came to do nothing. See core.cache_scope.
     cli = get_client()
     try:
         res = (
@@ -297,7 +303,7 @@ def _fetch_engagements() -> tuple[pd.DataFrame, bool]:
 
 
 try:
-    df_e, has_resolved_col = _fetch_engagements()
+    df_e, has_resolved_col = _fetch_engagements(scope_key())
 except Exception as exc:
     st.error(
         f"⚠ Could not load engagement_logs: `{type(exc).__name__}: {exc}`. "

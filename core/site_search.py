@@ -15,6 +15,7 @@ from __future__ import annotations
 import streamlit as st
 
 from db.supabase_client import get_client, safe_execute
+from core.cache_scope import scope_key
 
 # (label, keyword string, page_path, admin_only)
 _NAV: list[tuple[str, str, str, bool]] = [
@@ -88,11 +89,14 @@ def _sanitize(query: str) -> str:
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def search_opportunities(query: str, limit: int = 30) -> list[dict]:
+def search_opportunities(query: str, limit: int = 30, scope: str = "") -> list[dict]:
     """Opportunity matches across title / funder / brief / focus theme.
 
     Returns dicts: {title, funder, deadline, decision, source, page}.
     """
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
     qf = _sanitize(query)
     if len(qf) < 2:
         return []
@@ -130,8 +134,11 @@ def search_opportunities(query: str, limit: int = 30) -> list[dict]:
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def search_donors(query: str, limit: int = 30) -> list[dict]:
+def search_donors(query: str, limit: int = 30, scope: str = "") -> list[dict]:
     """Donor matches by name. Returns dicts: {name, page}."""
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
     qf = _sanitize(query)
     if len(qf) < 2:
         return []

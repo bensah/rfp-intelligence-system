@@ -32,6 +32,7 @@ from core.review_week import all_weeks_for_year, monday_from_week_label
 from core.records import (clean_df, submission_weights as _submission_weights,
                           requested_currency as _requested_currency)
 from db.supabase_client import get_client
+from core.cache_scope import scope_key
 
 # auth handled by wrapper page
 sb = get_client()
@@ -150,7 +151,10 @@ def _kpi(label: str, value, helper: str | None = None) -> None:
 # Data fetch
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=30)
-def _fetch(year: int):
+def _fetch(year: int, scope: str):
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
     sbc = get_client()
     rfps = clean_df(pd.DataFrame(sbc.table("rfp_submissions").select("*").execute().data or []))
     grants = clean_df(pd.DataFrame(sbc.table("applied_funding").select("*").execute().data or []))
@@ -203,7 +207,7 @@ def _fetch(year: int):
     return rfps, grants, engagements, narratives, meetings
 
 
-rfps, grants, engagements, narratives, meetings = _fetch(year)
+rfps, grants, engagements, narratives, meetings = _fetch(year, scope_key())
 if rfps.empty:
     st.info(f"No RFPs in {year} yet.")
     st.stop()
