@@ -289,9 +289,11 @@ class ThePageStillRunsTests(unittest.TestCase):
     def test_the_section_that_moved_renders_its_own_subsections(self):
         # The block move is the risky change: a name defined by a section it jumped over would
         # raise, and a raised exception renders as blank space rather than an error.
+        # The subtitles are descriptive now — "Team Touchpoints" said what the block was, not
+        # what it tells you — so assert on the current wording.
         body = self.result["markdown"]
-        self.assertIn("Team Touchpoints", body)
-        self.assertIn("Lead & Sub Applicant partners", body)
+        self.assertIn("Internal review meetings", body)
+        self.assertIn("Partners we apply alongside", body)
 
 
 class TheDecisionRowTests(unittest.TestCase):
@@ -582,3 +584,77 @@ class TheDonorDecisionChartShowsOnlyFunderResponsesTests(unittest.TestCase):
         src = _source()
         self.assertIn("still awaiting an", src)
         self.assertIn("submitted with no answer back", src)
+
+
+class EveryChartCarriesADescriptiveSubtitleTests(unittest.TestCase):
+    """A subtitle should say what the chart TELLS you, not restate its name.
+
+    "Proposal Leads" and "Contributors" named the block; they did not help a reader decide
+    whether to look. Some charts also had no subtitle at all and sat straight under the section
+    heading, which in a document reads as though they belong to whatever is above them.
+    """
+
+    def test_the_subtitles_are_descriptive_rather_than_bare_nouns(self):
+        src = _source()
+        for bare in ('_h5("Proposal Leads")', '_h5("Contributors")',
+                     '_h5("Team Touchpoints")', '_h5("Conversion rates")',
+                     '_h5("Applied Funding Opportunities")'):
+            with self.subTest(bare=bare):
+                self.assertNotIn(bare, src)
+
+    def test_the_named_examples_are_in_place(self):
+        src = _source()
+        self.assertIn("Proposal leads driving funding applications", src)
+        self.assertIn("Contributors supporting the application process", src)
+
+    def test_the_word_cloud_is_labelled_in_the_export(self):
+        # It is an h4 on the page, and only h5s are collected, so the image arrived unlabelled.
+        src = _source()
+        block = src[src.index("_wdoc.image("):src.index("_wdoc.image(") + 260]
+        self.assertIn("title=", block)
+        self.assertIn("Focus areas", block)
+
+    def test_charts_that_had_no_subtitle_now_have_one(self):
+        src = _source()
+        for subtitle in ("Who discovered the calls, month by month",
+                         "Which funders our calls come from",
+                         "Where calls fall out, by count and by value",
+                         "How far the calls we pursued have progressed",
+                         "Funding secured, cumulatively",
+                         "Our own decisions, and when we made them"):
+            with self.subTest(subtitle=subtitle):
+                self.assertIn(f'_h5("{subtitle}")', src)
+
+
+class TheSystemVersusHumanTableTests(unittest.TestCase):
+    """Three rows, two comparators. The cross-tab showed where the team overrode the scorer, but
+    answered a narrower question than the one asked: how many calls did each send to Proceed,
+    Park and Decline?"""
+
+    def _block(self) -> str:
+        src = _source()
+        return src[src.index("# SYSTEM vs HUMAN, side by side"):
+                   src.index("# ───────────── Donor Decisions")]
+
+    def test_the_shape_is_decision_autoscorer_team(self):
+        block = self._block()
+        self.assertIn('"Decision": _label', block)
+        self.assertIn('"Auto-scorer": int(', block)
+        self.assertIn('"Team": int(', block)
+
+    def test_all_three_outcomes_are_rows(self):
+        block = self._block()
+        self.assertIn('for _label in ("Proceed", "Park", "Decline")', block)
+
+    def test_both_columns_count_the_same_calls(self):
+        # Comparing different row sets would make the two columns incomparable.
+        block = self._block()
+        self.assertIn("_cmp = decided.copy()", block)
+        self.assertIn('_auto = (_cmp["auto_recommendation"]', block)
+        self.assertIn('_team = (_cmp["decision"]', block)
+
+    def test_agreement_is_still_reported(self):
+        self.assertIn("agreed on {_agreed} of {_total}", self._block())
+
+    def test_it_is_no_longer_a_crosstab(self):
+        self.assertNotIn("pd.crosstab", self._block())
