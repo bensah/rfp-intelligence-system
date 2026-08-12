@@ -92,7 +92,7 @@ class TheRenamedAndAddedItemsTests(unittest.TestCase):
     def test_donor_decisions_renders_under_reviews_and_decisions(self):
         src = _source()
         i_reviews = src.index('st.subheader("4 · Reviews & Decisions")')
-        i_donor = src.index('st.markdown("##### Donor Decisions")')
+        i_donor = src.index("_h5(\"Donor decisions")
         i_results = src.index("# SECTION 5 — Our Results")
         self.assertLess(i_reviews, i_donor)
         self.assertLess(i_donor, i_results)
@@ -161,20 +161,62 @@ class ThePrintLayoutTests(unittest.TestCase):
         # Plotly.relayout is async; printing before it settles captures the old width.
         self.assertIn("if (p && p.then) { p.then(function () { window.print(); }); }", _source())
 
-    def test_the_click_is_handled_by_a_native_streamlit_button(self):
-        # The hand-drawn button inside the component iframe was reported dead twice. It has no
-        # hover styling of its own and needs a click to land inside a sandboxed frame — and when
-        # its script failed to parse, its onclick handler simply did not exist. A real Streamlit
-        # button gets hover, focus and keyboard handling, and its click cannot be lost.
+    def test_there_is_no_print_pdf_button(self):
+        # Removed: it was the browser's own print dialog, which cannot paginate a flexbox
+        # layout, cannot size a Plotly chart to paper, and names the file after the document
+        # title. Export Report replaces it.
         src = _source()
-        self.assertIn('ac_print.button("🖨 Print / PDF"', src)
-        self.assertIn('st.session_state["_rfpis_print_now"] = True', src)
-        self.assertNotIn('onclick="rfpisPrint()"', src)
+        # The BUTTON, not any mention: the comment explaining why it went is worth keeping.
+        self.assertNotIn('button("🖨 Print / PDF"', src)
+        self.assertNotIn('key="report_print_btn"', src)
+        self.assertNotIn("_rfpis_print_now", src)
 
-    def test_printing_happens_in_a_component_rendered_on_the_rerun(self):
+    def test_the_export_button_says_export_not_build(self):
+        # Whether we "build" anything is our concern; the user is exporting a report.
         src = _source()
-        self.assertIn('st.session_state.pop("_rfpis_print_now", False)', src)
-        self.assertIn("window.parent.print()", src)
+        self.assertIn('_pdf_slot.button("\U0001F4C4 Export Report"', src)
+        # The BUTTON, not any mention — the comment recording why it was renamed stays.
+        self.assertNotIn('button("\U0001F4C4 Build PDF"', src)
+
+    def test_export_and_download_are_two_states_of_one_control(self):
+        # Not two buttons side by side: once a PDF exists, exporting again does nothing a reader
+        # wants, and having both left the question of which to press.
+        src = _source()
+        self.assertIn("_pdf_slot = ac_pdf.empty()", src)
+        self.assertIn("elif _pdf_slot.button(\"📄 Export Report\"", src)
+        self.assertIn("_pdf_slot.download_button(", src)
+
+    def test_the_download_is_rendered_at_most_once_per_run(self):
+        # A widget key may not be reused, so the run that BUILDS the file fills the slot at the
+        # end while every later run fills it at the top.
+        src = _source()
+        self.assertIn("_pdf_rendered = True", src)
+        self.assertIn('if st.session_state.get("_rfpis_pdf_bytes") and not _pdf_rendered:', src)
+
+    def test_generate_report_clears_the_built_pdf(self):
+        # A new report means the built file describes the previous one.
+        src = _source()
+        gen = src[src.index('st.session_state["report_generated"] = True'):]
+        gen = gen[:gen.index("st.rerun()")]
+        self.assertIn('st.session_state.pop("_rfpis_pdf_bytes", None)', gen)
+        self.assertIn('st.session_state.pop("_rfpis_pdf_name", None)', gen)
+
+    def test_the_control_sits_in_the_action_row_not_at_the_end_of_the_page(self):
+        # THE reported bug. The document is only complete once the page has drawn, so the download
+        # button used to render at the END of a five-section page — several screens below the
+        # button just pressed. From the top, Export Report looked like it reran the page and did
+        # nothing. The slot is declared in the action row, so whichever button it holds sits there.
+        src = _source()
+        i_slot = src.index("_pdf_slot = ac_pdf.empty()")
+        i_sections = src.index("# SECTION 1")
+        self.assertLess(i_slot, i_sections)
+
+    def test_ctrl_p_still_gets_the_print_hook(self):
+        # The button is gone but the beforeprint hook stays, so anyone reaching for Ctrl+P out
+        # of habit still gets charts fitted rather than cut off.
+        src = _source()
+        self.assertIn("beforeprint", src)
+        self.assertIn("rfpis-print-hook", src)
 
     def test_the_hook_id_is_versioned_and_replaces_older_ones(self):
         # THE reason the button was dead. The previous guard was
@@ -185,24 +227,6 @@ class ThePrintLayoutTests(unittest.TestCase):
         self.assertRegex(src, r"RFPIS_HOOK_ID = 'rfpis-print-hook-v\d+'")
         self.assertIn("""querySelectorAll('[id^="rfpis-print-hook"]')""", src)
         self.assertIn("stale[i].remove()", src)
-
-    def test_the_print_call_prefers_the_verifiable_path(self):
-        # The parent-realm entry point returns true, so the caller knows it ran. A fire-and-forget
-        # path cannot tell delivery from silence, which is how a missing hook became an inert
-        # button the first time round.
-        src = _source()
-        self.assertIn("window.parent.rfpisPrintNow() === true", src)
-        i_call = src.index("rfpisPrintNow() === true")
-        i_direct = src.index("window.parent.print()", i_call)
-        self.assertLess(i_call, i_direct)
-
-    def test_it_still_works_when_the_hook_is_missing_entirely(self):
-        # Verified in a browser against a real Streamlit component with a stale hook planted:
-        # the direct parent path fits the charts and prints.
-        trigger = _source()
-        trigger = trigger[trigger.index('_rfpis_print_now", False'):]
-        self.assertIn("window.parent.print()", trigger)
-        self.assertIn("rfpisFitPlots", trigger)
 
 
 class ThePageStillRunsTests(unittest.TestCase):
@@ -257,7 +281,10 @@ class ThePageStillRunsTests(unittest.TestCase):
         self.assertGreater(self.result["n_charts"], 10, "charts were not built")
 
     def test_donor_decisions_renders_when_there_is_data(self):
-        self.assertIn("Donor Decisions", self.result["markdown"])
+        # The heading now distinguishes the funder's response from the team's own decision — the
+        # two were both called "decisions" and the section read ambiguously.
+        self.assertIn("Donor decisions", self.result["markdown"])
+        self.assertIn("funder's response", self.result["markdown"])
 
     def test_the_section_that_moved_renders_its_own_subsections(self):
         # The block move is the risky change: a name defined by a section it jumped over would
@@ -364,8 +391,10 @@ class Section1DoesNotDependOnScanLogsTests(unittest.TestCase):
         # got its own guard.
         self.assertEqual(self.result["exceptions"], [])
 
-    def test_the_keyword_cloud_still_renders(self):
-        self.assertIn("Search Keywords", self.result["markdown"])
+    def test_the_focus_area_cloud_still_renders(self):
+        # The owner renamed this heading from "Focus areas" to "Focus areas"; assert
+        # the heading the page actually renders.
+        self.assertIn("Focus areas", self.result["markdown"])
 
     def test_the_charts_still_build(self):
         self.assertGreater(self.result["n_charts"], 10)
@@ -398,7 +427,10 @@ class TheReportIdentityTests(unittest.TestCase):
         # Chrome stamps document.title into the printed page header, which read
         # "RFP Intelligence System - RFPIS" on every tenant's PDF.
         src = _source()
-        self.assertIn('_doc_title = f"{_org_name} · Activity Report · {_period_label_str}"', src)
+        # The name now carries the CADENCE it was cut at ("Fund-raising Monthly Activity
+        # Report"), which is what distinguishes two exports of the same period.
+        self.assertIn('_doc_title = f"{_report_name()} · {_period_phrase()}"', src)
+        self.assertIn('Fund-raising {_cadence_word()} Activity Report', src)
         self.assertIn("window.RFPIS_DOC_TITLE", src)
         self.assertIn("window.parent.document.title = window.RFPIS_DOC_TITLE", src)
 
@@ -469,3 +501,84 @@ class ChartWordingTests(unittest.TestCase):
         self.assertIn("_theme.categorical(", src)
         block = src[src.index("Funding calls discovered by member"):]
         self.assertIn("categorical(", block[:600])
+
+
+class TheIntakeCardsCloseTheArithmeticTests(unittest.TestCase):
+    """"Excel imported 52" could not be reconciled against the 63 records actually imported.
+
+    The tile counted unique rows only, so the 11 the dedupe caught were invisible and anyone
+    comparing the report with the workbook found a shortfall with no explanation. Unique stays
+    the headline — it is what every other figure in the report counts — with the duplicates
+    stated beside it so total = unique + duplicates is visible on the card.
+    """
+
+    def _block(self) -> str:
+        src = _source()
+        return src[src.index("# EVERY RECORD, THE DUPLICATES"):src.index("if scans.empty:")]
+
+    def test_it_counts_all_rows_not_only_the_unique_ones(self):
+        block = self._block()
+        self.assertIn('agg(total=("dup", "size"), dups=("dup", "sum"))', block)
+        # the old version filtered duplicates out before counting anything
+        self.assertNotIn('rfps_all[~rfps_all["is_duplicate"]]["source"]', block)
+
+    def test_every_route_reports_its_duplicates(self):
+        block = self._block()
+        self.assertIn("duplicate{'s' if _d != 1 else ''}", block)
+        self.assertIn('delta_color="off"', block)   # a count, not a trend
+
+    def test_a_total_card_leads_the_row(self):
+        block = self._block()
+        i_total = block.index('"Records ingested"')
+        i_routes = block.index("_labels.get(str(_src)")
+        self.assertLess(i_total, i_routes)
+
+    def test_unique_remains_the_headline_number(self):
+        # Every other figure in the report counts unique rows; leading with the total would make
+        # the card disagree with the funnel directly below it.
+        block = self._block()
+        self.assertIn('_labels.get(str(_src), str(_src).title()), f"{_u:,}"', block)
+
+    def test_the_caption_says_which_number_is_which(self):
+        self.assertIn("is the UNIQUE calls kept", _source())
+        self.assertIn("duplicates the dedupe removed", _source())
+
+    def test_a_route_with_no_duplicates_shows_no_delta(self):
+        # "0 duplicates" on a clean route is noise.
+        self.assertIn("if _d else None", self._block())
+
+
+class TheDonorDecisionChartShowsOnlyFunderResponsesTests(unittest.TestCase):
+    """"Submitted" is OUR state, not the funder's answer.
+
+    On a chart headed "the funder's response to what we submitted" it was a category answering a
+    different question, so it now counts as awaiting an outcome alongside the rows never sent.
+    """
+
+    def _block(self) -> str:
+        src = _source()
+        return src[src.index('# "Submitted" IS NOT A FUNDER DECISION'):
+                   src.index("fig_dd.update_layout")]
+
+    def test_submitted_is_treated_as_awaiting_not_as_a_decision(self):
+        block = self._block()
+        self.assertIn('"submitted"', block)
+        self.assertIn("_AWAITING", block)
+        self.assertIn("_pending = int(_dd.str.lower().isin(_AWAITING).sum())", block)
+
+    def test_the_shared_ordering_no_longer_ranks_it(self):
+        from core import chart_theme
+        self.assertNotIn("Submitted", chart_theme.DONOR_DECISION_ORDER)
+        self.assertEqual(chart_theme.DONOR_DECISION_ORDER,
+                         ["Approved", "Under Review", "Not Approved"])
+
+    def test_one_bar_is_one_call_not_one_submission(self):
+        # Weighting by `submissions` would make a resubmission look like a second decision.
+        block = self._block()
+        self.assertNotIn("submission_weight", block)
+        self.assertIn("value_counts()", block)
+
+    def test_the_caption_says_what_awaiting_covers(self):
+        src = _source()
+        self.assertIn("still awaiting an", src)
+        self.assertIn("submitted with no answer back", src)

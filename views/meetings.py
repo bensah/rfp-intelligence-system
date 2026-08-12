@@ -17,6 +17,7 @@ from core import dropdowns, settings
 from core.review_week import all_weeks_for_year, week_bounds
 from core.records import clean_df
 from db.supabase_client import get_client
+from core.cache_scope import scope_key
 
 # auth handled by wrapper page
 user = st.session_state["app_user"]
@@ -223,7 +224,10 @@ if _ADD_NOTE_SLOT.button(
 # Notes for the selected week (filtered by meeting_date)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=15)
-def _fetch_notes(meeting_date: str) -> pd.DataFrame:
+def _fetch_notes(meeting_date: str, scope: str) -> pd.DataFrame:
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
     res = (
         get_client()
         .table("meeting_logs")
@@ -267,7 +271,7 @@ def _drop_empty_notes(df):
     return df[keep].copy(), int((~keep).sum())
 
 
-notes, _blank_notes = _drop_empty_notes(_fetch_notes(mon_date.isoformat()))
+notes, _blank_notes = _drop_empty_notes(_fetch_notes(mon_date.isoformat(), scope_key()))
 
 
 def _linked_label(n: dict) -> str:

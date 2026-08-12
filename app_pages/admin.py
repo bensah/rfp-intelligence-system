@@ -27,6 +27,7 @@ from views.account_sections import (
     render_manage_users, render_user_access, render_manage_tenants,
     render_blacklisted, render_org_suspend)
 from views.org_setup import render_org_setup
+from core.cache_scope import scope_key
 
 user = st.session_state["app_user"]
 # Defense in depth: the nav already omits this page for non-admins, but
@@ -518,7 +519,10 @@ with tab_data:
             st.info(spec["caption"])
 
             @st.cache_data(ttl=15)
-            def _fetch_table(table: str, order_col: str) -> pd.DataFrame:
+            def _fetch_table(table: str, order_col: str, scope: str) -> pd.DataFrame:
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
                 try:
                     res = (
                         get_client()
@@ -533,7 +537,7 @@ with tab_data:
                     st.error(f"Could not load {table}: {exc}")
                     return pd.DataFrame()
 
-            df = _fetch_table(spec["table"], spec["order_col"])
+            df = _fetch_table(spec["table"], spec["order_col"], scope_key())
             if df.empty:
                 st.info(f"No rows in `{spec['table']}` yet. Use ➕ Add new below.")
             else:
@@ -981,7 +985,10 @@ if _cat_tab is not None:
         from views.verification import _SRC_OPTS, _ACCESS_OPTS, _TYPE_OPTS
 
         @st.cache_data(ttl=15)
-        def _donors() -> pd.DataFrame:
+        def _donors(scope: str) -> pd.DataFrame:
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
             try:
                 res = safe_execute(get_client().table("donor_sources").select("*")
                                    .order("donor_name"))
@@ -1240,7 +1247,7 @@ if _cat_tab is not None:
             st.rerun()
 
         # ----- Selectable table -------------------------------------------------
-        ddf = _donors()
+        ddf = _donors(scope_key())
         if ddf.empty:
             st.info("No sources yet — add them in the **Verify Registry** tab, "
                     "then push to this catalogue.")
@@ -1743,7 +1750,10 @@ if tab_learning is not None:
         # feedback / human-decision signals (they fall outside the window). The signals are
         # NOT lost — only the window is capped — so the cards must count the whole table.
         @st.cache_data(ttl=30)
-        def _ld_count(event_type: str | None = None) -> int:
+        def _ld_count(event_type: str | None = None, scope: str = "") -> int:
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
             try:
                 q = get_client().table("scan_decisions").select("id", count="exact")
                 if event_type:
@@ -1753,9 +1763,12 @@ if tab_learning is not None:
                 return 0
 
         @st.cache_data(ttl=30)
-        def _reject_reason_counts() -> dict:
+        def _reject_reason_counts(scope: str) -> dict:
             """Accurate reason histogram over ALL system_reject rows (paginated label-only
             fetch), not just the recent display window."""
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
             from collections import Counter as _Counter
             out, start, page = _Counter(), 0, 1000
             try:
@@ -1773,7 +1786,7 @@ if tab_learning is not None:
                 pass
             return dict(out)
 
-        _total = _ld_count()
+        _total = _ld_count(scope=scope_key())
         try:
             _ld = (sb.table("scan_decisions").select("*")
                    .order("created_at", desc=True).limit(1000).execute().data or [])
@@ -1787,12 +1800,12 @@ if tab_learning is not None:
             _ldf = pd.DataFrame(_ld)
             m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("Total signals", _total)
-            m2.metric("System rejects", _ld_count("system_reject"))
-            m3.metric("Human decisions", _ld_count("human_decision"))
-            m4.metric("👍/👎 feedback", _ld_count("feedback"))
-            m5.metric("Reject verdicts", _ld_count("reject_verification"))
+            m2.metric("System rejects", _ld_count("system_reject", scope=scope_key()))
+            m3.metric("Human decisions", _ld_count("human_decision", scope=scope_key()))
+            m4.metric("👍/👎 feedback", _ld_count("feedback", scope=scope_key()))
+            m5.metric("Reject verdicts", _ld_count("reject_verification", scope=scope_key()))
             with st.expander("Rejects by reason category", expanded=False):
-                _rc = _reject_reason_counts()
+                _rc = _reject_reason_counts(scope_key())
                 if _rc:
                     _by = (pd.DataFrame(sorted(_rc.items(), key=lambda kv: -kv[1]),
                                         columns=["reason", "count"]))

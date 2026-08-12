@@ -238,8 +238,13 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
                                   "Decision rationale")),
         "stage": _txt(get("Stage")),
         "proposal_lead": _txt(get("Proposal Lead")),
-        "contributors": _multi(get("Contributors/Reviewers", "Contributors")),
-        "reviewers": _multi(get("Reviewers")),
+        # The sheet used to carry ONE "Contributors/Reviewers" column and now carries two.
+        # The split column is checked FIRST: if a workbook still has the old combined header
+        # beside the new one (a half-renamed sheet), the legacy value would otherwise win and
+        # quietly overwrite the split data with contributors-and-reviewers-mashed-together.
+        # Legacy is the fallback, so an un-migrated workbook still imports.
+        "contributors": _multi(get("Contributors", "Contributors/Reviewers")),
+        "reviewers": _multi(get("Reviewers", "Reviewer")),
         "support_roles": _txt(get("Support ( e.g. tech/finance/compliance)",
                                     "Support (e.g. tech/finance/compliance)",
                                     "Support")),

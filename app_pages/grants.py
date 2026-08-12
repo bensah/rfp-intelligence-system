@@ -31,6 +31,7 @@ sb = get_client()
 # Any tenant member may edit grant statuses (routine team-meeting task); Delete/admin
 # actions live elsewhere and stay gated.
 from core import permissions as _perm
+from core.cache_scope import scope_key
 _user = st.session_state.get("app_user") or {}
 _can_edit = _perm.can_edit_status(_user)
 st.title("Your Applied Funding")
@@ -45,7 +46,10 @@ with _rail:
     render_opportunity_rail()
 with _main:
     @st.cache_data(ttl=60)
-    def _fetch() -> tuple[pd.DataFrame, pd.DataFrame]:
+    def _fetch(scope: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
         sbc = get_client()
         try:
             rfps = pd.DataFrame(
@@ -98,7 +102,7 @@ with _main:
         return rfps, grants
 
 
-    rfps, grants = _fetch()
+    rfps, grants = _fetch(scope_key())
     if rfps.empty:
         st.info("No RFPs in the database yet.")
         st.stop()

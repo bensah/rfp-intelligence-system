@@ -33,6 +33,7 @@ from core.pipeline import days_to_deadline, deadline_status, usd_value
 from core.review_week import all_weeks_for_year, week_bounds
 from db.supabase_client import get_client
 from views.rfp_editor import render_rfp_editor
+from core.cache_scope import scope_key
 
 # auth handled by wrapper page
 user = st.session_state["app_user"]
@@ -61,7 +62,10 @@ st.caption(
 # Data fetch + dedup-aware view
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=30)
-def _fetch(year: int) -> pd.DataFrame:
+def _fetch(year: int, scope: str) -> pd.DataFrame:
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
     sbc = get_client()
     res = (
         sbc.table("rfp_submissions")
@@ -127,7 +131,7 @@ def _fetch(year: int) -> pd.DataFrame:
     return df
 
 
-df = _fetch(year)
+df = _fetch(year, scope_key())
 if df.empty:
     st.info(
         f"No active Proceed RFPs in {year}. An RFP shows up here once its "

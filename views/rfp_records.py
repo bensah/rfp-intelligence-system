@@ -28,6 +28,7 @@ from core.scorer import (score_submission, criterion_score,
                          CRITERION_RESPONSES, default_response)
 from db.supabase_client import get_client, safe_execute
 from views.rfp_editor import render_rfp_editor
+from core.cache_scope import scope_key
 
 # auth handled by wrapper page
 user = st.session_state["app_user"]
@@ -50,7 +51,10 @@ st.caption(
 # Data fetch
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=30)
-def _fetch_all() -> pd.DataFrame:
+def _fetch_all(scope: str) -> pd.DataFrame:
+    # `scope` is the tenant discriminator for this PROCESS-GLOBAL cache; it is unused in
+    # the body on purpose. Never rename it with a leading underscore — Streamlit drops
+    # underscore-prefixed args from the key. See core.cache_scope.
     # Order by created_at (true INSERTION time, DB-defaulted now() on insert and
     # never touched by Excel sync or updates) so the list reads newest-added →
     # oldest. A freshly-synced, non-duplicate RFP gets the latest created_at and
@@ -68,7 +72,7 @@ def _fetch_all() -> pd.DataFrame:
     return clean_df(pd.DataFrame(res.data or []))
 
 
-df = _fetch_all()
+df = _fetch_all(scope_key())
 if df.empty:
     st.info("No RFPs yet. Submit one via the Submit page or trigger a scan from Admin.")
     st.stop()

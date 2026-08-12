@@ -14,6 +14,7 @@ import streamlit as st
 from core import excel_sync
 from core.records import clean_df
 from db.supabase_client import get_client
+from core.cache_scope import scope_key
 
 # Home-specific block-container padding only — global theme (headings,
 # .quickcard, metric tiles, buttons) lives in core/app_header._GLOBAL_CSS
@@ -81,7 +82,12 @@ st.title(f"Welcome, {display_name.split()[0]} 👋")
 # Live KPIs
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
-def _kpis() -> dict:
+def _kpis(scope: str) -> dict:
+    # `scope` is unused in the body ON PURPOSE: it is the tenant discriminator for the
+    # PROCESS-GLOBAL cache. Without it this cache serves whichever tenant rendered first
+    # to every other tenant. It must NOT be named with a leading underscore — Streamlit
+    # excludes underscore-prefixed arguments from the key, which is how the report's own
+    # `_scope` guard came to do nothing. See core.cache_scope.
     sbc = get_client()
     rfps = sbc.table("rfp_submissions").select(
         "uid,decision,donor_decision,progress_status,"
@@ -161,7 +167,7 @@ def _kpis() -> dict:
 
 
 try:
-    k = _kpis()
+    k = _kpis(scope_key())
 except Exception as exc:
     st.warning(f"Couldn't load live KPIs: {exc}")
     k = {"total_unique": 0, "total_found": 0, "duplicates": 0,

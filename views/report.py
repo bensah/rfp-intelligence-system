@@ -18,11 +18,15 @@ than disappearing — important for the search-activity chart which would
 otherwise only show the days a scan was triggered.
 
 Export:
-  * **Print** button uses window.print() + @media print CSS that hides the
-    Streamlit sidebar / toolbar so the printable / save-as-PDF output is
-    just the report body.
-  * **Excel export** writes every section's underlying data to a single
-    .xlsx workbook (one sheet per section + a Summary sheet on top).
+  * **Export Report** builds a shareable PDF from the collected Document — cover page, one
+    section per page, charts laid out at page width. It does NOT print this page: every
+    Streamlit ancestor is a flex container, where Chrome will not honour `break-inside`, so
+    charts split across page boundaries no matter what CSS is added. See core.report_pdf.
+  * **Export Data** writes every section's underlying data to a single .xlsx workbook (one
+    sheet per section + a Summary sheet on top).
+
+There is no Print button. The @media print CSS and the beforeprint hook remain, so Ctrl+P
+still fits the charts for anyone who reaches for it, but it cannot produce a shareable file.
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from core import chart_theme as _theme
+from core import report_pdf as _report_pdf
 from core import dropdowns, partner_names, report_snapshots, settings
 # Plotly Express BAKES a colour into the trace, so layout.colorway is ignored and every
 # chart without an explicit `color=` came out Plotly default blue — which is why the
@@ -126,12 +131,17 @@ def _scope_key() -> str:
     PROCESS-GLOBAL (shared across all sessions), but the rows they load are tenant-scoped
     by the get_client() wrapper — so without the tenant in the key one tenant's report
     would be served to another. Mirror the wrapper's own scope: a tenant id for a scoped
-    tenant user, or 'all' for super_user / single-tenant (who see everything)."""
-    try:
-        from db.supabase_client import _tenant_scope_tid
-        return f"t:{_tenant_scope_tid() or 'all'}"
-    except Exception:
-        return "t:all"
+    tenant user, or 'all' for super_user / single-tenant (who see everything).
+
+    THE PARAMETER MUST NOT BE NAMED WITH A LEADING UNDERSCORE. Streamlit excludes
+    underscore-prefixed arguments from a cache key, so `def _load_rfps(_scope)` cached ONE
+    frame for every tenant and served whichever tenant rendered first in the process to all
+    the others. The safeguard this docstring describes was defeated by the parameter's name:
+    the report showed another tenant's rows (161 auto-scan rows across two months where the
+    tenant's own data spanned seven months and thirteen people). Verified against Streamlit:
+    changing an underscore-prefixed argument does not re-execute the function."""
+    from core.cache_scope import scope_key as _shared_scope_key
+    return _shared_scope_key()
 
 
 # ===========================================================================
@@ -476,7 +486,7 @@ _DT_KW = dict(errors="coerce", format="ISO8601")
 
 
 @st.cache_data(ttl=120)
-def _load_scan_logs(_scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
+def _load_scan_logs(scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     q = sb.table("scan_logs").select("*")
     if start_iso:
         q = q.gte("scan_date", start_iso)
@@ -509,7 +519,7 @@ def _load_scan_logs(_scope: str, start_iso: str | None, end_iso: str | None) -> 
 
 
 @st.cache_data(ttl=120)
-def _load_rfps(_scope: str) -> pd.DataFrame:
+def _load_rfps(scope: str) -> pd.DataFrame:
     # NOTE: every monetary field has its OWN currency column. Two
     # pairings matter on this page:
     #   estimated_value  ↔ currency           (the asked amount)
@@ -547,7 +557,7 @@ def _load_rfps(_scope: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=120)
-def _load_meetings(_scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
+def _load_meetings(scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     q = sb.table("meeting_logs").select("*")
     if start_iso:
         q = q.gte("meeting_date", start_iso)
@@ -562,7 +572,7 @@ def _load_meetings(_scope: str, start_iso: str | None, end_iso: str | None) -> p
 
 
 @st.cache_data(ttl=120)
-def _load_engagements(_scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
+def _load_engagements(scope: str, start_iso: str | None, end_iso: str | None) -> pd.DataFrame:
     q = sb.table("engagement_logs").select("*")
     if start_iso:
         q = q.gte("engagement_date", start_iso)
@@ -576,7 +586,7 @@ def _load_engagements(_scope: str, start_iso: str | None, end_iso: str | None) -
 
 
 @st.cache_data(ttl=120)
-def _load_grants(_scope: str) -> pd.DataFrame:
+def _load_grants(scope: str) -> pd.DataFrame:
     res = sb.table("applied_funding").select("*").limit(10000).execute()
     df = clean_df(pd.DataFrame(res.data or []))
     if not df.empty:
@@ -690,6 +700,162 @@ def _show(key: str) -> bool:
     return key in _selected_items
 
 
+# ── PDF DOCUMENT COLLECTION ───────────────────────────────────────────────────────────
+# The page collects what it renders into a Document, and the PDF is built from THAT rather
+# than by printing the page. Printing cannot work: every Streamlit ancestor is a flex
+# container, and Chrome will not honour `break-inside` inside flexbox, so charts split across
+# page boundaries no matter what CSS is added. See core.report_pdf.
+#
+# Collecting here also means the aggregations are not duplicated — one source of truth for
+# the numbers, two presentations of them.
+#
+# THE DOCUMENT LIVES IN core.report_pdf, NOT HERE. Streamlit re-executes this page with a
+# fresh namespace on every rerun, so a hook installed once cannot close over a document
+# defined here: it would keep appending to the FIRST run's object while the page builds and
+# renders a new one. That is precisely what happened — the metric hook was installed on the
+# first run and every later PDF came out with no KPI cards at all, because the tiles were
+# going into a dead Document. The hooks ask `report_pdf.current()` for the live one on every
+# call instead.
+_PDF_DOC = _report_pdf.new_document()
+
+
+def _pdf_hook_streamlit() -> None:
+    """Record KPI tiles and tables into the live document as well as rendering them.
+
+    Patched at the DeltaGenerator level because both are called on column and container
+    handles (`k1.metric(...)`, `expander.dataframe(...)`), not on `st` — so wrapping the `st.`
+    functions alone would miss nearly all of them, and adding a call beside forty existing
+    ones would be forty chances to miss one.
+
+    Guarded throughout: if Streamlit's internals move, the page still renders and only the
+    PDF loses content.
+    """
+    try:
+        from streamlit.delta_generator import DeltaGenerator
+    except Exception:
+        return
+    if getattr(DeltaGenerator, "_rfpis_pdf_hooked", False):
+        return
+
+    _orig_metric = DeltaGenerator.metric
+    _orig_df = getattr(DeltaGenerator, "dataframe", None)
+    _orig_table = getattr(DeltaGenerator, "table", None)
+
+    def _metric(self, label, value=None, *a, **kw):
+        try:
+            doc = _report_pdf.current()
+            if doc is not None:
+                doc.metric(label, value)
+        except Exception:
+            pass
+        return _orig_metric(self, label, value, *a, **kw)
+
+    def _wrap_table(orig):
+        def _inner(self, data=None, *a, **kw):
+            try:
+                doc = _report_pdf.current()
+                if doc is not None and hasattr(data, "columns"):
+                    doc.table(data)
+            except Exception:
+                pass
+            return orig(self, data, *a, **kw)
+        return _inner
+
+    DeltaGenerator.metric = _metric
+    if _orig_df is not None:
+        DeltaGenerator.dataframe = _wrap_table(_orig_df)
+    if _orig_table is not None:
+        DeltaGenerator.table = _wrap_table(_orig_table)
+    DeltaGenerator._rfpis_pdf_hooked = True
+
+
+_pdf_hook_streamlit()
+
+
+# Values that are not a programme area. "Unspecified Program Areas" is the extractor's
+# placeholder for "we could not tell", and drawing it in a focus-area cloud presents an absence
+# of information as a focus.
+_AREA_NON_VALUES = frozenset({
+    "n/a", "na", "none", "other", "unspecified", "unspecified program areas",
+    "unspecified programme areas", "not specified", "tbd",
+})
+
+
+def _canonical_area(label: str) -> str:
+    """Snap a stored area onto the taxonomy's own spelling where it unambiguously matches.
+
+    The pipeline stores "Digital Health" and "Digital Health (+AI)" for the same taxonomy
+    sub-area, so the cloud drew one area twice at half its weight each. Matching is EXACT first,
+    then a prefix match accepted only when exactly one sub-area matches — an ambiguous prefix is
+    left alone rather than guessed at, and an area the taxonomy has never heard of still appears
+    under its own name.
+    """
+    try:
+        from core import program_area_classifier as _pa
+        subs = [s for v in _pa.TAXONOMY.values() for s in v]
+    except Exception:
+        return label
+    low = label.lower()
+    for s in subs:
+        if s.lower() == low:
+            return s
+    hits = [s for s in subs if s.lower().startswith(low)]
+    return hits[0] if len(hits) == 1 else label
+
+
+def _programme_area_freq(rows) -> dict[str, int]:
+    """{programme area: number of calls} from the `call_domain_areas` a row actually carries.
+
+    NOT from titles and briefs, and NOT from the scan vocabulary. Those describe what we went
+    looking for; this describes what the team decided to pursue, which is the only version worth
+    putting in front of a reader.
+
+    The stored values carry an internal grouping prefix, and inconsistently — the same area
+    appears as "Cross-cutting - Digital Health (+AI)", "Cross-cutting  - Digital Health (+AI)"
+    (two spaces) and "Cross-cutting Expert Areas - Digital Health". Left as-is they would draw
+    as three separate areas at one count each instead of one area at three. Stripping the prefix
+    and collapsing whitespace merges them.
+    """
+    import collections
+
+    freq: collections.Counter = collections.Counter()
+    if rows is None or getattr(rows, "empty", True) or "call_domain_areas" not in rows.columns:
+        return {}
+    for raw in rows["call_domain_areas"]:
+        items = raw
+        if isinstance(items, str):
+            txt = items.strip()
+            if txt.startswith("["):
+                try:
+                    items = json.loads(txt)
+                except (ValueError, TypeError):
+                    items = [txt]
+            else:
+                items = [p for p in txt.split(",")] if txt else []
+        if not isinstance(items, (list, tuple, set)):
+            items = [items] if items else []
+        seen_this_row = set()
+        for item in items:
+            label = re.sub(r"\s+", " ", str(item or "")).strip()
+            if not label:
+                continue
+            # "<Category> - <Sub-area>" -> "<Sub-area>". Split on the LAST separator so an area
+            # whose own name contains a dash survives.
+            if " - " in label:
+                label = label.rsplit(" - ", 1)[-1].strip()
+            if not label or label.lower() in _AREA_NON_VALUES:
+                continue
+            label = _canonical_area(label)
+            if not label:
+                continue
+            # One call counts once for an area even if it lists it twice.
+            if label.lower() in seen_this_row:
+                continue
+            seen_this_row.add(label.lower())
+            freq[label] += 1
+    return dict(freq)
+
+
 def _period_slug() -> str:
     """A short, stable token for the selected period — "ytd", "2026", "last90d", "alltime".
 
@@ -730,6 +896,75 @@ def _export_filename(ext: str) -> str:
     return "_".join(p for p in parts if p) + f".{ext}"
 
 
+def _cadence_word() -> str:
+    """"Monthly" / "Quarterly" / … from the View-by selection.
+
+    The report is named after the cadence it was cut at, because that is what makes two exports
+    of the same period distinguishable to a reader who did not generate them.
+    """
+    m = str(bucket_mode or "").strip().lower()
+    return {"weekly": "Weekly", "monthly": "Monthly", "quarterly": "Quarterly",
+            "semestrial": "Semi-annual", "annually": "Annual"}.get(m, m.title() or "Periodic")
+
+
+def _report_name() -> str:
+    """"<Organisation> · Fund-raising Monthly Activity Report"."""
+    return f"{_org_name} · Fund-raising {_cadence_word()} Activity Report"
+
+
+def _period_phrase() -> str:
+    """The period as a reader says it: "Year-to-date 2026", not "YTD 2026".
+
+    The view-by word is deliberately NOT repeated here — it is already in the report's name, and
+    having both made the subtitle read like a settings dump.
+    """
+    label = str(_period_label_str or "").strip()
+    low = label.lower()
+    if low.startswith("ytd"):
+        return "Year-to-date " + label.split()[-1]
+    if low.startswith("last 90"):
+        return "Last 90 days"
+    if low.startswith("last 12"):
+        return "Last 12 months"
+    if low.startswith("all"):
+        return "All time"
+    return label
+
+
+def _h5(text: str) -> None:
+    """A subsection heading, on the page AND in the exported document.
+
+    Explicit rather than hooked. The table hook taught the lesson: `st.dataframe` does not route
+    through the `DeltaGenerator` attribute we patched, so tables silently never reached the PDF
+    while the hook reported itself installed. Nine call sites are cheap; a hook that lies is not.
+    """
+    # The hashes are built rather than written literally: a bulk rewrite of every
+    # `st.markdown("##### …")` call site into `_h5(…)` rewrote the one INSIDE this function too,
+    # and it called itself until the stack ran out.
+    st.markdown(("#" * 5) + " " + str(text))
+    try:
+        doc = _report_pdf.current()
+        if doc is not None:
+            doc.sub(text)
+    except Exception:
+        pass
+
+
+def _table(df, title: str = "", **kw) -> None:
+    """A dataframe on the page, and the same rows in the exported document.
+
+    The title goes ABOVE the table (a table is labelled above; a figure below), and it is passed
+    explicitly because a Streamlit dataframe carries no title of its own to lift out.
+    """
+    try:
+        doc = _report_pdf.current()
+        if doc is not None:
+            doc.table(df, title=title)
+    except Exception:
+        pass
+    st.dataframe(df, **kw)
+
+
 def _boxed(fig, **kw):
     """Render a chart inside its own bordered frame.
 
@@ -741,6 +976,12 @@ def _boxed(fig, **kw):
     bordered container that reads as a box within a box.
     """
     _theme.style(fig)
+    try:
+        _doc = _report_pdf.current()
+        if _doc is not None:
+            _doc.chart(fig)          # same figure object the page shows
+    except Exception:
+        pass
     with st.container(border=True):
         st.plotly_chart(fig, width="stretch", **kw)
 
@@ -788,6 +1029,10 @@ if _gen_col.button("▶ Generate report", type="primary",
     st.query_params.clear()
     st.query_params["r"] = _new_rid
     st.session_state["report_generated"] = True
+    # A new report means the built PDF describes the previous one. Drop it so the action row
+    # offers Export Report again rather than a download of something stale.
+    st.session_state.pop("_rfpis_pdf_bytes", None)
+    st.session_state.pop("_rfpis_pdf_name", None)
     st.rerun()
 
 # The report is "generated" when the URL carries a valid saved id (refresh-safe)
@@ -919,7 +1164,9 @@ def _bucketed_sum(date_series: pd.Series, value_series: pd.Series,
 # (right-aligned so they sit near the natural eye-line for "actions"
 # in a left-to-right reading layout).
 # ===========================================================================
-ac_tip, ac_excel, ac_print = st.columns([6, 1.4, 1.4])
+# The hook component still needs a home, but it draws nothing (height 0), so it goes
+# in the tip column rather than taking a slot of its own.
+ac_tip, ac_pdf, ac_excel = st.columns([5.4, 1.8, 1.6])
 
 
 def _safe_for_excel(df: pd.DataFrame) -> pd.DataFrame:
@@ -1039,9 +1286,9 @@ def _build_excel_export() -> bytes:
 
 
 ac_tip.caption(
-    "💡 Print works best with **landscape** orientation. Save as PDF via "
-    "your browser's print dialog → 'Save as PDF' destination. The Excel "
-    "export ships every section's raw data as separate sheets."
+    "💡 **Export Report** builds a shareable PDF — cover page, one section per page, and every "
+    "chart laid out to fit. **Export Data** ships each section's underlying rows as a separate "
+    "sheet in one workbook."
 )
 
 ac_excel.download_button(
@@ -1053,33 +1300,52 @@ ac_excel.download_button(
     width='stretch',
 )
 
-# Print button — rendered via st.components.v1.html so the inline
-# onclick handler isn't stripped (Streamlit's markdown sanitiser drops
-# event handlers even with unsafe_allow_html=True). The button lives in
-# its own iframe, so window.print() inside the iframe would print just
-# the iframe — call window.parent.print() to print the main Streamlit
-# page where the @media print CSS rules at the top of this file apply.
-# A NATIVE Streamlit button, not one drawn inside the component iframe.
+# NO Print / PDF button. It was the browser's own print dialog, which cannot control page
+# breaks in a flexbox layout, cannot size a Plotly chart to paper, and names the file after the
+# document title. Export Report replaces it. The @media print CSS and the beforeprint hook below
+# stay, so Ctrl+P still produces something sane for anyone who reaches for it out of habit.
 #
-# The iframe button was reported dead twice, and the second report included the decisive
-# detail: hovering it did not even change its colour, while the buttons beside it did. A
-# hand-styled <button> inside a sandboxed iframe has no hover styling of its own and depends
-# on a click landing inside that iframe and on same-origin reach back to the parent — a chain
-# with several ways to fail silently, none of which the page can see.
+# "Export Report", not "Build PDF": the user is exporting a report and then downloading it.
+# Whether we build it is our concern, not theirs.
 #
-# So the click is handled by Streamlit instead: a real button (its own hover, focus ring and
-# keyboard access) sets a flag, and on the rerun a ZERO-HEIGHT component runs the print call
-# as it loads. No click has to cross the iframe boundary, and window.print() does not need a
-# user gesture.
-if ac_print.button("🖨 Print / PDF", width="stretch", key="report_print_btn",
-                   help="Opens your browser's print dialog — choose 'Save as PDF' to keep a copy."):
-    st.session_state["_rfpis_print_now"] = True
+# ONE SLOT, ONE BUTTON. Export Report and Download PDF are two states of the same control, not
+# two controls: once a PDF exists, exporting again does nothing a reader wants, and two buttons
+# side by side left the question of which one to press. Generate report clears the PDF, so the
+# slot goes back to Export Report — the report has changed, and the old file no longer describes
+# it.
+#
+# The slot also has to be reserved HERE rather than filled at the end of the script: the document
+# is only complete once the page has drawn, and rendering the download button at that point put it
+# several screens below the button just pressed, which read as "clicking Export Report does
+# nothing".
+_pdf_slot = ac_pdf.empty()
+_pdf_name = _export_filename("pdf")
+_pdf_bytes = st.session_state.get("_rfpis_pdf_bytes")
+
+# Rendered at most ONCE per run: a widget key may not be reused, so the run that BUILDS the PDF
+# fills the slot at the end instead (see the export block below).
+_pdf_rendered = False
+if _pdf_bytes:
+    _pdf_slot.download_button(
+        "⬇ Download PDF",
+        data=_pdf_bytes,
+        file_name=st.session_state.get("_rfpis_pdf_name") or _pdf_name,
+        mime="application/pdf", width="stretch", key="report_pdf_download",
+        help=f"{st.session_state.get('_rfpis_pdf_name') or _pdf_name} · "
+             f"{len(_pdf_bytes) / 1024:,.0f} KB · Generate report starts a new export.")
+    _pdf_rendered = True
+elif _pdf_slot.button("📄 Export Report", width="stretch", key="report_pdf_btn",
+                      help="Builds a shareable PDF — cover page, one section per page, charts "
+                           "laid out to fit. Takes a few seconds; this button then becomes "
+                           "Download PDF."):
+    st.session_state["_rfpis_make_pdf"] = True
+    st.rerun()
 
 # Tenant- and period-specific document title. Chrome stamps document.title into the printed
 # page header, so this is what makes the PDF header identify the report rather than the product.
-_doc_title = f"{_org_name} · Activity Report · {_period_label_str}"
+_doc_title = f"{_report_name()} · {_period_phrase()}"
 
-with ac_print:
+with ac_tip:
     components.html(
         "<script>window.RFPIS_DOC_TITLE = "
         + json.dumps(_doc_title)
@@ -1276,49 +1542,86 @@ with ac_print:
         height=0,
     )
 
-    # The print call itself, on the rerun after the button was pressed. It runs as this
-    # component loads, so no click has to cross the iframe boundary.
-    #
-    # THE NONCE MATTERS. Streamlit keys a component off its content and position, so rendering
-    # byte-identical HTML again reuses the existing iframe WITHOUT re-executing its script. That
-    # is why the button printed the first time and then never again: the second click reran the
-    # page (which is why it looked like Generate) but the component was considered unchanged, so
-    # nothing ran. A counter in the payload makes each render a new component.
-    if st.session_state.pop("_rfpis_print_now", False):
-        _print_nonce = int(st.session_state.get("_rfpis_print_seq", 0)) + 1
-        st.session_state["_rfpis_print_seq"] = _print_nonce
-        components.html(
-            f"<!-- print request {_print_nonce} -->" + r"""
-            <script>
-            (function () {
-              function go() {
-                // The parent-realm entry point installed by the hook above.
-                try {
-                  if (typeof window.parent.rfpisPrintNow === 'function') {
-                    if (window.parent.rfpisPrintNow() === true) return;
-                  }
-                } catch (e) { /* fall through */ }
-                // Direct: fit what we can reach, then print the parent.
-                try {
-                  if (typeof window.parent.rfpisFitPlots === 'function') {
-                    window.parent.rfpisFitPlots(700);
-                  }
-                  window.parent.print();
-                  return;
-                } catch (e) { /* fall through */ }
-                // Last resort - print this document. Reached only when the parent is
-                // genuinely unreachable, in which case doing nothing is worse.
-                try { window.print(); } catch (e) {}
-              }
-              // One frame's delay so the hook script above has run and the charts are laid
-              // out; printing mid-render can capture a half-drawn page.
-              if (document.readyState === 'complete') { setTimeout(go, 60); }
-              else { window.addEventListener('load', function () { setTimeout(go, 60); }); }
-            })();
-            </script>
-            """,
-            height=0,
-        )
+# ── AT A GLANCE ───────────────────────────────────────────────────────────────────────
+# A report that opens on a KPI grid asks the reader to assemble the story themselves. This is
+# the story in a sentence or two, computed from the same rows the sections below chart, so it
+# cannot drift from them. It leads the PDF as well as the page.
+def _headline_summary() -> str:
+    """A plain-language summary of where this organisation's pipeline stands.
+
+    EVERY FIGURE HERE COMES FROM THE SAME HELPER THE SECTIONS BELOW USE. The first version did
+    its own arithmetic and disagreed with the report it introduces: it counted rows with any
+    submissions value (17) where the agreed rule is Progress = Completed × submissions (14), and
+    it summed `amount_secured` over every row where section 5 counts it only on donor-Approved
+    ones. A summary that contradicts the tables under it is worse than no summary.
+    """
+    if rfps_all.empty:
+        return (f"No funding calls are stored for {_org_name} yet. Run an eligibility scan or "
+                f"import the workbook, and this report will fill in.")
+
+    _u = rfps_all[~rfps_all["is_duplicate"]]
+    _dec = _u["decision"].fillna("").str.strip().str.lower()
+    n_all = int(len(_u))
+    n_proceed = int(_dec.str.startswith("proceed").sum())
+    n_park = int((_dec == "park").sum())
+    n_decline = int((_dec == "decline").sum())
+    n_open = n_all - (n_proceed + n_park + n_decline)
+
+    bits = [f"{_org_name} screened {n_all:,} funding calls and proceeded with "
+            f"{n_proceed:,} of them"
+            + (f" — {n_proceed / n_all:.0%} of everything screened." if n_all else ".")]
+    _tail = []
+    if n_park:
+        _tail.append(f"{n_park:,} were parked")
+    if n_decline:
+        _tail.append(f"{n_decline:,} declined")
+    if n_open:
+        _tail.append(f"{n_open:,} are still open")
+    if _tail:
+        bits.append(" and ".join([", ".join(_tail[:-1]), _tail[-1]]).strip(", ")
+                    if len(_tail) > 1 else _tail[0] + ".")
+        if len(_tail) > 1:
+            bits[-1] = bits[-1] + "."
+
+    # SUBMITTED — the agreed rule, from the shared helper, so it matches section 5's tile.
+    try:
+        from core.records import submission_weights as _sw
+        n_sub = int(_sw(_u).sum())
+        if n_sub:
+            bits.append(f"{n_sub:,} applications have gone to funders.")
+    except Exception:
+        pass
+
+    # SECURED — Approved rows only, exactly as section 5 computes it.
+    try:
+        _appr = _u[_u["donor_decision"].fillna("").str.strip().str.lower().eq("approved")]
+        if not _appr.empty:
+            _secured = float(_series_to_usd(_appr.get("amount_secured"),
+                                            _appr.get("currency_secured")).sum())
+            if _secured > 0:
+                bits.append(f"{len(_appr):,} were approved, securing ${_secured:,.0f}.")
+    except Exception:
+        pass
+
+    _areas = _programme_area_freq(_u[_dec.str.startswith("proceed")])
+    if _areas:
+        _top = [k for k, _ in sorted(_areas.items(), key=lambda kv: -kv[1])[:3]]
+        _joined = (", ".join(_top[:-1]) + " and " + _top[-1]) if len(_top) > 1 else _top[0]
+        bits.append(f"The work sits mainly in {_joined}.")
+    bits.append(f"Unless a caption says otherwise, the figures below cover "
+                f"{_period_phrase().lower()}.")
+    return " ".join(bits)
+
+
+_summary_text = _headline_summary()
+st.info(_summary_text)
+try:
+    _sdoc = _report_pdf.current()
+    if _sdoc is not None:
+        # Markdown emphasis is for the page; the PDF renders plain prose.
+        _sdoc.intro(_summary_text.replace("**", ""))
+except Exception:
+    pass
 
 st.divider()
 
@@ -1328,6 +1631,7 @@ st.divider()
 # ===========================================================================
 if _show_sec("1"):
     st.subheader("1 · Scan activity")
+    (_report_pdf.current() or _PDF_DOC).section("1 · Scan activity")
     st.caption(
         "How the automated scanner is performing. KPI tiles come from "
         "`scan_logs` (one row per source per run). The time-series chart "
@@ -1335,12 +1639,20 @@ if _show_sec("1"):
         "so the curve covers the full period — not just days a scan ran."
     )
 
-    # System-wide DISCOVERY counter (shared across all tenants) — the Friday crawl fills a
-    # shared catalog every tenant screens; distinct from THIS tenant's own activity below.
-    # Multi-tenant only (in single-tenant the two would double-count). Visible to all.
+    # System-wide DISCOVERY counter — SUPER_USER ONLY (owner, 2026-08-12).
+    #
+    # It reports the shared crawl every tenant screens, which is not this tenant's activity and
+    # not something a tenant can act on: 25,036 discovered and 22,791 rejected at gate said
+    # nothing about their own pipeline while being the largest numbers on the page. A tenant's
+    # report should show what that tenant did — their eligibility scans and their migrated rows.
+    # Operators still need the crawl's health, so it stays for super_user.
+    #
+    # Multi-tenant only (in single-tenant the tenant IS the system, so the two would
+    # double-count).
     try:
         from auth.tenant_context import multitenant_enabled as _mte
-        if _mte():
+        from core import permissions as _perms_sd
+        if _mte() and _perms_sd.is_super_user(st.session_state.get("app_user") or {}):
             from core import analytics as _an
 
             # Cached: this rollup paginates scan_logs and counts the shared store, and the
@@ -1364,6 +1676,54 @@ if _show_sec("1"):
                                "Your tenant's own screening activity is below.")
     except Exception:
         pass
+
+    # WHERE THIS TENANT'S ROWS CAME FROM. Moved up from the funnel section (owner,
+    # 2026-08-12): it describes intake, which is what section 1 is about, and with the
+    # system-wide counter gone it is now the honest headline for a tenant — their eligibility
+    # scans, their manual submissions, and the rows migrated from the legacy workbook.
+    if not rfps_all.empty and "source" in rfps_all.columns:
+        # EVERY RECORD, THE DUPLICATES, AND WHAT'S LEFT (owner, 2026-08-12).
+        #
+        # The tile showed unique rows only, so "Excel imported 52" could not be reconciled with
+        # the 63 records actually imported — the 11 the dedupe caught were invisible, and a
+        # reader comparing the report against the workbook finds a shortfall with no explanation.
+        # Unique stays the headline, because it is what every other figure here counts; the
+        # duplicates are stated beside it so the arithmetic is closed.
+        _src_col = rfps_all["source"].fillna("(unknown)").astype(str).str.strip()
+        _dup_col = rfps_all["is_duplicate"].astype(bool)
+        _labels = {"auto": "System eligibility auto-scan", "migration": "Excel imported",
+                   "manual": "Manually submitted via platform"}
+        _by_src = (pd.DataFrame({"src": _src_col.str.lower(), "dup": _dup_col})
+                   .groupby("src").agg(total=("dup", "size"), dups=("dup", "sum")))
+        _by_src["unique"] = _by_src["total"] - _by_src["dups"]
+        _by_src = _by_src.sort_values("total", ascending=False)
+
+        if not _by_src.empty:
+            _n_all = int(_by_src["total"].sum())
+            _n_dup = int(_by_src["dups"].sum())
+            _ic = st.columns(min(4, len(_by_src) + 1))
+            _ic[0].metric(
+                "Records ingested", f"{_n_all:,}",
+                delta=(f"{_n_dup:,} duplicate{'s' if _n_dup != 1 else ''}" if _n_dup else None),
+                delta_color="off",
+                help="Every row stored for this organisation, from all intake routes, including "
+                     "the duplicates the dedupe caught.")
+            for _i, (_src, _row) in enumerate(_by_src.iterrows(), start=1):
+                if _i >= len(_ic):
+                    break
+                _u, _d, _t = int(_row["unique"]), int(_row["dups"]), int(_row["total"])
+                _ic[_i].metric(
+                    _labels.get(str(_src), str(_src).title()), f"{_u:,}",
+                    delta=(f"{_d:,} duplicate{'s' if _d != 1 else ''}" if _d else None),
+                    delta_color="off",
+                    help=(f"{_t:,} record(s) arrived by this route; {_d:,} were duplicates of "
+                          f"calls already stored, leaving {_u:,} unique."))
+            st.caption(
+                f"Where this organisation's calls came from — all-time, not period-filtered. "
+                f"The large number on each card is the UNIQUE calls kept, which is what every "
+                f"other figure in this report counts; the grey number beside it is the "
+                f"duplicates the dedupe removed. {_n_all:,} records in total, "
+                f"{_n_dup:,} of them duplicates.")
 
     if scans.empty:
         st.info("No scans recorded in this period yet. Trigger one from "
@@ -1457,6 +1817,9 @@ if _show_sec("1"):
                 )
                 leader_series.columns = ["Member", "RFPs discovered"]
                 with st.expander("Submission leaderboard", expanded=False):
+                    # Kept on the page, NOT collected into the PDF: it is the same counts as
+                    # the chart directly above it, and the export does not need the number twice.
+                    # (It was also mislabelled — these are members and discoveries, not keywords.)
                     st.dataframe(leader_series,
                                   width='stretch', hide_index=True)
             else:
@@ -1510,26 +1873,32 @@ if _show_sec("1"):
         #     top-200 English words.
         # Font size scales to frequency via WordCloud.generate_from_
         # frequencies — that IS the "size grows with count" effect.
-        if _show("s1_keywords") and not disc.empty:
-            from core.keyword_cloud import extract_keyword_frequencies
-
-            _titles_and_briefs = [
-                " ".join([
-                    str(r.get("opportunity_title") or ""),
-                    str(r.get("brief_description") or ""),
-                ])
-                for _, r in disc.iterrows()
-            ]
-            kw_freq = extract_keyword_frequencies(_titles_and_briefs)
+        # PROCEED ONLY, and from the areas the calls actually CARRY (owner, 2026-08-12).
+        #
+        # It used to match a curated global-health vocabulary against every discovered call's
+        # title and brief. That drew the search terms the scanner went looking for — including
+        # across Park and Decline rows — so the cloud was largest exactly where the team had
+        # decided NOT to bid. In a report a tenant sends to their leadership that is worse than
+        # uninformative: it presents rejected subject matter as the tenant's focus.
+        #
+        # Now it reads `call_domain_areas` off the tenant's PROCEED calls: what was pursued, in
+        # the words the pipeline recorded. All-time rather than period-filtered, because a
+        # Proceed decision is the durable signal and a short period would leave this near-empty —
+        # said plainly in the caption so it is not mistaken for period data.
+        _proceed_all = rfps_all[
+            (~rfps_all["is_duplicate"])
+            & rfps_all["decision"].fillna("").str.strip().str.lower().str.startswith("proceed")
+        ] if not rfps_all.empty and "decision" in rfps_all.columns else rfps_all.iloc[0:0]
+        kw_freq = _programme_area_freq(_proceed_all) if _show("s1_keywords") else {}
+        if _show("s1_keywords"):
             if kw_freq:
-                st.markdown(
-                    f"#### Search Keywords ({_period_label_str})"
-                )
+                st.markdown("#### Focus areas")
                 st.caption(
-                    "Word size scales to how often the keyword (or any of "
-                    "its variants — e.g. *Financing* covers finance / "
-                    "financed / financial) appears across RFP titles + "
-                    "briefs. Vocabulary is a curated global-health niche."
+                    f"Programme areas recorded on the **{len(_proceed_all)} calls this tenant "
+                    "chose to pursue** (Proceed) — all-time, not filtered by the period above. "
+                    "Word size is the number of those calls carrying the area. Park and Decline "
+                    "calls are excluded, and so are the keywords the scanner searches on: this "
+                    "shows where the team committed effort, not what it looked at."
                 )
                 try:
                     from wordcloud import WordCloud
@@ -1551,6 +1920,15 @@ if _show_sec("1"):
                     fig_wc.tight_layout(pad=0)
                     with st.container(border=True):
                         st.pyplot(fig_wc, width='stretch')
+                    # Into the export as well. It is the ONE raster thing in the document — a
+                    # word cloud is a bitmap by nature — and it was simply absent before, which
+                    # left the "Focus areas" heading over nothing in the PDF.
+                    try:
+                        _wdoc = _report_pdf.current()
+                        if _wdoc is not None:
+                            _wdoc.image(fig_wc, height=300)
+                    except Exception:
+                        pass
                     plt.close(fig_wc)
                 except ImportError:
                     # Graceful fallback when WordCloud / matplotlib not
@@ -1564,10 +1942,10 @@ if _show_sec("1"):
                     _kw_top = (
                         pd.DataFrame(
                             sorted(kw_freq.items(), key=lambda kv: -kv[1]),
-                            columns=["Keyword", "Hits"],
+                            columns=["Programme area", "Proceed calls"],
                         ).head(40)
                     )
-                    st.dataframe(_kw_top, width='stretch',
+                    _table(_kw_top, "Focus areas on Proceed calls", width='stretch',
                                  hide_index=True)
 
         # ───── Keyword cloud + success table ─────────────────────────────
@@ -1647,8 +2025,9 @@ if _show_sec("1"):
                         "donor searches on the topics that consistently win. "
                         "Sorted by Approved → Submitted → Proceed → Hits."
                     )
-                    st.dataframe(
+                    _table(
                         kw_agg.rename(columns={"keyword": "Keyword"}),
+                        title="Keywords driving success",
                         width='stretch', hide_index=True,
                     )
 
@@ -1672,12 +2051,13 @@ if _show_sec("1"):
         src["avg_dur"] = src["avg_dur"].round(1)
         src["yield_pct"] = ((src["new"] / src["found"].replace(0, 1)) * 100).round(1)
         with st.expander("Top 15 sources by new-RFP yield", expanded=False):
-            st.dataframe(
+            _table(
                 src.rename(columns={
                     "source": "Source", "runs": "Runs", "found": "Found",
                     "new": "New", "rejected": "Rejected",
                     "avg_dur": "Avg duration (s)", "yield_pct": "Yield %",
                 }),
+                title="Top 15 sources by new-call yield",
                 width='stretch', hide_index=True,
             )
 
@@ -1687,7 +2067,7 @@ if _show_sec("1"):
     # quality signal. (Originally placed in §4 Team Activity which was
     # the wrong narrative beat.)
     if _show("s1_cycle") and not rfps_all.empty:
-        st.markdown("##### Search → Submission cycle time")
+        _h5("Search → Submission cycle time")
         cyc_src = rfps_all[~rfps_all["is_duplicate"]].copy()
         cyc = cyc_src.dropna(subset=["search_date", "date_completed"]).copy()
         if not cyc.empty:
@@ -1705,7 +2085,8 @@ if _show_sec("1"):
             fig_cyc = px.histogram(
                 cyc, x="days", nbins=20,
                 title="Distribution of days from Search Date → Date Completed",
-                labels={"days": "Days", "count": "Funding calls"},
+                labels={"days": "Days from discovery to submission",
+                        "count": "Number of funding calls"},
             )
             fig_cyc.update_layout(height=280, margin=dict(t=40, b=10))
             _boxed(fig_cyc)
@@ -1725,6 +2106,7 @@ if _show_sec("1"):
 # ===========================================================================
 if _show_sec("4"):
     st.subheader("2 · Team & Partnership Activity")
+    (_report_pdf.current() or _PDF_DOC).section("2 · Team & Partnership Activity")
     st.caption(
         "Everything about WHO does the work and WHO we do it with — internal "
         "triage meetings (**Team Touchpoints**), donor-facing engagements "
@@ -1734,7 +2116,7 @@ if _show_sec("4"):
     )
 
     # ─── Team Touchpoints (internal team meetings) ─────────────────────────────
-    st.markdown("##### Team Touchpoints")
+    _h5("Team Touchpoints")
     n_meetings_total = int(len(meetings))
     n_resolved = int(meetings["is_resolved"].sum()) if not meetings.empty else 0
     n_open = n_meetings_total - n_resolved
@@ -1755,7 +2137,7 @@ if _show_sec("4"):
     st.markdown("")  # vertical spacer between the two sub-sections
 
     # ─── Donor Touchpoints (external donor engagements) ───────────────────────
-    st.markdown("##### Donor Touchpoints")
+    _h5("Donor Engagements")
     n_engagements = int(len(engagements))
     n_donors = (int(engagements["donor"].nunique())
                 if (not engagements.empty and "donor" in engagements.columns) else 0)
@@ -1795,11 +2177,12 @@ if _show_sec("4"):
             .head(10)
         )
         with st.expander("Top 10 donors by touchpoints", expanded=False):
-            st.dataframe(
+            _table(
                 top_donors.rename(columns={
                     "donor": "Donor", "touchpoints": "Touchpoints",
                     "types": "Engagement types",
                 }),
+                title="Top 10 donors by touchpoints",
                 width='stretch', hide_index=True,
             )
 
@@ -1938,7 +2321,7 @@ if _show_sec("4"):
             return fig
 
         def _panel(heading: str, fig, msg, y_title: str, x_title: str):
-            st.markdown(f"##### {heading}")
+            _h5(heading)
             if fig is not None:
                 _boxed(_finish(fig, y_title, x_title))
             elif msg:
@@ -1967,7 +2350,7 @@ if _show_sec("4"):
         # A separator INSIDE one org's own name (a legal suffix after a comma, or an
         # abbreviation after a ";") does not make a second applicant — see core.partner_names.
         if _show("s4_partners"):
-            st.markdown("##### Lead & Sub Applicant partners")
+            _h5("Lead & Sub Applicant partners")
         _NA_VALUES = partner_names.NA_VALUES
         _org_full = (settings.get_org_name() or "").strip()
         _org_short = (settings.get_org_short() or "").strip()
@@ -2044,6 +2427,7 @@ if _show_sec("4"):
 # ===========================================================================
 if _show_sec("2"):
     st.subheader("3 · Insights — Status & Eligibility Funnel")
+    (_report_pdf.current() or _PDF_DOC).section("3 · Insights — Status & Eligibility Funnel")
     st.caption(
         "**Current pipeline state across ALL stored RFPs** — auto-scanned, "
         "manually submitted, AND imported from the legacy Excel workbook. "
@@ -2089,14 +2473,6 @@ if _show_sec("2"):
                   help="Held for later review — uncertain fit or no extractable deadline.")
         k4.metric("Decline", decline_all,
                   help="Filtered by the team or the decision tree.")
-
-        # By-source breakdown so the user can see how much came from where
-        if "source" in unique_all.columns:
-            src_counts = unique_all["source"].fillna("(unknown)").value_counts()
-            st.caption(
-                "**By source:**  "
-                + "  ·  ".join(f"`{k}` {v}" for k, v in src_counts.items())
-            )
 
         _STAGES = ["Discovered (all-time)", "Proceed-track", "Submitted", "Approved"]
         _FUNNEL_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#22c55e"]
@@ -2201,6 +2577,7 @@ if _show_sec("2"):
 # ===========================================================================
 if _show_sec("3"):
     st.subheader("4 · Reviews & Decisions")
+    (_report_pdf.current() or _PDF_DOC).section("4 · Reviews & Decisions")
     st.caption(
         "Triage outcomes — velocity from RFP discovery to decision, where "
         "the auto-recommendation needed manual override, and the funder's own "
@@ -2269,7 +2646,7 @@ if _show_sec("3"):
             })
             fig_dec = px.bar(
                 dec_df, x="decision", y="count", text="count",
-                title="Decision Distribution",
+                title="Team decisions: our own Proceed / Park / Decline",
                 color="decision",
                 # Fixed semantic order, not frequency order: the shade then means the same thing
                 # on every report instead of tracking whichever decision happens to dominate.
@@ -2285,7 +2662,8 @@ if _show_sec("3"):
             if not dec_dates.empty:
                 ts_df = _bucketed_count(dec_dates, "decisions")
                 fig_time = px.bar(ts_df, x="bucket", y="decisions",
-                                  title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
+                                  title=f"Team Proceed decisions over time "
+                                        f"({_period_label_str}, {bucket_mode.lower()})",
                                   labels={"bucket": _bucket_label(bucket_mode),
                                           "decisions": "Proceed decisions"},
                                   color_discrete_sequence=[_theme.TURQUOISE])
@@ -2303,35 +2681,40 @@ if _show_sec("3"):
         elif fig_time is not None:
             _boxed(fig_time)
 
-        if _show("s3_autorec") and not _proc_dec.empty:
-            # Of the RFPs we chose to pursue, what had the auto-scorer recommended?
-            # Rows other than "Proceed" are where human judgment overrode a
-            # park/decline suggestion — the most decision-relevant slice.
-            _ar = (
-                _proc_dec.assign(
-                    ar=_proc_dec["auto_recommendation"].fillna("—").replace("", "—").str.title()
-                )
-                .groupby("ar").size().reset_index(name="count")
-                .sort_values("count", ascending=False)
-            )
-            _n_proc = int(len(_proc_dec))
-            _n_agree = int(
-                _proc_dec["auto_recommendation"].fillna("").str.lower()
-                .str.startswith("proceed").sum()
-            )
+        if _show("s3_autorec") and not decided.empty:
+            # SYSTEM vs HUMAN, which is the only reason to show this at all.
+            #
+            # It used to list the auto-scorer's recommendation for TEAM-PROCEED rows only, under a
+            # title promising a comparison: one column of recommendations and one count, with the
+            # team's decision nowhere in it. Every row was a Proceed, so there was nothing to
+            # compare against.
+            #
+            # Now it is a cross-tab — the scorer's recommendation down the side, the team's
+            # decision across the top — so agreement sits on the diagonal and every override is
+            # visible as an off-diagonal count.
+            _ar_src = decided.copy()
+            _ar_src["_auto"] = (_ar_src["auto_recommendation"].fillna("").astype(str)
+                                .str.strip().str.title().replace("", "No recommendation"))
+            _ar_src["_team"] = (_ar_src["decision"].fillna("").astype(str)
+                                .str.strip().str.title().replace("", "No decision"))
+            _order = ["Proceed", "Park", "Decline", "No recommendation", "No decision"]
+            _xtab = pd.crosstab(_ar_src["_auto"], _ar_src["_team"])
+            _xtab = _xtab.reindex(index=[r for r in _order if r in _xtab.index],
+                                  columns=[c for c in _order if c in _xtab.columns])
+            _agree = int(sum(_xtab.at[k, k] for k in _xtab.index if k in _xtab.columns))
+            _total = int(_xtab.to_numpy().sum())
             with st.expander(
-                f"Auto-recommendation for Proceed RFPs — model agreed on "
-                f"{_n_agree} of {_n_proc}", expanded=False,
+                f"Auto-scorer vs the team — agreed on {_agree} of {_total} decided calls",
+                expanded=False,
             ):
                 st.caption(
-                    "Of the RFPs the team chose to pursue, what the auto-scorer had "
-                    "recommended. Rows other than *Proceed* are where human judgment "
-                    "overrode a park/decline suggestion."
+                    "Rows are what the auto-scorer recommended; columns are what the team "
+                    "decided. The diagonal is agreement; anything off it is a call where the "
+                    "team overrode the scorer."
                 )
-                st.dataframe(
-                    _ar.rename(columns={"ar": "Auto-recommendation", "count": "Proceed RFPs"}),
-                    width='stretch', hide_index=True,
-                )
+                _table(_xtab.reset_index().rename(columns={"_auto": "Auto-scorer said"}),
+                       title="Auto-scorer recommendation vs the team's decision",
+                       width='stretch', hide_index=True)
 
         # ───────────── Donor Decisions ─────────────────────────────────────────
         # The charts above are OUR decisions (Proceed / Park / Decline — whether to bid).
@@ -2342,11 +2725,28 @@ if _show_sec("3"):
         # the default for everything still in flight, so leaving it in produces one bar that
         # dwarfs every real outcome and says nothing about donor decisions. The count of those
         # awaiting a decision is stated as a caption instead.
-        if _show("s3_donordec") and "donor_decision" in _proc_dec.columns:
-            st.markdown("##### Donor Decisions")
-            _dd = _proc_dec["donor_decision"].fillna("").astype(str).str.strip()
-            _pending = int((_dd.str.lower().isin(["", "not submitted"])).sum())
-            _dd = _dd[~_dd.str.lower().isin(["", "not submitted"])]
+        # ALL Proceed calls, not only those decided inside the period. Period-filtering dropped
+        # Not Approved and Submitted from the chart entirely — 13 real donor decisions exist and
+        # only 6 were drawn, so a funder's rejection simply did not appear. A donor decision is a
+        # durable outcome, like the Proceed decision itself; the caption says the scope.
+        _proc_dd = rfps_all[
+            (~rfps_all["is_duplicate"])
+            & rfps_all["decision"].fillna("").str.strip().str.lower().str.startswith("proceed")
+        ] if not rfps_all.empty and "decision" in rfps_all.columns else _proc_dec
+        if _show("s3_donordec") and "donor_decision" in _proc_dd.columns:
+            _h5("Donor decisions: the funder's response to what we submitted")
+            # "Submitted" IS NOT A FUNDER DECISION. It records that we sent the proposal —
+            # our own state, not the funder's response — so on a chart headed "the funder's
+            # response" it was a category that answers a different question. It counts as
+            # awaiting an outcome, alongside the rows never submitted.
+            #
+            # One bar = one call. Not `submissions`: a proposal sent twice is still one call
+            # awaiting one answer, and weighting by submissions would make a resubmission look
+            # like a second decision.
+            _AWAITING = ("", "not submitted", "submitted", "pending", "awaiting", "in review")
+            _dd = _proc_dd["donor_decision"].fillna("").astype(str).str.strip()
+            _pending = int(_dd.str.lower().isin(_AWAITING).sum())
+            _dd = _dd[~_dd.str.lower().isin(_AWAITING)]
             if _dd.empty:
                 st.info("No donor decisions recorded yet.")
             else:
@@ -2365,8 +2765,11 @@ if _show_sec("3"):
                 _boxed(fig_dd)
             if _pending:
                 st.caption(
-                    f"{_pending} Proceed RFP(s) have no donor decision yet — not submitted, or "
-                    "submitted and awaiting an outcome. They are excluded from the chart above."
+                    f"One bar per call, all-time across this organisation's Proceed calls and "
+                    f"not filtered by the period above. {_pending} are still awaiting an "
+                    "outcome — either not yet submitted, or submitted with no answer back — and "
+                    "are excluded from the chart, which shows only decisions a funder has "
+                    "actually returned."
                 )
 
     st.divider()
@@ -2378,6 +2781,7 @@ if _show_sec("3"):
 # ===========================================================================
 if _show_sec("5"):
     st.subheader("5 · Our Results — Proposals Submitted & Grants Secured")
+    (_report_pdf.current() or _PDF_DOC).section("5 · Our Results")
     st.caption(
         "Bottom line across ALL stored RFPs — auto-scanned + manually "
         "submitted + Excel migration rows. Counts here ignore the period "
@@ -2444,22 +2848,34 @@ if _show_sec("5"):
             n_missing_pipe_cur = 0
 
         # Consolidated KPI cards — counts on top, amounts below (no duplicate secured tile).
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Applied grants", n_submitted,
+        # Card order: counts and the ratio they produce on the first row, money on the second.
+        # "Secured ÷ Requested" sat alone at the end of a four-tile row of amounts, reading as an
+        # afterthought when it is the summary of them.
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Applications submitted", n_submitted,
                   help="Sum of donor-side submissions on Proceed RFPs whose Progress = "
                        "Completed (an RFP can be submitted to a donor more than once).")
         k2.metric("Approved", n_approved,
                   help="Submitted (Proceed + Completed) RFPs with donor_decision = Approved.")
         k3.metric("Win rate", f"{win_rate:.1f}%" if n_submitted else "—",
-                  help="Approved ÷ Applied grants. '—' with no submissions.")
-        m1, m2, m3, m4 = st.columns(4)
+                  help="Approved ÷ Applications submitted. '—' with no submissions.")
+        k4.metric("Secured ÷ Requested", f"{sec_ratio:.1f}%",
+                  help="Total secured ÷ total requested, in USD.")
+        # Keep the two rows apart in the export as well; without this they merge into one run
+        # of seven tiles and wrap wherever the width falls.
+        try:
+            _rb = _report_pdf.current()
+            if _rb is not None:
+                _rb.row_break()
+        except Exception:
+            pass
+        m1, m2, m3 = st.columns(3)
         m1.metric("Total Requested (USD)", f"${total_req:,.0f}")
         m2.metric("Total Secured (USD)", f"${amt_secured:,.0f}",
-                  help="amount_secured on Approved RFPs, row-by-row to USD via the FX rates "
+                  help="amount_secured on Approved calls, row-by-row to USD via the FX rates "
                        "in Admin → Settings.")
         m3.metric("Total Unsecured (USD)", f"${total_unsec:,.0f}",
-                  help="amount_requested on Not-Approved (declined) RFPs.")
-        m4.metric("Secured ÷ Requested", f"{sec_ratio:.1f}%")
+                  help="amount_requested on Not-Approved (declined) calls.")
 
         if n_missing_secured_cur or n_missing_pipe_cur:
             st.warning(
@@ -2503,7 +2919,7 @@ if _show_sec("5"):
         # The signed outcome view — the aggregate amounts are in the KPI cards above; this
         # chart shows the per-RFP secured (▲) vs unsecured/declined (▼) picture.
         if _show("s5_reqsec"):
-            st.markdown("##### Amount Requested vs Amount Secured (USD)")
+            _h5("Amount Requested vs Amount Secured (USD)")
         if _show("s5_reqsec") and {"amount_requested", "amount_secured"} <= set(unique.columns):
             out_df = outcome_df[(outcome_df["req_usd"] > 0)
                                 | (outcome_df["sec_usd"] > 0)].copy()
@@ -2556,7 +2972,7 @@ if _show_sec("5"):
         # how many did we actually submit, and how many won?" — IS the
         # outcomes question, not a team-activity question.
         if _show("s5_conv"):
-            st.markdown("##### Conversion rates")
+            _h5("Conversion rates")
         proceeded = unique[
             unique["decision"].fillna("").str.lower().str.startswith("proceed")
         ]
@@ -2584,7 +3000,7 @@ if _show_sec("5"):
         # report / Owner columns aren't needed here). Not collapsible; the closing table of
         # the results story.
         if _show("s5_grants"):
-            st.markdown("##### Applied Grants")
+            _h5("Applied Funding Opportunities")
             st.caption("Every grant we've submitted (Proceed RFPs with Progress = "
                        "Completed) — requested amount and the donor's decision.")
             if _pc.empty:
@@ -2607,7 +3023,9 @@ if _show_sec("5"):
                     "Submissions": _sg["_subs"],
                     "Submitted": pd.to_datetime(_sg["date_completed"], errors="coerce").dt.date,
                 }).sort_values("Requested (USD)", ascending=False)
-                st.dataframe(
+                _table(
+                    # No title here: the subsection heading above already names it, and
+                    # passing both printed the label twice in the PDF.
                     _tbl, width='stretch', hide_index=True,
                     column_config={
                         "Grant": st.column_config.TextColumn("Grant", width="large"),
@@ -2631,25 +3049,14 @@ if _show_sec("5"):
 # "Meetings & Engagements" to "Team & Partnership Activity"). Nothing
 # renders here anymore — moving on to the Footer.
 
-st.divider()
-
-
-st.success(
-    f"✅ **End of report** — {len(_selected_items)} of {len(_ALL_KEYS)} "
-    f"metric blocks shown for **{_period_label_str}**. Export with "
-    f"**Print / PDF** or **Excel** at the top of the page."
-)
-
 
 # ===========================================================================
-# Footer — org context + generated timestamp
+# SHAREABLE PDF
 # ===========================================================================
-_website = _org.get("org_website")
-foot_bits = [f"**{_org_name}**"]
-if _org_country:
-    foot_bits.append(_org_country)
-if _website:
-    foot_bits.append(f"[{_website}]({_website})")
+# Built from the collected Document, not by printing the page — see core.report_pdf for why
+# printing cannot work here. It runs on demand rather than on every rerun: a headless Chromium
+# render is a few seconds, and `st.download_button` needs its bytes up front, so generating
+# eagerly would put that on every widget interaction.
 # WHO generated this report. A printed PDF circulates on its own, so it has to carry a
 # signature back to a person — name and email — or a figure in it cannot be questioned by
 # anyone who receives it. Read from the session, never from a form field, so it cannot be typed
@@ -2662,6 +3069,70 @@ if _gen_name and _gen_email:
 else:
     _gen_by = _gen_name or _gen_email or "unknown user"
 
+_pdf_doc = (_report_pdf.current() or _PDF_DOC).finish()
+
+if st.session_state.pop("_rfpis_make_pdf", False):
+    try:
+        with st.spinner("Building the PDF — laying out charts at page width…"):
+            _html_doc = _report_pdf.build_html(
+                _pdf_doc,
+                title=_report_name(),
+                subtitle=_period_phrase(),
+                meta={
+                    # "Organization", not "Tenant": tenant is our word for the account, and a
+                    # reader of the PDF has no reason to know it.
+                    "Organization": _org_name,
+                    "Period": (f"{_s_iso} → {_e_iso}" if _s_iso else "All time"),
+                    "Report id": (_url_rid or "unsaved"),
+                    "Generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "Generated by": _gen_by,
+                },
+            )
+            st.session_state["_rfpis_pdf_bytes"] = _report_pdf.render_pdf(
+                _html_doc,
+                chart_count=_pdf_doc.chart_count,
+                header_text=f"{_report_name()} · {_period_phrase()}",
+                footer_text=f"Generated by {_gen_by} · report {_url_rid or 'unsaved'}",
+            )
+            st.session_state["_rfpis_pdf_name"] = _pdf_name
+    except Exception as _pdf_exc:
+        st.session_state["_rfpis_pdf_bytes"] = None
+        st.error(f"Couldn't build the PDF: {_pdf_exc}")
+
+# On the run that just BUILT the file, the slot is still holding the Export Report button, so
+# fill it now. On any later run the download button was already rendered at the top of the page
+# and `_pdf_rendered` is True — filling it twice would reuse a widget key.
+if st.session_state.get("_rfpis_pdf_bytes") and not _pdf_rendered:
+    _pdf_slot.download_button(
+        "⬇ Download PDF",
+        data=st.session_state["_rfpis_pdf_bytes"],
+        file_name=st.session_state.get("_rfpis_pdf_name") or _pdf_name,
+        mime="application/pdf", width="stretch", key="report_pdf_download",
+        help=(f"{st.session_state.get('_rfpis_pdf_name') or _pdf_name} · "
+              f"{len(st.session_state['_rfpis_pdf_bytes']) / 1024:,.0f} KB · "
+              f"{_pdf_doc.chart_count} charts · Generate report starts a new export."),
+    )
+
+st.divider()
+
+
+st.success(
+    f"✅ **End of report** — {len(_selected_items)} of {len(_ALL_KEYS)} "
+    f"metric blocks shown for **{_period_label_str}**. Use "
+    f"**Export Report** for a shareable PDF, or **Export Data** for the underlying rows — "
+    f"both at the top of the page."
+)
+
+
+# ===========================================================================
+# Footer — org context + generated timestamp
+# ===========================================================================
+_website = _org.get("org_website")
+foot_bits = [f"**{_org_name}**"]
+if _org_country:
+    foot_bits.append(_org_country)
+if _website:
+    foot_bits.append(f"[{_website}]({_website})")
 with st.container(key="report_footer"):
     st.caption(
         " · ".join(foot_bits)

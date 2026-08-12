@@ -34,6 +34,7 @@ role = user.get("role", "collaborator")
 # Status/decision editing is a routine team-meeting task open to ANY tenant member
 # (collaborator included); only destructive actions (Delete, via is_admin below) stay gated.
 from core import permissions as _perm
+from core.cache_scope import scope_key
 can_edit = _perm.can_edit_status(user)
 is_admin = role in ("super_user", "admin")
 sb = get_client()
@@ -78,7 +79,12 @@ if _deep_uid and st.session_state.get("_deep_uid_applied") != _deep_uid:
 
 # Week selector + RFP selector on the same row, with year inline.
 @st.cache_data(ttl=30)
-def _fetch(week: str) -> pd.DataFrame:
+def _fetch(week: str, scope: str) -> pd.DataFrame:
+    # `scope` is unused in the body ON PURPOSE: it is the tenant discriminator for the
+    # PROCESS-GLOBAL cache. Without it this cache serves whichever tenant rendered first
+    # to every other tenant. It must NOT be named with a leading underscore — Streamlit
+    # excludes underscore-prefixed arguments from the key, which is how the report's own
+    # `_scope` guard came to do nothing. See core.cache_scope.
     try:
         res = safe_execute(
             get_client()
@@ -101,7 +107,7 @@ with wc:
         key="review_rfp_week",
     )
 
-df = _fetch(sel_week)
+df = _fetch(sel_week, scope_key())
 # Concluded grants (won/submitted) are tracked under Grants + counted in Summary —
 # keep them out of the active Review list (a row marked Completed + Approved).
 df = drop_concluded(df)
