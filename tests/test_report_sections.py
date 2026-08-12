@@ -480,3 +480,48 @@ class ChartWordingTests(unittest.TestCase):
         self.assertIn("_theme.categorical(", src)
         block = src[src.index("Funding calls discovered by member"):]
         self.assertIn("categorical(", block[:600])
+
+
+class TheIntakeCardsCloseTheArithmeticTests(unittest.TestCase):
+    """"Excel imported 52" could not be reconciled against the 63 records actually imported.
+
+    The tile counted unique rows only, so the 11 the dedupe caught were invisible and anyone
+    comparing the report with the workbook found a shortfall with no explanation. Unique stays
+    the headline — it is what every other figure in the report counts — with the duplicates
+    stated beside it so total = unique + duplicates is visible on the card.
+    """
+
+    def _block(self) -> str:
+        src = _source()
+        return src[src.index("# EVERY RECORD, THE DUPLICATES"):src.index("if scans.empty:")]
+
+    def test_it_counts_all_rows_not_only_the_unique_ones(self):
+        block = self._block()
+        self.assertIn('agg(total=("dup", "size"), dups=("dup", "sum"))', block)
+        # the old version filtered duplicates out before counting anything
+        self.assertNotIn('rfps_all[~rfps_all["is_duplicate"]]["source"]', block)
+
+    def test_every_route_reports_its_duplicates(self):
+        block = self._block()
+        self.assertIn("duplicate{'s' if _d != 1 else ''}", block)
+        self.assertIn('delta_color="off"', block)   # a count, not a trend
+
+    def test_a_total_card_leads_the_row(self):
+        block = self._block()
+        i_total = block.index('"Records ingested"')
+        i_routes = block.index("_labels.get(str(_src)")
+        self.assertLess(i_total, i_routes)
+
+    def test_unique_remains_the_headline_number(self):
+        # Every other figure in the report counts unique rows; leading with the total would make
+        # the card disagree with the funnel directly below it.
+        block = self._block()
+        self.assertIn('_labels.get(str(_src), str(_src).title()), f"{_u:,}"', block)
+
+    def test_the_caption_says_which_number_is_which(self):
+        self.assertIn("is the UNIQUE calls kept", _source())
+        self.assertIn("duplicates the dedupe removed", _source())
+
+    def test_a_route_with_no_duplicates_shows_no_delta(self):
+        # "0 duplicates" on a clean route is noise.
+        self.assertIn("if _d else None", self._block())

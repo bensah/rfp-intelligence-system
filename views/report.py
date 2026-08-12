@@ -1659,18 +1659,48 @@ if _show_sec("1"):
     # system-wide counter gone it is now the honest headline for a tenant — their eligibility
     # scans, their manual submissions, and the rows migrated from the legacy workbook.
     if not rfps_all.empty and "source" in rfps_all.columns:
-        _intake = rfps_all[~rfps_all["is_duplicate"]]["source"].fillna("(unknown)")
+        # EVERY RECORD, THE DUPLICATES, AND WHAT'S LEFT (owner, 2026-08-12).
+        #
+        # The tile showed unique rows only, so "Excel imported 52" could not be reconciled with
+        # the 63 records actually imported — the 11 the dedupe caught were invisible, and a
+        # reader comparing the report against the workbook finds a shortfall with no explanation.
+        # Unique stays the headline, because it is what every other figure here counts; the
+        # duplicates are stated beside it so the arithmetic is closed.
+        _src_col = rfps_all["source"].fillna("(unknown)").astype(str).str.strip()
+        _dup_col = rfps_all["is_duplicate"].astype(bool)
         _labels = {"auto": "System eligibility auto-scan", "migration": "Excel imported",
                    "manual": "Manually submitted via platform"}
-        _counts = _intake.value_counts()
-        if not _counts.empty:
-            _ic = st.columns(min(4, len(_counts)))
-            for _i, (_src, _n) in enumerate(_counts.items()):
+        _by_src = (pd.DataFrame({"src": _src_col.str.lower(), "dup": _dup_col})
+                   .groupby("src").agg(total=("dup", "size"), dups=("dup", "sum")))
+        _by_src["unique"] = _by_src["total"] - _by_src["dups"]
+        _by_src = _by_src.sort_values("total", ascending=False)
+
+        if not _by_src.empty:
+            _n_all = int(_by_src["total"].sum())
+            _n_dup = int(_by_src["dups"].sum())
+            _ic = st.columns(min(4, len(_by_src) + 1))
+            _ic[0].metric(
+                "Records ingested", f"{_n_all:,}",
+                delta=(f"{_n_dup:,} duplicate{'s' if _n_dup != 1 else ''}" if _n_dup else None),
+                delta_color="off",
+                help="Every row stored for this organisation, from all intake routes, including "
+                     "the duplicates the dedupe caught.")
+            for _i, (_src, _row) in enumerate(_by_src.iterrows(), start=1):
                 if _i >= len(_ic):
                     break
-                _ic[_i].metric(_labels.get(str(_src).lower(), str(_src).title()), f"{int(_n):,}")
-            st.caption("Where this tenant's stored calls came from — all-time, not "
-                       "period-filtered, so it reconciles with the totals below.")
+                _u, _d, _t = int(_row["unique"]), int(_row["dups"]), int(_row["total"])
+                _ic[_i].metric(
+                    _labels.get(str(_src), str(_src).title()), f"{_u:,}",
+                    delta=(f"{_d:,} duplicate{'s' if _d != 1 else ''}" if _d else None),
+                    delta_color="off",
+                    help=(f"{_t:,} record(s) arrived by this route; {_d:,} were duplicates of "
+                          f"calls already stored, leaving {_u:,} unique."))
+            st.caption(
+                f"Where this organisation's calls came from — all-time, not period-filtered. "
+                f"The large number on each card is the UNIQUE calls kept, which is what every "
+                f"other figure in this report counts; the grey number beside it is the "
+                f"duplicates the dedupe removed. {_n_all:,} records in total, "
+                f"{_n_dup:,} of them duplicates.")
 
     if scans.empty:
         st.info("No scans recorded in this period yet. Trigger one from "
