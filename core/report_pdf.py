@@ -51,7 +51,7 @@ TABLE_MAX_ROWS = 18
 
 @dataclass
 class Block:
-    kind: str      # "intro" | "section" | "sub" | "kpis" | "chart" | "table" | "note"
+    kind: str   # "intro"|"section"|"sub"|"kpis"|"chart"|"table"|"image"|"note"
     title: str = ""
     body: str = ""
     items: list = field(default_factory=list)
@@ -78,6 +78,16 @@ class Document:
         if self._pending:
             self.blocks.append(Block("kpis", items=list(self._pending)))
             self._pending.clear()
+
+    def row_break(self) -> None:
+        """End the current KPI row.
+
+        Tiles are buffered until the next heading or chart, so two consecutive `st.columns` rows
+        of metrics arrive as one long run and wrap wherever the page width happens to fall. The
+        page calls this between them when the grouping carries meaning — counts and the ratio they
+        produce on one row, the money on the next.
+        """
+        self._flush()
 
     def section(self, title: str, caption: str = "") -> None:
         self._flush()
@@ -153,8 +163,29 @@ class Document:
         legend.setdefault("font", {})["size"] = 9
         # Small fixed margins; automargin grows them where the labels need it.
         layout["margin"] = {"t": 12, "b": 20, "l": 20, "r": 16, "pad": 4}
+        # Em dashes in a chart title read as a gap at caption size; an en dash is enough.
         self.blocks.append(Block("chart", fig_json=json.dumps(spec), height=h,
-                                 title=caption.strip()))
+                                 title=caption.strip().replace(" — ", " – ")))
+
+    def image(self, fig, title: str = "", height: int = 300) -> None:
+        """A matplotlib figure, embedded as a PNG data URI.
+
+        The word cloud is the ONE raster thing in the document, and unavoidably so: it is a
+        bitmap by nature. Everything else stays vector. Rendered at 2x for print, so it does not
+        look soft next to type that is.
+        """
+        self._flush()
+        try:
+            import base64
+            import io as _io
+            buf = _io.BytesIO()
+            fig.savefig(buf, format="png", dpi=200, bbox_inches="tight",
+                        facecolor="white", edgecolor="none")
+            buf.seek(0)
+            data = base64.b64encode(buf.read()).decode("ascii")
+        except Exception:
+            return
+        self.blocks.append(Block("image", title=title, body=data, height=height))
 
     def table(self, df, title: str = "") -> None:
         """Store a table. Truncated to a readable length, with the count kept."""
@@ -173,8 +204,48 @@ class Document:
         self.blocks.append(Block("table", title=title, columns=cols, rows=rows,
                                  total_rows=total))
 
+    _CONTENT = ("kpis", "chart", "table", "image", "note", "intro")
+
     def finish(self) -> "Document":
+        """Flush pending tiles, then DROP HEADINGS THAT LABEL NOTHING.
+
+        A subsection heading is emitted by the page whether or not the block beneath it has data
+        — a metric switched off in the filter, a chart with an empty frame, a table with no rows.
+        On screen that costs a line of whitespace nobody notices. In a document it produced
+        "Team Touchpoints" immediately followed by "Donor Touchpoints" with nothing between, and
+        a "Conversion rates" heading over blank space: labels that promise content and then
+        point at nothing.
+        """
         self._flush()
+        kept: list[Block] = []
+        for i, b in enumerate(self.blocks):
+            if b.kind == "sub":
+                # keep only if real content follows before the next heading
+                has_content = False
+                for nxt in self.blocks[i + 1:]:
+                    if nxt.kind in ("sub", "section"):
+                        break
+                    if nxt.kind in self._CONTENT:
+                        has_content = True
+                        break
+                if not has_content:
+                    continue
+            kept.append(b)
+        # and a section that ended up with nothing at all
+        out: list[Block] = []
+        for i, b in enumerate(kept):
+            if b.kind == "section":
+                has_content = False
+                for nxt in kept[i + 1:]:
+                    if nxt.kind == "section":
+                        break
+                    if nxt.kind in self._CONTENT or nxt.kind == "sub":
+                        has_content = True
+                        break
+                if not has_content:
+                    continue
+            out.append(b)
+        self.blocks = out
         return self
 
     def __len__(self) -> int:
@@ -284,6 +355,7 @@ _CSS = """
 
   /* ── charts ─────────────────────────────────────────────────────────────────────── */
   .chart { border: 1px solid #E3EAEE; border-radius: 5px; padding: 4px 6px; background: #fff; }
+  img.img { border: 1px solid #E3EAEE; border-radius: 5px; display: block; }
 
   /* ── tables ─────────────────────────────────────────────────────────────────────── */
   table.data { width: 100%%; border-collapse: collapse; font-size: 8.5pt; }
@@ -376,8 +448,15 @@ def build_html(doc: Document, *, title: str, subtitle: str, meta: dict[str, str]
             out.append(f"<div class='block'><div class='chart' id='fig{i}' "
                        f"style='height:{b.height}px'></div>")
             if b.title:
-                out.append(f"<p class='figcap'><span class='n'>Figure {i + 1}</span> — "
+                out.append(f"<p class='figcap'><span class='n'>Figure {i + 1}:</span> "
                            f"{_html.escape(b.title)}</p>")
+            out.append("</div>")
+        elif b.kind == "image":
+            out.append("<div class='block'>")
+            if b.title:
+                out.append(f"<h3 class='sub'>{_html.escape(b.title)}</h3>")
+            out.append(f"<img class='img' src='data:image/png;base64,{b.body}' "
+                       f"style='width:100%;height:auto' />")
             out.append("</div>")
         elif b.kind == "table":
             out.append("<div class='block'><table class='data'>")

@@ -144,6 +144,7 @@ class TheDocumentStructureTests(unittest.TestCase):
     def test_content_is_escaped(self):
         doc = rp.Document()
         doc.section("<script>x</script>", "&caption")
+        doc.chart(_fig())          # content, or the empty section is pruned before rendering
         h = rp.build_html(doc.finish(), title="<b>t</b>", subtitle="s", meta={})
         self.assertNotIn("<script>x</script>", h)
         self.assertIn("&lt;script&gt;", h)
@@ -230,9 +231,6 @@ class TheFilenameTests(unittest.TestCase):
             self.assertIn(part, block)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
 
 class TheLiveDocumentTests(unittest.TestCase):
     """The bug that emptied every PDF of its KPI cards.
@@ -312,6 +310,7 @@ class TheOpeningSummaryTests(unittest.TestCase):
         doc = rp.Document()
         doc.intro("Screened 243 calls, 30 Proceed.")
         doc.section("1 · Scan activity")
+        doc.chart(_fig())          # content, or the empty section is pruned
         h = rp.build_html(doc.finish(), title="t", subtitle="s", meta={})
         self.assertIn("At a glance", h)
         # Against the section HEADING, not the first mention: the cover's Contents list names
@@ -378,3 +377,97 @@ class TheCoverFitsThePageTests(unittest.TestCase):
         doc = rp.Document()
         h = rp.build_html(doc.finish(), title="x", subtitle="y", meta={})
         self.assertIn("overflow-wrap: break-word", h)
+
+
+class HeadingsThatLabelNothingAreDroppedTests(unittest.TestCase):
+    """A heading is emitted whether or not the block beneath it has data. On screen that costs a
+    line of whitespace; in a document it promises content and points at nothing — which is how
+    "Team Touchpoints" ended up immediately above "Donor Touchpoints", and "Conversion rates"
+    over blank space."""
+
+    def test_a_heading_with_nothing_after_it_is_removed(self):
+        doc = rp.Document()
+        doc.section("S")
+        doc.sub("Orphan")
+        doc.sub("Real")
+        doc.chart(_fig("T"))
+        doc.finish()
+        self.assertEqual([b.title for b in doc.blocks if b.kind == "sub"], ["Real"])
+
+    def test_a_heading_followed_only_by_another_heading_is_removed(self):
+        doc = rp.Document()
+        doc.section("S")
+        doc.sub("First")
+        doc.sub("Second")
+        doc.chart(_fig())
+        self.assertEqual([b.title for b in doc.finish().blocks if b.kind == "sub"], ["Second"])
+
+    def test_cards_count_as_content(self):
+        doc = rp.Document()
+        doc.section("S")
+        doc.sub("Team touchpoints")
+        doc.metric("Meetings logged", 106)
+        doc.finish()
+        self.assertIn("Team touchpoints", [b.title for b in doc.blocks if b.kind == "sub"])
+
+    def test_a_section_with_nothing_in_it_is_removed(self):
+        doc = rp.Document()
+        doc.section("Empty")
+        doc.section("Real")
+        doc.chart(_fig())
+        self.assertEqual([b.title for b in doc.finish().blocks if b.kind == "section"], ["Real"])
+
+
+class FigureAndCardLabellingTests(unittest.TestCase):
+    def test_a_figure_is_labelled_with_a_colon_not_a_dash(self):
+        doc = rp.Document()
+        doc.chart(_fig("Donor decisions"))
+        h = rp.build_html(doc.finish(), title="t", subtitle="s", meta={})
+        self.assertIn("Figure 1:", h)
+        self.assertNotIn("Figure 1</span> —", h)
+
+    def test_an_em_dash_in_a_chart_title_becomes_an_en_dash(self):
+        doc = rp.Document()
+        doc.chart(_fig("Lead applicant — top 10"))
+        self.assertNotIn("—", doc.blocks[0].title)
+        self.assertIn("–", doc.blocks[0].title)
+
+    def test_a_row_break_keeps_two_card_rows_apart(self):
+        # Without it, two st.columns rows of metrics arrive as one run and wrap wherever the
+        # page width falls, which split "counts + ratio" from "amounts".
+        doc = rp.Document()
+        for k in ("Submitted", "Approved", "Win rate", "Secured / Requested"):
+            doc.metric(k, 1)
+        doc.row_break()
+        for k in ("Requested", "Secured", "Unsecured"):
+            doc.metric(k, 1)
+        rows = [len(b.items) for b in doc.finish().blocks if b.kind == "kpis"]
+        self.assertEqual(rows, [4, 3])
+
+
+class TheWordCloudIsIncludedTests(unittest.TestCase):
+    def test_a_matplotlib_figure_is_embedded_as_an_image(self):
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except Exception:
+            self.skipTest("matplotlib not available")
+        fig, ax = plt.subplots(figsize=(4, 2))
+        ax.text(0.5, 0.5, "focus areas")
+        ax.axis("off")
+        doc = rp.Document()
+        doc.image(fig, height=280)
+        plt.close(fig)
+        self.assertEqual(doc.blocks[0].kind, "image")
+        h = rp.build_html(doc.finish(), title="t", subtitle="s", meta={})
+        self.assertIn("data:image/png;base64,", h)
+
+    def test_a_figure_that_cannot_be_saved_is_skipped_not_fatal(self):
+        doc = rp.Document()
+        doc.image(object())
+        self.assertEqual(len(doc.finish().blocks), 0)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

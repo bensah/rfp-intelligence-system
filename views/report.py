@@ -1867,6 +1867,15 @@ if _show_sec("1"):
                     fig_wc.tight_layout(pad=0)
                     with st.container(border=True):
                         st.pyplot(fig_wc, width='stretch')
+                    # Into the export as well. It is the ONE raster thing in the document — a
+                    # word cloud is a bitmap by nature — and it was simply absent before, which
+                    # left the "Focus areas" heading over nothing in the PDF.
+                    try:
+                        _wdoc = _report_pdf.current()
+                        if _wdoc is not None:
+                            _wdoc.image(fig_wc, height=300)
+                    except Exception:
+                        pass
                     plt.close(fig_wc)
                 except ImportError:
                     # Graceful fallback when WordCloud / matplotlib not
@@ -2023,7 +2032,8 @@ if _show_sec("1"):
             fig_cyc = px.histogram(
                 cyc, x="days", nbins=20,
                 title="Distribution of days from Search Date → Date Completed",
-                labels={"days": "Days", "count": "Funding calls"},
+                labels={"days": "Days from discovery to submission",
+                        "count": "Number of funding calls"},
             )
             fig_cyc.update_layout(height=280, margin=dict(t=40, b=10))
             _boxed(fig_cyc)
@@ -2074,7 +2084,7 @@ if _show_sec("4"):
     st.markdown("")  # vertical spacer between the two sub-sections
 
     # ─── Donor Touchpoints (external donor engagements) ───────────────────────
-    _h5("Donor Touchpoints")
+    _h5("Donor Engagements")
     n_engagements = int(len(engagements))
     n_donors = (int(engagements["donor"].nunique())
                 if (not engagements.empty and "donor" in engagements.columns) else 0)
@@ -2583,7 +2593,7 @@ if _show_sec("3"):
             })
             fig_dec = px.bar(
                 dec_df, x="decision", y="count", text="count",
-                title="Team decisions — our own Proceed / Park / Decline",
+                title="Team decisions: our own Proceed / Park / Decline",
                 color="decision",
                 # Fixed semantic order, not frequency order: the shade then means the same thing
                 # on every report instead of tracking whichever decision happens to dominate.
@@ -2618,40 +2628,40 @@ if _show_sec("3"):
         elif fig_time is not None:
             _boxed(fig_time)
 
-        if _show("s3_autorec") and not _proc_dec.empty:
-            # Of the RFPs we chose to pursue, what had the auto-scorer recommended?
-            # Rows other than "Proceed" are where human judgment overrode a
-            # park/decline suggestion — the most decision-relevant slice.
-            _ar = (
-                _proc_dec.assign(
-                    ar=_proc_dec["auto_recommendation"].fillna("—").replace("", "—").str.title()
-                )
-                .groupby("ar").size().reset_index(name="count")
-                .sort_values("count", ascending=False)
-            )
-            _n_proc = int(len(_proc_dec))
-            _n_agree = int(
-                _proc_dec["auto_recommendation"].fillna("").str.lower()
-                .str.startswith("proceed").sum()
-            )
+        if _show("s3_autorec") and not decided.empty:
+            # SYSTEM vs HUMAN, which is the only reason to show this at all.
+            #
+            # It used to list the auto-scorer's recommendation for TEAM-PROCEED rows only, under a
+            # title promising a comparison: one column of recommendations and one count, with the
+            # team's decision nowhere in it. Every row was a Proceed, so there was nothing to
+            # compare against.
+            #
+            # Now it is a cross-tab — the scorer's recommendation down the side, the team's
+            # decision across the top — so agreement sits on the diagonal and every override is
+            # visible as an off-diagonal count.
+            _ar_src = decided.copy()
+            _ar_src["_auto"] = (_ar_src["auto_recommendation"].fillna("").astype(str)
+                                .str.strip().str.title().replace("", "No recommendation"))
+            _ar_src["_team"] = (_ar_src["decision"].fillna("").astype(str)
+                                .str.strip().str.title().replace("", "No decision"))
+            _order = ["Proceed", "Park", "Decline", "No recommendation", "No decision"]
+            _xtab = pd.crosstab(_ar_src["_auto"], _ar_src["_team"])
+            _xtab = _xtab.reindex(index=[r for r in _order if r in _xtab.index],
+                                  columns=[c for c in _order if c in _xtab.columns])
+            _agree = int(sum(_xtab.at[k, k] for k in _xtab.index if k in _xtab.columns))
+            _total = int(_xtab.to_numpy().sum())
             with st.expander(
-                f"Auto-recommendation for Proceed RFPs — model agreed on "
-                f"{_n_agree} of {_n_proc}", expanded=False,
+                f"Auto-scorer vs the team — agreed on {_agree} of {_total} decided calls",
+                expanded=False,
             ):
                 st.caption(
-                    "Of the RFPs the team chose to pursue, what the auto-scorer had "
-                    "recommended. Rows other than *Proceed* are where human judgment "
-                    "overrode a park/decline suggestion."
+                    "Rows are what the auto-scorer recommended; columns are what the team "
+                    "decided. The diagonal is agreement; anything off it is a call where the "
+                    "team overrode the scorer."
                 )
-                _table(
-                    _ar.rename(columns={"ar": "What the auto-scorer recommended",
-                                        "count": "Calls the team took forward anyway"}),
-                    # The old title promised a comparison the table did not show. Every row here
-                    # is already a TEAM Proceed; the column is what the scorer had said about it,
-                    # so a row other than "Proceed" is a place the team overrode the scorer.
-                    title="Auto-scorer recommendation on the calls the team chose to pursue",
-                    width='stretch', hide_index=True,
-                )
+                _table(_xtab.reset_index().rename(columns={"_auto": "Auto-scorer said"}),
+                       title="Auto-scorer recommendation vs the team's decision",
+                       width='stretch', hide_index=True)
 
         # ───────────── Donor Decisions ─────────────────────────────────────────
         # The charts above are OUR decisions (Proceed / Park / Decline — whether to bid).
@@ -2662,9 +2672,17 @@ if _show_sec("3"):
         # the default for everything still in flight, so leaving it in produces one bar that
         # dwarfs every real outcome and says nothing about donor decisions. The count of those
         # awaiting a decision is stated as a caption instead.
-        if _show("s3_donordec") and "donor_decision" in _proc_dec.columns:
-            _h5("Donor decisions — the funder's response to what we submitted")
-            _dd = _proc_dec["donor_decision"].fillna("").astype(str).str.strip()
+        # ALL Proceed calls, not only those decided inside the period. Period-filtering dropped
+        # Not Approved and Submitted from the chart entirely — 13 real donor decisions exist and
+        # only 6 were drawn, so a funder's rejection simply did not appear. A donor decision is a
+        # durable outcome, like the Proceed decision itself; the caption says the scope.
+        _proc_dd = rfps_all[
+            (~rfps_all["is_duplicate"])
+            & rfps_all["decision"].fillna("").str.strip().str.lower().str.startswith("proceed")
+        ] if not rfps_all.empty and "decision" in rfps_all.columns else _proc_dec
+        if _show("s3_donordec") and "donor_decision" in _proc_dd.columns:
+            _h5("Donor decisions: the funder's response to what we submitted")
+            _dd = _proc_dd["donor_decision"].fillna("").astype(str).str.strip()
             _pending = int((_dd.str.lower().isin(["", "not submitted"])).sum())
             _dd = _dd[~_dd.str.lower().isin(["", "not submitted"])]
             if _dd.empty:
@@ -2685,8 +2703,9 @@ if _show_sec("3"):
                 _boxed(fig_dd)
             if _pending:
                 st.caption(
-                    f"{_pending} Proceed RFP(s) have no donor decision yet — not submitted, or "
-                    "submitted and awaiting an outcome. They are excluded from the chart above."
+                    f"All-time across this organisation's Proceed calls, not filtered by the "
+                    f"period above. {_pending} have no donor decision yet — not submitted, or "
+                    "submitted and awaiting an outcome — and are excluded from the chart."
                 )
 
     st.divider()
@@ -2778,6 +2797,14 @@ if _show_sec("5"):
                   help="Approved ÷ Applications submitted. '—' with no submissions.")
         k4.metric("Secured ÷ Requested", f"{sec_ratio:.1f}%",
                   help="Total secured ÷ total requested, in USD.")
+        # Keep the two rows apart in the export as well; without this they merge into one run
+        # of seven tiles and wrap wherever the width falls.
+        try:
+            _rb = _report_pdf.current()
+            if _rb is not None:
+                _rb.row_break()
+        except Exception:
+            pass
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Requested (USD)", f"${total_req:,.0f}")
         m2.metric("Total Secured (USD)", f"${amt_secured:,.0f}",
