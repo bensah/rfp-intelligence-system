@@ -69,3 +69,28 @@ def get_snapshot(rid: Optional[str]) -> Optional[dict]:
         return None
     sel = entry.get("selection")
     return sel if isinstance(sel, dict) else None
+
+
+def restore_items(saved_items, all_keys, saved_universe=None) -> set:
+    """Which metrics a restored report should show.
+
+    A snapshot stores the metrics that were ON. It does NOT record which metrics existed at the
+    time, so a metric added to the report LATER is absent from every older snapshot — and
+    reopening one silently hid it. That is what "charts went missing" was: the saved report
+    predated the metric, so the checkbox came back unticked.
+
+    New snapshots record their key universe (`all_items`), which makes the distinction exact:
+    anything in that universe but not in `items` was deliberately switched off and stays off.
+
+    For OLDER snapshots there is no universe to compare against, so the ambiguity is real and has
+    to be resolved one way: a key the snapshot never knew about is treated as ON, matching the
+    page's own "everything defaults to on". The cost is that a deliberate de-selection in a
+    pre-`all_items` snapshot is not preserved — accepted because the alternative is a report that
+    silently drops content the reader has no way to discover.
+    """
+    all_keys = set(all_keys or [])
+    if not isinstance(saved_items, list):
+        return set(all_keys)                     # nothing saved -> everything on
+    kept = {k for k in saved_items if k in all_keys}
+    universe = set(saved_universe) if isinstance(saved_universe, list) else set(kept)
+    return kept | (all_keys - universe)

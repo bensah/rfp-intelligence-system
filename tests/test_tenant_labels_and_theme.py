@@ -157,3 +157,39 @@ class TheSharedFigureStyleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class DistinctColoursForUnorderedCategoriesTests(unittest.TestCase):
+    """A single-hue ramp is right for an ordered scale and wrong for one-series-per-person:
+    thirteen steps of the same turquoise are indistinguishable, which is what the per-member
+    stacked chart looked like."""
+
+    def test_every_colour_is_distinct(self):
+        for n in (3, 8, 12, 13, 20, 30):
+            with self.subTest(n=n):
+                cols = theme.categorical(n)
+                self.assertEqual(len(cols), n)
+                self.assertEqual(len(set(cols)), n, "two categories share a colour")
+
+    def test_the_primary_leads(self):
+        self.assertEqual(theme.categorical(5)[0], theme.TURQUOISE)
+
+    def test_dark_red_is_never_spent_on_a_category(self):
+        # It means "negative" everywhere else; using it for whoever is sixth in a legend would
+        # empty it of that meaning.
+        for n in (5, 12, 25):
+            with self.subTest(n=n):
+                self.assertNotIn(theme.DARK_RED, theme.categorical(n))
+
+    def test_the_house_dark_blue_is_not_used(self):
+        self.assertFalse(any("003e78" in c.lower() for c in theme.categorical(24)))
+
+    def test_none_requested_gives_none(self):
+        self.assertEqual(theme.categorical(0), [])
+        self.assertEqual(theme.categorical(-2), [])
+
+    def test_beyond_the_accent_list_it_lightens_rather_than_repeats(self):
+        base = theme.categorical(12)
+        longer = theme.categorical(24)
+        self.assertEqual(longer[:12], base)          # stable prefix
+        self.assertEqual(len(set(longer)), 24)

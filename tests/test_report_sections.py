@@ -417,3 +417,55 @@ class TheReportIdentityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class RestoringASnapshotDoesNotHideNewMetricsTests(unittest.TestCase):
+    """Why charts "went missing".
+
+    A snapshot records the metrics that were ON, not which metrics EXISTED. Every metric added
+    to the report after a snapshot was saved was therefore absent from it, and reopening that
+    snapshot brought the checkbox back unticked and the chart quietly gone. Six of the live
+    snapshots were in exactly that state.
+    """
+
+    def test_a_metric_the_snapshot_never_knew_about_is_shown(self):
+        from core.report_snapshots import restore_items
+        got = restore_items(["a", "b"], {"a", "b", "c"})
+        self.assertEqual(got, {"a", "b", "c"})
+
+    def test_a_deliberate_de_selection_is_respected_when_the_universe_is_known(self):
+        from core.report_snapshots import restore_items
+        got = restore_items(["a", "c"], {"a", "b", "c"}, ["a", "b", "c"])
+        self.assertEqual(got, {"a", "c"})
+
+    def test_nothing_saved_means_everything_on(self):
+        from core.report_snapshots import restore_items
+        self.assertEqual(restore_items(None, {"a", "b"}), {"a", "b"})
+
+    def test_keys_that_no_longer_exist_are_dropped(self):
+        from core.report_snapshots import restore_items
+        self.assertEqual(restore_items(["a", "gone"], {"a", "b"}, ["a", "b"]), {"a"})
+
+    def test_new_snapshots_record_their_key_universe(self):
+        # Without this the ambiguity is permanent.
+        src = _source()
+        self.assertIn('"all_items": sorted(_ALL_KEYS)', src)
+        self.assertIn("restore_items(_items_saved, _ALL_KEYS, _sel(\"all_items\"))", src)
+
+
+class ChartWordingTests(unittest.TestCase):
+    """"RFPs" excludes calls for proposals and every other solicitation type we track."""
+
+    def test_no_chart_title_calls_them_RFPs(self):
+        src = _source()
+        offenders = []
+        for line in src.splitlines():
+            if re.search(r"title\s*=\s*f?\"[^\"]*\bRFPs?\b", line):
+                offenders.append(line.strip()[:90])
+        self.assertEqual(offenders, [], f"chart titles still say RFPs: {offenders}")
+
+    def test_the_member_chart_gives_each_person_their_own_colour(self):
+        src = _source()
+        self.assertIn("_theme.categorical(", src)
+        block = src[src.index("Funding calls discovered by member"):]
+        self.assertIn("categorical(", block[:600])

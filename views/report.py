@@ -649,9 +649,12 @@ _ALL_SEC_IDS = [sid for sid, _, _ in _REPORT_SECTIONS]
 _secs_saved = _sel("secs")
 _restored_secs = ([s for s in _secs_saved if s in _ALL_SEC_IDS]
                   if isinstance(_secs_saved, list) else list(_ALL_SEC_IDS))
+# A snapshot records the metrics that were ON, not which metrics EXISTED. So every metric added
+# to the report after a snapshot was saved was absent from it, and reopening that snapshot came
+# back with the checkbox unticked and the chart quietly gone. New snapshots also record their key
+# universe, which makes the distinction exact from here on.
 _items_saved = _sel("items")
-_restored_items = ({k for k in _items_saved if k in _ALL_KEYS}
-                   if isinstance(_items_saved, list) else set(_ALL_KEYS))
+_restored_items = report_snapshots.restore_items(_items_saved, _ALL_KEYS, _sel("all_items"))
 
 # Built every run (even when the expander is collapsed — Streamlit still
 # executes the widgets inside it), so the filter applies without re-opening.
@@ -774,6 +777,11 @@ if _gen_col.button("▶ Generate report", type="primary",
             "view": bucket_mode,
             "secs": sorted(_picked_secs),
             "items": sorted(_selected_items),
+            # The metrics that EXISTED when this was saved. Without it, a metric added later
+            # cannot be told apart from one deliberately switched off, and restoring has to
+            # guess — see report_snapshots.restore_items.
+            "all_items": sorted(_ALL_KEYS),
+            "all_secs": sorted(_ALL_SEC_IDS),
         },
         updated_by=(st.session_state.get("app_user") or {}).get("email"),
     )
@@ -961,6 +969,18 @@ def _excel_cell_value(v):
     return v
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def _excel_bytes(scope: str, start_iso: str | None, end_iso: str | None) -> bytes:
+    """`_build_excel_export`, memoised on the same key the data loaders use.
+
+    `st.download_button` needs its bytes up front, so the whole workbook was rebuilt on EVERY
+    rerun whether or not anyone downloaded it — about 0.9s of a ~3s warm render. The key is
+    (scope, period), which is exactly what determines the frames the workbook is built from, and
+    the TTL matches the loaders', so the file cannot be staler than the page showing it.
+    """
+    return _build_excel_export()
+
+
 def _build_excel_export() -> bytes:
     """Multi-sheet workbook of the underlying data for the active period."""
     buf = io.BytesIO()
@@ -1026,7 +1046,7 @@ ac_tip.caption(
 
 ac_excel.download_button(
     "📥 Export Data",
-    data=_build_excel_export(),
+    data=_excel_bytes(_sk, _s_iso, _e_iso),
     file_name=_export_filename("xlsx"),
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     help="Multi-sheet workbook: Summary KPIs + raw data for every section.",
@@ -1405,12 +1425,17 @@ if _show_sec("1"):
                 exp_disc["submitter"] = exp_disc["_members"].map(disp_map).fillna(exp_disc["_members"])
                 stacked_disc = (
                     exp_disc.groupby(["bucket", "submitter"]).size()
-                    .reset_index(name="RFPs discovered")
+                    .reset_index(name="Funding calls discovered")
                 )
                 fig = px.bar(
-                    stacked_disc, x="bucket", y="RFPs discovered",
+                    stacked_disc, x="bucket", y="Funding calls discovered",
                     color="submitter", barmode="stack",
-                    title=f"RFPs discovered by member ({_period_label_str}, {bucket_mode.lower()})",
+                    title=f"Funding calls discovered by member "
+                          f"({_period_label_str}, {bucket_mode.lower()})",
+                    # One colour per member: these categories are people, not an ordered scale,
+                    # so the single-hue ramp made thirteen of them look identical.
+                    color_discrete_sequence=_theme.categorical(
+                        int(stacked_disc["submitter"].nunique())),
                     labels={"bucket": _bucket_label(bucket_mode), "submitter": "Submitted by"},
                 )
                 fig.update_layout(
@@ -1438,8 +1463,8 @@ if _show_sec("1"):
                 # No submitter data — fall back to a plain bucket count
                 disc_df = _bucketed_count(disc["search_date"].dropna(), "RFPs discovered")
                 fig = px.bar(
-                    disc_df, x="bucket", y="RFPs discovered",
-                    title=f"RFPs discovered ({_period_label_str}, {bucket_mode.lower()})",
+                    disc_df, x="bucket", y="Funding calls discovered",
+                    title=f"Funding calls discovered ({_period_label_str}, {bucket_mode.lower()})",
                     labels={"bucket": _bucket_label(bucket_mode)},
                 )
                 fig.update_layout(height=320, margin=dict(t=40, b=10),
@@ -1462,7 +1487,7 @@ if _show_sec("1"):
                 fig_dn = px.bar(
                     donor_counts, x="RFPs", y="Donor", orientation="h",
                     text="RFPs",
-                    title=f"RFPs by donor — top 15 ({_period_label_str})",
+                    title=f"Funding calls by donor — top 15 ({_period_label_str})",
                     color_discrete_sequence=[_theme.TURQUOISE],
                 )
                 fig_dn.update_layout(
@@ -1680,7 +1705,7 @@ if _show_sec("1"):
             fig_cyc = px.histogram(
                 cyc, x="days", nbins=20,
                 title="Distribution of days from Search Date → Date Completed",
-                labels={"days": "Days", "count": "RFPs"},
+                labels={"days": "Days", "count": "Funding calls"},
             )
             fig_cyc.update_layout(height=280, margin=dict(t=40, b=10))
             _boxed(fig_cyc)
@@ -1988,7 +2013,7 @@ if _show_sec("4"):
                     if not counts.empty:
                         fig = px.bar(
                             counts, x="RFPs", y=col_label, orientation="h",
-                            title=f"{col_label} — top 10 (Proceed RFPs)", text="RFPs",
+                            title=f"{col_label} — top 10 (Proceed calls)", text="RFPs",
                         )
                         # Shaded by RANK: the busiest partner takes the primary, the tail fades
                         # toward the light end. `counts` is already sorted descending, and the
@@ -2159,7 +2184,7 @@ if _show_sec("2"):
                 _PS_COLORS = _theme.sequence_for(list(ps["Status"]),
                                                  order=_theme.PROGRESS_ORDER)
                 fig_ps = px.bar(ps, x="Status", y="RFPs", text="RFPs",
-                                title="Progress status — Proceed RFPs", color="Status",
+                                title="Progress status — Proceed calls", color="Status",
                                 category_orders={"Status": _order},
                                 color_discrete_map=_PS_COLORS)
                 fig_ps.update_layout(height=300, showlegend=False,
@@ -2253,7 +2278,7 @@ if _show_sec("3"):
                     list(dec_df["decision"]), order=_theme.DECISION_ORDER),
             )
             fig_dec.update_layout(height=300, showlegend=False,
-                                  xaxis_title=None, yaxis_title="RFPs")
+                                  xaxis_title=None, yaxis_title="Funding calls")
 
         if _show("s3_dectime") and not _proc_dec.empty:
             dec_dates = pd.to_datetime(_proc_dec["decision_date"], errors="coerce").dropna()

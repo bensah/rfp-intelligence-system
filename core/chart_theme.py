@@ -114,6 +114,50 @@ DONOR_DECISION_ORDER = ["Approved", "Under Review", "Submitted", "Not Approved"]
 SUBMITTED_ORDER = ["Submitted", "Unsubmitted"]
 
 
+# Accents for charts whose categories are UNRELATED rather than ordered — one series per team
+# member, say. A single-hue ramp is the right choice for an ordered scale and the wrong one here:
+# thirteen steps of the same turquoise are indistinguishable, which is exactly what the
+# per-member stacked chart looked like.
+#
+# Dark Red is deliberately absent: it means "negative" everywhere else in the report, and spending
+# it on whoever happens to be sixth in a legend would empty it of that meaning. The house dark
+# blue is absent too — it reads as page chrome. Everything here is the palette's accents and
+# their tints/shades, which the brand guidance allows for graphs.
+_CATEGORICAL = [
+    "#117996",   # turquoise (primary)
+    "#1ED47F",   # green
+    "#F4B71B",   # gold
+    "#6EDBCD",   # teal
+    "#0E5A70",   # deep turquoise
+    "#A5C8D6",   # pale blue
+    "#14A06B",   # deep green
+    "#C9A227",   # deep gold
+    "#4A7A96",   # slate teal
+    "#9BD9C6",   # pale teal
+    "#E3D08A",   # pale gold
+    "#7FB2C4",   # mid blue
+]
+
+
+def categorical(n: int) -> list[str]:
+    """`n` visually distinct colours for unordered categories.
+
+    Beyond the accent list the colours are lightened progressively rather than repeated, so a
+    long legend stays readable instead of pairing two series in the same colour.
+    """
+    if n <= 0:
+        return []
+    out = list(_CATEGORICAL[:n])
+    round_no = 1
+    while len(out) < n:
+        for base in _CATEGORICAL:
+            if len(out) >= n:
+                break
+            out.append(_mix(base, "#FFFFFF", min(0.62, 0.22 * round_no)))
+        round_no += 1
+    return out[:n]
+
+
 def style(fig, *, height: int | None = None, showlegend: bool | None = None):
     """The shared look: transparent ground, one font, restrained gridlines.
 

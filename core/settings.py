@@ -12,7 +12,7 @@ from typing import Optional
 
 from db.supabase_client import get_client
 
-_CACHE: dict[str, tuple[float, str]] = {}
+_CACHE: dict[str, tuple[float, Optional[str]]] = {}   # value None = cached MISS
 _TTL = 60.0  # seconds
 
 
@@ -70,7 +70,10 @@ def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
             # tenant_settings table missing (pre-075) → fall back to the global store below
     cached = _CACHE.get(key)
     if cached and _now() - cached[0] < _TTL:
-        return cached[1]
+        # A cached MISS is stored as None. Return the caller's default for it, exactly as the
+        # tenant-scoped branch does — returning the None itself would hand every caller that
+        # relies on a default a null instead.
+        return cached[1] if cached[1] is not None else default
     try:
         sb = get_client()
         res = sb.table("app_settings").select("value").eq("key", key).limit(1).execute()
@@ -78,9 +81,18 @@ def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
         val = rows[0]["value"] if rows else None
     except Exception:
         val = None
+    # Cache the MISS as well, exactly as the tenant-scoped branch above does. Returning early
+    # here meant an UNSET key was re-queried on every single read — and a page that resolves a
+    # setting inside a per-row loop then makes one network round trip per row. The report spent
+    # 323 of 337 seconds in this function, across 2122 calls at ~150ms each, because two
+    # newly-added keys happened to be unset.
+    #
+    # The consequence to know: a key written OUTSIDE the app (straight into the table) can take
+    # up to _TTL to appear. `set_setting` primes the cache on write, so changes made through the
+    # app are visible immediately.
+    _CACHE[key] = (_now(), val)
     if val is None:
         return default
-    _CACHE[key] = (_now(), val)
     return val
 
 
