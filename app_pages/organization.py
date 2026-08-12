@@ -37,7 +37,7 @@ org = settings.get_org(view_tid)
 prof = _orgp.get_profile(view_tid)
 
 
-@st.dialog("Edit entity", width="large")
+@st.dialog("Edit tenant", width="large")
 def _edit_entity_dialog() -> None:
     """In-place overlay reusing the EXACT Settings → Setup form (one source). Edits the
     entity currently being viewed (view_tid), so a super_user editing a view-as tenant
@@ -149,7 +149,7 @@ def _rag_bar_html(pct: float, label: str) -> str:
 _hl, _hr = st.columns([5, 1.4])
 _hl.title("Your Organization")
 if can_edit:
-    if _hr.button("✏️ Edit entity", width="stretch", type="primary"):
+    if _hr.button("✏️ Edit tenant", width="stretch", type="primary"):
         _edit_entity_dialog()
 else:
     _hr.caption("View only — editing is restricted to app owners.")
@@ -171,7 +171,7 @@ with _main:
         except Exception:
             pass
     with _top[1]:
-        st.subheader(org.get("org_name") or "This entity")
+        st.subheader(org.get("org_name") or "This tenant")
         _sub_bits = [b for b in (org.get("org_team"), org.get("org_country")) if b]
         if _sub_bits:
             st.caption(" · ".join(_sub_bits))

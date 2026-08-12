@@ -20,6 +20,7 @@ import streamlit as st
 from core import ui_links as _links
 
 from core import opportunity_feed as _feed
+from core import tenant_labels as _labels
 from db.supabase_client import get_client, _tenant_scope_tid
 
 _FIELDS = ("uid,opportunity_title,funding_agency,call_award_value,currency,"
@@ -221,10 +222,12 @@ def render_opportunity_rail() -> None:
           "Ranked from the whole catalog against your geography, programme areas and the "
           "funders you work with — including calls your screening didn't pick up.",
           _featured, "Nothing to feature yet — run an extraction.")
-    _card("✅ Top Matches", "Strong fit for this entity (Proceed / Park / high alignment).",
+    _card("✅ Top Matches",
+          _labels.fill("Strong fit for {tenant} (Proceed / Park / high alignment)."),
           groups["top_matches"], "No strong matches yet.")
-    _card("💰 Top Funding", "Biggest / most-urgent calls your entity is geographically "
-          "eligible for.",
+    _card("💰 Top Funding",
+          _labels.fill("Biggest / most-urgent calls {tenant} is geographically "
+                       "eligible for."),
           groups["top_funding"], "No live opportunities yet — run a scan.")
     _card("✨ Also Interesting", "Fresh calls that aren't a match but are worth a look.",
           groups["other"], "Nothing else new right now.")

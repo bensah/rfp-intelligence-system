@@ -77,7 +77,7 @@ def _pages(include_admin: bool) -> list:
         st.Page("app_pages/report.py", title="Report", icon="📊", url_path="report"),
         st.Page("app_pages/donors.py", title="Donors", icon="🗺️", url_path="donors"),
         # ── Top-right user-menu pages (sidebar links hidden via CSS) ──
-        st.Page("app_pages/organization.py", title="Entity", icon="🏢",
+        st.Page("app_pages/organization.py", title="Tenant", icon="🏢",
                 url_path="organization"),
         st.Page("app_pages/submit_rfp.py", title="Submit", icon="📝",
                 url_path="submit-new-rfp"),

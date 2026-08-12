@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import os
 import subprocess
 import sys
@@ -146,6 +147,52 @@ class ThePrintLayoutTests(unittest.TestCase):
     def test_charts_are_never_enlarged_only_shrunk(self):
         self.assertIn("if (k >= 1) return;", _source())
 
+    def test_the_button_asks_the_parent_to_print_itself(self):
+        # The button lives in a SANDBOXED iframe. Reaching across to call the parent's print()
+        # from a sandboxed context is a step a browser may refuse; postMessage has no such
+        # failure mode, because the print then originates in the parent realm.
+        src = _source()
+        self.assertIn("postMessage({ rfpis: 'print' }", src)
+        self.assertIn('ev.data.rfpis !== "print"', src)
+
+    def test_the_hook_id_is_versioned_and_replaces_older_ones(self):
+        # THE reason the button was dead. The previous guard was
+        # `if (getElementById('rfpis-print-hook')) return;`, so once a browser had loaded an
+        # older build the parent kept that older hook forever and the newer one never installed.
+        # The button then posted a message nothing listened for, and clicking it did nothing.
+        src = _source()
+        self.assertIn("RFPIS_HOOK_ID = 'rfpis-print-hook-v2'", src)
+        self.assertIn("""querySelectorAll('[id^="rfpis-print-hook"]')""", src)
+        self.assertIn("stale[i].remove()", src)
+
+    def test_the_button_prefers_a_call_whose_success_is_observable(self):
+        # postMessage-then-return cannot tell delivery from silence, which is how a missing
+        # listener became an inert button. The first path returns true when it ran.
+        src = _source()
+        self.assertIn("window.parent.rfpisPrintNow() === true", src)
+        i_call = src.index("rfpisPrintNow() === true")
+        i_post = src.index("postMessage({ rfpis: 'print' }")
+        self.assertLess(i_call, i_post, "the unverifiable path must not be tried first")
+
+    def test_it_still_works_when_the_hook_is_missing_entirely(self):
+        # Verified in a browser against a real Streamlit component with a stale hook planted:
+        # the direct parent path fits the charts and prints.
+        src = _source()
+        btn = src[src.index("function rfpisPrint()"):]
+        btn = btn[:btn.index("</script>")]
+        self.assertIn("window.parent.print()", btn)
+        self.assertIn("rfpisFitPlots", btn)
+
+    def test_it_never_falls_back_to_printing_the_iframe(self):
+        # The old fallback called window.print() inside the component, which prints a page
+        # containing one button. That looks identical to a dead button — the most likely reason
+        # the button was reported as not working.
+        src = _source()
+        btn = src[src.index("function rfpisPrint()"):]
+        btn = btn[:btn.index("</script>")]
+        self.assertNotIn("window.print()", btn)
+        self.assertIn("Ctrl+P", btn)
+
 
 class ThePageStillRunsTests(unittest.TestCase):
     """Drives the REAL page, in a subprocess.
@@ -191,12 +238,91 @@ class ThePageStillRunsTests(unittest.TestCase):
         heads = self.result["subheaders"]
         self.assertTrue(heads[-1].startswith("5 · Our Results"), heads[-1])
 
+    def test_the_charts_actually_build(self):
+        # The probe supplies non-empty tables precisely so the figure-building code runs. Every
+        # chart sits inside an `if not frame.empty` branch, so on empty tables the headings
+        # render and every figure is skipped — a run that proves almost nothing about the
+        # palette, category orders and column references.
+        self.assertGreater(self.result["n_charts"], 10, "charts were not built")
+
+    def test_donor_decisions_renders_when_there_is_data(self):
+        self.assertIn("Donor Decisions", self.result["markdown"])
+
     def test_the_section_that_moved_renders_its_own_subsections(self):
         # The block move is the risky change: a name defined by a section it jumped over would
         # raise, and a raised exception renders as blank space rather than an error.
         body = self.result["markdown"]
         self.assertIn("Team Touchpoints", body)
         self.assertIn("Lead & Sub Applicant partners", body)
+
+
+class TheDecisionRowTests(unittest.TestCase):
+    """Decision Distribution and the Proceed-decisions time series share one row."""
+
+    def test_the_time_series_gets_at_least_three_quarters_of_the_row(self):
+        # 1:3 -> the monthly series takes 75%. It is a run across the whole period and its
+        # buckets crowd at half width; the four-bar distribution does not need the space.
+        self.assertIn("st.columns([1, 3], gap=\"medium\")", _source())
+
+    def test_the_distribution_is_vertical_now(self):
+        src = _source()
+        block = src[src.index("fig_dec = px.bar("):src.index("if _show(\"s3_dectime\")")]
+        self.assertIn('x="decision"', block)
+        self.assertIn('y="count"', block)
+        self.assertNotIn('orientation="h"', block)
+
+    def test_either_chart_alone_takes_the_full_width(self):
+        # Otherwise turning one off leaves a quarter-row chart with a gap beside it.
+        src = _source()
+        self.assertIn("elif fig_dec is not None:", src)
+        self.assertIn("elif fig_time is not None:", src)
+
+    def test_the_distribution_is_shaded_in_a_fixed_semantic_order(self):
+        # Frequency order would move the darkest shade onto whichever decision dominates, so the
+        # same colour would mean something different from one report to the next.
+        src = _source()
+        self.assertIn('category_orders={"decision": _theme.DECISION_ORDER}', src)
+
+
+class EveryChartIsFramedTests(unittest.TestCase):
+    def test_nothing_renders_a_chart_outside_the_frame_helper(self):
+        # One bare `st.plotly_chart` would sit unframed beside framed neighbours.
+        src = _source()
+        calls = [ln for ln in src.splitlines() if "st.plotly_chart(" in ln]
+        self.assertEqual(len(calls), 1, f"unframed chart calls: {calls}")
+        self.assertIn("def _boxed(", src)
+
+    def test_the_frame_helper_applies_the_shared_style(self):
+        src = _source()
+        boxed = src[src.index("def _boxed("):src.index("def _show_sec(")]
+        self.assertIn("_theme.style(fig)", boxed)
+        self.assertIn("st.container(border=True)", boxed)
+
+
+class OnePaletteTests(unittest.TestCase):
+    """The old report used a different palette per chart. Any raw hex in a colour argument means
+    one has crept back."""
+
+    def test_no_chart_names_its_own_colours(self):
+        src = _source()
+        offenders = []
+        for ln in src.splitlines():
+            if ("color_discrete_map" in ln or "color_discrete_sequence" in ln
+                    or "marker_color" in ln) and re.search(r"#[0-9a-fA-F]{6}", ln):
+                offenders.append(ln.strip())
+        self.assertEqual(offenders, [], f"hard-coded chart colours: {offenders}")
+
+    def test_the_deep_blue_is_gone_from_the_page(self):
+        # It survived only as the Print button's background, and it was the single deep-blue
+        # thing left in the app — the header is greens and neutrals — so it read as a stray.
+        self.assertNotIn("003366", _source())
+
+
+class TheExportButtonTests(unittest.TestCase):
+    def test_it_says_export_data(self):
+        src = _source()
+        self.assertIn('"📥 Export Data",', src)
+        self.assertNotIn('"📥 Excel",', src)
 
 
 if __name__ == "__main__":

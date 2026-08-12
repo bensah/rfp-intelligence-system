@@ -38,215 +38,12 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
+from core import chart_theme as _theme
 from core import dropdowns, partner_names, report_snapshots, settings
+from core.member_names import (first_name_display_map, normalize_member_name,
+                              split_and_normalize_names)
 from core.records import clean_df
 from db.supabase_client import get_client
-
-
-# ---------------------------------------------------------------------------
-# Team-member name normalization
-# ---------------------------------------------------------------------------
-# Different submitters spell their names inconsistently across the
-# Excel workbook and the Submit form. Common cases:
-#   "First"             → should resolve to "First Last"
-#   "Nickname"          → should resolve to canonical "First Last"
-#   "FIRST LAST"        → should normalise to "First Last"  (case)
-#   "first last"        → should normalise to "First Last"
-# Without normalisation, the "Submissions by team member" chart shows
-# the same person two or three times as separate stacked-bar series.
-#
-# Strategy: build a normaliser keyed on the canonical team_members
-# dropdown. For each input name:
-#   1. Trim + collapse whitespace + title-case (handles ALL-CAPS).
-#   2. If the normalised name is an exact canonical match → return canonical.
-#   3. Tokenise both. After applying the nickname map, if the input
-#      tokens are a subset of any canonical name's tokens → return that
-#      canonical name. Subset rule handles single-name → full-name.
-#   4. Tie-break: longest canonical wins (so "First Last" beats "First").
-#   5. Fall back to the title-cased input if nothing matches.
-#
-# The team-is-small assumption (no two members share first OR last name)
-# makes the subset rule safe — when two members DO share a token, the
-# subset rule could incorrectly merge them. Re-evaluate this strategy
-# if the team grows past ~30 members.
-# ---------------------------------------------------------------------------
-_NICKNAME_TO_FULL = {
-    # nickname (lowercase) → full first name (lowercase)
-    # Add new mappings here as the team grows. Bidirectional — applies
-    # both to incoming nicknames AND to nicknames inside canonical names.
-    "ben": "bernard",
-    "bernie": "bernard",
-    # room to grow: "yauba": "yauba"  (no-op — placeholder)
-}
-
-# ---------------------------------------------------------------------------
-# Full-name aliases — maps an INPUT string (lowercased, whitespace-normalised)
-# to the canonical full name it should resolve to.
-#
-# Why this exists in addition to _NICKNAME_TO_FULL: the nickname dict is
-# keyed on individual TOKENS ("ben" → "bernard"), but some cases need to
-# override an exact-match-on-itself. If "Clarence" is also present in the
-# team_members dropdown as a standalone entry, the exact-match shortcut
-# in `normalize_member_name` returns "Clarence" before the subset rule
-# can match it to "Clarence Bongo". This alias dict short-circuits that
-# trap so first-name-only mentions roll up to the right person.
-#
-# Add new entries when two people don't share a first name AND the
-# shorter form keeps showing up in the data (Excel imports, old form
-# submissions, etc.). Format: lowercased input → exact canonical name.
-# ---------------------------------------------------------------------------
-_FULLNAME_ALIASES = {
-    "clarence": "Clarence Bongo",
-}
-
-
-def _title_case(s: str) -> str:
-    """ALL CAPS / lower / Mixed → Sentence Case per word. Keeps hyphens and
-    apostrophes intact (so 'O'Brien' stays 'O'Brien' rather than 'O'brien')."""
-    if not s:
-        return ""
-    parts = []
-    for word in str(s).strip().split():
-        # Preserve apostrophe casing: O'BRIEN → O'Brien
-        if "'" in word:
-            chunks = word.split("'")
-            parts.append("'".join(c.capitalize() for c in chunks))
-        else:
-            parts.append(word.capitalize())
-    return " ".join(parts)
-
-
-def _tokenize_name(s: str) -> set[str]:
-    """Lowercase token set, with nicknames expanded to their full form."""
-    out: set[str] = set()
-    for tok in str(s or "").lower().replace("-", " ").split():
-        out.add(_NICKNAME_TO_FULL.get(tok, tok))
-    return out
-
-
-@st.cache_data(ttl=300)
-def _build_name_resolver(canonical_list: tuple[str, ...]) -> dict[str, str]:
-    """Pre-compute a lookup so each lookup at chart-render time is O(1)
-    rather than O(n_team_members). Cached for 5 minutes."""
-    return {c: c for c in canonical_list}  # identity map seed; resolver does the work
-
-
-def normalize_member_name(raw: str | None) -> str:
-    """Map a raw name string to the canonical team-member name.
-
-    None / empty → "(unknown)" so it still buckets cleanly.
-    """
-    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-        return "(unknown)"
-    s = str(raw).strip()
-    if not s:
-        return "(unknown)"
-    tidy = _title_case(s)
-    canonical_list = tuple(dropdowns.get("team_members") or [])
-    if not canonical_list:
-        return tidy
-
-    # Full-name alias check (runs BEFORE the exact-match shortcut so
-    # collisions like "Clarence" → "Clarence Mbanga" win even when
-    # "Clarence" is also a dropdown entry on its own).
-    alias_target = _FULLNAME_ALIASES.get(tidy.lower())
-    if alias_target:
-        for c in canonical_list:
-            if c.lower() == alias_target.lower():
-                return c
-        # Alias target isn't in the dropdown — return it anyway so the
-        # rollup happens; downstream chart code doesn't require canonical
-        # membership.
-        return alias_target
-
-    # Exact match on the cleaned-up form
-    for c in canonical_list:
-        if c.lower() == tidy.lower():
-            return c
-
-    # Subset / nickname match
-    input_tokens = _tokenize_name(tidy)
-    if not input_tokens:
-        return tidy
-    matches: list[str] = []
-    for c in canonical_list:
-        c_tokens = _tokenize_name(c)
-        if not c_tokens:
-            continue
-        # Input ⊆ canonical (e.g. single-name ⊆ full-name) OR
-        # canonical ⊆ input (rare — when a fuller form is submitted)
-        if input_tokens <= c_tokens or c_tokens <= input_tokens:
-            matches.append(c)
-    if matches:
-        # Tie-break: prefer the canonical name with MORE tokens (the
-        # fully-specified form). "First Last" beats "First".
-        matches.sort(key=lambda x: (-len(_tokenize_name(x)), x))
-        return matches[0]
-
-    return tidy
-
-
-def split_and_normalize_names(value) -> list[str]:
-    """Split a comma-separated name (or list-of-strings) into a flat
-    list of canonical names.
-
-    Cases handled:
-      * None / NaN / empty                  → []
-      * "Jane Doe"                       → ["Jane Doe"]
-      * "Alex Kim, Jane Doe"        → ["Alex Kim", "Jane Doe"]
-      * ["Alex Kim", "Jane Doe"]    → ["Alex Kim", "Jane Doe"]
-        (Postgres text[] arrays — contributors column)
-      * ["Alex Kim, Jane Doe"]      → ["Alex Kim", "Jane Doe"]
-        (one list element that ITSELF contains commas — common when a
-        sloppy form submission packed two names into one entry)
-
-    Each split piece is run through `normalize_member_name()` so
-    nickname / case / partial variants collapse to the canonical form.
-    "(unknown)" results are filtered out — they only appear when the
-    input was empty/None.
-    """
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return []
-    if isinstance(value, (list, tuple)):
-        out: list[str] = []
-        for v in value:
-            out.extend(split_and_normalize_names(v))
-        return out
-    parts = [p.strip() for p in str(value).split(",")]
-    normalized = [normalize_member_name(p) for p in parts if p]
-    return [n for n in normalized if n and n != "(unknown)"]
-
-
-def first_name_display_map(canonical_names) -> dict[str, str]:
-    """Return {canonical_name → display_name} where display is the
-    FIRST name only when it's unique, or the full name if two
-    canonical members share a first name.
-
-    Example: given ["Jane Doe", "Drew Hall", "Alex Kim"]
-      → {"Jane Doe": "Jane", "Drew Hall": "Drew", "Alex Kim": "Alex"}
-
-    Example with a collision (two Bernards on the team):
-      ["Jane Doe", "Bernard Smith"]
-      → {"Jane Doe": "Jane Doe", "Bernard Smith": "Bernard Smith"}
-
-    Shorter labels mean narrower chart legends — important for
-    print-to-PDF where wide right-side legends get cut off.
-    """
-    canonical = [n for n in set(canonical_names) if n and n != "(unknown)"]
-    by_first: dict[str, list[str]] = {}
-    for name in canonical:
-        first = name.split()[0]
-        by_first.setdefault(first, []).append(name)
-    display: dict[str, str] = {}
-    for first, names in by_first.items():
-        if len(names) == 1:
-            display[names[0]] = first       # unique first name → use it
-        else:
-            for n in names:
-                display[n] = n               # collision → fall back to full
-    # Pass through "(unknown)" so it still groups
-    display["(unknown)"] = "(unknown)"
-    return display
 
 
 # ---------------------------------------------------------------------------
@@ -878,6 +675,21 @@ def _show(key: str) -> bool:
     return key in _selected_items
 
 
+def _boxed(fig, **kw):
+    """Render a chart inside its own bordered frame.
+
+    Charts used to sit directly on the page background, so with several in a row the eye had
+    nothing to separate one from the next — the funnel pair in particular read as one wide
+    graphic. The frame also gives print a block it can keep together.
+
+    Every chart also goes through `_theme.style`, which strips Plotly's grey plot area: inside a
+    bordered container that reads as a box within a box.
+    """
+    _theme.style(fig)
+    with st.container(border=True):
+        st.plotly_chart(fig, width="stretch", **kw)
+
+
 def _show_sec(sid: str) -> bool:
     """True when an entire section is included in the advanced filter. Gates
     the section header, caption, and KPI tiles (individual charts inside a
@@ -1161,7 +973,7 @@ ac_tip.caption(
 )
 
 ac_excel.download_button(
-    "📥 Excel",
+    "📥 Export Data",
     data=_build_excel_export(),
     file_name=(
         f"rfpis-report-{_org.get('org_short') or 'org'}-"
@@ -1265,12 +1077,23 @@ with ac_print:
         // iframe keeps pointing at functions in a torn-down realm - it survives the guard
         // that stops re-registration and then does nothing when the user prints. Injected
         // code lives in the parent's own realm, so it outlives any rerun.
+        // The id carries a VERSION. The previous build guarded with
+        // `if (getElementById('rfpis-print-hook')) return;`, so once a page had been
+        // loaded with an older build, the parent kept that older hook forever and the
+        // newer one never installed — the button then posted a message nothing was
+        // listening for, and clicking it did nothing at all. Bump this whenever the
+        // injected body changes, and remove any earlier hook on the way in.
+        var RFPIS_HOOK_ID = 'rfpis-print-hook-v2';
+
         (function () {
           var pdoc;
           try { pdoc = window.parent.document; } catch (e) { return; }  // cross-origin
-          if (pdoc.getElementById('rfpis-print-hook')) return;          // already injected
+          if (pdoc.getElementById(RFPIS_HOOK_ID)) return;               // this version is in
+          // Drop hooks from earlier builds so their stale listeners stop firing.
+          var stale = pdoc.querySelectorAll('[id^="rfpis-print-hook"]');
+          for (var i = 0; i < stale.length; i++) { stale[i].remove(); }
           var el = pdoc.createElement('script');
-          el.id = 'rfpis-print-hook';
+          el.id = RFPIS_HOOK_ID;
           // Rebuild the two helpers plus their listeners inside the parent. The function
           // bodies are carried across as source text, so what runs there is parent code.
           el.textContent = [
@@ -1281,31 +1104,71 @@ with ac_print:
             'window.addEventListener("beforeprint", function () {',
             '  window.rfpisFitPlots(window.RFPIS_PRINT_W); });',
             'window.addEventListener("afterprint", function () {',
-            '  window.rfpisRestorePlots(); });'
+            '  window.rfpisRestorePlots(); });',
+            // The button posts up to here, so the print originates in the parent realm.
+            // One entry point the button can CALL, so success is observable rather than
+            // fired-and-forgotten into a message channel.
+            'window.rfpisPrintNow = function () {',
+            '  window.rfpisFitPlots(window.RFPIS_PRINT_W);',
+            '  window.print();',
+            '  return true; };',
+            'window.addEventListener("message", function (ev) {',
+            '  if (!ev.data || ev.data.rfpis !== "print") return;',
+            '  window.rfpisPrintNow();',
+            '});'
           ].join('\n');
           pdoc.head.appendChild(el);
         })();
 
+        // Ask the PARENT to print itself, rather than reaching across and calling
+        // print() from in here.
+        //
+        // Why: this button lives in a sandboxed iframe. Every step of the old path -
+        // touching window.parent, calling its print() from a sandboxed context - is a
+        // place a browser may refuse, and the old code's `catch` then fell through to
+        // `window.print()`, which prints the IFRAME: a page containing one button.
+        // A blank-looking printout is indistinguishable from a dead button, which is
+        // the most likely reason this reads as 'not working'.
+        //
+        // postMessage has no such failure mode. The handler was installed by the
+        // injected parent-realm script above, so the print call originates in the
+        // parent, where nothing is sandboxed. If the hook is missing we still try the
+        // direct route, and only then fall back - now telling the user rather than
+        // printing a button.
         function rfpisPrint() {
+          // Ordered by how VERIFIABLE each path is, because the previous version's first
+          // step was postMessage followed by an unconditional `return`: a message with no
+          // listener is indistinguishable from success, so a missing hook meant a button
+          // that silently did nothing.
+          //
+          // 1. Call the parent's own entry point. It returns true, so we know it ran.
           try {
-            // Print the parent window (main Streamlit app, with our print CSS).
-            // Fit first in case beforeprint fires too late to affect layout.
-            if (window.parent.rfpisFitPlots) {
+            if (typeof window.parent.rfpisPrintNow === 'function') {
+              if (window.parent.rfpisPrintNow() === true) return;
+            }
+          } catch (e) { /* fall through */ }
+
+          // 2. Fit and print the parent directly.
+          try {
+            if (typeof window.parent.rfpisFitPlots === 'function') {
               window.parent.rfpisFitPlots(RFPIS_PRINT_W);
-            } else {
-              rfpisFitPlots(RFPIS_PRINT_W);
             }
             window.parent.print();
-          } catch (e) {
-            // Cross-origin block (unlikely on Streamlit Cloud since both
-            // are same-origin, but possible in some embed scenarios) -
-            // fall back to printing the iframe so something happens.
-            window.print();
-          }
+            return;
+          } catch (e) { /* fall through */ }
+
+          // 3. Post upward, in case the parent is reachable only by message.
+          try { window.parent.postMessage({ rfpis: 'print' }, '*'); } catch (e) {}
+
+          // 4. Say so. Printing the IFRAME (the old fallback) yields a page containing one
+          //    button, which looks like a broken feature. Ctrl+P works regardless, because
+          //    the parent's beforeprint hook does the fitting.
+          var b = document.getElementById('rfpis-print-btn');
+          if (b) { b.textContent = '⌨ Use Ctrl+P'; b.title = 'Print via your browser (Ctrl+P)'; }
         }
         </script>
-        <button onclick="rfpisPrint()" style="
-          background:#003366; color:#fff; border:none;
+        <button id="rfpis-print-btn" onclick="rfpisPrint()" style="
+          background:#00703C; color:#fff; border:none;
           padding:0.31rem 0.75rem; border-radius:0.5rem; cursor:pointer;
           font-size:0.875rem; width:100%; line-height:1.6;
           font-weight:400;
@@ -1429,7 +1292,7 @@ if _show_sec("1"):
                         legend=dict(orientation="h", yanchor="top", y=-0.18,
                                     xanchor="center", x=0.5, font=dict(size=11)),
                     )
-                    st.plotly_chart(fig, width='stretch')
+                    _boxed(fig)
 
                     # ─── Submission leaderboard ─────────────────────────────
                     # Moved here from Section 4 (Team & Partnership Activity)
@@ -1454,7 +1317,7 @@ if _show_sec("1"):
                     )
                     fig.update_layout(height=320, margin=dict(t=40, b=10),
                                       xaxis=_fmt_bucket_ticks(bucket_mode))
-                    st.plotly_chart(fig, width='stretch')
+                    _boxed(fig)
             elif _show("s1_discovery"):
                 st.info(f"No RFPs discovered in this {period_mode.lower()} period yet.")
 
@@ -1473,14 +1336,14 @@ if _show_sec("1"):
                         donor_counts, x="RFPs", y="Donor", orientation="h",
                         text="RFPs",
                         title=f"RFPs by donor — top 15 ({_period_label_str})",
-                        color_discrete_sequence=["#10b981"],
+                        color_discrete_sequence=[_theme.rgba(0.9)],
                     )
                     fig_dn.update_layout(
                         height=max(280, 28 * len(donor_counts) + 80),
                         margin=dict(t=40, b=10),
                         yaxis={"categoryorder": "total ascending"},
                     )
-                    st.plotly_chart(fig_dn, width='stretch')
+                    _boxed(fig_dn)
 
             # ───── Keyword cloud — niche-vocabulary, frequency-sized ────────
             # Replaces the old "by program area" bar chart. Source is the
@@ -1534,7 +1397,8 @@ if _show_sec("1"):
                         ax.imshow(wc, interpolation="bilinear")
                         ax.axis("off")
                         fig_wc.tight_layout(pad=0)
-                        st.pyplot(fig_wc, width='stretch')
+                        with st.container(border=True):
+                            st.pyplot(fig_wc, width='stretch')
                         plt.close(fig_wc)
                     except ImportError:
                         # Graceful fallback when WordCloud / matplotlib not
@@ -1688,7 +1552,7 @@ if _show_sec("1"):
                     labels={"days": "Days", "count": "RFPs"},
                 )
                 fig_cyc.update_layout(height=280, margin=dict(t=40, b=10))
-                st.plotly_chart(fig_cyc, width='stretch')
+                _boxed(fig_cyc)
             else:
                 st.info("No RFPs with both search_date and date_completed yet — "
                         "cycle time chart will populate as proposals get submitted.")
@@ -1762,7 +1626,7 @@ if _show_sec("4"):
                      labels={"bucket": _bucket_label(bucket_mode)})
         fig.update_layout(height=280, margin=dict(t=40, b=10),
                           xaxis=_fmt_bucket_ticks(bucket_mode))
-        st.plotly_chart(fig, width='stretch')
+        _boxed(fig)
 
     if _show("s4_topdonors") and not engagements.empty and "donor" in engagements.columns:
         top_donors = (
@@ -1842,7 +1706,9 @@ if _show_sec("4"):
                         "RFPs": int(match["RFPs"].iloc[0]) if not match.empty else 0,
                     })
             return clean_df(pd.DataFrame(all_rows))
-        _STACK_COLORS = {"Submitted": "#10b981", "Unsubmitted": "#cbd5e1"}
+        # One hue at two opacities: submitted is the emphatic half of the same bar.
+        _STACK_COLORS = _theme.sequence_for(list(_theme.SUBMITTED_ORDER),
+                                            order=_theme.SUBMITTED_ORDER)
 
         # ───────── Proposal Leads + Contributors, SIDE BY SIDE ────────────────
         # Two charts of the same shape — people on the y-axis, submitted vs unsubmitted
@@ -1918,7 +1784,7 @@ if _show_sec("4"):
         def _panel(heading: str, fig, msg, y_title: str, x_title: str):
             st.markdown(f"##### {heading}")
             if fig is not None:
-                st.plotly_chart(_finish(fig, y_title, x_title), width="stretch")
+                _boxed(_finish(fig, y_title, x_title))
             elif msg:
                 st.info(msg)
 
@@ -1998,7 +1864,7 @@ if _show_sec("4"):
                             margin=dict(t=40, b=10),
                             yaxis={"categoryorder": "total ascending"},
                         )
-                        st.plotly_chart(fig, width='stretch')
+                        _boxed(fig)
                     else:
                         st.info(f"No {col_label.lower()} values recorded yet.")
 
@@ -2105,8 +1971,11 @@ if _show_sec("2"):
                                    title="Conversion funnel — value (USD)")
         if _show("s2_funnel"):
             _fc1, _fc2 = st.columns(2)
-            _fc1.plotly_chart(fig_funnel, width='stretch')
-            _fc2.plotly_chart(fig_funnel_v, width='stretch')
+            # Framed individually — side by side and unframed, the pair read as one graphic.
+            with _fc1:
+                _boxed(fig_funnel)
+            with _fc2:
+                _boxed(fig_funnel_v)
             st.caption("Value funnel: Discovered / Proceed = estimated award value; Submitted "
                        "= amount requested; Approved = amount secured.")
         # Decision-distribution chart used to live here; moved to Section 3
@@ -2150,18 +2019,17 @@ if _show_sec("2"):
                 )
                 # Traffic-light semantics: Not Started (red) → In Progress (amber) →
                 # Completed (green); Discontinued / Missed are muted greys.
-                _PS_COLORS = {
-                    "Not Started": "#ef4444", "In Progress": "#eab308",
-                    "Completed": "#1e8e3e", "Discontinued": "#9ca3af",
-                    "Missed": "#6b7280",
-                }
+                # Shaded along pipeline progression (Completed most emphatic), so the ink
+                # carries the ordering the old red/amber/green only implied.
+                _PS_COLORS = _theme.sequence_for(list(ps["Status"]),
+                                                 order=_theme.PROGRESS_ORDER)
                 fig_ps = px.bar(ps, x="Status", y="RFPs", text="RFPs",
                                 title="Progress status — Proceed RFPs", color="Status",
                                 category_orders={"Status": _order},
                                 color_discrete_map=_PS_COLORS)
                 fig_ps.update_layout(height=300, showlegend=False,
                                      margin=dict(t=40, b=10), xaxis_title=None)
-                st.plotly_chart(fig_ps, width='stretch')
+                _boxed(fig_ps)
                 st.caption(f"_{len(_proc_ps)} Proceed RFPs (blank progress counts as "
                            f"'Not Started'). Completed = submitted to donor._")
 
@@ -2211,10 +2079,24 @@ if _show_sec("3"):
         k4.metric("Overridden", int(len(overridden)),
                   help="Decisions where the reviewer disagreed with the auto-recommendation.")
 
-        # Decision Distribution — across ALL stored RFPs (not period-restricted).
-        # Placed BEFORE the time-series so the eye sees the static "where we
-        # land overall" snapshot first, then descends into the time-bucketed
-        # cadence of "when decisions happened in this period".
+        # Proceed-only for the lower charts: §3 drills into the RFPs the team chose to pursue
+        # (consistent with §4+). The KPI row and Decision Distribution stay full-triage — they
+        # describe the whole review process, and the distribution chart IS the
+        # Proceed/Park/Decline split.
+        _proc_dec = decided[
+            decided["decision"].fillna("").str.lower().str.startswith("proceed")
+        ]
+
+        # ── Decision Distribution + Proceed decisions over time, ONE ROW ──────────────
+        # They answer two halves of the same question — where decisions land, and when they
+        # happened — so they belong side by side rather than a scroll apart.
+        #
+        # The split is 1:3. The time series is a monthly run across the period and needs the
+        # width or its buckets crowd; the distribution is four bars and does not. That also makes
+        # VERTICAL bars right for the distribution: in a narrow column horizontal bars waste the
+        # height and squeeze the value labels, and four categories never collide on the x-axis.
+        fig_dec = fig_time = None
+
         if _show("s3_decdist") and not rfps_all.empty:
             _unique_all = rfps_all[~rfps_all["is_duplicate"]]
             _proceed = int(_unique_all["decision"].fillna("").str.lower().str.startswith("proceed").sum())
@@ -2225,44 +2107,41 @@ if _show_sec("3"):
                 "decision": ["Proceed", "Park", "Decline", "No decision"],
                 "count": [_proceed, _park, _decline, _no_dec],
             })
-            # Horizontal bars — easier to scan + labels never collide on
-            # narrow widths. Order by count descending so the dominant
-            # decision sits at the top.
             fig_dec = px.bar(
-                dec_df, x="count", y="decision", text="count",
-                orientation="h",
+                dec_df, x="decision", y="count", text="count",
                 title="Decision Distribution",
                 color="decision",
-                color_discrete_map={
-                    "Proceed": "#10b981", "Park": "#f59e0b",
-                    "Decline": "#ef4444", "No decision": "#9ca3af",
-                },
+                # Fixed semantic order, not frequency order: the shade then means the same thing
+                # on every report instead of tracking whichever decision happens to dominate.
+                category_orders={"decision": _theme.DECISION_ORDER},
+                color_discrete_map=_theme.sequence_for(
+                    list(dec_df["decision"]), order=_theme.DECISION_ORDER),
             )
-            fig_dec.update_layout(height=280, showlegend=False,
-                                  margin=dict(t=40, b=10),
-                                  xaxis_title="RFPs", yaxis_title=None,
-                                  yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(fig_dec, width='stretch')
-
-        # Proceed-only from here down: §3's lower charts drill into the RFPs the
-        # team chose to pursue (consistent with §4+). The KPI row and Decision
-        # Distribution above stay full-triage — they describe the whole review
-        # process, and the distribution chart IS the Proceed/Park/Decline split.
-        _proc_dec = decided[
-            decided["decision"].fillna("").str.lower().str.startswith("proceed")
-        ]
+            fig_dec.update_layout(height=300, showlegend=False,
+                                  xaxis_title=None, yaxis_title="RFPs")
 
         if _show("s3_dectime") and not _proc_dec.empty:
             dec_dates = pd.to_datetime(_proc_dec["decision_date"], errors="coerce").dropna()
             if not dec_dates.empty:
                 ts_df = _bucketed_count(dec_dates, "decisions")
-                fig = px.bar(ts_df, x="bucket", y="decisions",
-                             title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
-                             labels={"bucket": _bucket_label(bucket_mode),
-                                     "decisions": "Proceed decisions"})
-                fig.update_layout(height=280, margin=dict(t=40, b=10),
-                                  xaxis=_fmt_bucket_ticks(bucket_mode))
-                st.plotly_chart(fig, width='stretch')
+                fig_time = px.bar(ts_df, x="bucket", y="decisions",
+                                  title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
+                                  labels={"bucket": _bucket_label(bucket_mode),
+                                          "decisions": "Proceed decisions"},
+                                  color_discrete_sequence=[_theme.rgba(0.9)])
+                fig_time.update_layout(height=300, xaxis=_fmt_bucket_ticks(bucket_mode))
+
+        if fig_dec is not None and fig_time is not None:
+            _dc1, _dc2 = st.columns([1, 3], gap="medium")
+            with _dc1:
+                _boxed(fig_dec)
+            with _dc2:
+                _boxed(fig_time)
+        elif fig_dec is not None:
+            # Alone it gets the full width, rather than a quarter-row with a gap beside it.
+            _boxed(fig_dec)
+        elif fig_time is not None:
+            _boxed(fig_time)
 
         if _show("s3_autorec") and not _proc_dec.empty:
             # Of the RFPs we chose to pursue, what had the auto-scorer recommended?
@@ -2317,13 +2196,13 @@ if _show_sec("3"):
                     _ddc, x="RFPs", y="Donor decision", orientation="h",
                     title="Donor decisions on submitted proposals", text="RFPs",
                     color="Donor decision",
-                    color_discrete_map={"Approved": "#10b981", "Not Approved": "#ef4444",
-                                        "Under Review": "#f59e0b", "Submitted": "#3b82f6"},
+                    color_discrete_map=_theme.sequence_for(
+                        list(_ddc["Donor decision"]), order=_theme.DONOR_DECISION_ORDER),
                 )
                 fig_dd.update_layout(height=max(220, 34 * len(_ddc) + 70), showlegend=False,
                                      margin=dict(t=40, b=10), yaxis_title=None,
                                      yaxis={"categoryorder": "total ascending"})
-                st.plotly_chart(fig_dd, width='stretch')
+                _boxed(fig_dd)
             if _pending:
                 st.caption(
                     f"{_pending} Proceed RFP(s) have no donor decision yet — not submitted, or "
@@ -2449,7 +2328,7 @@ if _show_sec("5"):
                                       "cumulative": "USD (cumulative)"})
                 fig.update_layout(height=280, margin=dict(t=40, b=10),
                                   xaxis=_fmt_bucket_ticks(bucket_mode))
-                st.plotly_chart(fig, width='stretch')
+                _boxed(fig)
 
         # (The "Submitted Grants" table was moved to the END of this section — see below.)
 
@@ -2507,7 +2386,7 @@ if _show_sec("5"):
                     height=430, margin=dict(t=40, b=120), xaxis_tickangle=-40,
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                 xanchor="right", x=1, title_text=""))
-                st.plotly_chart(fig_amt, width='stretch')
+                _boxed(fig_amt)
             else:
                 st.info("No submitted RFPs with monetary amounts recorded yet.")
 
