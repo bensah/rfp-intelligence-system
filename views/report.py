@@ -1029,6 +1029,10 @@ if _gen_col.button("▶ Generate report", type="primary",
     st.query_params.clear()
     st.query_params["r"] = _new_rid
     st.session_state["report_generated"] = True
+    # A new report means the built PDF describes the previous one. Drop it so the action row
+    # offers Export Report again rather than a download of something stale.
+    st.session_state.pop("_rfpis_pdf_bytes", None)
+    st.session_state.pop("_rfpis_pdf_name", None)
     st.rerun()
 
 # The report is "generated" when the URL carries a valid saved id (refresh-safe)
@@ -1303,20 +1307,39 @@ ac_excel.download_button(
 #
 # "Export Report", not "Build PDF": the user is exporting a report and then downloading it.
 # Whether we build it is our concern, not theirs.
-if ac_pdf.button("📄 Export Report", width="stretch", key="report_pdf_btn",
-                 help="Exports a shareable PDF — cover page, one section per page, charts laid "
-                      "out to fit. Takes a few seconds, then a download button appears here."):
+#
+# ONE SLOT, ONE BUTTON. Export Report and Download PDF are two states of the same control, not
+# two controls: once a PDF exists, exporting again does nothing a reader wants, and two buttons
+# side by side left the question of which one to press. Generate report clears the PDF, so the
+# slot goes back to Export Report — the report has changed, and the old file no longer describes
+# it.
+#
+# The slot also has to be reserved HERE rather than filled at the end of the script: the document
+# is only complete once the page has drawn, and rendering the download button at that point put it
+# several screens below the button just pressed, which read as "clicking Export Report does
+# nothing".
+_pdf_slot = ac_pdf.empty()
+_pdf_name = _export_filename("pdf")
+_pdf_bytes = st.session_state.get("_rfpis_pdf_bytes")
+
+# Rendered at most ONCE per run: a widget key may not be reused, so the run that BUILDS the PDF
+# fills the slot at the end instead (see the export block below).
+_pdf_rendered = False
+if _pdf_bytes:
+    _pdf_slot.download_button(
+        "⬇ Download PDF",
+        data=_pdf_bytes,
+        file_name=st.session_state.get("_rfpis_pdf_name") or _pdf_name,
+        mime="application/pdf", width="stretch", key="report_pdf_download",
+        help=f"{st.session_state.get('_rfpis_pdf_name') or _pdf_name} · "
+             f"{len(_pdf_bytes) / 1024:,.0f} KB · Generate report starts a new export.")
+    _pdf_rendered = True
+elif _pdf_slot.button("📄 Export Report", width="stretch", key="report_pdf_btn",
+                      help="Builds a shareable PDF — cover page, one section per page, charts "
+                           "laid out to fit. Takes a few seconds; this button then becomes "
+                           "Download PDF."):
     st.session_state["_rfpis_make_pdf"] = True
     st.rerun()
-
-# The RESULT lands here, beside the button that asked for it.
-#
-# It used to render at the end of the script, because the document is only complete once the
-# page has drawn. On a five-section report that put the download button several screens below
-# the button the user had just pressed — so from the top of the page, clicking Export Report
-# looked like it reran the page and did nothing. A placeholder reserves the spot now and is
-# filled in at the end.
-_pdf_slot = ac_pdf.empty()
 
 # Tenant- and period-specific document title. Chrome stamps document.title into the printed
 # page header, so this is what makes the PDF header identify the report rather than the product.
@@ -3036,7 +3059,6 @@ else:
     _gen_by = _gen_name or _gen_email or "unknown user"
 
 _pdf_doc = (_report_pdf.current() or _PDF_DOC).finish()
-_pdf_name = _export_filename("pdf")
 
 if st.session_state.pop("_rfpis_make_pdf", False):
     try:
@@ -3066,8 +3088,10 @@ if st.session_state.pop("_rfpis_make_pdf", False):
         st.session_state["_rfpis_pdf_bytes"] = None
         st.error(f"Couldn't build the PDF: {_pdf_exc}")
 
-if st.session_state.get("_rfpis_pdf_bytes"):
-    # Into the placeholder reserved beside the Export Report button.
+# On the run that just BUILT the file, the slot is still holding the Export Report button, so
+# fill it now. On any later run the download button was already rendered at the top of the page
+# and `_pdf_rendered` is True — filling it twice would reuse a widget key.
+if st.session_state.get("_rfpis_pdf_bytes") and not _pdf_rendered:
     _pdf_slot.download_button(
         "⬇ Download PDF",
         data=st.session_state["_rfpis_pdf_bytes"],
@@ -3075,7 +3099,7 @@ if st.session_state.get("_rfpis_pdf_bytes"):
         mime="application/pdf", width="stretch", key="report_pdf_download",
         help=(f"{st.session_state.get('_rfpis_pdf_name') or _pdf_name} · "
               f"{len(st.session_state['_rfpis_pdf_bytes']) / 1024:,.0f} KB · "
-              f"{_pdf_doc.chart_count} charts"),
+              f"{_pdf_doc.chart_count} charts · Generate report starts a new export."),
     )
 
 st.divider()

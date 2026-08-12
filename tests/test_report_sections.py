@@ -174,21 +174,42 @@ class ThePrintLayoutTests(unittest.TestCase):
     def test_the_export_button_says_export_not_build(self):
         # Whether we "build" anything is our concern; the user is exporting a report.
         src = _source()
-        self.assertIn('ac_pdf.button("\U0001F4C4 Export Report"', src)
+        self.assertIn('_pdf_slot.button("\U0001F4C4 Export Report"', src)
         # The BUTTON, not any mention — the comment recording why it was renamed stays.
         self.assertNotIn('button("\U0001F4C4 Build PDF"', src)
 
-    def test_the_download_appears_beside_the_button_that_asked_for_it(self):
-        # THE reported bug. The document is only complete once the page has drawn, so the
-        # download button used to render at the END of a five-section page — several screens
-        # below the button just pressed. From the top, Export Report looked like it reran the
-        # page and did nothing. A placeholder reserves the spot and is filled at the end.
+    def test_export_and_download_are_two_states_of_one_control(self):
+        # Not two buttons side by side: once a PDF exists, exporting again does nothing a reader
+        # wants, and having both left the question of which to press.
         src = _source()
-        i_button = src.index('ac_pdf.button("\U0001F4C4 Export Report"')
+        self.assertIn("_pdf_slot = ac_pdf.empty()", src)
+        self.assertIn("elif _pdf_slot.button(\"📄 Export Report\"", src)
+        self.assertIn("_pdf_slot.download_button(", src)
+
+    def test_the_download_is_rendered_at_most_once_per_run(self):
+        # A widget key may not be reused, so the run that BUILDS the file fills the slot at the
+        # end while every later run fills it at the top.
+        src = _source()
+        self.assertIn("_pdf_rendered = True", src)
+        self.assertIn('if st.session_state.get("_rfpis_pdf_bytes") and not _pdf_rendered:', src)
+
+    def test_generate_report_clears_the_built_pdf(self):
+        # A new report means the built file describes the previous one.
+        src = _source()
+        gen = src[src.index('st.session_state["report_generated"] = True'):]
+        gen = gen[:gen.index("st.rerun()")]
+        self.assertIn('st.session_state.pop("_rfpis_pdf_bytes", None)', gen)
+        self.assertIn('st.session_state.pop("_rfpis_pdf_name", None)', gen)
+
+    def test_the_control_sits_in_the_action_row_not_at_the_end_of_the_page(self):
+        # THE reported bug. The document is only complete once the page has drawn, so the download
+        # button used to render at the END of a five-section page — several screens below the
+        # button just pressed. From the top, Export Report looked like it reran the page and did
+        # nothing. The slot is declared in the action row, so whichever button it holds sits there.
+        src = _source()
         i_slot = src.index("_pdf_slot = ac_pdf.empty()")
-        i_fill = src.index("_pdf_slot.download_button(")
-        self.assertLess(i_button, i_slot, "the slot must sit beside the button")
-        self.assertLess(i_slot, i_fill, "the slot is filled after the page has rendered")
+        i_sections = src.index("# SECTION 1")
+        self.assertLess(i_slot, i_sections)
 
     def test_ctrl_p_still_gets_the_print_hook(self):
         # The button is gone but the beforeprint hook stays, so anyone reaching for Ctrl+P out
