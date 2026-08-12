@@ -1787,6 +1787,7 @@ if _show_sec("1"):
                     exp_disc.groupby(["bucket", "submitter"]).size()
                     .reset_index(name="Funding calls discovered")
                 )
+                _h5("Who discovered the calls, month by month")
                 fig = px.bar(
                     stacked_disc, x="bucket", y="Funding calls discovered",
                     color="submitter", barmode="stack",
@@ -1825,6 +1826,7 @@ if _show_sec("1"):
             else:
                 # No submitter data — fall back to a plain bucket count
                 disc_df = _bucketed_count(disc["search_date"].dropna(), "RFPs discovered")
+                _h5("Calls discovered over the period")
                 fig = px.bar(
                     disc_df, x="bucket", y="Funding calls discovered",
                     title=f"Funding calls discovered ({_period_label_str}, {bucket_mode.lower()})",
@@ -1847,6 +1849,7 @@ if _show_sec("1"):
             )
             donor_counts.columns = ["Donor", "RFPs"]
             if not donor_counts.empty:
+                _h5("Which funders our calls come from")
                 fig_dn = px.bar(
                     donor_counts, x="RFPs", y="Donor", orientation="h",
                     text="RFPs",
@@ -1926,7 +1929,9 @@ if _show_sec("1"):
                     try:
                         _wdoc = _report_pdf.current()
                         if _wdoc is not None:
-                            _wdoc.image(fig_wc, height=300)
+                            _wdoc.image(
+                                fig_wc, height=300,
+                                title="Focus areas across the calls we pursued")
                     except Exception:
                         pass
                     plt.close(fig_wc)
@@ -2067,7 +2072,7 @@ if _show_sec("1"):
     # quality signal. (Originally placed in §4 Team Activity which was
     # the wrong narrative beat.)
     if _show("s1_cycle") and not rfps_all.empty:
-        _h5("Search → Submission cycle time")
+        _h5("How long from discovery to submission")
         cyc_src = rfps_all[~rfps_all["is_duplicate"]].copy()
         cyc = cyc_src.dropna(subset=["search_date", "date_completed"]).copy()
         if not cyc.empty:
@@ -2116,7 +2121,7 @@ if _show_sec("4"):
     )
 
     # ─── Team Touchpoints (internal team meetings) ─────────────────────────────
-    _h5("Team Touchpoints")
+    _h5("Internal review meetings and the actions they raised")
     n_meetings_total = int(len(meetings))
     n_resolved = int(meetings["is_resolved"].sum()) if not meetings.empty else 0
     n_open = n_meetings_total - n_resolved
@@ -2137,7 +2142,7 @@ if _show_sec("4"):
     st.markdown("")  # vertical spacer between the two sub-sections
 
     # ─── Donor Touchpoints (external donor engagements) ───────────────────────
-    _h5("Donor Engagements")
+    _h5("Donor conversations and how far they reached")
     n_engagements = int(len(engagements))
     n_donors = (int(engagements["donor"].nunique())
                 if (not engagements.empty and "donor" in engagements.columns) else 0)
@@ -2330,14 +2335,17 @@ if _show_sec("4"):
         if _show("s4_leads") and _show("s4_contrib"):
             _pc1, _pc2 = st.columns(2, gap="medium")
             with _pc1:
-                _panel("Proposal Leads", _pl_fig, _pl_msg, "Proposal lead", "RFPs")
+                _panel("Proposal leads driving funding applications", _pl_fig, _pl_msg,
+                       "Proposal lead", "Funding calls")
             with _pc2:
-                _panel("Contributors", _ct_fig, _ct_msg, "Contributor",
-                       "RFP contributions")
+                _panel("Contributors supporting the application process", _ct_fig, _ct_msg,
+                       "Contributor", "Calls supported")
         elif _show("s4_leads"):
-            _panel("Proposal Leads", _pl_fig, _pl_msg, "Proposal lead", "RFPs")
+            _panel("Proposal leads driving funding applications", _pl_fig, _pl_msg,
+                       "Proposal lead", "Funding calls")
         elif _show("s4_contrib"):
-            _panel("Contributors", _ct_fig, _ct_msg, "Contributor", "RFP contributions")
+            _panel("Contributors supporting the application process", _ct_fig, _ct_msg,
+                   "Contributor", "Calls supported")
 
         # ───────────── Lead & Sub Applicant partners ──────────────────────────
         # Over the PROCEED RFPs (activity_rows), each applicant cell can list MULTIPLE partners
@@ -2350,7 +2358,7 @@ if _show_sec("4"):
         # A separator INSIDE one org's own name (a legal suffix after a comma, or an
         # abbreviation after a ";") does not make a second applicant — see core.partner_names.
         if _show("s4_partners"):
-            _h5("Lead & Sub Applicant partners")
+            _h5("Partners we apply alongside, as lead and as sub")
         _NA_VALUES = partner_names.NA_VALUES
         _org_full = (settings.get_org_name() or "").strip()
         _org_short = (settings.get_org_short() or "").strip()
@@ -2478,6 +2486,7 @@ if _show_sec("2"):
         _FUNNEL_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#22c55e"]
 
         # COUNT funnel — how many RFPs make it through each stage.
+        _h5("Where calls fall out, by count and by value")
         fig_funnel = go.Figure(go.Funnel(
             y=_STAGES, x=[total_all, proceed_all, submitted_all, approved_all],
             textinfo="value+percent initial", marker={"color": _FUNNEL_COLORS},
@@ -2559,6 +2568,7 @@ if _show_sec("2"):
                 # carries the ordering the old red/amber/green only implied.
                 _PS_COLORS = _theme.sequence_for(list(ps["Status"]),
                                                  order=_theme.PROGRESS_ORDER)
+                _h5("How far the calls we pursued have progressed")
                 fig_ps = px.bar(ps, x="Status", y="RFPs", text="RFPs",
                                 title="Progress status — Proceed calls", color="Status",
                                 category_orders={"Status": _order},
@@ -2632,6 +2642,9 @@ if _show_sec("3"):
         # width or its buckets crowd; the distribution is four bars and does not. That also makes
         # VERTICAL bars right for the distribution: in a narrow column horizontal bars waste the
         # height and squeeze the value labels, and four categories never collide on the x-axis.
+        # One subtitle for the row: the two charts answer "how did we decide" and "when", and
+        # splitting them under separate headings implied they were about different things.
+        _h5("Our own decisions, and when we made them")
         fig_dec = fig_time = None
 
         if _show("s3_decdist") and not rfps_all.empty:
@@ -2682,38 +2695,44 @@ if _show_sec("3"):
             _boxed(fig_time)
 
         if _show("s3_autorec") and not decided.empty:
-            # SYSTEM vs HUMAN, which is the only reason to show this at all.
+            # SYSTEM vs HUMAN, side by side (owner, 2026-08-12).
             #
-            # It used to list the auto-scorer's recommendation for TEAM-PROCEED rows only, under a
-            # title promising a comparison: one column of recommendations and one count, with the
-            # team's decision nowhere in it. Every row was a Proceed, so there was nothing to
-            # compare against.
+            # This was a cross-tab: recommendation down the side, decision across the top. That
+            # shows where the team overrode the scorer, but it answers a narrower question than
+            # the one being asked — how many calls did each one send to Proceed, Park and
+            # Decline? Three rows and two columns answers that directly, and a reader does not
+            # have to add a row up to get either total.
             #
-            # Now it is a cross-tab — the scorer's recommendation down the side, the team's
-            # decision across the top — so agreement sits on the diagonal and every override is
-            # visible as an off-diagonal count.
-            _ar_src = decided.copy()
-            _ar_src["_auto"] = (_ar_src["auto_recommendation"].fillna("").astype(str)
-                                .str.strip().str.title().replace("", "No recommendation"))
-            _ar_src["_team"] = (_ar_src["decision"].fillna("").astype(str)
-                                .str.strip().str.title().replace("", "No decision"))
-            _order = ["Proceed", "Park", "Decline", "No recommendation", "No decision"]
-            _xtab = pd.crosstab(_ar_src["_auto"], _ar_src["_team"])
-            _xtab = _xtab.reindex(index=[r for r in _order if r in _xtab.index],
-                                  columns=[c for c in _order if c in _xtab.columns])
-            _agree = int(sum(_xtab.at[k, k] for k in _xtab.index if k in _xtab.columns))
-            _total = int(_xtab.to_numpy().sum())
+            # Both columns count the SAME calls, so they are comparable: every row the team has
+            # decided. A call the scorer had no opinion on still counts in the team's column,
+            # which is why the totals can differ from each other and why they are shown.
+            _cmp = decided.copy()
+            _auto = (_cmp["auto_recommendation"].fillna("").astype(str).str.strip().str.lower())
+            _team = (_cmp["decision"].fillna("").astype(str).str.strip().str.lower())
+            _rows = []
+            for _label in ("Proceed", "Park", "Decline"):
+                _k = _label.lower()
+                _rows.append({
+                    "Decision": _label,
+                    "Auto-scorer": int(_auto.str.startswith(_k).sum()),
+                    "Team": int(_team.str.startswith(_k).sum()),
+                })
+            _cmp_df = pd.DataFrame(_rows)
+            _agreed = int((_auto.str.split().str[0] == _team.str.split().str[0]).sum())
+            _total = int(len(_cmp))
             with st.expander(
-                f"Auto-scorer vs the team — agreed on {_agree} of {_total} decided calls",
+                f"Auto-scorer vs the team — same call, same three outcomes "
+                f"(agreed on {_agreed} of {_total})",
                 expanded=False,
             ):
                 st.caption(
-                    "Rows are what the auto-scorer recommended; columns are what the team "
-                    "decided. The diagonal is agreement; anything off it is a call where the "
-                    "team overrode the scorer."
+                    "How many calls each one put in each outcome, over the "
+                    f"{_total} calls the team has decided. The auto-scorer column is what the "
+                    "system recommended; the Team column is what was decided. Where a column "
+                    "totals less than the calls decided, the scorer had no recommendation for "
+                    "the rest."
                 )
-                _table(_xtab.reset_index().rename(columns={"_auto": "Auto-scorer said"}),
-                       title="Auto-scorer recommendation vs the team's decision",
+                _table(_cmp_df, title="Auto-scorer recommendation against the team's decision",
                        width='stretch', hide_index=True)
 
         # ───────────── Donor Decisions ─────────────────────────────────────────
@@ -2898,6 +2917,7 @@ if _show_sec("5"):
                 )
                 agg_df = _bucketed_sum(ts["date_of_approval"], ts["_usd"], "secured")
                 agg_df["cumulative"] = agg_df["secured"].cumsum()
+                _h5("Funding secured, cumulatively")
                 fig = px.area(agg_df, x="bucket", y="cumulative",
                               title=f"Cumulative USD secured ({_period_label_str}, {bucket_mode.lower()})",
                               labels={"bucket": _bucket_label(bucket_mode),
@@ -2919,7 +2939,7 @@ if _show_sec("5"):
         # The signed outcome view — the aggregate amounts are in the KPI cards above; this
         # chart shows the per-RFP secured (▲) vs unsecured/declined (▼) picture.
         if _show("s5_reqsec"):
-            _h5("Amount Requested vs Amount Secured (USD)")
+            _h5("What we asked for against what we won, call by call")
         if _show("s5_reqsec") and {"amount_requested", "amount_secured"} <= set(unique.columns):
             out_df = outcome_df[(outcome_df["req_usd"] > 0)
                                 | (outcome_df["sec_usd"] > 0)].copy()
@@ -2972,7 +2992,7 @@ if _show_sec("5"):
         # how many did we actually submit, and how many won?" — IS the
         # outcomes question, not a team-activity question.
         if _show("s5_conv"):
-            _h5("Conversion rates")
+            _h5("Where calls convert, and where they stall")
         proceeded = unique[
             unique["decision"].fillna("").str.lower().str.startswith("proceed")
         ]
@@ -3000,7 +3020,7 @@ if _show_sec("5"):
         # report / Owner columns aren't needed here). Not collapsible; the closing table of
         # the results story.
         if _show("s5_grants"):
-            _h5("Applied Funding Opportunities")
+            _h5("Applications submitted to funders")
             st.caption("Every grant we've submitted (Proceed RFPs with Progress = "
                        "Completed) — requested amount and the donor's decision.")
             if _pc.empty:
