@@ -560,6 +560,52 @@ def guidance_text(html: str | None, base_url: str | None) -> tuple[str, str | No
         return "", None
 
 
+# A FETCHED PAGE MUST BE ABOUT THIS CALL.
+#
+# Every grants.gov detail page returns the SAME 497 characters — "Official websites use .gov…",
+# the security banner of a JavaScript app whose content never arrives without a browser. 497
+# clears the 400-character floor, so 18 outstanding rows would each have spent a model call
+# synthesising a funding opportunity out of a cookie notice. The floor guards against SHORT
+# text; it cannot tell boilerplate from content.
+#
+# The test is specificity: a page that is really this call's page mentions the call — its
+# opportunity id, or several distinctive words from its title. A shared banner mentions neither.
+# Short pages only: a long page is worth reading even if the title was reworded, and this must
+# not start discarding real content over a phrasing difference.
+_SPECIFICITY_MAX = 1200          # above this, length itself is evidence enough
+_TITLE_STOP = {"the", "for", "and", "call", "calls", "proposal", "proposals", "grant",
+               "grants", "funding", "programme", "program", "opportunity", "opportunities",
+               "request", "applications", "application", "notice", "tender", "project",
+               "projects", "support", "development", "research", "health", "fund", "with"}
+
+
+def page_is_about(row: dict, text: str) -> bool:
+    """Does this page text actually concern this row's call?
+
+    True for anything substantial. For a SHORT page, requires the call's own opportunity id or
+    two distinctive title words to appear — which a shared boilerplate banner never does.
+    """
+    t = (text or "").lower()
+    if not t:
+        return False
+    if len(t) > _SPECIFICITY_MAX:
+        return True
+    for key in ("opportunity_id", "funding_opportunity_number"):
+        v = str((row or {}).get(key) or "").strip().lower()
+        if len(v) >= 4 and v in t:
+            return True
+    words = {w for w in re.findall(r"[a-z]{4,}",
+                                   str((row or {}).get("opportunity_name") or "").lower())
+             if w not in _TITLE_STOP}
+    if not words:
+        return False        # nothing distinctive to check against — cannot verify, so don't
+    # Ask for as much of the title as the title actually offers. Two matches is the bar, but a
+    # short generic title ("A Health Delivery Call") keeps only one distinctive word once the
+    # funding vocabulary is removed, and demanding two would reject its own genuine page.
+    needed = min(2, len(words))
+    return sum(1 for w in words if w in t) >= needed
+
+
 def best_body(row: dict, html: str | None) -> tuple[str, dict]:
     """``(body, provenance)`` — the fullest text available for this row, and where it came
     from. Never shorter than what is already stored."""
@@ -567,6 +613,13 @@ def best_body(row: dict, html: str | None) -> tuple[str, dict]:
     parts, prov = [], {"stored": len(stored)}
     page = page_text(html)
     prov["page"] = len(page)
+    if page and not page_is_about(row, page):
+        # A shell, not this call. Treat it as no page at all rather than as thin text, so the
+        # stored value still stands and no call is spent reading a banner.
+        prov["shell"] = True
+        log.info("catalog_synthesis: %s fetched page (%d chars) does not mention this call — "
+                 "treated as no page", (row or {}).get("uid"), len(page))
+        page = ""
     if page:
         parts.append(page)
     pdf_text, pdf_url = guidance_text(html, (row or {}).get("opportunity_url"))

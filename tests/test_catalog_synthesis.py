@@ -499,9 +499,13 @@ class TheFullestSourceTextIsUsedTests(unittest.TestCase):
     once the page itself was read. The other two are aggregator paywall stubs — nothing to
     recover, and the thin-text guard still declines to spend a call on them."""
 
+    # The page MENTIONS THE CALL, because a real call page does — and since the shell guard
+    # (AFetchedPageMustBeAboutThisCallTests) a page that names nothing from the row is treated
+    # as no page. The old fixture named neither, so it was quietly testing the reject path.
     PAGE = ("<html><head><style>x{}</style></head><body><nav>Home About</nav>"
-            "<p>Eligible applicants are NGOs and academic institutions registered in "
-            "eligible countries. Only invited organisations may apply.</p>"
+            "<p>This health delivery call funds cold-chain equipment. Eligible applicants "
+            "are NGOs and academic institutions registered in eligible countries. Only "
+            "invited organisations may apply.</p>"
             "<footer>Cookies</footer></body></html>")
 
     def test_navigation_and_scripts_are_stripped(self):
@@ -511,7 +515,9 @@ class TheFullestSourceTextIsUsedTests(unittest.TestCase):
             self.assertNotIn(junk, text)
 
     def test_the_page_beats_a_short_stored_brief(self):
-        body, prov = CS.best_body({"raw_text": "A short brief."}, self.PAGE)
+        body, prov = CS.best_body(
+            {"opportunity_name": "A Health Delivery Call", "raw_text": "A short brief."},
+            self.PAGE)
         self.assertIn("Eligible applicants", body)
         self.assertGreater(prov["used"], prov["stored"])
 
@@ -534,8 +540,10 @@ class TheFullestSourceTextIsUsedTests(unittest.TestCase):
         # one re-fetching the same page.
         CS.reset_calls()
         row = dict(ROW, raw_text="A short brief.", full_description=None)
+        # Echoes the row's own title, so the shell guard accepts it as this call's page.
+        page = "<p>" + ("Health delivery detail for this call. " * 60) + "</p>"
         with _reply(GOOD):
-            got = CS.synthesize_row(row, html="<p>" + ("Real call detail. " * 60) + "</p>")
+            got = CS.synthesize_row(row, html=page)
         self.assertIn("raw_text", got)
         self.assertGreater(len(got["raw_text"]), len("A short brief.") + CS._BODY_GAIN)
 
@@ -553,3 +561,57 @@ class TheFullestSourceTextIsUsedTests(unittest.TestCase):
         with _reply(GOOD) as c:
             CS.synthesize_row(dict(ROW, raw_text="Premium"), html="<p>Premium</p>")
         self.assertEqual(c.calls, 0)
+
+
+class AFetchedPageMustBeAboutThisCallTests(unittest.TestCase):
+    """Every grants.gov detail page returns the SAME 497 characters — ".gov websites use
+    HTTPS…", the security banner of a JavaScript app whose content never arrives without a
+    browser. 497 clears the 400-character floor, so 18 outstanding rows would each have spent a
+    model call synthesising a funding opportunity out of a cookie notice.
+
+    The floor guards against SHORT text; it cannot tell boilerplate from content. The test is
+    SPECIFICITY: a page that is really this call's page mentions the call. A shared banner
+    mentions nothing."""
+
+    BANNER = ("Official websites use .gov A .gov website belongs to an official government "
+              "organization in the United States. Secure .gov websites use HTTPS A lock or "
+              "https:// means you have safely connected to the .gov website.")
+    ROW = {"uid": "es_1", "opportunity_name": "Cold Chain Equipment Ecosystem Subgrant",
+           "opportunity_id": "CDC-RFA-1234"}
+
+    def test_THE_REAL_BANNER_IS_REJECTED(self):
+        self.assertFalse(CS.page_is_about(self.ROW, self.BANNER))
+
+    def test_a_page_naming_the_opportunity_id_is_accepted(self):
+        self.assertTrue(CS.page_is_about(
+            self.ROW, "Notice CDC-RFA-1234 is now open for applications."))
+
+    def test_a_page_echoing_the_title_is_accepted(self):
+        self.assertTrue(CS.page_is_about(
+            self.ROW, "This subgrant funds cold chain equipment across districts."))
+
+    def test_generic_title_words_alone_are_not_enough(self):
+        # "call", "grant", "programme" appear on every funder's boilerplate, so they cannot be
+        # what proves a page is this call's.
+        row = {"opportunity_name": "Call for Proposals: Grant Programme"}
+        self.assertFalse(CS.page_is_about(row, "Call for proposals. Grant programme. Funding."))
+
+    def test_a_long_page_is_accepted_without_the_name_test(self):
+        # Length is its own evidence, and a reworded title must not discard real content.
+        self.assertTrue(CS.page_is_about(self.ROW, "x" * (CS._SPECIFICITY_MAX + 1)))
+
+    def test_a_shell_is_treated_as_NO_page_not_as_thin_text(self):
+        # So the stored value still stands and no call is spent.
+        body, prov = CS.best_body(dict(self.ROW, raw_text="A stored brief."),
+                                  "<p>" + self.BANNER + "</p>")
+        self.assertEqual(body, "A stored brief.")
+        self.assertTrue(prov.get("shell"))
+
+    def test_a_shell_over_an_empty_row_yields_nothing_to_read(self):
+        body, _prov = CS.best_body(dict(self.ROW, raw_text=""),
+                                   "<p>" + self.BANNER + "</p>")
+        self.assertEqual(body, "")
+
+    def test_no_text_is_never_about_the_call(self):
+        self.assertFalse(CS.page_is_about(self.ROW, ""))
+        self.assertFalse(CS.page_is_about(self.ROW, None))
