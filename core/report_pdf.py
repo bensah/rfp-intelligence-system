@@ -319,7 +319,11 @@ _CSS = """
   .cover .contents { margin-top: 30px; }
   .cover .contents .h { font-size: 8pt; letter-spacing: .14em; text-transform: uppercase;
                         color: #64748b; margin-bottom: 8px; }
-  .cover .contents ol { margin: 0; padding-left: 18px; font-size: 10.5pt; }
+  /* No list marker: each section name already carries its own number ("1 · Scan activity"),
+     and those are the numbers that match the headings in the body. An <ol> marker on top of
+     them reads as "1. 1 · Scan activity", and it also drifts — finish() prunes sections that
+     came out empty, so the body can run 1, 2, 4 while the marker keeps counting 1, 2, 3. */
+  .cover .contents ol { margin: 0; padding-left: 0; font-size: 10.5pt; list-style: none; }
   .cover .contents li { margin: 3px 0; }
   .cover .foot { margin-top: 30px; font-size: 8pt; color: #64748b; }
 
