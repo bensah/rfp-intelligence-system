@@ -39,6 +39,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from core import chart_theme as _theme
+from core import report_pdf as _report_pdf
 from core import dropdowns, partner_names, report_snapshots, settings
 # Plotly Express BAKES a colour into the trace, so layout.colorway is ignored and every
 # chart without an explicit `color=` came out Plotly default blue — which is why the
@@ -695,6 +696,48 @@ def _show(key: str) -> bool:
     return key in _selected_items
 
 
+# ── PDF DOCUMENT COLLECTION ───────────────────────────────────────────────────────────
+# The page collects what it renders into a Document, and the PDF is built from THAT rather
+# than by printing the page. Printing the page cannot work: every Streamlit ancestor is a
+# flex container, and Chrome will not honour `break-inside` inside flexbox, so charts split
+# across page boundaries no matter what CSS is added. See core.report_pdf.
+#
+# Collecting here also means the aggregations are not duplicated — one source of truth for
+# the numbers, two presentations of them.
+_PDF_DOC = _report_pdf.Document()
+
+
+def _pdf_hook_metrics() -> None:
+    """Record every `st.metric` into the document as well as rendering it.
+
+    Patched at the DeltaGenerator level because metrics are called on column handles
+    (`k1.metric(...)`), not on `st` — so wrapping `st.metric` alone would miss nearly all of
+    them, and adding a call beside thirty existing ones would be thirty chances to miss one.
+    Guarded: if Streamlit's internals move, the report still renders and only the PDF loses
+    its tiles.
+    """
+    try:
+        from streamlit.delta_generator import DeltaGenerator
+    except Exception:
+        return
+    if getattr(DeltaGenerator, "_rfpis_metric_hooked", False):
+        return
+    _orig = DeltaGenerator.metric
+
+    def _metric(self, label, value=None, *a, **kw):
+        try:
+            _PDF_DOC.metric(label, value)
+        except Exception:
+            pass
+        return _orig(self, label, value, *a, **kw)
+
+    DeltaGenerator.metric = _metric
+    DeltaGenerator._rfpis_metric_hooked = True
+
+
+_pdf_hook_metrics()
+
+
 def _period_slug() -> str:
     """A short, stable token for the selected period — "ytd", "2026", "last90d", "alltime".
 
@@ -746,6 +789,10 @@ def _boxed(fig, **kw):
     bordered container that reads as a box within a box.
     """
     _theme.style(fig)
+    try:
+        _PDF_DOC.chart(fig)          # same figure object the page shows
+    except Exception:
+        pass
     with st.container(border=True):
         st.plotly_chart(fig, width="stretch", **kw)
 
@@ -924,7 +971,7 @@ def _bucketed_sum(date_series: pd.Series, value_series: pd.Series,
 # (right-aligned so they sit near the natural eye-line for "actions"
 # in a left-to-right reading layout).
 # ===========================================================================
-ac_tip, ac_excel, ac_print = st.columns([6, 1.4, 1.4])
+ac_tip, ac_pdf, ac_excel, ac_print = st.columns([4.6, 1.6, 1.4, 1.4])
 
 
 def _safe_for_excel(df: pd.DataFrame) -> pd.DataFrame:
@@ -1079,6 +1126,12 @@ ac_excel.download_button(
 if ac_print.button("🖨 Print / PDF", width="stretch", key="report_print_btn",
                    help="Opens your browser's print dialog — choose 'Save as PDF' to keep a copy."):
     st.session_state["_rfpis_print_now"] = True
+
+if ac_pdf.button("📄 Build PDF", width="stretch", key="report_pdf_btn",
+                 help="Builds a shareable A4 report — cover page, one section per page, charts "
+                      "laid out at page width. Takes a few seconds."):
+    st.session_state["_rfpis_make_pdf"] = True
+    st.rerun()
 
 # Tenant- and period-specific document title. Chrome stamps document.title into the printed
 # page header, so this is what makes the PDF header identify the report rather than the product.
@@ -1333,6 +1386,7 @@ st.divider()
 # ===========================================================================
 if _show_sec("1"):
     st.subheader("1 · Scan activity")
+    _PDF_DOC.section("1 · Scan activity")
     st.caption(
         "How the automated scanner is performing. KPI tiles come from "
         "`scan_logs` (one row per source per run). The time-series chart "
@@ -1340,12 +1394,20 @@ if _show_sec("1"):
         "so the curve covers the full period — not just days a scan ran."
     )
 
-    # System-wide DISCOVERY counter (shared across all tenants) — the Friday crawl fills a
-    # shared catalog every tenant screens; distinct from THIS tenant's own activity below.
-    # Multi-tenant only (in single-tenant the two would double-count). Visible to all.
+    # System-wide DISCOVERY counter — SUPER_USER ONLY (owner, 2026-08-12).
+    #
+    # It reports the shared crawl every tenant screens, which is not this tenant's activity and
+    # not something a tenant can act on: 25,036 discovered and 22,791 rejected at gate said
+    # nothing about their own pipeline while being the largest numbers on the page. A tenant's
+    # report should show what that tenant did — their eligibility scans and their migrated rows.
+    # Operators still need the crawl's health, so it stays for super_user.
+    #
+    # Multi-tenant only (in single-tenant the tenant IS the system, so the two would
+    # double-count).
     try:
         from auth.tenant_context import multitenant_enabled as _mte
-        if _mte():
+        from core import permissions as _perms_sd
+        if _mte() and _perms_sd.is_super_user(st.session_state.get("app_user") or {}):
             from core import analytics as _an
 
             # Cached: this rollup paginates scan_logs and counts the shared store, and the
@@ -1369,6 +1431,24 @@ if _show_sec("1"):
                                "Your tenant's own screening activity is below.")
     except Exception:
         pass
+
+    # WHERE THIS TENANT'S ROWS CAME FROM. Moved up from the funnel section (owner,
+    # 2026-08-12): it describes intake, which is what section 1 is about, and with the
+    # system-wide counter gone it is now the honest headline for a tenant — their eligibility
+    # scans, their manual submissions, and the rows migrated from the legacy workbook.
+    if not rfps_all.empty and "source" in rfps_all.columns:
+        _intake = rfps_all[~rfps_all["is_duplicate"]]["source"].fillna("(unknown)")
+        _labels = {"auto": "Eligibility scanner", "migration": "Excel migration",
+                   "manual": "Manually submitted"}
+        _counts = _intake.value_counts()
+        if not _counts.empty:
+            _ic = st.columns(min(4, len(_counts)))
+            for _i, (_src, _n) in enumerate(_counts.items()):
+                if _i >= len(_ic):
+                    break
+                _ic[_i].metric(_labels.get(str(_src).lower(), str(_src).title()), f"{int(_n):,}")
+            st.caption("Where this tenant's stored calls came from — all-time, not "
+                       "period-filtered, so it reconciles with the totals below.")
 
     if scans.empty:
         st.info("No scans recorded in this period yet. Trigger one from "
@@ -1528,7 +1608,7 @@ if _show_sec("1"):
             kw_freq = extract_keyword_frequencies(_titles_and_briefs)
             if kw_freq:
                 st.markdown(
-                    f"#### Search Keywords ({_period_label_str})"
+                    f"#### Focus areas"
                 )
                 st.caption(
                     "Word size scales to how often the keyword (or any of "
@@ -1730,6 +1810,7 @@ if _show_sec("1"):
 # ===========================================================================
 if _show_sec("4"):
     st.subheader("2 · Team & Partnership Activity")
+    _PDF_DOC.section("2 · Team & Partnership Activity")
     st.caption(
         "Everything about WHO does the work and WHO we do it with — internal "
         "triage meetings (**Team Touchpoints**), donor-facing engagements "
@@ -2049,6 +2130,7 @@ if _show_sec("4"):
 # ===========================================================================
 if _show_sec("2"):
     st.subheader("3 · Insights — Status & Eligibility Funnel")
+    _PDF_DOC.section("3 · Insights — Status & Eligibility Funnel")
     st.caption(
         "**Current pipeline state across ALL stored RFPs** — auto-scanned, "
         "manually submitted, AND imported from the legacy Excel workbook. "
@@ -2094,14 +2176,6 @@ if _show_sec("2"):
                   help="Held for later review — uncertain fit or no extractable deadline.")
         k4.metric("Decline", decline_all,
                   help="Filtered by the team or the decision tree.")
-
-        # By-source breakdown so the user can see how much came from where
-        if "source" in unique_all.columns:
-            src_counts = unique_all["source"].fillna("(unknown)").value_counts()
-            st.caption(
-                "**By source:**  "
-                + "  ·  ".join(f"`{k}` {v}" for k, v in src_counts.items())
-            )
 
         _STAGES = ["Discovered (all-time)", "Proceed-track", "Submitted", "Approved"]
         _FUNNEL_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#22c55e"]
@@ -2206,6 +2280,7 @@ if _show_sec("2"):
 # ===========================================================================
 if _show_sec("3"):
     st.subheader("4 · Reviews & Decisions")
+    _PDF_DOC.section("4 · Reviews & Decisions")
     st.caption(
         "Triage outcomes — velocity from RFP discovery to decision, where "
         "the auto-recommendation needed manual override, and the funder's own "
@@ -2383,6 +2458,7 @@ if _show_sec("3"):
 # ===========================================================================
 if _show_sec("5"):
     st.subheader("5 · Our Results — Proposals Submitted & Grants Secured")
+    _PDF_DOC.section("5 · Our Results")
     st.caption(
         "Bottom line across ALL stored RFPs — auto-scanned + manually "
         "submitted + Excel migration rows. Counts here ignore the period "
@@ -2636,6 +2712,66 @@ if _show_sec("5"):
 # "Meetings & Engagements" to "Team & Partnership Activity"). Nothing
 # renders here anymore — moving on to the Footer.
 
+
+# ===========================================================================
+# SHAREABLE PDF
+# ===========================================================================
+# Built from the collected Document, not by printing the page — see core.report_pdf for why
+# printing cannot work here. It runs on demand rather than on every rerun: a headless Chromium
+# render is a few seconds, and `st.download_button` needs its bytes up front, so generating
+# eagerly would put that on every widget interaction.
+# WHO generated this report. A printed PDF circulates on its own, so it has to carry a
+# signature back to a person — name and email — or a figure in it cannot be questioned by
+# anyone who receives it. Read from the session, never from a form field, so it cannot be typed
+# to say somebody else.
+_gen_user = st.session_state.get("app_user") or {}
+_gen_name = str(_gen_user.get("name") or "").strip()
+_gen_email = str(_gen_user.get("email") or "").strip()
+if _gen_name and _gen_email:
+    _gen_by = f"{_gen_name} <{_gen_email}>"
+else:
+    _gen_by = _gen_name or _gen_email or "unknown user"
+
+_pdf_doc = _PDF_DOC.finish()
+_pdf_name = _export_filename("pdf")
+
+if st.session_state.pop("_rfpis_make_pdf", False):
+    try:
+        with st.spinner("Building the PDF — laying out charts at page width…"):
+            _html_doc = _report_pdf.build_html(
+                _pdf_doc,
+                title=f"{_org_name} · Activity Report",
+                subtitle=f"{_period_label_str} · view {bucket_mode.lower()}",
+                meta={
+                    "Tenant": _org_name,
+                    "Period": (f"{_s_iso} → {_e_iso}" if _s_iso else "All time"),
+                    "Report id": (_url_rid or "unsaved"),
+                    "Generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "Generated by": _gen_by,
+                },
+            )
+            st.session_state["_rfpis_pdf_bytes"] = _report_pdf.render_pdf(
+                _html_doc,
+                chart_count=_pdf_doc.chart_count,
+                header_text=f"{_org_name} · Activity Report · {_period_label_str}",
+                footer_text=f"Generated by {_gen_by} · report {_url_rid or 'unsaved'}",
+            )
+            st.session_state["_rfpis_pdf_name"] = _pdf_name
+    except Exception as _pdf_exc:
+        st.session_state["_rfpis_pdf_bytes"] = None
+        st.error(f"Couldn't build the PDF: {_pdf_exc}")
+
+with st.container(key="report_pdf_actions"):
+    if st.session_state.get("_rfpis_pdf_bytes"):
+        st.download_button(
+            f"⬇ Download {st.session_state.get('_rfpis_pdf_name') or _pdf_name}",
+            data=st.session_state["_rfpis_pdf_bytes"],
+            file_name=st.session_state.get("_rfpis_pdf_name") or _pdf_name,
+            mime="application/pdf", width="stretch",
+        )
+        st.caption(f"{len(st.session_state['_rfpis_pdf_bytes']) / 1024:,.0f} KB · "
+                   f"{_pdf_doc.chart_count} charts · A4 portrait, one section per page.")
+
 st.divider()
 
 
@@ -2655,18 +2791,6 @@ if _org_country:
     foot_bits.append(_org_country)
 if _website:
     foot_bits.append(f"[{_website}]({_website})")
-# WHO generated this report. A printed PDF circulates on its own, so it has to carry a
-# signature back to a person — name and email — or a figure in it cannot be questioned by
-# anyone who receives it. Read from the session, never from a form field, so it cannot be typed
-# to say somebody else.
-_gen_user = st.session_state.get("app_user") or {}
-_gen_name = str(_gen_user.get("name") or "").strip()
-_gen_email = str(_gen_user.get("email") or "").strip()
-if _gen_name and _gen_email:
-    _gen_by = f"{_gen_name} <{_gen_email}>"
-else:
-    _gen_by = _gen_name or _gen_email or "unknown user"
-
 with st.container(key="report_footer"):
     st.caption(
         " · ".join(foot_bits)
