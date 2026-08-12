@@ -145,7 +145,21 @@ class ThePrintLayoutTests(unittest.TestCase):
         self.assertIn("rfpisRestorePlots", _source())
 
     def test_charts_are_never_enlarged_only_shrunk(self):
-        self.assertIn("if (k >= 1) return;", _source())
+        self.assertIn("maxW / natW >= 1) return;", _source())
+
+    def test_printing_re_lays_out_rather_than_shrinking_the_svg(self):
+        # Shrinking the SVG scales EVERYTHING, so 11px axis text printed at about 5pt — which is
+        # what "blurry" was. The PDF was vector throughout; the type was just too small.
+        # Plotly.relayout recomputes the chart for the narrower box and keeps font sizes.
+        src = _source()
+        self.assertIn("window.Plotly.relayout(plot, {width: maxW})", src)
+        i_relayout = src.index("window.Plotly.relayout(plot, {width: maxW})")
+        i_fallback = src.index("svg.setAttribute('viewBox'", i_relayout)
+        self.assertLess(i_relayout, i_fallback, "re-layout must be tried before scaling")
+
+    def test_the_print_call_waits_for_the_re_layout(self):
+        # Plotly.relayout is async; printing before it settles captures the old width.
+        self.assertIn("if (p && p.then) { p.then(function () { window.print(); }); }", _source())
 
     def test_the_click_is_handled_by_a_native_streamlit_button(self):
         # The hand-drawn button inside the component iframe was reported dead twice. It has no
@@ -168,7 +182,7 @@ class ThePrintLayoutTests(unittest.TestCase):
         # older build the parent kept that older hook forever and the newer one never installed.
         # The button then posted a message nothing listened for, and clicking it did nothing.
         src = _source()
-        self.assertIn("RFPIS_HOOK_ID = 'rfpis-print-hook-v2'", src)
+        self.assertRegex(src, r"RFPIS_HOOK_ID = 'rfpis-print-hook-v\d+'")
         self.assertIn("""querySelectorAll('[id^="rfpis-print-hook"]')""", src)
         self.assertIn("stale[i].remove()", src)
 
@@ -320,6 +334,85 @@ class TheExportButtonTests(unittest.TestCase):
         src = _source()
         self.assertIn('"📥 Export Data",', src)
         self.assertNotIn('"📥 Excel",', src)
+
+
+class Section1DoesNotDependOnScanLogsTests(unittest.TestCase):
+    """The reported disappearance of the keyword cloud.
+
+    Everything after the scan KPIs used to sit inside the `else:` of `if scans.empty:`, so a
+    period with no scan_logs rows for the tenant silently took the keyword cloud, the discovery
+    timeline, funding-by-donor and cycle time with it — all of which are built from
+    rfp_submissions and have nothing to do with whether a scan ran.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        probe = os.path.join(_ROOT, "tests", "report_page_probe.py")
+        env = dict(os.environ, RFPIS_PROBE_EMPTY="scan_logs")
+        proc = subprocess.run([sys.executable, probe], cwd=_ROOT, env=env,
+                              capture_output=True, text=True, timeout=600)
+        marker = "---PROBE---"
+        if marker not in proc.stdout:
+            raise AssertionError(
+                f"probe produced no result (exit {proc.returncode})\n"
+                f"stdout tail:\n{proc.stdout[-1500:]}\n"
+                f"stderr tail:\n{proc.stderr[-1500:]}")
+        cls.result = json.loads(proc.stdout.split(marker, 1)[1].strip().splitlines()[-1])
+
+    def test_the_page_does_not_crash_without_scan_logs(self):
+        # Top-sources IS scan-log-derived, and de-nesting it raised KeyError('source') until it
+        # got its own guard.
+        self.assertEqual(self.result["exceptions"], [])
+
+    def test_the_keyword_cloud_still_renders(self):
+        self.assertIn("Search Keywords", self.result["markdown"])
+
+    def test_the_charts_still_build(self):
+        self.assertGreater(self.result["n_charts"], 10)
+
+    def test_all_five_sections_still_arrive(self):
+        self.assertEqual(len(self.result["subheaders"]), 5)
+
+
+class TheExportFilenameTests(unittest.TestCase):
+    """One name for every tenant and period meant downloads collided and a file on disk could
+    not be traced back to the report that produced it."""
+
+    def test_it_carries_product_period_tenant_report_id_and_year(self):
+        src = _source()
+        self.assertIn('def _export_filename(', src)
+        self.assertIn('file_name=_export_filename("xlsx")', src)
+        block = src[src.index("def _export_filename("):src.index("def _boxed(")]
+        for part in ('"RFPIS"', "_period_slug()", "_org", "_url_rid", "year_override"):
+            self.assertIn(part, block)
+
+    def test_each_period_selection_gets_its_own_token(self):
+        src = _source()
+        block = src[src.index("def _period_slug("):src.index("def _slug(")]
+        for token in ('"ytd"', '"last90d"', '"last12m"', '"alltime"'):
+            self.assertIn(token, block)
+
+
+class TheReportIdentityTests(unittest.TestCase):
+    def test_the_document_title_names_the_tenant_and_period(self):
+        # Chrome stamps document.title into the printed page header, which read
+        # "RFP Intelligence System - RFPIS" on every tenant's PDF.
+        src = _source()
+        self.assertIn('_doc_title = f"{_org_name} · Activity Report · {_period_label_str}"', src)
+        self.assertIn("window.RFPIS_DOC_TITLE", src)
+        self.assertIn("window.parent.document.title = window.RFPIS_DOC_TITLE", src)
+
+    def test_the_footer_signs_the_report_with_a_name_and_email(self):
+        src = _source()
+        self.assertIn("Generated by", src)
+        block = src[src.index("_gen_user = st.session_state"):src.index("with st.container(key=\"report_footer\")")]
+        self.assertIn('_gen_user.get("name")', block)
+        self.assertIn('_gen_user.get("email")', block)
+
+    def test_the_signature_comes_from_the_session_not_a_field(self):
+        # A typed value could name somebody else.
+        src = _source()
+        self.assertIn('st.session_state.get("app_user")', src)
 
 
 if __name__ == "__main__":

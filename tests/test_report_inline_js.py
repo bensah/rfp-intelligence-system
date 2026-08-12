@@ -22,8 +22,9 @@ never been defined). Nothing in the page could report the error, and reading the
 correct code. Two rounds of fixes went into the wrong layer before the emitted text was compared
 against the file text.
 
-So the payloads are RAW strings now, and this test asserts both that they stay raw and that what
-Python emits actually parses.
+Payloads are raw strings now, and this checks both that they stay raw and that what Python emits
+actually parses. String literals are found through the AST rather than by regex, so wrapping a
+payload in concatenation (as the document-title injection does) cannot hide it from this test.
 """
 from __future__ import annotations
 
@@ -40,15 +41,26 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-# Pages that hand JavaScript to the browser through components.html.
+# Pages that hand JavaScript to the browser.
 _PAGES = ("views/report.py",)
 
-_PAYLOAD_RE = re.compile(r'components\.html\(\s*(r?""".*?""")', re.S)
 
+def _script_literals(rel_path: str) -> list[tuple[str, str]]:
+    """Every string literal in the file that carries a <script> block.
 
-def _payloads(rel_path: str) -> list[str]:
-    with open(os.path.join(_ROOT, rel_path), encoding="utf-8") as fh:
-        return _PAYLOAD_RE.findall(fh.read())
+    Returns (source_text_of_the_literal, runtime_value). The source text is what reveals whether
+    the literal was written raw; the runtime value is what the browser receives.
+    """
+    path = os.path.join(_ROOT, rel_path)
+    with open(path, encoding="utf-8") as fh:
+        src = fh.read()
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "<script>" in node.value:
+                segment = ast.get_source_segment(src, node) or ""
+                out.append((segment, node.value))
+    return out
 
 
 class ThePayloadsAreRawStringsTests(unittest.TestCase):
@@ -60,25 +72,29 @@ class ThePayloadsAreRawStringsTests(unittest.TestCase):
     about, and it happened while writing it.)
     """
 
-    def test_every_payload_is_raw(self):
+    def test_every_multiline_script_literal_is_raw(self):
         for page in _PAGES:
-            found = _payloads(page)
-            self.assertTrue(found, f"no components.html payload found in {page} — this test "
-                                   f"would pass vacuously")
-            for n, lit in enumerate(found):
-                with self.subTest(page=page, payload=n):
-                    self.assertTrue(lit.startswith('r"""'),
-                                    f"{page} payload {n} is not a raw string; Python will "
-                                    f"consume any JS escape inside it")
+            found = _script_literals(page)
+            self.assertTrue(found, f"no script literal found in {page} — this test would pass "
+                                   f"vacuously")
+            for n, (segment, value) in enumerate(found):
+                # Single-line helpers (the one-line title injection) carry no escapes worth
+                # protecting; the multi-line blocks are the risk.
+                if value.count("\n") < 3:
+                    continue
+                with self.subTest(page=page, literal=n):
+                    self.assertTrue(segment.lstrip().startswith(("r\"\"\"", "r'''")),
+                                    f"{page} literal {n} is not raw; Python will consume any JS "
+                                    f"escape inside it. Starts: {segment[:24]!r}")
 
 
 class WhatPythonEmitsIsValidJavaScriptTests(unittest.TestCase):
     def _emitted_scripts(self):
         for page in _PAGES:
-            for n, lit in enumerate(_payloads(page)):
-                runtime = ast.literal_eval(lit)          # exactly what the browser receives
-                for m, block in enumerate(re.findall(r"<script>(.*?)</script>", runtime, re.S)):
-                    yield f"{page}#{n}.{m}", block
+            for n, (_segment, value) in enumerate(_script_literals(page)):
+                for m, block in enumerate(re.findall(r"<script>(.*?)</script>", value, re.S)):
+                    if block.strip():
+                        yield f"{page}#{n}.{m}", block
 
     def test_no_javascript_string_literal_spans_a_line_break(self):
         # The precise shape of the bug: a real newline inside '...'.
@@ -94,6 +110,7 @@ class WhatPythonEmitsIsValidJavaScriptTests(unittest.TestCase):
         node = shutil.which("node")
         if not node:
             self.skipTest("node not available")
+        checked = 0
         for name, block in self._emitted_scripts():
             with self.subTest(script=name):
                 with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,
@@ -105,8 +122,10 @@ class WhatPythonEmitsIsValidJavaScriptTests(unittest.TestCase):
                                           capture_output=True, text=True, timeout=60)
                     self.assertEqual(proc.returncode, 0,
                                      f"{name} does not parse as emitted:\n{proc.stderr}")
+                    checked += 1
                 finally:
                     os.unlink(path)
+        self.assertGreater(checked, 0, "no script was actually parsed")
 
     def test_something_was_actually_checked(self):
         self.assertGreater(len(list(self._emitted_scripts())), 0)
@@ -117,16 +136,22 @@ class NoLiteralScriptTagInsideInlineScriptTests(unittest.TestCase):
     as the HTML parser is concerned, so the rest stops being script. This was a SECOND, separate
     defect found while chasing the first."""
 
-    def test_no_script_open_tag_appears_inside_the_script_body(self):
+    def test_no_script_tag_appears_inside_a_script_body(self):
         for name, block in WhatPythonEmitsIsValidJavaScriptTests()._emitted_scripts():
             with self.subTest(script=name):
-                self.assertNotRegex(block, r"<\s*script",
-                                    f"{name} contains a literal script open tag")
+                self.assertNotRegex(block, r"<\s*/?\s*script",
+                                    f"{name} contains a literal script tag")
 
-    def test_no_script_close_tag_appears_inside_the_script_body(self):
-        for name, block in WhatPythonEmitsIsValidJavaScriptTests()._emitted_scripts():
-            with self.subTest(script=name):
-                self.assertNotRegex(block, r"<\s*/\s*script")
+
+class ThePrintTriggerRerunsTests(unittest.TestCase):
+    """Streamlit keys a component off its content, so byte-identical HTML is reused WITHOUT
+    re-executing. That is why the button printed once and then never again."""
+
+    def test_the_trigger_payload_carries_a_nonce(self):
+        with open(os.path.join(_ROOT, "views", "report.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("_rfpis_print_seq", src)
+        self.assertIn("print request {_print_nonce}", src)
 
 
 if __name__ == "__main__":

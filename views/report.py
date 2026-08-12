@@ -40,6 +40,12 @@ import streamlit.components.v1 as components
 
 from core import chart_theme as _theme
 from core import dropdowns, partner_names, report_snapshots, settings
+# Plotly Express BAKES a colour into the trace, so layout.colorway is ignored and every
+# chart without an explicit `color=` came out Plotly default blue — which is why the
+# partner charts stayed blue after the palette change. Setting the Express default is the
+# one place that fixes all of them.
+px.defaults.color_discrete_sequence = _theme.ramp(6)
+
 from core.member_names import (first_name_display_map, normalize_member_name,
                               split_and_normalize_names)
 from core.records import clean_df
@@ -212,9 +218,15 @@ st.markdown(
           page-break-inside: avoid;
         }
         .stPlotlyChart, [data-testid="stPlotlyChart"], [data-testid="stMetric"],
-        [data-testid="stDataFrame"], [data-testid="stTable"] {
+        [data-testid="stDataFrame"], [data-testid="stTable"],
+        /* The bordered frame around each chart. This selector was MISSING, so a frame could
+           split across a page break — the chart on one page and its value labels on the next,
+           which is what the overlapping / stray-numbers pages were. */
+        [data-testid="stVerticalBlockBorderWrapper"] {
           page-break-inside: avoid; break-inside: avoid;
         }
+        /* Keep a subsection heading with the frame that follows it. */
+        h4 + div, h5 + div, h6 + div { page-break-before: avoid; break-before: avoid; }
         body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       }
       /* Slightly compact the metric tiles so the report fits on one printed page. */
@@ -675,6 +687,46 @@ def _show(key: str) -> bool:
     return key in _selected_items
 
 
+def _period_slug() -> str:
+    """A short, stable token for the selected period — "ytd", "2026", "last90d", "alltime".
+
+    Goes in the export filename, so two reports downloaded on the same day for different periods
+    no longer land as "…(1).xlsx".
+    """
+    mode = str(period_mode or "").strip().lower()
+    if "year to date" in mode or mode == "ytd":
+        return "ytd"
+    if "last 90" in mode:
+        return "last90d"
+    if "last 12" in mode:
+        return "last12m"
+    if "all time" in mode:
+        return "alltime"
+    if "month" in mode:
+        return f"{str(month_override or '').lower()[:3] or 'month'}{int(year_override)}"
+    if "year" in mode:
+        return str(int(year_override))
+    return (mode.replace(" ", "") or "period")
+
+
+def _slug(text: str, limit: int = 28) -> str:
+    """Filename-safe token: keeps letters, digits and dashes, drops everything else."""
+    out = re.sub(r"[^A-Za-z0-9]+", "-", str(text or "")).strip("-")
+    return (out[:limit].strip("-") or "org")
+
+
+def _export_filename(ext: str) -> str:
+    """RFPIS_<period>_report_<tenant>_<report-id>_<year>.<ext>
+
+    The old name was the same for every tenant and every period, so downloads collided and a
+    file on disk could not be traced back to the report that produced it.
+    """
+    parts = ["RFPIS", _period_slug(), "report",
+             _slug(_org.get("org_short") or _org_name),
+             _slug(_url_rid or "unsaved", 20), str(int(year_override))]
+    return "_".join(p for p in parts if p) + f".{ext}"
+
+
 def _boxed(fig, **kw):
     """Render a chart inside its own bordered frame.
 
@@ -975,10 +1027,7 @@ ac_tip.caption(
 ac_excel.download_button(
     "📥 Export Data",
     data=_build_excel_export(),
-    file_name=(
-        f"rfpis-report-{_org.get('org_short') or 'org'}-"
-        f"{(_s_iso or 'alltime')}-to-{(_e_iso or 'now')}.xlsx"
-    ).replace(" ", "_"),
+    file_name=_export_filename("xlsx"),
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     help="Multi-sheet workbook: Summary KPIs + raw data for every section.",
     width='stretch',
@@ -1006,9 +1055,16 @@ if ac_print.button("🖨 Print / PDF", width="stretch", key="report_print_btn",
                    help="Opens your browser's print dialog — choose 'Save as PDF' to keep a copy."):
     st.session_state["_rfpis_print_now"] = True
 
+# Tenant- and period-specific document title. Chrome stamps document.title into the printed
+# page header, so this is what makes the PDF header identify the report rather than the product.
+_doc_title = f"{_org_name} · Activity Report · {_period_label_str}"
+
 with ac_print:
     components.html(
-        r"""
+        "<script>window.RFPIS_DOC_TITLE = "
+        + json.dumps(_doc_title)
+        + ";</script>"
+        + r"""
         <script>
         // -- Fit Plotly charts to the printed page ------------------------------------
         // Plotly bakes a PIXEL width into its <svg> at render time, measured from the
@@ -1037,12 +1093,13 @@ with ac_print:
 
         function rfpisFitPlots(maxW) {
           var doc = rfpisDoc();
+          var jobs = [];
           doc.querySelectorAll('.js-plotly-plot').forEach(function (plot) {
             var cont = plot.querySelector('.svg-container');
             var svgs = plot.querySelectorAll('svg.main-svg');
             if (!cont || !svgs.length) return;
-            // Record the natural size ONCE, so afterprint restores the screen layout and
-            // a second print does not re-scale an already-scaled chart.
+            // Record the natural size ONCE, so afterprint restores the screen layout and a
+            // second print does not re-fit an already-fitted chart.
             if (!plot.dataset.rfpisNatW) {
               plot.dataset.rfpisNatW =
                 parseFloat(svgs[0].getAttribute('width')) || cont.offsetWidth || 0;
@@ -1051,9 +1108,24 @@ with ac_print:
             }
             var natW = parseFloat(plot.dataset.rfpisNatW);
             var natH = parseFloat(plot.dataset.rfpisNatH);
-            if (!natW || !natH) return;
+            if (!natW || !natH || maxW / natW >= 1) return;   // already fits - never enlarge
+
+            // PREFERRED: ask Plotly to re-lay the chart out at the page width. Fonts, ticks and
+            // legends keep their real sizes and are recomputed for the narrower box.
+            //
+            // The alternative - giving the SVG a viewBox and shrinking its box - scales EVERYTHING,
+            // so an 11px axis label printed at about 5pt. That is what "blurry" was: not
+            // resolution (the PDF is vector throughout) but type shrunk past legibility.
+            if (window.Plotly && window.Plotly.relayout) {
+              try {
+                jobs.push(window.Plotly.relayout(plot, {width: maxW}));
+                return;
+              } catch (e) { /* fall through to the scaling fallback */ }
+            }
+
+            // FALLBACK, only when Plotly is unreachable: scale the SVG. Undersized text beats a
+            // chart cut off at the page edge.
             var k = maxW / natW;
-            if (k >= 1) return;                 // already fits - never enlarge
             var w = Math.floor(natW * k), h = Math.floor(natH * k);
             cont.style.width = w + 'px';  cont.style.height = h + 'px';
             plot.style.width = w + 'px';  plot.style.height = h + 'px';
@@ -1063,10 +1135,13 @@ with ac_print:
                   (svg.getAttribute('width') || natW) + ' ' +
                   (svg.getAttribute('height') || natH));
               }
-              svg.setAttribute('width', w);  svg.setAttribute('height', h);
-              svg.style.width = w + 'px';    svg.style.height = h + 'px';
+              svg.setAttribute('width', w); svg.setAttribute('height', h);
+              svg.style.width = w + 'px';  svg.style.height = h + 'px';
             });
           });
+          // A promise the caller can await, so printing waits for the re-layout to finish.
+          return (window.Promise && jobs.length) ? window.Promise.all(jobs)
+                                                 : {then: function (f) { f(); }};
         }
 
         function rfpisRestorePlots() {
@@ -1082,6 +1157,9 @@ with ac_print:
               svg.setAttribute('width', natW); svg.setAttribute('height', natH);
               svg.style.width = ''; svg.style.height = '';
             });
+            if (window.Plotly && window.Plotly.relayout) {
+              try { window.Plotly.relayout(plot, {width: natW}); } catch (e) {}
+            }
           });
         }
 
@@ -1108,7 +1186,15 @@ with ac_print:
         // newer one never installed — the button then posted a message nothing was
         // listening for, and clicking it did nothing at all. Bump this whenever the
         // injected body changes, and remove any earlier hook on the way in.
-        var RFPIS_HOOK_ID = 'rfpis-print-hook-v2';
+        var RFPIS_HOOK_ID = 'rfpis-print-hook-v3';
+
+        // The browser tab title, which is ALSO what the print dialog stamps into the page
+        // header. It read "RFP Intelligence System - RFPIS" on every tenant's printout —
+        // identical across tenants and saying nothing about which report this is. Set from the
+        // page so the PDF header names the tenant and the period.
+        try {
+          if (window.RFPIS_DOC_TITLE) { window.parent.document.title = window.RFPIS_DOC_TITLE; }
+        } catch (e) {}
 
         (function () {
           var pdoc;
@@ -1134,8 +1220,11 @@ with ac_print:
             // One entry point the button can CALL, so success is observable rather than
             // fired-and-forgotten into a message channel.
             'window.rfpisPrintNow = function () {',
-            '  window.rfpisFitPlots(window.RFPIS_PRINT_W);',
-            '  window.print();',
+            // Await the fit: Plotly.relayout is asynchronous, and printing before it settles
+            // captures the chart at its old width.
+            '  var p = window.rfpisFitPlots(window.RFPIS_PRINT_W);',
+            '  if (p && p.then) { p.then(function () { window.print(); }); }',
+            '  else { window.print(); }',
             '  return true; };',
             'window.addEventListener("message", function (ev) {',
             '  if (!ev.data || ev.data.rfpis !== "print") return;',
@@ -1169,9 +1258,17 @@ with ac_print:
 
     # The print call itself, on the rerun after the button was pressed. It runs as this
     # component loads, so no click has to cross the iframe boundary.
+    #
+    # THE NONCE MATTERS. Streamlit keys a component off its content and position, so rendering
+    # byte-identical HTML again reuses the existing iframe WITHOUT re-executing its script. That
+    # is why the button printed the first time and then never again: the second click reran the
+    # page (which is why it looked like Generate) but the component was considered unchanged, so
+    # nothing ran. A counter in the payload makes each render a new component.
     if st.session_state.pop("_rfpis_print_now", False):
+        _print_nonce = int(st.session_state.get("_rfpis_print_seq", 0)) + 1
+        st.session_state["_rfpis_print_seq"] = _print_nonce
         components.html(
-            r"""
+            f"<!-- print request {_print_nonce} -->" + r"""
             <script>
             (function () {
               function go() {
@@ -1279,307 +1376,317 @@ if _show_sec("1"):
                        "counts one source-run. Open Admin → Manual Scan "
                        "history for the actual error messages.")
 
-        # Discovery timeline — driven by rfp_submissions.search_date so the
-        # curve covers the entire period (not just days scans ran). Each
-        # bar is STACKED by submitted_by so you can see who's contributing
-        # to the funnel month-over-month.
-        if not rfps_all.empty:
-            disc = rfps_all[~rfps_all["is_duplicate"]].copy()
-            if _start:
-                disc = disc[disc["_discovered_in_period"]]
-            if _show("s1_discovery") and not disc.empty and disc["search_date"].notna().any():
-                # Stack-by-submitter — split comma-separated names, normalize,
-                # and use first-name display when unique (same logic as
-                # Section 4's Submissions chart).
-                disc_with_members = disc.assign(
-                    _members=disc["submitted_by"].apply(split_and_normalize_names),
-                    bucket=_bucket_start(disc["search_date"], bucket_mode),
+    # ── RFP-derived blocks: NOT gated on scan logs ─────────────────────────────
+    # These read rfp_submissions, not scan_logs, so they must render whether or not the
+    # tenant has scan runs recorded in the period. They used to sit inside the
+    # `else:` of `if scans.empty:` — so a period with no scan rows silently took the
+    # keyword cloud, the discovery timeline, funding-by-donor, top sources and cycle
+    # time with it, even though every one of them had data to show.
+    # Discovery timeline — driven by rfp_submissions.search_date so the
+    # curve covers the entire period (not just days scans ran). Each
+    # bar is STACKED by submitted_by so you can see who's contributing
+    # to the funnel month-over-month.
+    if not rfps_all.empty:
+        disc = rfps_all[~rfps_all["is_duplicate"]].copy()
+        if _start:
+            disc = disc[disc["_discovered_in_period"]]
+        if _show("s1_discovery") and not disc.empty and disc["search_date"].notna().any():
+            # Stack-by-submitter — split comma-separated names, normalize,
+            # and use first-name display when unique (same logic as
+            # Section 4's Submissions chart).
+            disc_with_members = disc.assign(
+                _members=disc["submitted_by"].apply(split_and_normalize_names),
+                bucket=_bucket_start(disc["search_date"], bucket_mode),
+            )
+            exp_disc = disc_with_members.explode("_members").dropna(subset=["_members"])
+            exp_disc = exp_disc[exp_disc["_members"] != ""]
+            if not exp_disc.empty:
+                disp_map = first_name_display_map(exp_disc["_members"])
+                exp_disc["submitter"] = exp_disc["_members"].map(disp_map).fillna(exp_disc["_members"])
+                stacked_disc = (
+                    exp_disc.groupby(["bucket", "submitter"]).size()
+                    .reset_index(name="RFPs discovered")
                 )
-                exp_disc = disc_with_members.explode("_members").dropna(subset=["_members"])
-                exp_disc = exp_disc[exp_disc["_members"] != ""]
-                if not exp_disc.empty:
-                    disp_map = first_name_display_map(exp_disc["_members"])
-                    exp_disc["submitter"] = exp_disc["_members"].map(disp_map).fillna(exp_disc["_members"])
-                    stacked_disc = (
-                        exp_disc.groupby(["bucket", "submitter"]).size()
-                        .reset_index(name="RFPs discovered")
-                    )
-                    fig = px.bar(
-                        stacked_disc, x="bucket", y="RFPs discovered",
-                        color="submitter", barmode="stack",
-                        title=f"RFPs discovered by member ({_period_label_str}, {bucket_mode.lower()})",
-                        labels={"bucket": _bucket_label(bucket_mode), "submitter": "Submitted by"},
-                    )
-                    fig.update_layout(
-                        height=360, margin=dict(t=40, b=10),
-                        xaxis=_fmt_bucket_ticks(bucket_mode),
-                        legend=dict(orientation="h", yanchor="top", y=-0.18,
-                                    xanchor="center", x=0.5, font=dict(size=11)),
-                    )
-                    _boxed(fig)
-
-                    # ─── Submission leaderboard ─────────────────────────────
-                    # Moved here from Section 4 (Team & Partnership Activity)
-                    # so the totals-per-member sit directly under the chart
-                    # showing the per-bucket breakdown — same data, two views.
-                    # Uses `exp_disc["submitter"]` which already has the
-                    # first-name display map applied (collision-safe).
-                    leader_series = (
-                        exp_disc["submitter"].value_counts().reset_index()
-                    )
-                    leader_series.columns = ["Member", "RFPs discovered"]
-                    with st.expander("Submission leaderboard", expanded=False):
-                        st.dataframe(leader_series,
-                                      width='stretch', hide_index=True)
-                else:
-                    # No submitter data — fall back to a plain bucket count
-                    disc_df = _bucketed_count(disc["search_date"].dropna(), "RFPs discovered")
-                    fig = px.bar(
-                        disc_df, x="bucket", y="RFPs discovered",
-                        title=f"RFPs discovered ({_period_label_str}, {bucket_mode.lower()})",
-                        labels={"bucket": _bucket_label(bucket_mode)},
-                    )
-                    fig.update_layout(height=320, margin=dict(t=40, b=10),
-                                      xaxis=_fmt_bucket_ticks(bucket_mode))
-                    _boxed(fig)
-            elif _show("s1_discovery"):
-                st.info(f"No RFPs discovered in this {period_mode.lower()} period yet.")
-
-            # ───── RFPs by donor (non-time-series) ──────────────────────────
-            # Snapshot of which donors contribute the most RFPs to the
-            # pipeline. Top 15, horizontal so long donor names fit.
-            if _show("s1_donor") and not disc.empty:
-                donor_counts = (
-                    disc["funding_agency"].fillna("(unspecified)")
-                    .replace("", "(unspecified)")
-                    .value_counts().head(15).reset_index()
+                fig = px.bar(
+                    stacked_disc, x="bucket", y="RFPs discovered",
+                    color="submitter", barmode="stack",
+                    title=f"RFPs discovered by member ({_period_label_str}, {bucket_mode.lower()})",
+                    labels={"bucket": _bucket_label(bucket_mode), "submitter": "Submitted by"},
                 )
-                donor_counts.columns = ["Donor", "RFPs"]
-                if not donor_counts.empty:
-                    fig_dn = px.bar(
-                        donor_counts, x="RFPs", y="Donor", orientation="h",
-                        text="RFPs",
-                        title=f"RFPs by donor — top 15 ({_period_label_str})",
-                        color_discrete_sequence=[_theme.rgba(0.9)],
-                    )
-                    fig_dn.update_layout(
-                        height=max(280, 28 * len(donor_counts) + 80),
-                        margin=dict(t=40, b=10),
-                        yaxis={"categoryorder": "total ascending"},
-                    )
-                    _boxed(fig_dn)
-
-            # ───── Keyword cloud — niche-vocabulary, frequency-sized ────────
-            # Replaces the old "by program area" bar chart. Source is the
-            # RFP title + description (NOT the program-area classifier
-            # labels). Words go through `core.keyword_cloud` which:
-            #   * tokenizes single words (HIV/AIDS → hiv, aids)
-            #   * stems related forms together (finance/financing/financed
-            #     → "Financing"; vaccine/vaccination → "Vaccine")
-            #   * keeps only words in a curated ~80-stem global-health
-            #     niche vocabulary — surfaces the topics we should be
-            #     searching more aggressively, not a sprawling cloud of
-            #     top-200 English words.
-            # Font size scales to frequency via WordCloud.generate_from_
-            # frequencies — that IS the "size grows with count" effect.
-            if _show("s1_keywords") and not disc.empty:
-                from core.keyword_cloud import extract_keyword_frequencies
-
-                _titles_and_briefs = [
-                    " ".join([
-                        str(r.get("opportunity_title") or ""),
-                        str(r.get("brief_description") or ""),
-                    ])
-                    for _, r in disc.iterrows()
-                ]
-                kw_freq = extract_keyword_frequencies(_titles_and_briefs)
-                if kw_freq:
-                    st.markdown(
-                        f"#### Search Keywords ({_period_label_str})"
-                    )
-                    st.caption(
-                        "Word size scales to how often the keyword (or any of "
-                        "its variants — e.g. *Financing* covers finance / "
-                        "financed / financial) appears across RFP titles + "
-                        "briefs. Vocabulary is a curated global-health niche."
-                    )
-                    try:
-                        from wordcloud import WordCloud
-                        import matplotlib.pyplot as plt
-
-                        wc = WordCloud(
-                            width=1600, height=600,
-                            background_color="white",
-                            colormap="viridis",
-                            prefer_horizontal=0.9,
-                            collocations=False,
-                            relative_scaling=0.6,    # font scales ~linearly with count
-                            min_font_size=12,
-                            max_font_size=180,
-                        ).generate_from_frequencies(kw_freq)
-                        fig_wc, ax = plt.subplots(figsize=(14, 5))
-                        ax.imshow(wc, interpolation="bilinear")
-                        ax.axis("off")
-                        fig_wc.tight_layout(pad=0)
-                        with st.container(border=True):
-                            st.pyplot(fig_wc, width='stretch')
-                        plt.close(fig_wc)
-                    except ImportError:
-                        # Graceful fallback when WordCloud / matplotlib not
-                        # installed (e.g. Streamlit Cloud pre-deploy). Show a
-                        # ranked list so the user still gets the signal.
-                        st.info(
-                            "Word cloud requires `wordcloud` + `matplotlib`. "
-                            "Run `pip install wordcloud matplotlib` to enable "
-                            "the visual cloud. Top keywords shown below."
-                        )
-                        _kw_top = (
-                            pd.DataFrame(
-                                sorted(kw_freq.items(), key=lambda kv: -kv[1]),
-                                columns=["Keyword", "Hits"],
-                            ).head(40)
-                        )
-                        st.dataframe(_kw_top, width='stretch',
-                                     hide_index=True)
-
-            # ───── Keyword cloud + success table ─────────────────────────────
-            # Frequency of program-area keywords across RFP titles +
-            # descriptions. The cloud surfaces what topics dominate the
-            # incoming pipeline; the success table ranks keywords by how
-            # often the RFPs containing them progressed to Proceed /
-            # Submitted / Approved — actionable signal for what to search
-            # for more aggressively.
-            if _show("s1_kw_success") and not disc.empty:
-                # Use the SAME curated `keyword_cloud` vocabulary as the
-                # visual cloud above (not the legacy program_area_classifier
-                # keywords). This makes the table and the cloud consistent
-                # — and crucially picks up bare acronyms like "AI" that the
-                # classifier only knew as "artificial intelligence". Per
-                # user feedback: AI-titled RFPs were being missed because
-                # the classifier vocabulary required the spelled-out form.
-                from core.keyword_cloud import extract_keyword_frequencies
-
-                _kw_rows = []
-                for _, r in disc.iterrows():
-                    text = " ".join([
-                        str(r.get("opportunity_title") or ""),
-                        str(r.get("brief_description") or ""),
-                    ])
-                    if not text.strip():
-                        continue
-                    # Presence per RFP (set of stems), NOT token occurrence
-                    # count — so an RFP saying "AI" twice still counts as
-                    # one AI hit on the conversion side.
-                    stems_in_row = set(extract_keyword_frequencies([text]).keys())
-                    if not stems_in_row:
-                        continue
-                    decision_str = str(r.get("decision") or "").lower()
-                    progress_str = str(r.get("progress_status") or "").lower()
-                    donor_str = str(r.get("donor_decision") or "").lower()
-                    is_proceed = decision_str.startswith("proceed")
-                    # Shared app-wide "submitted": Completed OR a donor decision recorded.
-                    is_submitted = (progress_str == "completed"
-                                    or donor_str in _SUBMITTED_DECISIONS)
-                    is_approved = donor_str == "approved"
-                    for kw in stems_in_row:
-                        _kw_rows.append({
-                            "keyword": kw,
-                            "is_proceed": is_proceed,
-                            "is_submitted": is_submitted,
-                            "is_approved": is_approved,
-                        })
-                if _kw_rows:
-                    kw_df = pd.DataFrame(_kw_rows)
-                    kw_agg = (
-                        kw_df.groupby("keyword").agg(
-                            Hits=("keyword", "count"),
-                            Proceed=("is_proceed", "sum"),
-                            Submitted=("is_submitted", "sum"),
-                            Approved=("is_approved", "sum"),
-                        ).reset_index()
-                        .sort_values(
-                            ["Approved", "Submitted", "Proceed", "Hits"],
-                            ascending=[False, False, False, False],
-                        )
-                        .head(50)
-                    )
-
-                    # ─── Keyword success table ───
-                    # The visual cloud above answers "what topics dominate";
-                    # this table answers "which topics convert" — same
-                    # vocabulary, broken out by Proceed / Submitted / Approved.
-                    with st.expander(
-                        "Keywords driving success — top by Approved / Submitted / Proceed",
-                        expanded=False,
-                    ):
-                        st.caption(
-                            "One row per niche keyword. Hits = number of RFPs "
-                            "whose title or brief mentions that keyword (or any "
-                            "of its stemmed variants). Use this to focus future "
-                            "donor searches on the topics that consistently win. "
-                            "Sorted by Approved → Submitted → Proceed → Hits."
-                        )
-                        st.dataframe(
-                            kw_agg.rename(columns={"keyword": "Keyword"}),
-                            width='stretch', hide_index=True,
-                        )
-
-        # Top sources by yield
-        src = (
-            scans.groupby("source")
-            .agg(runs=("scan_date", "count"),
-                 found=("rfps_found", "sum"),
-                 new=("rfps_new", "sum"),
-                 rejected=("rfps_rejected", "sum"),
-                 avg_dur=("duration_sec", "mean"))
-            .reset_index()
-            .sort_values("new", ascending=False)
-            .head(15)
-        )
-        if _show("s1_sources") and not src.empty:
-            src["avg_dur"] = src["avg_dur"].round(1)
-            src["yield_pct"] = ((src["new"] / src["found"].replace(0, 1)) * 100).round(1)
-            with st.expander("Top 15 sources by new-RFP yield", expanded=False):
-                st.dataframe(
-                    src.rename(columns={
-                        "source": "Source", "runs": "Runs", "found": "Found",
-                        "new": "New", "rejected": "Rejected",
-                        "avg_dur": "Avg duration (s)", "yield_pct": "Yield %",
-                    }),
-                    width='stretch', hide_index=True,
+                fig.update_layout(
+                    height=360, margin=dict(t=40, b=10),
+                    xaxis=_fmt_bucket_ticks(bucket_mode),
+                    legend=dict(orientation="h", yanchor="top", y=-0.18,
+                                xanchor="center", x=0.5, font=dict(size=11)),
                 )
+                _boxed(fig)
 
-        # ───────────── Search → Submission cycle time (relocated from §4) ─────
-        # Lives in Section 1 because Search Date is the anchor of the metric —
-        # it's the search-to-submission lag, conceptually a search-activity
-        # quality signal. (Originally placed in §4 Team Activity which was
-        # the wrong narrative beat.)
-        if _show("s1_cycle") and not rfps_all.empty:
-            st.markdown("##### Search → Submission cycle time")
-            cyc_src = rfps_all[~rfps_all["is_duplicate"]].copy()
-            cyc = cyc_src.dropna(subset=["search_date", "date_completed"]).copy()
-            if not cyc.empty:
-                cyc["days"] = cyc.apply(
-                    lambda r: (r["date_completed"] - r["search_date"].date()).days,
-                    axis=1,
+                # ─── Submission leaderboard ─────────────────────────────
+                # Moved here from Section 4 (Team & Partnership Activity)
+                # so the totals-per-member sit directly under the chart
+                # showing the per-bucket breakdown — same data, two views.
+                # Uses `exp_disc["submitter"]` which already has the
+                # first-name display map applied (collision-safe).
+                leader_series = (
+                    exp_disc["submitter"].value_counts().reset_index()
                 )
-                cyc = cyc[cyc["days"] >= 0]
-            if not cyc.empty:
-                ct1, ct2, ct3, ct4 = st.columns(4)
-                ct1.metric("Median days", f"{cyc['days'].median():.0f}")
-                ct2.metric("Mean days",   f"{cyc['days'].mean():.0f}")
-                ct3.metric("Min days",    f"{int(cyc['days'].min())}")
-                ct4.metric("Max days",    f"{int(cyc['days'].max())}")
-                fig_cyc = px.histogram(
-                    cyc, x="days", nbins=20,
-                    title="Distribution of days from Search Date → Date Completed",
-                    labels={"days": "Days", "count": "RFPs"},
-                )
-                fig_cyc.update_layout(height=280, margin=dict(t=40, b=10))
-                _boxed(fig_cyc)
+                leader_series.columns = ["Member", "RFPs discovered"]
+                with st.expander("Submission leaderboard", expanded=False):
+                    st.dataframe(leader_series,
+                                  width='stretch', hide_index=True)
             else:
-                st.info("No RFPs with both search_date and date_completed yet — "
-                        "cycle time chart will populate as proposals get submitted.")
+                # No submitter data — fall back to a plain bucket count
+                disc_df = _bucketed_count(disc["search_date"].dropna(), "RFPs discovered")
+                fig = px.bar(
+                    disc_df, x="bucket", y="RFPs discovered",
+                    title=f"RFPs discovered ({_period_label_str}, {bucket_mode.lower()})",
+                    labels={"bucket": _bucket_label(bucket_mode)},
+                )
+                fig.update_layout(height=320, margin=dict(t=40, b=10),
+                                  xaxis=_fmt_bucket_ticks(bucket_mode))
+                _boxed(fig)
+        elif _show("s1_discovery"):
+            st.info(f"No RFPs discovered in this {period_mode.lower()} period yet.")
+
+        # ───── RFPs by donor (non-time-series) ──────────────────────────
+        # Snapshot of which donors contribute the most RFPs to the
+        # pipeline. Top 15, horizontal so long donor names fit.
+        if _show("s1_donor") and not disc.empty:
+            donor_counts = (
+                disc["funding_agency"].fillna("(unspecified)")
+                .replace("", "(unspecified)")
+                .value_counts().head(15).reset_index()
+            )
+            donor_counts.columns = ["Donor", "RFPs"]
+            if not donor_counts.empty:
+                fig_dn = px.bar(
+                    donor_counts, x="RFPs", y="Donor", orientation="h",
+                    text="RFPs",
+                    title=f"RFPs by donor — top 15 ({_period_label_str})",
+                    color_discrete_sequence=[_theme.TURQUOISE],
+                )
+                fig_dn.update_layout(
+                    height=max(280, 28 * len(donor_counts) + 80),
+                    margin=dict(t=40, b=10),
+                    yaxis={"categoryorder": "total ascending"},
+                )
+                _boxed(fig_dn)
+
+        # ───── Keyword cloud — niche-vocabulary, frequency-sized ────────
+        # Replaces the old "by program area" bar chart. Source is the
+        # RFP title + description (NOT the program-area classifier
+        # labels). Words go through `core.keyword_cloud` which:
+        #   * tokenizes single words (HIV/AIDS → hiv, aids)
+        #   * stems related forms together (finance/financing/financed
+        #     → "Financing"; vaccine/vaccination → "Vaccine")
+        #   * keeps only words in a curated ~80-stem global-health
+        #     niche vocabulary — surfaces the topics we should be
+        #     searching more aggressively, not a sprawling cloud of
+        #     top-200 English words.
+        # Font size scales to frequency via WordCloud.generate_from_
+        # frequencies — that IS the "size grows with count" effect.
+        if _show("s1_keywords") and not disc.empty:
+            from core.keyword_cloud import extract_keyword_frequencies
+
+            _titles_and_briefs = [
+                " ".join([
+                    str(r.get("opportunity_title") or ""),
+                    str(r.get("brief_description") or ""),
+                ])
+                for _, r in disc.iterrows()
+            ]
+            kw_freq = extract_keyword_frequencies(_titles_and_briefs)
+            if kw_freq:
+                st.markdown(
+                    f"#### Search Keywords ({_period_label_str})"
+                )
+                st.caption(
+                    "Word size scales to how often the keyword (or any of "
+                    "its variants — e.g. *Financing* covers finance / "
+                    "financed / financial) appears across RFP titles + "
+                    "briefs. Vocabulary is a curated global-health niche."
+                )
+                try:
+                    from wordcloud import WordCloud
+                    import matplotlib.pyplot as plt
+
+                    wc = WordCloud(
+                        width=1600, height=600,
+                        background_color="white",
+                        colormap="viridis",
+                        prefer_horizontal=0.9,
+                        collocations=False,
+                        relative_scaling=0.6,    # font scales ~linearly with count
+                        min_font_size=12,
+                        max_font_size=180,
+                    ).generate_from_frequencies(kw_freq)
+                    fig_wc, ax = plt.subplots(figsize=(14, 5))
+                    ax.imshow(wc, interpolation="bilinear")
+                    ax.axis("off")
+                    fig_wc.tight_layout(pad=0)
+                    with st.container(border=True):
+                        st.pyplot(fig_wc, width='stretch')
+                    plt.close(fig_wc)
+                except ImportError:
+                    # Graceful fallback when WordCloud / matplotlib not
+                    # installed (e.g. Streamlit Cloud pre-deploy). Show a
+                    # ranked list so the user still gets the signal.
+                    st.info(
+                        "Word cloud requires `wordcloud` + `matplotlib`. "
+                        "Run `pip install wordcloud matplotlib` to enable "
+                        "the visual cloud. Top keywords shown below."
+                    )
+                    _kw_top = (
+                        pd.DataFrame(
+                            sorted(kw_freq.items(), key=lambda kv: -kv[1]),
+                            columns=["Keyword", "Hits"],
+                        ).head(40)
+                    )
+                    st.dataframe(_kw_top, width='stretch',
+                                 hide_index=True)
+
+        # ───── Keyword cloud + success table ─────────────────────────────
+        # Frequency of program-area keywords across RFP titles +
+        # descriptions. The cloud surfaces what topics dominate the
+        # incoming pipeline; the success table ranks keywords by how
+        # often the RFPs containing them progressed to Proceed /
+        # Submitted / Approved — actionable signal for what to search
+        # for more aggressively.
+        if _show("s1_kw_success") and not disc.empty:
+            # Use the SAME curated `keyword_cloud` vocabulary as the
+            # visual cloud above (not the legacy program_area_classifier
+            # keywords). This makes the table and the cloud consistent
+            # — and crucially picks up bare acronyms like "AI" that the
+            # classifier only knew as "artificial intelligence". Per
+            # user feedback: AI-titled RFPs were being missed because
+            # the classifier vocabulary required the spelled-out form.
+            from core.keyword_cloud import extract_keyword_frequencies
+
+            _kw_rows = []
+            for _, r in disc.iterrows():
+                text = " ".join([
+                    str(r.get("opportunity_title") or ""),
+                    str(r.get("brief_description") or ""),
+                ])
+                if not text.strip():
+                    continue
+                # Presence per RFP (set of stems), NOT token occurrence
+                # count — so an RFP saying "AI" twice still counts as
+                # one AI hit on the conversion side.
+                stems_in_row = set(extract_keyword_frequencies([text]).keys())
+                if not stems_in_row:
+                    continue
+                decision_str = str(r.get("decision") or "").lower()
+                progress_str = str(r.get("progress_status") or "").lower()
+                donor_str = str(r.get("donor_decision") or "").lower()
+                is_proceed = decision_str.startswith("proceed")
+                # Shared app-wide "submitted": Completed OR a donor decision recorded.
+                is_submitted = (progress_str == "completed"
+                                or donor_str in _SUBMITTED_DECISIONS)
+                is_approved = donor_str == "approved"
+                for kw in stems_in_row:
+                    _kw_rows.append({
+                        "keyword": kw,
+                        "is_proceed": is_proceed,
+                        "is_submitted": is_submitted,
+                        "is_approved": is_approved,
+                    })
+            if _kw_rows:
+                kw_df = pd.DataFrame(_kw_rows)
+                kw_agg = (
+                    kw_df.groupby("keyword").agg(
+                        Hits=("keyword", "count"),
+                        Proceed=("is_proceed", "sum"),
+                        Submitted=("is_submitted", "sum"),
+                        Approved=("is_approved", "sum"),
+                    ).reset_index()
+                    .sort_values(
+                        ["Approved", "Submitted", "Proceed", "Hits"],
+                        ascending=[False, False, False, False],
+                    )
+                    .head(50)
+                )
+
+                # ─── Keyword success table ───
+                # The visual cloud above answers "what topics dominate";
+                # this table answers "which topics convert" — same
+                # vocabulary, broken out by Proceed / Submitted / Approved.
+                with st.expander(
+                    "Keywords driving success — top by Approved / Submitted / Proceed",
+                    expanded=False,
+                ):
+                    st.caption(
+                        "One row per niche keyword. Hits = number of RFPs "
+                        "whose title or brief mentions that keyword (or any "
+                        "of its stemmed variants). Use this to focus future "
+                        "donor searches on the topics that consistently win. "
+                        "Sorted by Approved → Submitted → Proceed → Hits."
+                    )
+                    st.dataframe(
+                        kw_agg.rename(columns={"keyword": "Keyword"}),
+                        width='stretch', hide_index=True,
+                    )
+
+    # Top sources by yield — the ONE block here that really is scan-log-derived, so it keeps
+    # its own guard rather than borrowing the section-wide one. Without this, de-nesting the
+    # RFP blocks made an empty scan-log frame raise KeyError('source') on the groupby.
+    src = pd.DataFrame()
+    if not scans.empty and "source" in scans.columns:
+        src = (
+        scans.groupby("source")
+        .agg(runs=("scan_date", "count"),
+             found=("rfps_found", "sum"),
+             new=("rfps_new", "sum"),
+             rejected=("rfps_rejected", "sum"),
+             avg_dur=("duration_sec", "mean"))
+        .reset_index()
+        .sort_values("new", ascending=False)
+        .head(15)
+        )
+    if _show("s1_sources") and not src.empty:
+        src["avg_dur"] = src["avg_dur"].round(1)
+        src["yield_pct"] = ((src["new"] / src["found"].replace(0, 1)) * 100).round(1)
+        with st.expander("Top 15 sources by new-RFP yield", expanded=False):
+            st.dataframe(
+                src.rename(columns={
+                    "source": "Source", "runs": "Runs", "found": "Found",
+                    "new": "New", "rejected": "Rejected",
+                    "avg_dur": "Avg duration (s)", "yield_pct": "Yield %",
+                }),
+                width='stretch', hide_index=True,
+            )
+
+    # ───────────── Search → Submission cycle time (relocated from §4) ─────
+    # Lives in Section 1 because Search Date is the anchor of the metric —
+    # it's the search-to-submission lag, conceptually a search-activity
+    # quality signal. (Originally placed in §4 Team Activity which was
+    # the wrong narrative beat.)
+    if _show("s1_cycle") and not rfps_all.empty:
+        st.markdown("##### Search → Submission cycle time")
+        cyc_src = rfps_all[~rfps_all["is_duplicate"]].copy()
+        cyc = cyc_src.dropna(subset=["search_date", "date_completed"]).copy()
+        if not cyc.empty:
+            cyc["days"] = cyc.apply(
+                lambda r: (r["date_completed"] - r["search_date"].date()).days,
+                axis=1,
+            )
+            cyc = cyc[cyc["days"] >= 0]
+        if not cyc.empty:
+            ct1, ct2, ct3, ct4 = st.columns(4)
+            ct1.metric("Median days", f"{cyc['days'].median():.0f}")
+            ct2.metric("Mean days",   f"{cyc['days'].mean():.0f}")
+            ct3.metric("Min days",    f"{int(cyc['days'].min())}")
+            ct4.metric("Max days",    f"{int(cyc['days'].max())}")
+            fig_cyc = px.histogram(
+                cyc, x="days", nbins=20,
+                title="Distribution of days from Search Date → Date Completed",
+                labels={"days": "Days", "count": "RFPs"},
+            )
+            fig_cyc.update_layout(height=280, margin=dict(t=40, b=10))
+            _boxed(fig_cyc)
+        else:
+            st.info("No RFPs with both search_date and date_completed yet — "
+                    "cycle time chart will populate as proposals get submitted.")
 
     st.divider()
 
@@ -1883,6 +1990,10 @@ if _show_sec("4"):
                             counts, x="RFPs", y=col_label, orientation="h",
                             title=f"{col_label} — top 10 (Proceed RFPs)", text="RFPs",
                         )
+                        # Shaded by RANK: the busiest partner takes the primary, the tail fades
+                        # toward the light end. `counts` is already sorted descending, and the
+                        # ramp runs emphatic-first, so the two line up.
+                        fig.update_traces(marker_color=_theme.ramp(len(counts)))
                         fig.update_layout(
                             height=max(250, 30 * len(counts) + 60),
                             margin=dict(t=40, b=10),
@@ -2152,7 +2263,7 @@ if _show_sec("3"):
                                   title=f"Proceed decisions ({_period_label_str}, {bucket_mode.lower()})",
                                   labels={"bucket": _bucket_label(bucket_mode),
                                           "decisions": "Proceed decisions"},
-                                  color_discrete_sequence=[_theme.rgba(0.9)])
+                                  color_discrete_sequence=[_theme.TURQUOISE])
                 fig_time.update_layout(height=300, xaxis=_fmt_bucket_ticks(bucket_mode))
 
         if fig_dec is not None and fig_time is not None:
@@ -2514,9 +2625,22 @@ if _org_country:
     foot_bits.append(_org_country)
 if _website:
     foot_bits.append(f"[{_website}]({_website})")
+# WHO generated this report. A printed PDF circulates on its own, so it has to carry a
+# signature back to a person — name and email — or a figure in it cannot be questioned by
+# anyone who receives it. Read from the session, never from a form field, so it cannot be typed
+# to say somebody else.
+_gen_user = st.session_state.get("app_user") or {}
+_gen_name = str(_gen_user.get("name") or "").strip()
+_gen_email = str(_gen_user.get("email") or "").strip()
+if _gen_name and _gen_email:
+    _gen_by = f"{_gen_name} <{_gen_email}>"
+else:
+    _gen_by = _gen_name or _gen_email or "unknown user"
+
 with st.container(key="report_footer"):
     st.caption(
         " · ".join(foot_bits)
         + f" · Report generated {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        + f" · Generated by **{_gen_by}**"
         + (f" · Report id `{_url_rid}`" if _url_rid else "")
     )

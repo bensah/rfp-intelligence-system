@@ -66,31 +66,52 @@ class NamingTheTenantTests(unittest.TestCase):
         self.assertEqual(labels.fill("100% of {unknown} calls"), "100% of {unknown} calls")
 
 
-class OneHueAtVaryingOpacityTests(unittest.TestCase):
-    def test_the_ramp_runs_from_emphatic_to_faint(self):
+class TheHousePaletteTests(unittest.TestCase):
+    def test_the_ramp_runs_from_primary_toward_the_light_end(self):
         r = theme.ramp(4)
         self.assertEqual(len(r), 4)
-        alphas = [float(c.rsplit(",", 1)[1].rstrip(")")) for c in r]
-        self.assertEqual(alphas, sorted(alphas, reverse=True))
+        self.assertEqual(r[0], theme.TURQUOISE)
+        self.assertNotEqual(r[-1], theme.TURQUOISE)
 
-    def test_every_shade_is_the_same_hue(self):
-        for shade in theme.ramp(5):
-            self.assertTrue(shade.startswith("rgba(0,112,60,"), shade)
+    def test_a_single_category_gets_the_full_primary_not_a_midpoint(self):
+        self.assertEqual(theme.ramp(1), [theme.TURQUOISE])
 
-    def test_a_single_category_gets_full_strength_not_the_midpoint(self):
-        self.assertEqual(theme.ramp(1), [theme.rgba(0.95)])
-
-    def test_the_faintest_shade_is_still_visible(self):
-        alphas = [float(c.rsplit(",", 1)[1].rstrip(")")) for c in theme.ramp(9)]
-        self.assertGreaterEqual(min(alphas), 0.3, "a bar this faint reads as a rendering fault")
+    def test_the_faintest_step_stops_short_of_the_background_tint(self):
+        # A bar in the exact light-blue tint reads as a rendering fault, not a small value.
+        self.assertNotEqual(theme.ramp(8)[-1].lower(), theme.LIGHT_BLUE.lower())
 
     def test_no_categories_gives_no_shades(self):
         self.assertEqual(theme.ramp(0), [])
         self.assertEqual(theme.ramp(-3), [])
 
-    def test_the_deep_blue_is_not_in_the_palette(self):
-        self.assertNotIn("003366", theme.BRAND)
-        self.assertNotEqual(theme.BRAND_RGB, (0, 51, 102))
+    def test_dark_red_never_appears_in_the_ramp(self):
+        # Reserved for negatives. If it showed up decoratively it would stop meaning "bad".
+        for n in range(1, 9):
+            with self.subTest(n=n):
+                self.assertNotIn(theme.DARK_RED, theme.ramp(n))
+
+    def test_the_house_dark_blue_is_not_used(self):
+        self.assertNotIn("003e78", theme.TURQUOISE.lower())
+        for n in range(1, 9):
+            self.assertFalse(any("003e78" in c.lower() for c in theme.ramp(n)))
+
+
+class DarkRedIsReservedForNegativesTests(unittest.TestCase):
+    def test_a_negative_category_gets_dark_red(self):
+        for cat in ("Decline", "Not Approved", "Missed", "rejected"):
+            with self.subTest(cat=cat):
+                self.assertEqual(theme.sequence_for([cat])[cat], theme.DARK_RED)
+
+    def test_a_neutral_category_never_does(self):
+        for cat in ("Proceed", "Park", "Under Review", "In Progress", "Submitted"):
+            with self.subTest(cat=cat):
+                self.assertNotEqual(theme.sequence_for([cat])[cat], theme.DARK_RED)
+
+    def test_the_negative_is_taken_out_of_the_ramp_so_it_does_not_consume_a_step(self):
+        got = theme.sequence_for(["Proceed", "Park", "Decline"], order=theme.DECISION_ORDER)
+        self.assertEqual(got["Proceed"], theme.ramp(2)[0])
+        self.assertEqual(got["Park"], theme.ramp(2)[1])
+        self.assertEqual(got["Decline"], theme.DARK_RED)
 
 
 class ShadingFollowsMeaningNotFrequencyTests(unittest.TestCase):
@@ -99,17 +120,17 @@ class ShadingFollowsMeaningNotFrequencyTests(unittest.TestCase):
 
     def test_the_given_order_wins_over_the_input_order(self):
         got = theme.sequence_for(["Decline", "Proceed", "Park"], order=theme.DECISION_ORDER)
-        self.assertEqual(got["Proceed"], theme.ramp(3)[0])   # most emphatic
-        self.assertEqual(got["Decline"], theme.ramp(3)[2])   # least
+        self.assertEqual(got["Proceed"], theme.ramp(2)[0])   # most emphatic of the positives
+        self.assertEqual(got["Decline"], theme.DARK_RED)     # negative, out of the ramp
 
     def test_categories_outside_the_order_still_get_a_shade(self):
         got = theme.sequence_for(["Proceed", "Something New"], order=theme.DECISION_ORDER)
         self.assertEqual(set(got), {"Proceed", "Something New"})
 
     def test_a_missing_category_does_not_shift_the_others(self):
-        # A report with no Park rows must still shade Proceed darkest.
+        # A report with no Park rows must still shade Proceed with the primary.
         got = theme.sequence_for(["Proceed", "Decline"], order=theme.DECISION_ORDER)
-        self.assertEqual(got["Proceed"], theme.ramp(2)[0])
+        self.assertEqual(got["Proceed"], theme.TURQUOISE)
 
     def test_every_ordered_vocabulary_is_covered(self):
         for order in (theme.DECISION_ORDER, theme.PROGRESS_ORDER,
