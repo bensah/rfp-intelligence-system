@@ -2311,7 +2311,22 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
     # the odd one out. The raw-name test is KEPT as a fallback for free-typed funders that
     # are not in the donor catalog at all.
     grantee = _is_past_grantee(org, rfp, donor)
-    contact = bool(_shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor))
+    # PORTAL REGISTRATION IS NOT A RELATIONSHIP. This read
+    # `_shared_collaborator(...) or _registered_on_portal(...)`, and the portal arm was
+    # answering a different question: having an account on the submission platform says
+    # we can file a proposal, not that anyone here has ever spoken to the funder.
+    #
+    # It is wrong most loudly on the shared platforms. One registration on the EU Funding
+    # & Tenders Portal (ec.europa.eu) satisfied this tier for EVERY EU call in the
+    # catalogue: a Joint Undertaking the org has never contacted, never been funded by
+    # and has no route into came back as "Some contact - 1/1 - 100%". sam.gov and
+    # grants.gov carry the same problem for US federal calls.
+    #
+    # `_registered_on_portal` keeps its job in PREFER-8, where familiarity with the
+    # submission platform is a real competitiveness edge and is what the owner added it
+    # for (2026-07-20). PREFER-7 asks whether we know the FUNDER, so the only warm route
+    # left here is a partner of ours who is also a partner of theirs.
+    contact = bool(_shared_collaborator(org, donor))
     sc, src = _donor_engaged(org, rfp, donor)
     eng = _factor("rel_engaged", "Donor already engaged on this opportunity", "R",
                   (None if sc is None else sc >= 1.0 if sc >= 1.0 else sc > 0.0),
@@ -2325,7 +2340,7 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
     return [
         _factor("rel_grantee", "Past / current grantee of this donor", "DO", grantee),
         eng,
-        _factor("rel_contact", "Shared collaborator or registered", "DO", contact),
+        _factor("rel_contact", "Shared collaborator with this funder", "DO", contact),
     ]
 
 

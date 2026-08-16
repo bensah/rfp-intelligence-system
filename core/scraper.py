@@ -855,6 +855,33 @@ _AMOUNT_CTX_RE = re.compile(
     r"(up to|award|grant|funding|value|budget|maximum|max\b|each|per "
     r"(?:grant|award|project|year)|total|prize|stipend|amount)", re.I)
 
+# A call page routinely states BOTH figures, and they differ by an order of magnitude:
+#   "The total indicative budget for the topic is EUR 18 000 000"          <- envelope
+#   "an EU contribution of around EUR 2.25 million per project"            <- the award
+# Taking the largest award-context figure always picked the envelope. These two patterns
+# tell them apart so the per-award figure wins when the page offers one.
+_PER_AWARD_CTX_RE = re.compile(
+    r"per\s+(?:grant|award|project|proposal|beneficiary|consortium|applicant|"
+    r"successful\s+\w+)"
+    r"|(?:each|any one|a single)\s+(?:grant|award|project|proposal)"
+    r"|contribution\s+(?:of\s+around\s+)?[^.]{0,40}?per\s+project", re.I)
+# The page saying, in one form or another, that the pot is shared out. Only used to
+# decide whether an envelope figure may stand in for an award size when the page offers
+# nothing else.
+_MULTI_AWARD_RE = re.compile(
+    r"(?:\d+|two|three|four|five|six|seven|eight|nine|ten|several|multiple|a\s+number\s+of)"
+    r"\s+(?:projects|grants|awards|proposals|consortia)"
+    r"\s*(?:are\s+|will\s+be\s+|to\s+be\s+|expected\s+)?"
+    r"(?:funded|selected|supported|awarded|expected)?"
+    r"|number\s+of\s+(?:projects|grants|awards)\s+(?:expected|to\s+be)"
+    r"|(?:across|among|between)\s+\S+\s+(?:projects|grants|awards)", re.I)
+_ENVELOPE_CTX_RE = re.compile(
+    r"(?:total|overall|indicative|aggregate|combined|call|programme|program)\s+"
+    r"(?:indicative\s+)?(?:budget|funding|envelope)"
+    r"|budget\s+for\s+(?:the\s+)?(?:topic|call|programme|program)"
+    r"|total\s+(?:funding\s+)?available"
+    r"|(?:across|among|between)\s+\S+\s+(?:projects|grants|awards)", re.I)
+
 
 def _one_amount(m: "re.Match") -> tuple[float | None, str | None]:
     try:
@@ -878,17 +905,38 @@ def _extract_amount(title: str, text: str) -> tuple[float | None, str | None]:
         v, c = _one_amount(m)
         if v and (m.group("mag") or v >= 1000):
             return v, c
-    best_v, best_c = None, None
+    # Largest-wins is right WITHIN a kind — "$50,000 to $100,000" should keep the
+    # ceiling — but it is wrong ACROSS kinds, where the programme envelope is always the
+    # bigger number and never the award. So collect the two kinds separately and let a
+    # per-award figure beat an envelope however much smaller it is.
+    per_v, per_c = None, None
+    any_v, any_c = None, None
+    env_v, env_c = None, None
     for m in _matches(text):
         ctx = text[max(0, m.start() - 40):m.end() + 25]   # award word either side
         if not _AMOUNT_CTX_RE.search(ctx):
             continue
         v, c = _one_amount(m)
-        # Take the LARGEST award-context figure — handles ranges like
-        # "$50,000 to $100,000" (keeps the ceiling).
-        if v and (m.group("mag") or v >= 1000) and (best_v is None or v > best_v):
-            best_v, best_c = v, c
-    return best_v, best_c
+        if not (v and (m.group("mag") or v >= 1000)):
+            continue
+        if _PER_AWARD_CTX_RE.search(ctx):
+            if per_v is None or v > per_v:
+                per_v, per_c = v, c
+        elif _ENVELOPE_CTX_RE.search(ctx):
+            if env_v is None or v > env_v:
+                env_v, env_c = v, c
+        elif any_v is None or v > any_v:
+            # Neither marked per-award nor marked as a whole-programme pot: the ordinary
+            # single-award page, which behaves exactly as it did before.
+            any_v, any_c = v, c
+    if per_v is not None:
+        return per_v, per_c
+    if any_v is not None:
+        return any_v, any_c
+    # Envelope only. On a single-award call "total funding available" IS the award, and
+    # refusing to read it would throw away a figure we used to get right - so it still
+    # counts, unless the page says in as many words that the pot is shared out.
+    return (None, None) if (env_v and _MULTI_AWARD_RE.search(text or "")) else (env_v, env_c)
 
 
 def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
@@ -1937,6 +1985,27 @@ def _eu_budget(bo_str: str) -> tuple[float | None, str | None, float | None,
             floor, ceil, (awards or None))
 
 
+def _per_award_value(total: float | None, floor: float | None, ceil: float | None,
+                     awards: int | None) -> float | None:
+    """What ONE winner gets, from the portal's structured budget — None when the portal
+    doesn't say.
+
+    In preference order: the stated per-grant ceiling (the "up to" figure, and the same
+    HIGHEST-of-a-range rule the regex extractor follows), then the floor, then the
+    envelope split across the number of grants the call expects to make.
+
+    A programme envelope is NEVER returned on its own. Splitting EUR 33M across an
+    unknown number of grants is not an award size, and a wrong number here is worse than
+    no number: the criteria treat a missing value as "we don't know" and exclude it, but
+    a present one is measured against the org's funding band as if it were fact."""
+    for v in (ceil, floor):
+        if v:
+            return float(v)
+    if total and awards and awards > 0:
+        return float(total) / float(awards)
+    return None
+
+
 def _eu_deadlines(val: Any) -> list:
     """Parse a SEDIA `deadlineDate` (a single ISO datetime OR, for a two-stage topic, a
     LIST [stage-1, stage-2]) → a sorted list of date objects. The EFFECTIVE deadline is the
@@ -2106,7 +2175,19 @@ def _scan_eu_funding_tenders(name: str, url: str, *,
                 "call_submission_deadline": _eff_deadline,
                 # Window label: surface the two-stage nature (stage-1 concept → stage-2 full).
                 "funding_window": "Two-stage" if _two_stage else None,
-                "call_award_value": amt,
+                # `amt` is the PROGRAMME ENVELOPE — _eu_budget sums every action's
+                # per-year budget — and it was going into call_award_value, the field
+                # that means "what one winner gets". They are different quantities and
+                # the gap is not small: EDCTP3 topic DIGIT-02 funds 8 projects at about
+                # EUR 2.25M each, and the envelope stored against it was EUR 33M, the two
+                # topics of that call added together. PREFER-6 then measured a EUR 2.25M
+                # award against the org's absorptive ceiling and reported the call as
+                # eight times too big to take on.
+                #
+                # The envelope has a column of its own, so it goes there, and the
+                # per-award value is only claimed when the portal actually states one.
+                "total_program_funding": amt,
+                "call_award_value": _per_award_value(amt, _floor, _ceil, _awards),
                 "currency": cur,
                 "call_award_floor": _floor,
                 "call_award_ceiling": _ceil,
