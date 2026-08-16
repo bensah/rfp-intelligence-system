@@ -145,11 +145,19 @@ class OrRatioTests(unittest.TestCase):
                          (0.0, 3))
 
     def test_a_non_or_criterion_is_untouched(self):
-        # The AND-style mean still counts every route. Two are now met, not one: the
-        # shared `_is_past_grantee` also makes PREFER-8's portal-familiarity route true
-        # (a known funder implies familiarity with how they take submissions).
+        # The AND-style mean still counts every active route, and ONE of them is met.
+        #
+        # This asserted 2.0 while `rel_contact` was `_shared_collaborator(...) or
+        # _registered_on_portal(...)`, because a past grantee satisfies the portal test
+        # too — so a single underlying fact, "we have been funded by them", was counted
+        # in two tiers and the AND-style mean read 100% off one piece of evidence.
+        # `rel_contact` now asks only whether a partner of ours is also a partner of
+        # theirs, which for this org is not the case (2026-08-16).
+        #
+        # The OR path — the one PREFER-7 actually displays — is unchanged: one satisfied
+        # route is still the whole criterion, asserted above.
         facts = CD._relationship_factors(ORG, RFP, BMGF)
-        self.assertEqual(self._ratio(facts, False), (2.0, 2))
+        self.assertEqual(self._ratio(facts, False), (1.0, 2))
 
 
 if __name__ == "__main__":
