@@ -171,6 +171,48 @@ def _branded_html(*, recipient_name: str, body_html: str) -> str:
 """
 
 
+def _code_fallback(url: str) -> str:
+    """The token on its own, to be pasted into the app.
+
+    A LINK IS NOT A RELIABLE CARRIER, for reasons outside this app's control.
+
+    Not because the query string is lost: it survives. Measured on the live deployment, the
+    host's session bootstrap carries it through and hands it back -
+    `redirect_uri=https%3A%2F%2Fapp%2F%3Ftoken%3DABC` - so an earlier version of this
+    comment, which claimed the token was dropped, was simply wrong. What does go wrong:
+
+      * the HOST answers with its own access error instead of the app, when the visitor is
+        signed in to a hosting account that is not on the app's viewer list - the app never
+        runs, so no amount of app-side code helps;
+      * corporate mail clients rewrite or wrap long URLs, and a wrapped query is a broken
+        one;
+      * the mail gets forwarded to a phone and the tap lands on something else.
+
+    In each case somebody holding a valid token cannot get it to the app. Printing the
+    token as a code, and accepting it on the sign-in screen, needs nothing but the ability
+    to reach that screen. Same single secret either way - nothing weaker is introduced.
+    """
+    import html as _html
+    token = ""
+    try:
+        from urllib.parse import urlsplit, parse_qs
+        token = (parse_qs(urlsplit(url).query).get("token") or [""])[0]
+    except Exception:
+        token = ""
+    if not token:
+        return ""
+    return f"""
+        <p style="font-size:13px; color:#475569; margin-top:20px;">
+          If that opens the app without asking for a password, choose
+          <strong>&#128273; Have an activation or reset code?</strong> on the sign-in
+          screen and paste this:
+        </p>
+        <p style="font-family:monospace; font-size:14px; background:#f8f9fa; padding:12px 14px; border-radius:6px; border:1px solid #e3e7e3; word-break:break-all; color:#1f2937;">
+          {_html.escape(token)}
+        </p>
+    """
+
+
 def _action_button(url: str, label: str) -> str:
     """A link styled as a button, with the URL also shown as text.
 
@@ -208,11 +250,17 @@ def send_welcome_email(
     Raises MailerNotConfigured if the mail transport is unset; the caller
     decides whether to fall back to showing the link on screen.
     """
+    # FRAMED AS ACTIVATION (owner, 2026-08-17). What the recipient is being asked to do is
+    # turn on an account somebody made for them; choosing a password is how that happens,
+    # not the point of the email. "Set up your account" also reads like configuration work,
+    # and "Set my password" invites the question "which password?" from someone who has
+    # never had one. Activate first, password second.
     short = _short_name()
     body = f"""
         <p>An administrator has created a {_html_escape(short)} account for you.</p>
-        <p>Choose your password to finish setting it up:</p>
-        {_action_button(setup_link, "Set my password")}
+        <p>Activate it and choose a password to finish:</p>
+        {_action_button(setup_link, "Activate account")}
+        {_code_fallback(setup_link)}
         <p style="font-size:13px; color:#475569;">
           This link works once and expires in {_html_escape(expires_hint)}.
           If it expires, ask your administrator to send a new one.
@@ -220,7 +268,7 @@ def send_welcome_email(
     """
     return send_email(
         to=[to_email],
-        subject=f"Set up your {short} account",
+        subject=f"Activate your {short} account",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 
@@ -243,7 +291,8 @@ def send_password_reset_email(
         <p>An administrator has started a password reset for your
         {_html_escape(short)} account.</p>
         <p>Choose a new password:</p>
-        {_action_button(reset_link, "Choose a new password")}
+        {_action_button(reset_link, "Change my password")}
+        {_code_fallback(reset_link)}
         <p style="font-size:13px; color:#475569;">
           This link works once and expires in {_html_escape(expires_hint)}.
         </p>
@@ -255,7 +304,7 @@ def send_password_reset_email(
     """
     return send_email(
         to=[to_email],
-        subject=f"Reset your {short} password",
+        subject=f"Change your {short} password",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 

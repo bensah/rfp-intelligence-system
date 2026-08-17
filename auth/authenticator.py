@@ -464,6 +464,68 @@ def _maybe_onboard(user: dict[str, Any]) -> None:
 # they're trying to visit, then `st.stop()`s — they cannot access any
 # app content until the flag is cleared.
 
+_TOKEN_SS_KEY = "_activation_token"
+
+
+def _activation_token() -> str:
+    """The activation/reset token for this run, from any route that works.
+
+    A QUERY PARAMETER IS NOT A ROUTE YOU CAN RELY ON. It usually arrives - measured on the
+    live deployment, the host's session bootstrap does carry `?token=...` through, so an
+    earlier version of this comment claiming it was dropped was wrong - but there are
+    ordinary ways for it not to:
+
+      * the HOST refuses the request before the app runs (a visitor signed in to a hosting
+        account that is not on the app's viewer list gets the host's own access error), so
+        `st.query_params` is never consulted at all;
+      * a mail client rewrites or wraps the URL and the query arrives mangled;
+      * the recipient retypes the address by hand, or opens the app from a bookmark.
+
+    Reading the query alone therefore works for the person who already had the app open,
+    and fails for the new joiner the link was written for. Hence more than one route.
+
+    Three routes, in order:
+      * the query parameter, when it did survive (a warm session);
+      * session state, so the token outlives the reruns of setting a password;
+      * a code the recipient pastes, for the cold case above.
+    """
+    try:
+        raw = (st.query_params.get("token") or "").strip()
+    except Exception:
+        raw = ""
+    if raw:
+        st.session_state[_TOKEN_SS_KEY] = raw
+        return raw
+    return str(st.session_state.get(_TOKEN_SS_KEY) or "").strip()
+
+
+def activation_code_entry() -> bool:
+    """Offer to accept a pasted activation code. True when one was submitted.
+
+    Rendered on the login screen because the link cannot be relied on to carry the token
+    (see `_activation_token`). The email prints the same code beneath the button, so a
+    recipient whose link arrived stripped is not stuck waiting for an administrator.
+    """
+    with st.expander("🔑 Have an activation or reset code?", expanded=False):
+        st.caption(
+            "If the button in your email did not open a password screen, paste the code "
+            "printed underneath it here.")
+        with st.form("activation_code_form", clear_on_submit=False):
+            code = st.text_input("Activation / reset code", key="activation_code_input")
+            ok = st.form_submit_button("Continue")
+        if ok:
+            code = (code or "").strip()
+            if not code:
+                st.error("Paste the code from your email.")
+                return False
+            # Stored, not validated here: handle_setup_token owns the verdict, so a bad
+            # code produces the same single message as a stale link and this screen never
+            # becomes a place to test whether a code exists.
+            st.session_state[_TOKEN_SS_KEY] = code
+            st.rerun()
+    return False
+
+
 def handle_setup_token() -> None:
     """Redeem a ?token=... link from a setup or reset email.
 
@@ -482,10 +544,7 @@ def handle_setup_token() -> None:
     Silent no-op when there is no token, so an ordinary page load pays only
     a dictionary lookup.
     """
-    try:
-        raw = (st.query_params.get("token") or "").strip()
-    except Exception:
-        return
+    raw = _activation_token()
     if not raw:
         return
 
@@ -587,6 +646,10 @@ def handle_setup_token() -> None:
                 st.query_params.clear()
             except Exception:
                 pass
+            # ...and from session state, which now also holds it (a pasted code, or a
+            # link token kept across the reruns of this form). Leaving it there would
+            # re-enter this screen on the next rerun with a token already spent.
+            st.session_state.pop(_TOKEN_SS_KEY, None)
 
             st.success("Password saved. You can now sign in.")
             st.stop()
@@ -608,7 +671,7 @@ def _gate_must_change_password(user: dict[str, Any]) -> None:
     # so the user can't escape the gate by clicking another page.
     _hide_sidebar_on_login()
 
-    st.title("🔐 Set a new password")
+    st.title("🔐 Choose your password")
     st.warning(
         "An administrator has asked you to choose a new password before "
         "continuing."
@@ -862,6 +925,10 @@ def _render_signup_and_reset_forms() -> None:
                     st.session_state["_signup_done_for"] = \
                         su_email.strip()
                     st.rerun()
+
+    # A new joiner's emailed link may arrive without its token (see _activation_token),
+    # so the login screen has to offer a way in that does not depend on it.
+    activation_code_entry()
 
     with st.expander("🔐 Forgot password?", expanded=False):
         st.caption(
