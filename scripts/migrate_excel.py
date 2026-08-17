@@ -25,6 +25,46 @@ from openpyxl import load_workbook
 # created_at. (created_at isn't used for RFP analytics, only this ordering.)
 _SYNC_TS = datetime.now(timezone.utc).isoformat()
 
+# FIELDS THE APP OWNS once a row exists. The workbook seeds them on insert and then stops
+# writing them, because these are the outcomes of somebody's judgement recorded IN the app -
+# a bid decision, a funder's answer, the money that actually landed. Everything else about a
+# call (title, deadline, value, geography, partners) is still the sheet's to correct.
+_APP_OWNED_FIELDS = (
+    "decision",           # our Proceed / Park / Decline
+    "decision_date",
+    "decision_note",
+    "donor_decision",     # the funder's answer - the reported regression
+    "progress_status",
+    "amount_secured",
+)
+
+
+def _blankish(v: Any) -> bool:
+    """True when a stored value carries no decision worth protecting."""
+    return v is None or str(v).strip().lower() in ("", "none", "nan", "not submitted")
+
+
+def _fetch_app_owned(sb, uids: list[str]) -> dict[str, dict[str, Any]]:
+    """{uid: {app-owned field: stored value}} for the rows about to be updated.
+
+    One read for the whole batch. Best-effort: on failure the caller sees no stored values,
+    which means nothing looks like a conflict and the sync behaves as it did before - the
+    guard should never be the reason a sync fails.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    cols = "uid," + ",".join(_APP_OWNED_FIELDS)
+    for i in range(0, len(uids), 200):
+        chunk = uids[i:i + 200]
+        try:
+            rows = (sb.table("rfp_submissions").select(cols)
+                    .in_("uid", chunk).execute().data or [])
+        except Exception as exc:
+            print(f"  (could not read existing decisions, sheet values will apply: {exc})")
+            return {}
+        for r in rows:
+            out[r["uid"]] = r
+    return out
+
 # Force UTF-8 on our output streams. This script prints status with non-ASCII
 # glyphs (→, ⚠, ·, —, …). When run as a subprocess (Admin → Sync now), Windows
 # defaults stdout/stderr to cp1252, so printing e.g. "adopted→MID" raised
@@ -673,13 +713,49 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
             # None (blank cell / missing column) is dropped so it can't null out
             # a stored value. created_at (_SYNC_TS) + computed fields are always
             # non-None, so re-float ordering + scores still refresh.
+            #
+            # ...EXCEPT the fields the APP owns once a row exists. The sheet was
+            # authoritative for every non-blank cell, which silently reverted decisions
+            # made in the app: a grant marked "Not Approved" in the Review tab went back to
+            # whatever the workbook still said, with nothing on screen to say it had
+            # happened. The owner reported it twice as a regression appearing out of
+            # nowhere - and it is exactly that, because a sync is not a moment anybody
+            # associates with a decision changing.
+            #
+            # The workbook still SEEDS these fields on a brand-new row (the insert above is
+            # untouched); it just stops overwriting them afterwards. Anything it would have
+            # changed is printed, so a real disagreement is reconciled deliberately instead
+            # of resolved by whichever side wrote last. --trust-sheet-decisions restores the
+            # old behaviour for a deliberate bulk correction from the workbook.
+            _existing_rows = _fetch_app_owned(sb, [r["uid"] for r in _existing])
             _upd = 0
+            _kept: list[str] = []
             for r in _existing:
                 payload = {k: v for k, v in r.items() if v is not None}
+                if not args.trust_sheet_decisions:
+                    _stored = _existing_rows.get(r["uid"], {})
+                    for _f in _APP_OWNED_FIELDS:
+                        if _f not in payload:
+                            continue
+                        _old, _new = _stored.get(_f), payload[_f]
+                        if _blankish(_old):
+                            continue          # nothing to protect - let the sheet fill it
+                        if str(_old).strip() == str(_new).strip():
+                            continue          # agreement, nothing to report
+                        _kept.append(f"{r['uid']} · {_f}: kept {_old!r} "
+                                     f"(sheet says {_new!r})")
+                        payload.pop(_f)
                 if not payload:
                     continue
                 sb.table("rfp_submissions").update(payload).eq("uid", r["uid"]).execute()
                 _upd += 1
+            if _kept:
+                print(f"  PROTECTED {len(_kept)} app-owned value(s) from being overwritten:")
+                for _line in _kept[:20]:
+                    print(f"    · {_line}")
+                if len(_kept) > 20:
+                    print(f"    … and {len(_kept) - 20} more")
+                print("    (re-run with --trust-sheet-decisions to let the sheet win)")
             # Tombstone only the brand-NEW uids in the permanent seen-ledger so
             # they're remembered (never silently re-scanned in) even if later deleted.
             if _new:
@@ -915,6 +991,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--xlsx", type=Path, default=DEFAULT_XLSX)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--trust-sheet-decisions", action="store_true",
+        help="Let the workbook overwrite decisions already recorded in the app. OFF by "
+             "default: a sync silently reverting a decision somebody made in the Review "
+             "tab is indistinguishable from a bug, and was reported as one. Use this for a "
+             "deliberate bulk correction FROM the sheet.")
     args = ap.parse_args()
 
     if not args.xlsx.exists():
