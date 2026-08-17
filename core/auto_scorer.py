@@ -25,6 +25,7 @@ So higher rigor demands more positive evidence to score Yes.
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Any
@@ -371,6 +372,55 @@ def _bucket(label: str) -> set[str]:
     return {name for name, rx in _APPLICANT_BUCKET_RES if rx.search(label)}
 
 
+# A published applicant-country list longer than this is treated as unusable rather than
+# as a restriction. A genuine "who may apply" rule names a handful of countries; a list of
+# 130 is a WORK geography that the extractor filed under the wrong heading (the Finnish
+# scheme publishes ~130 developing markets it will fund projects IN), and rejecting on that
+# would throw away calls the org is perfectly eligible for.
+_APPLICANT_COUNTRY_MAX = 5
+
+
+def applicant_country_mismatch_reject(candidate: dict[str, Any],
+                                      policies: dict[str, Any]) -> tuple[bool, str]:
+    """(True, reason) when the call says who may apply BY COUNTRY and the org is not one.
+
+    "Business Partnership Support" is granted by a foreign ministry to Finland-registered
+    operators. Its work geography spans ~130 developing markets and genuinely includes the
+    tenant's country, so every geography gate kept it - the rule that excludes the tenant
+    is about the APPLICANT, and nothing read it. The restriction was extracted and stored
+    (`eligibility_countries = ['Finland']`, plus "Applicant must be a Finnish-registered
+    operator" in eligibility_other) and then dropped before any gate ran.
+
+    This DOES hard-reject, unlike `applicant_type_mismatch_reject`, which is opt-in because
+    an applicant-TYPE mismatch is a MUST-1 qualification signal rather than a scan-time drop
+    (Bernard 2026-06-19). Registration in a named country is a different kind of statement:
+    it is a legal bar the org cannot satisfy by arguing its case, so a call that names one
+    and excludes us is not a weak fit, it is not open to us. Kept narrow to earn that:
+      * the org must have a declared geography, else defer;
+      * the list must be SHORT (see _APPLICANT_COUNTRY_MAX), else it is a mis-filed work
+        geography and we say nothing;
+      * a region or tier in the list means "applicants from the Global South" - inclusive
+        wording, not a restriction - so anything that is not a plain country stands down.
+    """
+    org_set = _org_geo_set(policies)
+    if not org_set:
+        return False, ""
+    listed = applicant_countries(candidate)
+    if not listed or len(listed) > _APPLICANT_COUNTRY_MAX:
+        return False, ""
+    # Any non-country term alongside (a region, a tier) widens the list beyond what we can
+    # judge - stand down rather than reject on a partial reading.
+    raw_terms = _applicant_country_terms(candidate)
+    if len(raw_terms) != len(listed):
+        return False, ""
+    for c in listed:
+        if {c} & org_set or _place_in_org(c, org_set):
+            return False, ""
+    sample = ", ".join(sorted(listed)[:3])
+    return True, (f"applicants must be based in {sample}, which is outside the "
+                  f"organisation's registered geography")
+
+
 def applicant_type_mismatch_reject(candidate: dict[str, Any],
                                    policies: dict[str, Any]) -> tuple[bool, str]:
     """(True, reason) when a call's published eligibility EXCLUDES the deploying
@@ -535,6 +585,23 @@ def geographic_exclusion_reject(candidate: dict[str, Any],
     for c in sorted({m.lower() for m in _raw_country_matches}, key=len, reverse=True):
         clean = re.sub(r"\b" + re.escape(c) + r"\b", " ", clean)
     specific_regions = geo.regions_in_text(clean)   # UN regions + EU + Mediterranean
+
+    # 1b. A country named in the TITLE is the call's own headline scope and outranks every
+    # broad qualifier below it. "Modern Slavery Fund Viet Nam Programme" was stored with a
+    # scope of ['Low- and middle-income countries (LMICs)'], so step 3's tier keeper
+    # returned keep for every tenant on earth and step 4 - the named-country test - was
+    # unreachable. An income tier is a property of the CALL, never of the tenant: "LMICs"
+    # beside "Viet Nam" means this call funds an LMIC, not that it is open to all of them.
+    #
+    # TITLE only, on purpose. Step 3's comment names the case this must not break - a
+    # funder-country stamp in the metadata ('Canada' on a ResearchNet row) is incidental
+    # and must still not override an LMIC-open call.
+    _title_c = title_countries(candidate)
+    if _title_c:
+        if _title_c & org_set or any(_place_in_org(c, org_set) for c in _title_c):
+            return False, ""
+        sample = ", ".join(sorted(_title_c)[:3])
+        return True, f"geography: the title scopes this call to {sample} (outside org scope)"
 
     # 2. A specific REGION is the hardest scope signal (it CONSTRAINS the call —
     # a development-tier word alongside is only a qualifier, e.g. "LMICs in Asia"
@@ -899,10 +966,86 @@ def _scope_terms(candidate: dict[str, Any]) -> list[str]:
     return [str(s).strip() for s in sc if str(s).strip()]
 
 
+def title_countries(candidate: dict[str, Any]) -> set[str]:
+    """Canonical countries named in the call's TITLE (lowercase). Empty when none.
+
+    THE TITLE IS THE CLUE (owner 2026-08-16). A funder that scopes a call to one country
+    says so in the title - "Modern Slavery Fund Viet Nam Programme 2026 to 2029",
+    "EOI - Sierra Leone - Feasibility Study ...", "IFB - Cabo Verde - ...". That is the
+    call's own headline scope and it outranks whatever broad wording appears further down.
+
+    Deliberately the TITLE ONLY, not `_geo_text`. A country mentioned in body text or in a
+    funder stamp is often incidental - the comment on step 3 of geographic_exclusion_reject
+    names the real case, a funder-country 'Canada' stamp that must not override an
+    LMIC-open call. Reading the title alone keeps that behaviour intact while giving a
+    deliberately-scoped call the authority it should have had.
+    """
+    title = (candidate.get("opportunity_title") or "")
+    return {geo.canonical_geo(m).lower() for m in _COUNTRY_PATTERN.findall(title) if m}
+
+
+def applicant_countries(candidate: dict[str, Any]) -> set[str]:
+    """Canonical countries whose organisations MAY APPLY, as extracted from the call.
+
+    A DIFFERENT QUESTION FROM WHERE THE MONEY IS SPENT, and the two must not be pooled.
+    A Finnish government scheme publishes a work geography of ~130 developing markets -
+    which genuinely includes the tenant's country - while restricting applicants to
+    Finland-registered operators. Union the two and the 130-country work scope drowns the
+    one country that decides eligibility, which is how that call reached a tenant
+    registered nowhere near Finland.
+
+    Already extracted and stored in `extracted_solicitations.eligibility_countries`
+    (['Finland'] here, ['France'], ['United Kingdom', 'Republic of Ireland'] on others) and
+    until now dropped before any gate could see it. It also catches what a title rule
+    cannot: "Business Partnership Support" names no country at all, and the restriction
+    lives in a demonym - "Applicant must be a Finnish-registered operator".
+    """
+    out: set[str] = set()
+    for t in _applicant_country_terms(candidate):
+        cl = (geo.canonical_geo(t) or "").lower()
+        if cl and cl in _ALL_COUNTRY_LOWER:
+            out.add(cl)
+    return out
+
+
+def _applicant_country_terms(candidate: dict[str, Any]) -> list[str]:
+    """The raw published applicant-country terms, as a list of non-empty strings.
+
+    The column is jsonb, but a large share of the store holds it DOUBLE-ENCODED - a jsonb
+    string containing JSON ('["Finland"]') rather than an array. Decode a str before giving
+    up on it, or a real restriction reads as "no list published": the same shape of bug
+    that silently blanks the applicant-TYPE gate on this very table.
+    """
+    raw = candidate.get("eligibility_countries")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            raw = [raw]
+    if not isinstance(raw, (list, tuple, set)):
+        raw = [raw] if raw else []
+    return [str(t).strip() for t in raw if str(t).strip()]
+
+
 def _scope_specific_countries(candidate: dict[str, Any]) -> set[str]:
-    """Canonical specific COUNTRIES named in the structured scope field (lowercase).
-    Regions, development tiers, worldwide and free-text placeholders are excluded — a
-    country expands to just itself and must be a known country name."""
+    """Canonical specific COUNTRIES the call is scoped to (lowercase).
+
+    Three sources, all treated as equally specific: the structured scope field, the TITLE,
+    and the extracted applicant-country list. Regions, development tiers, worldwide and
+    free-text placeholders are excluded - a country expands to just itself and must be a
+    known country name.
+
+    Two sources, both saying where the call is SCOPED: the structured scope field and the
+    TITLE. Applicant-eligibility countries are deliberately NOT folded in - see
+    `applicant_countries` for why pooling them breaks both rules.
+
+    Only the structured field was read before, which is why the owner's "a specific named
+    country governs over a broad region" rule never engaged on the reported rows: a call
+    stored as ['Low- and middle-income countries (LMICs)'] yields no specific country, so
+    `_specific_country_mismatch` returned False and both the LLM adjudication and the
+    deterministic reject were skipped. The rule was implemented and simply starved of
+    input.
+    """
     out: set[str] = set()
     for t in _scope_terms(candidate):
         c = geo.canonical_geo(t)
@@ -912,7 +1055,7 @@ def _scope_specific_countries(candidate: dict[str, Any]) -> set[str]:
         exp = geo.expand([c])
         if len(exp) == 1 and cl in _ALL_COUNTRY_LOWER:
             out.add(cl)
-    return out
+    return out | title_countries(candidate)
 
 
 def _specific_country_mismatch(candidate: dict[str, Any],
@@ -1967,6 +2110,13 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
         return False, reason
     # Applicant-type match — does the call admit the deploying org's type at all?
     rejected, reason = applicant_type_mismatch_reject(candidate, policies)
+    if geo_org_gates and rejected:
+        return False, f"eligibility: {reason}"
+    # Applicant COUNTRY — does the call admit an applicant registered where we are? A
+    # scheme restricted to one country's own operators is closed to us however well its
+    # work geography matches, and its work geography can match perfectly (see
+    # applicant_country_mismatch_reject).
+    rejected, reason = applicant_country_mismatch_reject(candidate, policies)
     if geo_org_gates and rejected:
         return False, f"eligibility: {reason}"
     ok, reason = country_eligible(candidate, policies)
