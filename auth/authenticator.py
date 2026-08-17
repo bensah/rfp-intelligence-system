@@ -519,7 +519,7 @@ def _activation_token() -> str:
     return str(st.session_state.get(_TOKEN_SS_KEY) or "").strip()
 
 
-def activation_code_entry() -> bool:
+def activation_code_entry(expanded: bool | None = None) -> bool:
     """Offer to accept a pasted activation code. True when one was submitted.
 
     Rendered on the login screen because the link cannot be relied on to carry the token
@@ -530,10 +530,15 @@ def activation_code_entry() -> bool:
     # `?activate=1`, so a recipient lands with the box already open and the next thing they
     # do is paste. Collapsed otherwise, so the sign-in screen stays a sign-in screen for
     # everyone else.
-    try:
-        _want_open = bool(st.query_params.get("activate"))
-    except Exception:
-        _want_open = False
+    if expanded is None:
+        try:
+            _want_open = bool(st.query_params.get("activate"))
+        except Exception:
+            _want_open = False
+    else:
+        # The dedicated activation page passes True: that page exists FOR this form, so
+        # collapsing it there would hide the only thing on the screen.
+        _want_open = bool(expanded)
     with st.expander("🔑 Have an activation or reset code?", expanded=_want_open):
         st.caption(
             "If the button in your email did not open a password screen, paste the code "
