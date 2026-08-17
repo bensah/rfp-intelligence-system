@@ -91,6 +91,44 @@ def program_area_picker(label, current, key_prefix, *, container=None, help=""):
     return out
 
 
+def program_area_multiselect(label, current, key, *, container=None, help="",
+                             disabled=False):
+    """One flat multi-select over the whole taxonomy; returns canonical keys.
+
+    A FORM-SAFE sibling of `program_area_picker`. That one reveals a sub-area selector for
+    each chosen category, which needs a rerun between the two choices — inside an
+    `st.form` nothing reruns until submit, so the second selector never appears. This is
+    the version for a dialog or form: every sub-area is offered at once, grouped in the
+    label so the category is still visible.
+
+    Used wherever a PERSON records their own program areas. Those fields were free text
+    ("e.g. 'Vaccines, MCH, Malaria'"), which put user-entered vocabulary next to a graded
+    taxonomy the rest of the app matches on — so a colleague could type "TD" or "malaria
+    control" and nothing downstream could line it up with a call's themes. Now the same
+    vocabulary everywhere, which is what makes a declaration usable as evidence in MUST-2.
+    """
+    c = container or st
+    cur = _as_selection(current)
+    # Legacy free text is preserved as far as it can be resolved, and silently dropped
+    # where it cannot — a stray "TD" has no canonical meaning and should not be offered
+    # back as though it were a real area.
+    known = [k for k in cur if k in PROGRAM_AREA_KEYWORDS]
+    if not known and cur:
+        try:
+            from core.program_area_classifier import expand as _expand
+            known = sorted(_expand(cur))
+        except Exception:
+            known = []
+    options = sorted(PROGRAM_AREA_KEYWORDS,
+                     key=lambda k: (category_full(k), subarea_label(k)))
+    return c.multiselect(
+        label, options, default=[k for k in known if k in options], key=key,
+        help=help or "Pick from the shared programme-area list, so what you record here "
+                     "matches how calls and funders are classified.",
+        format_func=lambda k: f"{subarea_label(k)} · {category_full(k)}",
+        disabled=disabled)
+
+
 def program_area_rating_editor(label, current_selection, current_ratings, key_prefix,
                                *, container=None, help=""):
     """Hierarchical picker PLUS a 0–5 priority grade for each chosen child

@@ -248,7 +248,7 @@ with _main:
                      prof.get("org_domain_ratings"), prof.get("org_domain_expertise"),
                      "Where you have demonstrated experience.")
         st.markdown("")
-        _areas_block("Strategic priority areas (strategy → strategic fit)",
+        _areas_block("Strategic priority areas of interest",
                      prof.get("org_priority_ratings"), prof.get("org_priority_areas"),
                      "Where your strategy says you want to work.")
 
