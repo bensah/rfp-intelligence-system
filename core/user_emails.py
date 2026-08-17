@@ -6,11 +6,15 @@ Sends:
   * Password-reset email when admin issues a new temp (Manage Users
     → Reset Password action)
 
-Both emails carry the user's temp password in plaintext (one-time use)
-and tell them to log in + change it immediately. The `must_change_
-password` flag on the users row is set in tandem with the email send,
-so the next login is gated by `ensure_logged_in()` into the Change
-Password screen until the user picks their own password.
+Account setup and reset now carry a ONE-TIME LINK rather than a
+password. A password sent by email stays valid in that inbox until
+somebody changes it; a link expires, works once, and authorises only
+setting a password — it does not sign the bearer in. See
+core/password_tokens.py.
+
+`must_change_password` remains on the users row as a second gate, so an
+account that somehow acquires a password without going through a link is
+still stopped at the Change Password screen.
 
 Why a separate module rather than inlining the email body in the User
 page: keeps the HTML template + branding logic out of the UI code and
@@ -28,6 +32,19 @@ import os
 from typing import Any
 
 from core.mailer import MailerNotConfigured, send_email
+
+
+def _html_escape(text: str) -> str:
+    """Escape a value being interpolated into an email body.
+
+    Everything these templates inject is operator-supplied — the product
+    name comes from app_settings, the expiry hint from the caller — so an
+    ampersand in a deployment's own name is the realistic case rather than
+    an attack. Escaping it keeps the markup valid instead of producing an
+    email that renders half a header.
+    """
+    import html as _html
+    return _html.escape(text or "")
 
 
 def _app_url() -> str:
@@ -138,27 +155,56 @@ def _branded_html(*, recipient_name: str, body_html: str) -> str:
 """
 
 
+def _action_button(url: str, label: str) -> str:
+    """A link styled as a button, with the URL also shown as text.
+
+    Some corporate mail clients strip or rewrite anchors, and some users
+    forward the mail to a phone where tapping is unreliable. Showing the URL
+    underneath means the link is still usable when the button is not.
+    """
+    import html as _html
+    safe = _html.escape(url, quote=True)
+    return f"""
+        <p style="margin:24px 0;">
+          <a href="{safe}" style="background:#00703C; color:#ffffff; text-decoration:none; padding:12px 22px; border-radius:6px; font-weight:600; display:inline-block;">{_html.escape(label)}</a>
+        </p>
+        <p style="font-size:12px; color:#64748b; word-break:break-all;">
+          If the button does not work, paste this into your browser:<br>{safe}
+        </p>
+    """
+
+
 def send_welcome_email(
     *,
     to_email: str,
     to_name: str | None,
-    temp_password: str,
+    setup_link: str,
+    expires_hint: str = "7 days",
 ) -> dict[str, Any]:
-    """Sent when admin/super creates a new account via Manage Users.
+    """Sent when an admin creates an account via Manage Users.
 
-    Raises MailerNotConfigured if Resend env not set — caller decides
-    whether to fall back to showing the password on-screen."""
+    Carries a one-time link, never a password. A password mailed in
+    plaintext stays valid in that inbox — and in the sender's outbox, and
+    on every mail server that relayed it — until somebody changes it. The
+    link expires, works once, and authorises only setting a password: it
+    does not sign anyone in.
+
+    Raises MailerNotConfigured if the mail transport is unset; the caller
+    decides whether to fall back to showing the link on screen.
+    """
+    short = _short_name()
     body = f"""
-        <p>An administrator has created an RFPIS account for you.</p>
-        <p>Your temporary password is:</p>
-        <p style="font-family:monospace; font-size:18px; background:#f8f9fa; padding:12px 16px; border-radius:6px; border:1px solid #e3e7e3; letter-spacing:1px; color:#1e3a8a;">
-          {temp_password}
+        <p>An administrator has created a {_html_escape(short)} account for you.</p>
+        <p>Choose your password to finish setting it up:</p>
+        {_action_button(setup_link, "Set my password")}
+        <p style="font-size:13px; color:#475569;">
+          This link works once and expires in {_html_escape(expires_hint)}.
+          If it expires, ask your administrator to send a new one.
         </p>
-        <p><strong>Important — you'll be required to change this password the first time you log in.</strong> Pick something only you know.</p>
     """
     return send_email(
         to=[to_email],
-        subject=f"Your {_short_name()} account — temporary password inside",
+        subject=f"Set up your {short} account",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 
@@ -167,24 +213,33 @@ def send_password_reset_email(
     *,
     to_email: str,
     to_name: str | None,
-    temp_password: str,
+    reset_link: str,
+    expires_hint: str = "2 hours",
 ) -> dict[str, Any]:
-    """Sent when admin/super resets a user's password from Manage Users."""
+    """Sent when an admin resets a user's password from Manage Users.
+
+    Shorter-lived than an invite: a reset is requested deliberately and
+    acted on immediately, so there is no reason for the link to stay usable
+    for days in an inbox.
+    """
+    short = _short_name()
     body = f"""
-        <p>An administrator has reset your RFPIS password at your request.</p>
-        <p>Your new temporary password is:</p>
-        <p style="font-family:monospace; font-size:18px; background:#f8f9fa; padding:12px 16px; border-radius:6px; border:1px solid #e3e7e3; letter-spacing:1px; color:#1e3a8a;">
-          {temp_password}
-        </p>
-        <p><strong>You'll be required to change this password on your next login.</strong></p>
+        <p>An administrator has started a password reset for your
+        {_html_escape(short)} account.</p>
+        <p>Choose a new password:</p>
+        {_action_button(reset_link, "Choose a new password")}
         <p style="font-size:13px; color:#475569;">
-          If you did NOT request this reset, contact your administrator
-          immediately — your previous password no longer works.
+          This link works once and expires in {_html_escape(expires_hint)}.
+        </p>
+        <p style="font-size:13px; color:#475569;">
+          If you did NOT expect this, contact your administrator. Your
+          existing password still works until this link is used, so nothing
+          has changed yet.
         </p>
     """
     return send_email(
         to=[to_email],
-        subject=f"{_short_name()} password reset — temporary password inside",
+        subject=f"Reset your {short} password",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 
