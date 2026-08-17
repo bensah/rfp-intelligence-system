@@ -278,6 +278,27 @@ class TheEmailIsFramedAsActivationTests(unittest.TestCase):
                          to_name="A", setup_link="https://x.example/?token=SECRET")
         self.assertIn("https://x.example/?token=SECRET", got["html"])
 
+    def test_the_invite_prints_the_token_as_a_pasteable_code(self):
+        # A link is not a reliable carrier: a hosted Streamlit app bootstraps a session
+        # before serving a cold request, and the round trip DROPS THE QUERY STRING - so the
+        # one visitor the link was written for is exactly the one it fails for. Measured on
+        # the live deployment: /?token=ABC -> /-/auth/app?redirect_uri=<app>/ (no token).
+        from core import user_emails as UE
+        got = self._sent(UE.send_welcome_email, to_email="a@example.org", to_name="A",
+                         setup_link="https://app.example/?token=TOKEN123abc")
+        self.assertIn("TOKEN123abc", got["html"])
+        self.assertIn("activation or reset code", got["html"])
+
+    def test_the_reset_prints_its_code_too(self):
+        from core import user_emails as UE
+        got = self._sent(UE.send_password_reset_email, to_email="a@example.org",
+                         to_name="A", reset_link="https://app.example/?token=RESET9xy")
+        self.assertIn("RESET9xy", got["html"])
+
+    def test_a_link_without_a_token_prints_no_code_block(self):
+        from core import user_emails as UE
+        self.assertEqual(UE._code_fallback("https://app.example/"), "")
+
     def test_the_reset_says_change_your_password(self):
         from core import user_emails as UE
         got = self._sent(UE.send_password_reset_email, to_email="a@example.org",
