@@ -58,6 +58,11 @@ _MONTHS = {
 _MONTH_RE = r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|" \
             r"jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
 
+# How far into a page a bare, unlabelled date may sit and still be read as the
+# publication stamp. Catalogue pages put it directly under the heading; past that, an
+# unlabelled date is just a date in the prose.
+_POSTED_HEAD_CHARS = 600
+
 # Date shapes, each tagged so the parser knows how to read the groups.
 _DATE_PATTERNS = [
     # 22 July 2026 / 22nd July, 2026
@@ -133,6 +138,51 @@ def _label_near(text: str, start: int, window: int = 70) -> tuple[bool, bool, st
             best_pos, best_sub = p, False
     snip = text[max(0, start - window):start + 24].strip().replace("\n", " ")
     return (best_sub is True), (best_sub is False), snip
+
+
+def extract_posted_date(text: str, *, title: str = "",
+                        today: "date | None" = None) -> tuple[str | None, str]:
+    """(iso_date, how) for the date a page was PUBLISHED, or (None, "").
+
+    The stale-posting rule - no deadline, not rolling, posted longer ago than a real
+    application window runs - is the only evidence-based way to retire an undated call.
+    It needs `date_posted`, and donor-catalogue pages were arriving with that column NULL,
+    so the rule could never fire. The reported case states its publication date plainly in
+    the page: a 2026 call for proposals stamped "17/10/2025" under the heading, sitting in
+    the store with date_posted NULL and therefore ageless.
+
+    Two sources, both conservative:
+      * a date carrying a publication LABEL ("posted", "published", "issued", ...) -
+        `_NEGATIVE_LABELS` already recognises exactly these, because the deadline
+        extractor has to avoid them;
+      * failing that, the FIRST date in the opening `_POSTED_HEAD_CHARS` of the page,
+        when it carries no submission label and lies in the PAST. That is where a
+        catalogue puts its publication stamp.
+
+    A FUTURE date is never read as a posting date - that is a deadline, an event or an
+    award ceremony - so this can only ever make a page look older, never younger.
+    """
+    from datetime import date as _d
+    today = today or _d.today()
+    blob = f"{title}\n{text or ''}"
+    labelled: list[_d] = []
+    head: list[tuple[int, _d]] = []
+    for kind, rx in _DATE_PATTERNS:
+        for m in rx.finditer(blob):
+            dt, month_only = _parse(kind, m.groups())
+            if not dt or dt >= today:            # future → not a publication date
+                continue
+            is_sub, is_neg, _snip = _label_near(blob, m.start())
+            if is_neg:
+                labelled.append(dt)
+            elif not is_sub and m.start() <= _POSTED_HEAD_CHARS and not month_only:
+                head.append((m.start(), dt))
+    if labelled:
+        return max(labelled).isoformat(), "labelled"
+    if head:
+        head.sort(key=lambda p: p[0])
+        return head[0][1].isoformat(), "page-head"
+    return None, ""
 
 
 def extract_deadline(text: str, *, scan_year: int | None = None, title: str = "",

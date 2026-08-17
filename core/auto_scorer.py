@@ -1494,15 +1494,41 @@ _ROLLING_RE = re.compile(
     re.IGNORECASE)
 
 
+# The label a rolling call carries in `funding_window`, so a reviewer reads "Rolling"
+# instead of an empty deadline and the tracker knows the row has nothing to expire.
+ROLLING_WINDOW = "Rolling"
+
+
 def _is_rolling_call(candidate: dict[str, Any]) -> bool:
-    """True if the text states the call is rolling / open-ended (no fixed
-    deadline). Such calls are EXEMPT from the stale-posting rule."""
+    """True if the text states the call is rolling / open-ended (no fixed deadline).
+
+    Such calls are EXEMPT from every expiry rule: an open-ended fund has no closing date
+    to pass, so "no deadline" is the correct state rather than a missing one.
+
+    The PAGE BODY is read, not just the title and brief. A funder states this in prose -
+    "we will review applications on a rolling basis" - and the one-line brief rarely
+    repeats it, so reading only title/brief/notes made a genuinely open-ended fund
+    indistinguishable from an abandoned page.
+    """
     blob = " ".join([
         candidate.get("opportunity_title") or "",
         candidate.get("brief_description") or "",
         candidate.get("notes") or "",
+        candidate.get("_page_text") or "",
+        candidate.get("full_description") or "",
     ])
-    return bool(_ROLLING_RE.search(blob))
+    if _ROLLING_RE.search(blob):
+        return True
+    # An earlier stage may already have concluded this and written it down.
+    return str(candidate.get("funding_window") or "").strip().lower() == \
+        ROLLING_WINDOW.lower()
+
+
+# Public name: the scan pipeline marks rolling calls, and the gates exempt them, so both
+# sides must agree on what "rolling" means rather than each testing their own regex.
+def is_rolling_call(candidate: dict[str, Any]) -> bool:
+    """Public alias of `_is_rolling_call` — see there."""
+    return _is_rolling_call(candidate)
 
 
 def deadline_in_future(candidate: dict[str, Any]) -> tuple[bool, str]:
@@ -1635,21 +1661,40 @@ def insufficient_data_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
             _pd = posted
         if _pd and 0 <= (_date.today() - _pd).days <= _STALE_POSTING_DAYS:
             return False, ""            # recently posted → plausibly live, keep
+        if _pd and (_date.today() - _pd).days > _STALE_POSTING_DAYS:
+            # POSITIVE evidence, and the only kind available for an undated page: it was
+            # published longer ago than any real application window runs. The same rule
+            # deadline_in_future applies at ingest, repeated here because this is the gate
+            # the per-tenant screening pass actually runs, and dropping the rule from it
+            # would have let a page from 2017 into a review week.
+            return True, (f"posted {_pd.isoformat()} "
+                          f"({(_date.today() - _pd).days}d ago) with no deadline and no "
+                          f"rolling wording — the window has long closed")
         blob = " ".join([
             candidate.get("opportunity_link") or "",
             candidate.get("opportunity_title") or "",
             body, page, candidate.get("notes") or ""])
-        # A YEAR ON THE PAGE IS NOT AN OPEN WINDOW. This asked `_latest_year_in(blob)`,
-        # so any 20xx anywhere in the URL, the title, the body or the page chrome kept the
-        # row - and every expired call that kept reappearing week after week had one. One
-        # of them announces itself as a "2026 call for project proposals" in its title
-        # while its application window closed years ago. The year now has to sit beside
-        # wording that makes it a closing date.
-        yr = _live_window_year(blob)
-        if not (yr and yr >= _date.today().year):
-            return True, ("no verifiable live deadline — no parseable deadline, not a "
-                          "rolling call, no recent posting date, and no current/future "
-                          "closing date stated on the page")
+        # A MISSING DEADLINE IS NOT AN EXPIRED ONE (owner, 2026-08-17). An earlier version
+        # of this branch rejected whenever no current-or-future closing date could be
+        # found, which reads "we could not confirm this is open" as "this is closed". That
+        # is too harsh in the one direction that costs real money: an open-ended fund
+        # genuinely has no closing date, so it can never produce the evidence being
+        # demanded, and a live rolling call would be dropped for being open.
+        #
+        # So the burden of proof is the other way round now. We reject only on POSITIVE
+        # evidence that the window has passed:
+        #   * a stated closing date in the past          (deadline_in_future, above)
+        #   * a page posted longer ago than a real application window runs
+        #     (the stale-posting rule, which needs date_posted - see
+        #      deadline_extract.extract_posted_date, added so it can actually fire)
+        # A row with no deadline and no such evidence is KEPT and marked rolling, so the
+        # reviewer sees "Rolling" rather than a blank date, and the tracker holds it until
+        # a human decides.
+        _stated = _live_window_year(blob)
+        if _stated and _stated < _date.today().year:
+            return True, (f"the application window stated on the page closed in "
+                          f"{_stated}")
+    return False, ""
     return False, ""
 
 

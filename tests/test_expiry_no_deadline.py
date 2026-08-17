@@ -108,13 +108,16 @@ class TheStatedWindowIsReadTests(unittest.TestCase):
 
 
 class TheScreeningGateTests(unittest.TestCase):
-    def test_an_undated_call_with_only_a_title_year_is_blocked(self):
+    def test_an_undated_call_with_no_expiry_evidence_is_KEPT(self):
+        # COURSE CORRECTION (owner, 2026-08-17). An earlier version of this rule blocked
+        # here, on the grounds that no current closing date could be confirmed. That reads
+        # "we could not confirm this is open" as "this is closed", and it is wrong in the
+        # direction that costs money: an open-ended fund can never produce the evidence
+        # being demanded. Rejection now requires POSITIVE evidence of expiry.
         cand = _cand(opportunity_title="Its %d call for project proposals!" % THIS_YEAR,
                      _page_text="A" * 400, call_award_value=50000,
                      call_geographic_scope=["Kenya"])
-        blocked, why = A.insufficient_data_reject(cand)
-        self.assertTrue(blocked)
-        self.assertIn("no verifiable live deadline", why)
+        self.assertFalse(A.insufficient_data_reject(cand)[0])
 
     def test_a_genuinely_rolling_call_survives(self):
         cand = _cand(opportunity_title="Rolling small grants programme",
@@ -142,6 +145,86 @@ class TheScreeningGateTests(unittest.TestCase):
                                                + timedelta(days=30)).isoformat())
         self.assertFalse(A.insufficient_data_reject(cand)[0])
         self.assertTrue(A.deadline_in_future(cand)[0])
+
+
+class RollingCallsAreNeverExpiredTests(unittest.TestCase):
+    """An open-ended fund has no closing date to pass (owner, 2026-08-17)."""
+
+    ROLLING = dict(
+        opportunity_title="Request for Proposals: Global Health and Wellbeing",
+        brief_description="Open call for proposals.",
+        _page_text=("We plan to accept applications and will review applications on a "
+                    "rolling basis, though we expect to take some months."),
+        call_award_value=100_000, call_geographic_scope=["Kenya"],
+        call_domain_areas=["Health"])
+
+    def test_rolling_wording_in_the_PAGE_BODY_is_recognised(self):
+        # It read only title + brief + notes, and a funder states this in prose, so a
+        # genuinely open-ended fund looked identical to an abandoned page.
+        self.assertTrue(A.is_rolling_call(_cand(**self.ROLLING)))
+
+    def test_a_rolling_call_survives_both_gates(self):
+        cand = _cand(**self.ROLLING)
+        self.assertTrue(A.deadline_in_future(cand)[0])
+        self.assertFalse(A.insufficient_data_reject(cand)[0])
+
+    def test_a_rolling_call_posted_years_ago_still_survives(self):
+        # The whole point of open-ended: age is not evidence of closure.
+        cand = _cand(date_posted="2021-01-01", **self.ROLLING)
+        self.assertTrue(A.deadline_in_future(cand)[0])
+        self.assertFalse(A.insufficient_data_reject(cand)[0])
+
+    def test_rolling_is_recorded_as_a_state_not_a_blank(self):
+        # A fabricated 31-December deadline is worse than none: everything downstream
+        # treats it as fact and the call silently "expires" at new year.
+        self.assertEqual(A.ROLLING_WINDOW, "Rolling")
+        self.assertTrue(A.is_rolling_call(_cand(funding_window="Rolling")))
+
+    def test_the_pipeline_marks_a_rolling_call_and_leaves_the_deadline_null(self):
+        import io
+        with io.open(os.path.join(_ROOT, "core", "scan_pipeline.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("ROLLING_WINDOW", src)
+        self.assertIn("is_rolling_call(cand)", src)
+
+
+class ThePostedDateIsRecoveredTests(unittest.TestCase):
+    """The stale-posting rule is the only evidence an undated page can offer."""
+
+    def test_an_unlabelled_date_under_the_heading_is_read_as_the_posting_date(self):
+        # The reported page: a 2026 call stamped 17/10/2025 under its heading, arriving
+        # with date_posted NULL and therefore ageless.
+        got, how = DE.extract_posted_date(
+            "The Observatory launches its 2026 call for project proposals! 17/10/2025 "
+            "Join the community of award winners...",
+            title="The Observatory launches its 2026 call for project proposals!")
+        self.assertEqual(got, "2025-10-17")
+        self.assertEqual(how, "page-head")
+
+    def test_a_labelled_publication_date_wins(self):
+        got, how = DE.extract_posted_date("Published: 28 February 2025. Details follow.")
+        self.assertEqual(got, "2025-02-28")
+        self.assertEqual(how, "labelled")
+
+    def test_a_future_date_is_never_a_posting_date(self):
+        # That is a deadline, an event or an award ceremony. This can only make a page
+        # look older, never younger.
+        self.assertEqual(DE.extract_posted_date(
+            "Prizes will be awarded on 30 December %d." % (THIS_YEAR + 1))[0], None)
+
+    def test_a_submission_labelled_date_is_not_a_posting_date(self):
+        self.assertIsNone(DE.extract_posted_date(
+            "Application deadline: 15 January 2020.")[0])
+
+    def test_a_stale_posting_blocks_at_the_screening_gate_too(self):
+        # The rule lived only in deadline_in_future; the screening pass runs this gate, so
+        # without it a page from 2017 could still reach a review week.
+        cand = _cand(opportunity_title="An old call", date_posted="2017-09-29",
+                     _page_text="C" * 400, call_award_value=1000)
+        blocked, why = A.insufficient_data_reject(cand)
+        self.assertTrue(blocked)
+        self.assertIn("2017-09-29", why)
 
 
 class TheStoreIsAgedTests(unittest.TestCase):
