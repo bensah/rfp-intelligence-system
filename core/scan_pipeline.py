@@ -24,7 +24,8 @@ from core import aggregators, source_registry, scraper, type_detect
 from core import extract as extraction        # extraction-first global store (shadow)
 from core import deadline_extract             # confidence-gated deadline backstop
 from core.auto_scorer import (auto_score, is_eligible, is_index_page,
-                              theme_eligible, insufficient_data_reject)
+                              theme_eligible, insufficient_data_reject,
+                              is_rolling_call, ROLLING_WINDOW)
 from core.deduplicator import find_duplicates
 from core.policies import get_policies
 from core.review_week import review_week_label
@@ -557,8 +558,50 @@ def ingest_candidates(
                 if (_dl["deadline"] and _dl["confidence"] in ("high", "medium")
                         and _dl["method"] != "default-rolling"):
                     cand["call_submission_deadline"] = _dl["deadline"]
+                elif (_dl["deadline"] and _dl["method"] != "default-rolling"
+                        and str(_dl["deadline"])[:10] < _date.today().isoformat()):
+                    # A LOW-confidence date that has already PASSED is still evidence.
+                    # The two questions are different: "is this good enough to publish as
+                    # the deadline" (no - we are not sure what it labels) and "does this
+                    # page describe a window that has closed" (yes - the date is in the
+                    # past whatever it labels). Discarding it on confidence alone is how a
+                    # call whose page reads "Open until 30 December 2017" stayed Open and
+                    # came back every week. Recorded as an expiry signal, NOT written to
+                    # call_submission_deadline, so nothing downstream shows a date we do
+                    # not trust.
+                    cand["_expired_window"] = str(_dl["deadline"])[:10]
             except Exception as _exc:
                 log.debug("deadline backstop skipped: %s", _exc)
+
+        # ROLLING IS A STATE, NOT A MISSING VALUE (owner, 2026-08-17). An open-ended call
+        # has no closing date, and leaving the field blank made it indistinguishable from a
+        # call whose deadline we simply failed to read - so it looked like missing data to
+        # every reader, human and gate alike. Recording it explicitly means the reviewer
+        # sees "Rolling" instead of a dash, and the expiry rules can exempt it honestly
+        # rather than by accident.
+        #
+        # The deadline itself stays NULL on purpose. The extractor's own answer for a
+        # rolling call is 31 December of the scan year, which is a date the funder never
+        # published; a fabricated deadline is worse than none, because everything
+        # downstream treats it as fact and the call silently "expires" at new year.
+        if not cand.get("call_submission_deadline") and is_rolling_call(cand):
+            cand["funding_window"] = cand.get("funding_window") or ROLLING_WINDOW
+
+        # Posting-date backstop. The stale-posting rule is the only evidence-based way to
+        # retire an undated call, and it needs date_posted - which donor-catalogue sources
+        # were leaving NULL, so the rule never fired and those pages sat Open forever. The
+        # date is usually right there on the page, unlabelled, under the heading.
+        if not cand.get("date_posted"):
+            try:
+                _pd, _how = deadline_extract.extract_posted_date(
+                    cand.get("_page_text") or cand.get("brief_description") or "",
+                    title=cand.get("opportunity_title") or "")
+                if _pd:
+                    cand["date_posted"] = _pd
+                    log.debug("date_posted %s recovered (%s) for %s",
+                              _pd, _how, cand.get("opportunity_link"))
+            except Exception as _exc:
+                log.debug("posted-date backstop skipped: %s", _exc)
         # Link sanity: after any resolve rewrite, the opportunity_link must be a real
         # URL. Drop candidates whose link is a JS-SPA scrape artifact (stray text/CSS,
         # not an href) so the UI never shows an unclickable "Apply" link; normalise a
