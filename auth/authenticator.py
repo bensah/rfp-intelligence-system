@@ -608,7 +608,7 @@ def _gate_must_change_password(user: dict[str, Any]) -> None:
     # so the user can't escape the gate by clicking another page.
     _hide_sidebar_on_login()
 
-    st.title("🔐 Set a new password")
+    st.title("🔐 Choose your password")
     st.warning(
         "An administrator has asked you to choose a new password before "
         "continuing."

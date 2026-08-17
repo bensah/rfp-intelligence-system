@@ -208,11 +208,16 @@ def send_welcome_email(
     Raises MailerNotConfigured if the mail transport is unset; the caller
     decides whether to fall back to showing the link on screen.
     """
+    # FRAMED AS ACTIVATION (owner, 2026-08-17). What the recipient is being asked to do is
+    # turn on an account somebody made for them; choosing a password is how that happens,
+    # not the point of the email. "Set up your account" also reads like configuration work,
+    # and "Set my password" invites the question "which password?" from someone who has
+    # never had one. Activate first, password second.
     short = _short_name()
     body = f"""
         <p>An administrator has created a {_html_escape(short)} account for you.</p>
-        <p>Choose your password to finish setting it up:</p>
-        {_action_button(setup_link, "Set my password")}
+        <p>Activate it and choose a password to finish:</p>
+        {_action_button(setup_link, "Activate account")}
         <p style="font-size:13px; color:#475569;">
           This link works once and expires in {_html_escape(expires_hint)}.
           If it expires, ask your administrator to send a new one.
@@ -220,7 +225,7 @@ def send_welcome_email(
     """
     return send_email(
         to=[to_email],
-        subject=f"Set up your {short} account",
+        subject=f"Activate your {short} account",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 
@@ -243,7 +248,7 @@ def send_password_reset_email(
         <p>An administrator has started a password reset for your
         {_html_escape(short)} account.</p>
         <p>Choose a new password:</p>
-        {_action_button(reset_link, "Choose a new password")}
+        {_action_button(reset_link, "Change my password")}
         <p style="font-size:13px; color:#475569;">
           This link works once and expires in {_html_escape(expires_hint)}.
         </p>
@@ -255,7 +260,7 @@ def send_password_reset_email(
     """
     return send_email(
         to=[to_email],
-        subject=f"Reset your {short} password",
+        subject=f"Change your {short} password",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 

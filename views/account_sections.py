@@ -1249,7 +1249,7 @@ def render_manage_users(user: dict, sb) -> None:
                 _setup_link = build_link(_app_url(), _raw)
             except Exception as exc:
                 st.error(
-                    f"Account created, but no setup link could be issued "
+                    f"Account created, but no activation link could be issued "
                     f"({exc}). Use **Reset password** on the user to send "
                     f"one — the account cannot be logged into until then.")
                 return
@@ -1262,7 +1262,7 @@ def render_manage_users(user: dict, sb) -> None:
                     setup_link=_setup_link,
                 )
                 st.success(
-                    f"✅ Created **{d_email}**. A one-time setup link has "
+                    f"✅ Created **{d_email}**. A one-time activation link has "
                     f"been emailed — it expires in 7 days, and they choose "
                     f"their own password.")
                 _auto_close_dialog()
