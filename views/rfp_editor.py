@@ -21,6 +21,7 @@ import streamlit as st
 
 from core import dropdowns
 from core.scorer import (score_submission, CRITERION_RESPONSES, default_response)
+from core.donor_decision import is_no_answer as _dd_is_no_answer
 
 
 @st.dialog("Edit RFP", width="large")
@@ -289,7 +290,29 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
             prog_status = _opt("Progress status", "ps", dropdowns.get("progress_status"), row.get("progress_status"))
         c5, c6 = st.columns(2)
         with c5:
-            donor_dec = _opt("Donor decision", "dd", dropdowns.get("donor_decision"), row.get("donor_decision"))
+            # SUGGESTED, NOT IMPOSED (owner, 2026-08-17). Marking Progress = Completed means
+            # the proposal went to the funder, so an answer is now pending - and a Completed
+            # row with no donor decision leaves Tracking without entering Applied Funding,
+            # which is how a grant went missing once. The old fix wrote "Under Review" into
+            # the row on save, silently: nobody had chosen it and nothing said it had
+            # happened, so read back later it looked like a decision the app had invented.
+            #
+            # Proposed in the WIDGET now, where it can be seen and changed before anything is
+            # written. What gets saved is what was on screen.
+            _dd_stored = row.get("donor_decision")
+            _dd_suggested = (str(prog_status or "").strip().lower() == "completed"
+                             and _dd_is_no_answer(_dd_stored))
+            donor_dec = _opt(
+                "Donor decision", "dd", dropdowns.get("donor_decision"),
+                "Under Review" if _dd_suggested else _dd_stored,
+                help="The funder's answer. Suggested as “Under Review” while "
+                     "Progress is Completed and no answer has been recorded - change it if "
+                     "you know the outcome.")
+            if _dd_suggested:
+                st.caption(
+                    "ℹ️ Suggested because Progress is **Completed** - the proposal "
+                    "is with the funder, so an answer is pending. Nothing is saved until you "
+                    "press Save.")
         # THE ROSTER, not a free-text box. Typing a name each time produced the same person
         # under several spellings, which then split every per-person figure on the Report —
         # the roster already exists (Admin > Settings > Team members) and is what every other
@@ -574,15 +597,27 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
             "decision_overridden_by": user.get("email"),
             "decision_overridden_at": datetime.now(timezone.utc).isoformat(),
         }
-        # Invariant: Progress = "Completed" means the proposal was SUBMITTED to the donor,
-        # so a donor decision is now pending. If the user marked Completed but left the
-        # donor decision blank/Not submitted, default it to "Under Review" — otherwise the
-        # row leaves Tracking (Completed) yet never enters Applied Funding (which keys off
-        # donor_decision), the exact gap that hid the lead-poisoning grant.
-        if str(update.get("progress_status") or "").strip().lower() == "completed" \
-                and str(update.get("donor_decision") or "").strip().lower() in ("", "not submitted"):
-            update["donor_decision"] = "Under Review"
+        # NO SILENT DEFAULT HERE ANY MORE (owner, 2026-08-17). This used to force
+        # donor_decision to "Under Review" whenever Progress was Completed and the answer was
+        # blank. The intent was right - a Completed row with no donor decision leaves Tracking
+        # without entering Applied Funding, which is how a grant went missing once - but
+        # writing it invisibly meant the app stored a decision nobody had made. Read back
+        # later it looked like data changing on its own: a grant marked Not Approved in the
+        # workbook showed "Under Review" here, with no event anywhere to point at.
+        #
+        # The value is SUGGESTED in the widget instead (see the Donor decision field), so what
+        # gets saved is what the person saw on screen. The GAP is still worth naming, so it is
+        # said out loud rather than papered over.
+        _saving_completed = str(
+            update.get("progress_status") or "").strip().lower() == "completed"
+        _saving_no_answer = _dd_is_no_answer(update.get("donor_decision"))
         sb.table("rfp_submissions").update(update).eq("uid", row["uid"]).execute()
+        if _saving_completed and _saving_no_answer:
+            st.warning(
+                "Saved. Progress is **Completed** but no donor decision is recorded, so this "
+                "row will not appear in Applied Funding yet. Set the donor decision once the "
+                "funder answers."
+            )
         # Reporting → applied_funding (only when the Reporting tab was shown). Update the linked
         # row if it exists; otherwise create one when the user entered any reporting value.
         if show_reporting:
