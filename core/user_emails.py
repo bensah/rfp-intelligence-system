@@ -171,8 +171,14 @@ def _branded_html(*, recipient_name: str, body_html: str) -> str:
 """
 
 
+# The button label per destination - "Activate my account" is wrong on a reset email.
+_ACTION_LABEL = {"activate-account": "Activate my account",
+                 "password-reset": "Set a new password"}
+
+
 def _activation_instructions(url: str, expires_hint: str,
-                             what: str = "activation code") -> str:
+                             what: str = "activation code",
+                             path: str = "activate-account") -> str:
     """One link that activates, and the same code underneath in case it cannot be followed.
 
     THE LINK IS THE PRIMARY ROUTE AGAIN (owner, 2026-08-17). It had been removed because it
@@ -201,13 +207,16 @@ def _activation_instructions(url: str, expires_hint: str,
     if not token:
         return ""
     base = _app_url().rstrip("/")
-    activate_url = f"{base}/activate-account?token={token}"
-    page_url = f"{base}/activate-account"
+    # A reset lands on /password-reset and an invitation on /activate-account: the two
+    # screens say different things, and sending somebody to "Activate your account" when
+    # they asked to reset a password they already had reads as the wrong email.
+    activate_url = f"{base}/{path}?token={token}"
+    page_url = f"{base}/{path}"
     safe_activate = _html.escape(activate_url, quote=True)
     safe_page = _html.escape(page_url, quote=True)
     return f"""
         <p style="margin:24px 0;">
-          <a href="{safe_activate}" style="background:#00703C; color:#ffffff; text-decoration:none; padding:12px 22px; border-radius:6px; font-weight:600; display:inline-block;">Activate my account</a>
+          <a href="{safe_activate}" style="background:#00703C; color:#ffffff; text-decoration:none; padding:12px 22px; border-radius:6px; font-weight:600; display:inline-block;">{_html.escape(_ACTION_LABEL.get(path, "Continue"))}</a>
         </p>
         <p style="font-size:12px; color:#64748b; word-break:break-all;">
           If the button does not work, paste this into your browser:<br>{safe_activate}
@@ -340,7 +349,8 @@ def send_password_reset_email(
     body = f"""
         <p>An administrator has started a password reset for your
         {_html_escape(short)} account.</p>
-        {_activation_instructions(reset_link, expires_hint, what="reset code")}
+        {_activation_instructions(reset_link, expires_hint, what="reset code",
+                                  path="password-reset")}
         <p style="font-size:13px; color:#475569;">
           If you did NOT expect this, contact your administrator. Your existing password
           still works until this code is used, so nothing has changed yet.

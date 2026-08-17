@@ -559,6 +559,60 @@ def activation_code_entry(expanded: bool | None = None) -> bool:
     return False
 
 
+def password_reset_request_form(*, heading: bool = False) -> None:
+    """Ask an admin for a password reset. Shared by the login screen and /password-reset.
+
+    Lifted out of the login screen so the dedicated page can host the same form rather than
+    a second copy of it - two copies of an anti-enumeration flow is two places for the
+    behaviour to drift.
+    """
+    if heading:
+        st.subheader("Request a password reset")
+    st.caption(
+        "Enter your email and request a reset. Once an admin approves it, the app emails "
+        "you a one-time code and link to set a new password. Your current password keeps "
+        "working until you use it."
+    )
+    with st.form("forgot_pw_form", clear_on_submit=True):
+        fp_email = st.text_input("Email", key="fp_email")
+        fp_submit = st.form_submit_button("📨 Request password reset")
+
+    if not fp_submit:
+        return
+    if not fp_email or "@" not in fp_email:
+        st.error("Enter a valid email.")
+        return
+    try:
+        # Don't reveal whether the email exists (anti-enumeration). The request is
+        # recorded either way; an admin sees it and decides whether to action it. The
+        # confirmation below is deliberately identical for a known and an unknown
+        # address.
+        get_client().table("password_reset_requests").insert({
+            "email": fp_email.strip(),
+        }).execute()
+        st.success(
+            "✅ Request received. After an admin approves it, the app will email you a "
+            "one-time code and link to set a new password. It expires in 2 hours."
+        )
+    except Exception as exc:
+        st.error(f"Could not record request: {exc}")
+
+
+def has_session_cookie() -> bool:
+    """True when a session cookie MIGHT be restorable — used only to decide whether it is
+    safe to redirect an anonymous visitor to /login.
+
+    Deliberately optimistic: any doubt returns True, which means "do not redirect" and the
+    caller renders the login screen in place exactly as it always did. Getting this wrong
+    in the other direction would bounce a signed-in user off the page they asked for.
+    """
+    try:
+        cookies = getattr(st.context, "cookies", None) or {}
+        return COOKIE_NAME in cookies
+    except Exception:
+        return True
+
+
 def handle_setup_token() -> None:
     """Redeem a ?token=... link from a setup or reset email.
 
@@ -964,30 +1018,4 @@ def _render_signup_and_reset_forms() -> None:
     activation_code_entry()
 
     with st.expander("🔐 Forgot password?", expanded=False):
-        st.caption(
-            "Enter your email and request a reset. Once an admin approves it, "
-            "the app emails you a one-time link to set a new password. Your "
-            "current password keeps working until you use the link."
-        )
-        with st.form("forgot_pw_form", clear_on_submit=True):
-            fp_email = st.text_input("Email", key="fp_email")
-            fp_submit = st.form_submit_button("📨 Request password reset")
-
-        if fp_submit:
-            if not fp_email or "@" not in fp_email:
-                st.error("Enter a valid email.")
-            else:
-                try:
-                    # Don't reveal whether the email exists (anti-
-                    # enumeration). Insert the request either way; admin
-                    # will see it and decide whether to action.
-                    get_client().table("password_reset_requests").insert({
-                        "email": fp_email.strip(),
-                    }).execute()
-                    st.success(
-                        "✅ Request received. After an admin approves it, the "
-                        "app will email you a one-time link to set a new "
-                        "password. It expires in 2 hours."
-                    )
-                except Exception as exc:
-                    st.error(f"Could not record request: {exc}")
+        password_reset_request_form()
