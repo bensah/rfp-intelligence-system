@@ -222,12 +222,52 @@ def _org_match_score(theme: str, org_tokens: dict) -> float | None:
     return None
 
 
+def _org_theme_scores(org: dict) -> dict[str, float]:
+    """What this organisation can claim on a theme, 0-5 per canonical key.
+
+    THREE SOURCES, TAKEN TOGETHER, HIGHEST WINS (owner, 2026-08-17):
+
+      1. Strategic priority areas of interest - where the strategy says we want to work.
+      2. Domains / areas of expertise - where we have a track record. These used to be a
+         FALLBACK, consulted only when no strategy was recorded at all, which meant a
+         team with a deep track record in an area and no strategy row for it scored
+         MUST-2 as though it had no standing there. Track record is evidence of fit, so
+         it now counts alongside strategy rather than instead of it. It also keeps its
+         separate role in PREFER-8 competitiveness, which asks a different question - how
+         well-placed we are to WIN - and is unaffected by this.
+      3. Program areas the tenant's own users have declared on their accounts, worth 5.
+
+    Source 3 is the one that overrides. A profile is edited by one person, occasionally,
+    so a low rating there is as likely to mean "nobody has updated this" as "we are weak
+    here"; a colleague naming an area on their own account is a person saying this is what
+    they work on. Because the merge takes the MAXIMUM, a declaration can only ever raise a
+    rating - the profile stays the floor and hard evidence lifts it.
+    """
+    scores: dict[str, float] = {}
+    for sel, rat in ((org.get("org_priority_areas"), org.get("org_priority_ratings")),
+                     (org.get("org_domain_expertise"), org.get("org_domain_ratings"))):
+        if not _as_list(sel):
+            continue
+        for k, v in _theme_scores(sel, _ratings(rat), 5.0).items():
+            scores[k] = max(scores.get(k, 0.0), v)
+    # Declared-by-a-user areas. Pre-resolved onto the profile by org_profile.get_profile
+    # so scoring stays a pure function of the dict it is handed.
+    for k in _as_list(org.get("org_user_declared_areas")):
+        try:
+            from core.user_program_areas import DECLARED_RATING
+        except Exception:                                  # pragma: no cover
+            DECLARED_RATING = 5.0
+        for key in (_pa.expand([k]) or {k}):
+            scores[key] = max(scores.get(key, 0.0), float(DECLARED_RATING))
+    return scores
+
+
 def _strategic_items(org: dict, rfp: dict, donor: dict | None = None) -> list[dict] | None:
     """One MUST-2 item per FUNDER theme. CALL/DONOR themes (denominator Y) = LLM-detected
     program areas (rfp.program_area, default 5) ∪ donor priority areas (donor ratings,
     default 5) — listed themes only, no category duplication. ORG themes (numerator) =
-    strategic priority areas (+ratings), FALLBACK to domains/track-record only when
-    strategy is undefined; matched at category OR sub-area level. item.score =
+    strategy ∪ track-record domains ∪ areas the tenant's users declared (see
+    `_org_theme_scores`, highest wins); matched at category OR sub-area level. item.score =
     min(band(org), band(call)) when the org shares it, else 0. None when there are NO
     call themes or NO org themes → 'Not sure'."""
     donor = donor or {}
@@ -237,12 +277,7 @@ def _strategic_items(org: dict, rfp: dict, donor: dict | None = None) -> list[di
         call[k] = max(call.get(k, 0.0), v)
     if not call:
         return None                           # nothing imposed → Not sure
-    if _as_list(org.get("org_priority_areas")):
-        org_tokens = _theme_scores(org.get("org_priority_areas"),
-                                   _ratings(org.get("org_priority_ratings")), 5.0)
-    else:                                     # fallback: track-record domains
-        org_tokens = _theme_scores(org.get("org_domain_expertise"),
-                                   _ratings(org.get("org_domain_ratings")), 5.0)
+    org_tokens = _org_theme_scores(org)
     if not org_tokens:
         return None                           # no org strategy/domain data → Not sure
     items: list[dict] = []

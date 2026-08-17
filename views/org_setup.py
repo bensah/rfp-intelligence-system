@@ -494,7 +494,7 @@ def render_org_setup(user, sb, tenant_id=None):
                  "track record is (e.g. malaria 5 = many funded/ongoing projects; "
                  "health workforce 1 = a minor past project). Drives competitiveness.")
         priorities_sel, priority_ratings = program_area_matrix_editor(
-            "Strategic priority areas (strategy)",
+            "Strategic priority areas of interest",
             _prof.get("org_priority_areas"), _prof.get("org_priority_ratings"),
             "orgp_priority_areas",
             help="Where your strategy says you want to work — even with no footprint "

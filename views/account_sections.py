@@ -68,6 +68,46 @@ def _verify_password(plain: str, stored_hash: str) -> bool:
         return False
 
 
+def _forget_declared_areas() -> None:
+    """Drop the cached "areas our users declared" set after a user record changes.
+
+    MUST-2 reads those declarations through a 60-second cache, so without this an admin
+    would add a colleague, look at a call, and see the old strategic-fit verdict — with no
+    way to tell whether the declaration had taken effect or simply had no bearing.
+    """
+    try:
+        from core.user_program_areas import clear_cache
+        clear_cache()
+    except Exception:
+        pass
+    try:                                  # the profile carries the derived key
+        from core.org_profile import _clear_profile_cache
+        _clear_profile_cache()
+    except Exception:
+        pass
+
+
+def _program_areas_field(label, current, key, *, container=None, help="",
+                         disabled=False) -> str | None:
+    """The programme-areas control, and the string that goes in `users.program`.
+
+    These three fields (my profile, add user, edit user) were free text, which put
+    hand-typed vocabulary next to the graded taxonomy the rest of the app matches on: a
+    colleague could type "TD" or "malaria control" and nothing downstream could line it up
+    with a call's themes. Same list everywhere now, which is what lets a declaration count
+    as evidence of expertise in MUST-2 (see core.user_program_areas).
+
+    Returns a comma-joined string of CANONICAL keys, because `users.program` is a text
+    column and is read as free text by the Report and the user table. Canonical keys
+    survive `program_area_classifier.expand()` unchanged, so no reader needs to know the
+    values are now controlled.
+    """
+    from core.program_area_select import program_area_multiselect
+    picked = program_area_multiselect(label, current, key, container=container,
+                                      help=help, disabled=disabled)
+    return ", ".join(picked) or None
+
+
 def _gen_temp_password(length: int = 12) -> str:
     """URL-safe random temp password (letters + digits). Used by admin
     'reset password' — user is forced to change it on next login."""
@@ -117,10 +157,11 @@ def render_my_profile(user: dict, sb) -> None:
         new_dept = f5.text_input(
             "Department", value=me.get("department") or "",
             help="e.g. 'Business Development', 'Programmes'.")
-        new_program = f6.text_input(
-            "Program areas", value=me.get("program") or "",
-            help="Free-text, comma-separated. e.g. 'Vaccines, MCH, Malaria'. "
-                 "Used by the Report to attribute scans by program focus.")
+        new_program = _program_areas_field(
+            "Program areas", me.get("program"), "me_program", container=f6,
+            help="Pick from the shared programme-area list. What you record here is "
+                 "treated as evidence of your organisation's expertise in MUST-2, and "
+                 "the Report uses it to attribute scans by programme focus.")
         # Location (migration 069). Country is a canonical dropdown so values stay
         # consistent for any downstream geo reporting.
         f7, f8 = st.columns(2)
@@ -180,6 +221,7 @@ def render_my_profile(user: dict, sb) -> None:
                              "Please retry, or contact an admin if it persists.")
                 else:
                     clear_credentials_cache()
+                    _forget_declared_areas()
                     user["name"] = (new_name or "").strip() or user.get("name")
                     user["email"] = new_email_clean
                     st.session_state["app_user"] = user
@@ -913,6 +955,7 @@ def render_blacklisted(user: dict, sb, *, can_manage: bool | None = None) -> Non
                      "blacklisted_by": None, "blacklist_reason": None}
                 ).in_("email", _u_emails).execute()
                 clear_credentials_cache()
+                _forget_declared_areas()
                 st.toast(f"♻ Restored {len(_u_emails)} user(s)", icon="♻")
                 st.rerun()
             except Exception as exc:
@@ -965,8 +1008,8 @@ def render_manage_users(user: dict, sb) -> None:
         d_tenant_kind = None
         d_new_org = ""
         # Tenants split by KIND so the picker can be filtered (owner 2026-08-10): an
-        # individual's personal account has no business appearing in a list beside
-        # CHAI Cameroon and RFPIS APP — they answer different questions.
+        # individual's personal account has no business appearing in a list beside the
+        # organisation tenants — they answer different questions.
         _tenant_opts: dict[str, str] = {}
         _by_kind: dict[str, dict[str, str]] = {"individual": {}, "organization": {}}
         if _mt and _is_super:
@@ -1003,14 +1046,16 @@ def render_manage_users(user: dict, sb) -> None:
                 "Role", permissions.assignable_roles(user) or ["collaborator"],
                 index=0, key="adu_role")
             d_dept = dc4.text_input("Department", key="adu_dept")
-            d_program = st.text_input(
-                "Program areas", help="e.g. 'Vaccines, MCH, Malaria'",
-                key="adu_program")
+            d_program = _program_areas_field(
+                "Program areas", None, "adu_program",
+                help="Pick from the shared programme-area list — the same vocabulary "
+                     "calls and funders are classified with, so this person's areas can "
+                     "count as evidence of expertise in MUST-2.")
             if _mt and _is_super:
                 # The tenant list is FILTERED by the type chosen above (owner
                 # 2026-08-10). Previously "Individual" sat in the SAME list as the
-                # organizations, so a personal account like "B Nsah" appeared beside
-                # CHAI Cameroon and RFPIS APP as though it were one of them.
+                # organizations, so a personal account appeared beside the tenant
+                # organizations as though it were one of them.
                 _is_ind = d_tenant_kind == "Individual"
                 _pool = _by_kind["individual" if _is_ind else "organization"]
                 # A PLAIN selectbox. `accept_new_options=True` was used here to let a
@@ -1081,6 +1126,7 @@ def render_manage_users(user: dict, sb) -> None:
                 }).execute()
                 new_uid = (_ins.data or [{}])[0].get("id")
                 clear_credentials_cache()
+                _forget_declared_areas()
                 # Multi-tenant: associate the new user with a tenant. An admin adds
                 # users to ITS OWN active tenant automatically; a super_user picks an
                 # existing tenant OR types a new one (created here). (No-op single-tenant.)
@@ -1411,10 +1457,10 @@ def render_manage_users(user: dict, sb) -> None:
             e_dept = f5.text_input(
                 "Department", value=_tgt.get("department") or "",
                 disabled=not profile_editable)
-            e_program = f6.text_input(
-                "Program areas", value=_tgt.get("program") or "",
-                disabled=not profile_editable,
-                help="Free-text, comma-separated.")
+            e_program = _program_areas_field(
+                "Program areas", _tgt.get("program"), f"edit_program_{_tgt.get('id')}",
+                container=f6, disabled=not profile_editable,
+                help="Pick from the shared programme-area list.")
             st.markdown("**Access**")
             f7, f8 = st.columns(2)
             e_role = f7.selectbox(
@@ -1534,6 +1580,7 @@ def render_manage_users(user: dict, sb) -> None:
                     return
 
             clear_credentials_cache()
+            _forget_declared_areas()
             if _is_self:
                 user["name"] = payload.get("name") or user.get("name")
                 user["email"] = new_email_clean
@@ -1585,6 +1632,7 @@ def render_manage_users(user: dict, sb) -> None:
                 except Exception:
                     pass
                 clear_credentials_cache()
+                _forget_declared_areas()
             except Exception as exc:
                 st.error(f"Reset failed: {exc}")
                 return
@@ -1641,6 +1689,7 @@ def render_manage_users(user: dict, sb) -> None:
                 try:
                     service_client().table("users").delete().eq("email", _target_email).execute()
                     clear_credentials_cache()
+                    _forget_declared_areas()
                     st.toast(f"🗑 Deleted {_target_email}", icon="🗑️")
                     st.rerun()
                 except Exception as exc:
@@ -1669,6 +1718,7 @@ def render_manage_users(user: dict, sb) -> None:
                 st.error(f"Blacklist failed (did you run migration 077?): {exc}")
                 return
             clear_credentials_cache()
+            _forget_declared_areas()
             st.toast(f"🚫 Blacklisted {_target_email}", icon="🚫")
             st.rerun()
         if bc2.button("Cancel", width='stretch', key="bl_cancel_user"):

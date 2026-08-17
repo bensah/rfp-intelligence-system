@@ -105,6 +105,11 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "org_priority_ratings": {},             # {child key: 0-5} STRATEGY priority per area —
                                             # feeds STRATEGIC FIT (MUST-2), correlated with
                                             # donor_intel.program_area_ratings
+    # DERIVED, not edited: program areas the tenant's own users named on their accounts.
+    # Filled by get_profile() from core.user_program_areas and worth the top of the band
+    # in MUST-2, because one colleague saying "this is what I work on" is harder evidence
+    # than a profile row nobody has revisited. Never persisted by set_profile.
+    "org_user_declared_areas": [],
 
     # --- geographic_fit (presence) ---
     "org_operating_countries": [],           # where we operate directly
@@ -325,9 +330,18 @@ def get_profile(tenant_id: str | None = None) -> dict[str, Any]:
                 overlay = None      # transient error → do NOT cache the failure
     if overlay is None and store is None:
         overlay = _coerce_overlay(get_setting(ORG_PROFILE_KEY))
-    if not overlay:
-        return copy.deepcopy(DEFAULT_PROFILE)
-    return _deep_merge(DEFAULT_PROFILE, _migrate_keys(overlay))
+    prof = (copy.deepcopy(DEFAULT_PROFILE) if not overlay
+            else _deep_merge(DEFAULT_PROFILE, _migrate_keys(overlay)))
+    # Program areas the tenant's own users declared on their accounts. Resolved HERE, not
+    # inside scoring, so the criteria stay a pure function of the profile dict they are
+    # handed and remain testable without a database. Best-effort: a failure leaves the key
+    # empty and the profile alone decides, exactly as before this signal existed.
+    try:
+        from core.user_program_areas import declared_keys
+        prof["org_user_declared_areas"] = declared_keys(tenant_id)
+    except Exception:
+        prof.setdefault("org_user_declared_areas", [])
+    return prof
 
 
 def set_profile(profile: dict[str, Any], updated_by: str | None = None,
@@ -335,6 +349,13 @@ def set_profile(profile: dict[str, Any], updated_by: str | None = None,
     """Persist the FULL profile blob — to a tenant's tenants.org_profile (multi-tenant)
     or the global app_settings blob (single-tenant). `tenant_id` overrides the session
     tenant (super_user editing another tenant)."""
+    # DERIVED keys never persist. `org_user_declared_areas` is computed from the users
+    # table on every read; writing it back would freeze one moment's answer into the
+    # profile, and it would then go stale the moment somebody edits their own account -
+    # while looking for all the world like something an admin had chosen.
+    if "org_user_declared_areas" in (profile or {}):
+        profile = {k: v for k, v in profile.items()
+                   if k != "org_user_declared_areas"}
     store = _tenant_store(tenant_id)
     if store is not None:
         client, tid = store
