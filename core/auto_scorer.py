@@ -2889,13 +2889,30 @@ def auto_score(
     # the derivation against the RFP text (see policies['criteria']).
     values = _apply_criteria_keywords(values, text, policies)
 
-    # decline_flags rule (per the reference deployment's policy):
-    #   Decline flag = NO only when all 5 MUSTs == Yes AND ≥3 of 4 PREFERs == Yes
-    #   Decline flag = YES otherwise. Normalised via criterion_score so the
-    #   bid-effort rich label (and any True/Partial/False) counts correctly.
-    all_musts_yes = all(criterion_score(values.get(m)) == 2 for m in _MUST_KEYS)
-    prefers_yes = sum(1 for p in _PREFER_KEYS if criterion_score(values.get(p)) == 2)
-    decline_flags = not (all_musts_yes and prefers_yes >= 3)
+    # DECLINE-FLAG RULE (owner, 2026-08-17):
+    #   * any ONE failing MUST                     -> Yes
+    #   * all MUSTs pass, but >= 2 failing PREFERs  -> Yes
+    #   * otherwise                                 -> No
+    #
+    # This is a flag about FAILURE, and it used to be a flag about the absence of
+    # success: `not (all 5 MUSTs green AND >= 3 of 4 PREFERs green)`. The difference
+    # matters because the flag is not a badge - `scorer.auto_recommendation` returns
+    # "Decline" whenever it is set, whatever the score. Under the old rule a call with
+    # every MUST green, two PREFERs green and two merely UNCERTAIN was flagged, so a
+    # 92/100 call was recommended Decline on the strength of two questions we could not
+    # answer. Nothing had failed.
+    #
+    # "Not sure" and "Partial" are therefore NOT failures here. That is the same
+    # principle the rest of the model already follows - an unstated value is excluded
+    # from a criterion's count rather than scored zero - and it is the substantive change:
+    # only a measured 0 counts against a call. A partial MUST still costs points through
+    # the weighted score, which is the proportionate instrument; it no longer forces the
+    # verdict past the score entirely.
+    _must_scores = [criterion_score(values.get(m)) for m in _MUST_KEYS]
+    _prefer_scores = [criterion_score(values.get(p)) for p in _PREFER_KEYS]
+    _musts_failed = sum(1 for s in _must_scores if s == 0)
+    _prefers_failed = sum(1 for s in _prefer_scores if s == 0)
+    decline_flags = bool(_musts_failed) or _prefers_failed >= 2
 
     # Numeric score for display purposes (Review gauge). We still compute
     # it the legacy way — weighted sum of MUST/PREFER values, 0-100 scale.
