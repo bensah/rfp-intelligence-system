@@ -19,6 +19,7 @@ import os
 import re
 import secrets
 import string
+import time
 import unicodedata
 from datetime import datetime, timezone
 
@@ -73,6 +74,32 @@ def _gen_temp_password(length: int = 12) -> str:
     'reset password' — user is forced to change it on next login."""
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+# How long a finished dialog stays on screen before dismissing itself. Long
+# enough to read a two-line confirmation, short enough that it is quicker
+# than reaching for the X.
+_DIALOG_CLOSE_SECONDS = 4
+
+
+def _auto_close_dialog(seconds: int = _DIALOG_CLOSE_SECONDS) -> None:
+    """Dismiss the surrounding st.dialog once its result has been read.
+
+    st.rerun() is what closes a dialog — the delete modal already relies on
+    that. The delay is the entire point: rerunning immediately would wipe
+    the confirmation before anyone could read it, while leaving the dialog
+    up makes every successful action cost a second click on Cancel or X.
+    The rerun also refreshes the page underneath, so the user table shows
+    the change that was just made.
+
+    Call this ONLY on a success path. Where a fallback has printed a
+    one-time link on screen the dialog must stay open — closing it would
+    destroy the only copy of a credential that cannot be reissued without
+    invalidating it.
+    """
+    st.caption(f"Closing in {seconds} seconds…")
+    time.sleep(seconds)
+    st.rerun()
 
 
 # ===========================================================================
@@ -1175,6 +1202,7 @@ def render_manage_users(user: dict, sb) -> None:
                     f"✅ Created **{d_email}**. A one-time setup link has "
                     f"been emailed — it expires in 7 days, and they choose "
                     f"their own password.")
+                _auto_close_dialog()
             except MailerNotConfigured:
                 st.warning(
                     "Account created, but email service is not configured "
@@ -1647,6 +1675,7 @@ def render_manage_users(user: dict, sb) -> None:
                     f"✅ A one-time reset link has been emailed to "
                     f"**{_target_email}**. It expires in 2 hours. Their "
                     f"current password keeps working until they use it.")
+                _auto_close_dialog()
             except MailerNotConfigured:
                 st.warning(
                     "Email service not configured — share the one-time reset "
