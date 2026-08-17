@@ -470,18 +470,19 @@ _TOKEN_SS_KEY = "_activation_token"
 def _activation_token() -> str:
     """The activation/reset token for this run, from any route that works.
 
-    THE QUERY STRING DOES NOT SURVIVE A COLD VISIT to a Streamlit Cloud app. The host
-    bootstraps a session first, and the round trip drops everything after the path:
+    A QUERY PARAMETER IS NOT A ROUTE YOU CAN RELY ON. It usually arrives - measured on the
+    live deployment, the host's session bootstrap does carry `?token=...` through, so an
+    earlier version of this comment claiming it was dropped was wrong - but there are
+    ordinary ways for it not to:
 
-        1. app.example/?token=ABC
-        2. -> share.streamlit.io/-/auth/app?redirect_uri=https%3A%2F%2Fapp.example%2F
-                                                                                  ^ token gone
-        3. -> app.example/-/login?payload=...
+      * the HOST refuses the request before the app runs (a visitor signed in to a hosting
+        account that is not on the app's viewer list gets the host's own access error), so
+        `st.query_params` is never consulted at all;
+      * a mail client rewrites or wraps the URL and the query arrives mangled;
+      * the recipient retypes the address by hand, or opens the app from a bookmark.
 
-    Clicking an emailed link is exactly the cold case, so `st.query_params` was reliably
-    EMPTY for the one visitor the link exists for, and the activation screen never
-    rendered. Reading the query alone is a route that works only for someone who already
-    had the app open - which a new joiner never does.
+    Reading the query alone therefore works for the person who already had the app open,
+    and fails for the new joiner the link was written for. Hence more than one route.
 
     Three routes, in order:
       * the query parameter, when it did survive (a warm session);

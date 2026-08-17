@@ -1060,11 +1060,11 @@ def render_manage_users(user: dict, sb) -> None:
             except Exception:
                 _tenant_opts = {}
 
-        # TENANT TYPE lives OUTSIDE the form on purpose. A widget inside st.form does
-        # not publish its value until the form is submitted, so a radio in there could
-        # not refilter the tenant list — the list would only catch up one submit late.
-        # Out here, changing it reruns the dialog fragment and the form below is rebuilt
-        # with the right options.
+        # TENANT TYPE first, because the tenant list below is filtered by it. This dialog
+        # used to wrap the rest in st.form, where a widget does not publish its value until
+        # submit, so a radio in there could not refilter the list — it would catch up one
+        # submit late. The form is gone now (see below) and every widget reruns the dialog,
+        # so the ordering is all that matters.
         if _mt and _is_super:
             d_tenant_kind = st.radio(
                 "Tenant type", ["Organization", "Individual"],
@@ -1073,61 +1073,66 @@ def render_manage_users(user: dict, sb) -> None:
                      "**Individual** — a personal account, whose activity is visible "
                      "to all. This chooses which accounts the next question lists.")
 
-        # PROGRAMME AREAS LIVES OUTSIDE THE FORM, for the same reason Tenant type does.
-        # A multiselect in there swallowed the click on Create user: the first click
-        # returned save=False and the dialog just sat there. This file already records the
-        # identical failure from a selectbox with accept_new_options in this very form, and
-        # the remedy that worked was moving the widget out. Out here it publishes its value
-        # immediately, which is also what a reviewer expects when they add a chip.
+        # NO st.form HERE, and Program areas keeps its place in the layout.
+        #
+        # A multiselect inside st.form swallows the click on the submit button - the first
+        # click returns save=False and the dialog just sits there. This file already
+        # recorded that failure from a selectbox with accept_new_options in this same form.
+        # Hoisting the picker above the form dodged it but moved the field out of its row,
+        # which is a worse trade: the fix should not rearrange the form to work.
+        #
+        # Plain widgets with an ordinary st.button have neither problem, and the pattern is
+        # already used for the same reason in auth/authenticator.py's set-password screen.
+        # The cost is that each widget reruns the dialog instead of batching until submit -
+        # which the Tenant type radio above already does deliberately - and Enter no longer
+        # submits.
+        dc1, dc2 = st.columns(2)
+        d_email = dc1.text_input(
+            "Email *", help="Used as the login username.", key="adu_email")
+        d_name = dc2.text_input("Full name *", key="adu_name")
+        dc3, dc4 = st.columns(2)
+        d_role = dc3.selectbox(
+            "Role", permissions.assignable_roles(user) or ["collaborator"],
+            index=0, key="adu_role")
+        d_dept = dc4.text_input("Department", key="adu_dept")
         d_program = _program_areas_field(
             "Program areas", None, "adu_program",
             help="Pick from the shared programme-area list — the same vocabulary calls "
                  "and funders are classified with, so this person's areas can count as "
                  "evidence of expertise in MUST-2.")
-
-        with st.form("add_user_dialog_form", clear_on_submit=False):
-            dc1, dc2 = st.columns(2)
-            d_email = dc1.text_input(
-                "Email *", help="Used as the login username.", key="adu_email")
-            d_name = dc2.text_input("Full name *", key="adu_name")
-            dc3, dc4 = st.columns(2)
-            d_role = dc3.selectbox(
-                "Role", permissions.assignable_roles(user) or ["collaborator"],
-                index=0, key="adu_role")
-            d_dept = dc4.text_input("Department", key="adu_dept")
-            if _mt and _is_super:
-                # The tenant list is FILTERED by the type chosen above (owner
-                # 2026-08-10). Previously "Individual" sat in the SAME list as the
-                # organizations, so a personal account appeared beside the tenant
-                # organizations as though it were one of them.
-                _is_ind = d_tenant_kind == "Individual"
-                _pool = _by_kind["individual" if _is_ind else "organization"]
-                # A PLAIN selectbox. `accept_new_options=True` was used here to let a
-                # super user type a new org name, but inside a form it SWALLOWS THE
-                # FIRST CLICK on the submit button — reproduced in a browser: click one
-                # returns save=False and the dialog just sits there, click two works.
-                # That is the "Create user does nothing" report. A new organization is
-                # now named in its own text box, which has no such behaviour.
-                _label = ("Assign to individual account" if _is_ind
-                          else "Assign to organization")
-                d_tenant_name = st.selectbox(
-                    _label, [_NEW_TENANT_LABEL] + list(_pool.keys()),
-                    index=0, key="adu_tenant",
-                    help="Only accounts of the selected tenant type are listed. "
-                         "(Admins add users to their OWN tenant automatically.)")
-                d_new_org = st.text_input(
-                    "New individual account name" if _is_ind
-                    else "New organization name",
-                    key="adu_new_org",
-                    placeholder=("Leave blank unless you picked “"
-                                 + _NEW_TENANT_LABEL + "”"),
-                    help="Used only when the picker above is set to “"
-                         + _NEW_TENANT_LABEL + "”. For an individual account, leave "
-                         "blank to name it after the user.")
-            bc1, bc2 = st.columns([1, 1])
-            save = bc1.form_submit_button(
-                "➕ Create user", type="primary", width='stretch')
-            cancel = bc2.form_submit_button("Cancel", width='stretch')
+        if _mt and _is_super:
+            # The tenant list is FILTERED by the type chosen above (owner
+            # 2026-08-10). Previously "Individual" sat in the SAME list as the
+            # organizations, so a personal account appeared beside the tenant
+            # organizations as though it were one of them.
+            _is_ind = d_tenant_kind == "Individual"
+            _pool = _by_kind["individual" if _is_ind else "organization"]
+            # A PLAIN selectbox. `accept_new_options=True` was used here to let a
+            # super user type a new org name, but inside a form it SWALLOWS THE
+            # FIRST CLICK on the submit button — reproduced in a browser: click one
+            # returns save=False and the dialog just sits there, click two works.
+            # That is the "Create user does nothing" report. A new organization is
+            # now named in its own text box, which has no such behaviour.
+            _label = ("Assign to individual account" if _is_ind
+                      else "Assign to organization")
+            d_tenant_name = st.selectbox(
+                _label, [_NEW_TENANT_LABEL] + list(_pool.keys()),
+                index=0, key="adu_tenant",
+                help="Only accounts of the selected tenant type are listed. "
+                     "(Admins add users to their OWN tenant automatically.)")
+            d_new_org = st.text_input(
+                "New individual account name" if _is_ind
+                else "New organization name",
+                key="adu_new_org",
+                placeholder=("Leave blank unless you picked “"
+                             + _NEW_TENANT_LABEL + "”"),
+                help="Used only when the picker above is set to “"
+                     + _NEW_TENANT_LABEL + "”. For an individual account, leave "
+                     "blank to name it after the user.")
+        bc1, bc2 = st.columns([1, 1])
+        save = bc1.button("➕ Create user", type="primary", width='stretch',
+                          key="adu_save")
+        cancel = bc2.button("Cancel", width='stretch', key="adu_cancel")
 
         if cancel:
             st.rerun()

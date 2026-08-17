@@ -174,17 +174,23 @@ def _branded_html(*, recipient_name: str, body_html: str) -> str:
 def _code_fallback(url: str) -> str:
     """The token on its own, to be pasted into the app.
 
-    A LINK IS NOT A RELIABLE CARRIER on a hosted Streamlit app. The host bootstraps a
-    session before serving a cold request and the round trip drops the query string:
+    A LINK IS NOT A RELIABLE CARRIER, for reasons outside this app's control.
 
-        app.example/?token=ABC
-          -> share.streamlit.io/-/auth/app?redirect_uri=https%3A%2F%2Fapp.example%2F
-          -> app.example/-/login?payload=...        (the token is gone)
+    Not because the query string is lost: it survives. Measured on the live deployment, the
+    host's session bootstrap carries it through and hands it back -
+    `redirect_uri=https%3A%2F%2Fapp%2F%3Ftoken%3DABC` - so an earlier version of this
+    comment, which claimed the token was dropped, was simply wrong. What does go wrong:
 
-    Clicking a link in an email IS the cold case, so the one visitor the link was written
-    for is precisely the one it fails for. Printing the token as a code, and accepting it
-    on the login screen, gives that person a route that does not depend on the query
-    surviving. Same single secret either way - nothing weaker is introduced.
+      * the HOST answers with its own access error instead of the app, when the visitor is
+        signed in to a hosting account that is not on the app's viewer list - the app never
+        runs, so no amount of app-side code helps;
+      * corporate mail clients rewrite or wrap long URLs, and a wrapped query is a broken
+        one;
+      * the mail gets forwarded to a phone and the tap lands on something else.
+
+    In each case somebody holding a valid token cannot get it to the app. Printing the
+    token as a code, and accepting it on the sign-in screen, needs nothing but the ability
+    to reach that screen. Same single secret either way - nothing weaker is introduced.
     """
     import html as _html
     token = ""
