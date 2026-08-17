@@ -1092,6 +1092,14 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
         "opportunity_type": row.get("opportunity_type"),
         # Restore applicant types for the applicant-type match gate during screening.
         "_applicant_types": row.get("eligibility_applicant_types") or None,
+        # ...and the applicant COUNTRIES, which were extracted, stored, then dropped here.
+        # The store held ["Finland"] for a Finnish government scheme and ["Vietnam"] for the
+        # Viet Nam programme; because this mapping had no entry for the column, the geo gate
+        # never saw either and both reached a tenant registered in neither. The gate reads a
+        # single field, `call_geographic_scope`, so the correct answer was sitting one column
+        # away the whole time. Plumbing gap, not an extraction gap.
+        "eligibility_countries": row.get("eligibility_countries") or None,
+        "eligibility_other": row.get("eligibility_other") or None,
         "date_posted": row.get("date_posted"),
         "source": row.get("source"),
         "_source_origin": row.get("source"),
