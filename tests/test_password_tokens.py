@@ -239,6 +239,53 @@ class TheLinkOriginTests(unittest.TestCase):
                 os.environ.pop("APP_PUBLIC_URL", None)
 
 
+class TheEmailIsFramedAsActivationTests(unittest.TestCase):
+    """What the recipient is asked to do is turn on an account (owner, 2026-08-17).
+
+    Choosing a password is how that happens, not the point of the message. "Set up your
+    account" also reads like configuration work, and "Set my password" invites "which
+    password?" from somebody who has never had one.
+    """
+
+    def _sent(self, fn, **kw):
+        from core import user_emails as UE
+        captured = {}
+
+        def _fake(to, subject, html):
+            captured.update(to=to, subject=subject, html=html)
+            return {"id": "x"}
+
+        orig = UE.send_email
+        UE.send_email = _fake
+        try:
+            fn(**kw)
+        finally:
+            UE.send_email = orig
+        return captured
+
+    def test_the_invite_says_activate(self):
+        from core import user_emails as UE
+        got = self._sent(UE.send_welcome_email, to_email="a@example.org",
+                         to_name="A", setup_link="https://x.example/?token=t")
+        self.assertIn("Activate your", got["subject"])
+        self.assertIn("Activate account", got["html"])
+        self.assertNotIn("Set my password", got["html"])
+        self.assertNotIn("temporary password", got["html"].lower())
+
+    def test_the_invite_still_carries_the_link_and_no_password(self):
+        from core import user_emails as UE
+        got = self._sent(UE.send_welcome_email, to_email="a@example.org",
+                         to_name="A", setup_link="https://x.example/?token=SECRET")
+        self.assertIn("https://x.example/?token=SECRET", got["html"])
+
+    def test_the_reset_says_change_your_password(self):
+        from core import user_emails as UE
+        got = self._sent(UE.send_password_reset_email, to_email="a@example.org",
+                         to_name="A", reset_link="https://x.example/?token=t")
+        self.assertIn("Change your", got["subject"])
+        self.assertIn("Change my password", got["html"])
+
+
 class TheMigrationTests(unittest.TestCase):
     def test_it_is_idempotent_and_stores_only_a_hash(self):
         # Migrations here are applied BY HAND, so re-running one must be safe.
