@@ -314,7 +314,7 @@ class TheEmailIsFramedAsActivationTests(unittest.TestCase):
                          to_name="A", reset_link="https://x.example/?token=t")
         self.assertIn("Change your", got["subject"])
         self.assertIn("reset code", got["html"])
-        self.assertIn("/activate-account?token=", got["html"])
+        self.assertIn("/password-reset?token=", got["html"])
 
 
 class ThePasswordRulesAreStatedTests(unittest.TestCase):
@@ -416,11 +416,16 @@ class TheActivationPageIsPublicTests(unittest.TestCase):
         self.assertLess(app.index("_PUBLIC_URL_PATHS"), app.index("user = ensure_logged_in()"),
                         "the public-page bypass must precede the gate")
 
-    def test_only_that_one_path_is_public(self):
+    def test_the_public_set_is_explicit_and_closed(self):
+        # Every entry is a page reachable WITHOUT signing in, so the set is worth pinning:
+        # exactly three, each because its visitor cannot sign in (no password yet, or a
+        # forgotten one). Adding a fourth should be a deliberate act that fails here first.
         app = self._src("App.py")
         line = next(l for l in app.split("\n") if "_PUBLIC_URL_PATHS = " in l)
-        self.assertEqual(line.count('"'), 2, "exactly one path may be exempt: " + line)
-        self.assertIn("activate-account", line)
+        self.assertEqual(line.count('"') // 2, 3,
+                         "unexpected number of public paths: " + line)
+        for path in ("login", "activate-account", "password-reset"):
+            self.assertIn(path, line)
 
     def test_the_page_carries_no_login_form(self):
         page = self._src("app_pages/activate.py")
@@ -446,3 +451,84 @@ class TheActivationPageIsPublicTests(unittest.TestCase):
             UE.send_email = orig
         self.assertIn("/activate-account", got["html"])
         self.assertNotIn("?activate=1", got["html"])   # the page itself, not the expander
+
+
+class TheRoutesTests(unittest.TestCase):
+    """/login, /activate-account and /password-reset each have their own address.
+
+    The login screen used to render wherever you happened to be, so the app root was both
+    "home" and "the login page" depending on who asked, and the two flows whose visitors
+    CANNOT sign in lived as expanders underneath a login form.
+    """
+
+    def _src(self, rel):
+        import io
+        with io.open(os.path.join(_ROOT, *rel.split("/")), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_all_three_paths_are_registered(self):
+        app = self._src("App.py")
+        for path in ("login", "activate-account", "password-reset"):
+            self.assertIn('url_path="%s"' % path, app)
+
+    def test_all_three_are_public_and_run_before_the_gate(self):
+        app = self._src("App.py")
+        line = next(l for l in app.split("\n") if "_PUBLIC_URL_PATHS = " in l)
+        for path in ("login", "activate-account", "password-reset"):
+            self.assertIn(path, line)
+        self.assertLess(app.index("_PUBLIC_URL_PATHS"),
+                        app.index("user = ensure_logged_in()"))
+
+    def test_the_redirect_is_guarded_twice(self):
+        # Bouncing a signed-in user off the page they asked for would be worse than the
+        # inconsistency being fixed, so it fires only with no cached user AND no restorable
+        # cookie - and the cookie probe answers True ("do not redirect") on any doubt.
+        app = self._src("App.py")
+        self.assertIn("_session_user is None and not _auth.has_session_cookie()", app)
+        self.assertIn('st.switch_page("app_pages/login.py")', app)
+
+    def test_the_cookie_probe_fails_safe(self):
+        # Source, not import: another test module installs a fake `streamlit`, and
+        # auth.authenticator needs the real one.
+        src = self._src("auth/authenticator.py")
+        fn = src[src.index("def has_session_cookie("):]
+        fn = fn[:fn.index(chr(10) + "def ", 1)]
+        self.assertIn("Deliberately optimistic", fn)
+        # The except branch must answer True, which means "do not redirect".
+        self.assertIn("return True", fn.split("except Exception:")[1])
+
+    def test_the_reset_page_hosts_both_halves(self):
+        page = self._src("app_pages/password_reset.py")
+        self.assertIn("activation_code_entry(expanded=True)", page)   # redeem a code
+        self.assertIn("password_reset_request_form()", page)          # ask for one
+        self.assertNotIn("get_authenticator", page)                   # no login widget
+
+    def test_the_request_form_has_one_implementation(self):
+        # Two copies of an anti-enumeration flow is two places for it to drift.
+        auth = self._src("auth/authenticator.py")
+        self.assertEqual(auth.count("def password_reset_request_form("), 1)
+        self.assertEqual(auth.count('st.form("forgot_pw_form"'), 1)
+
+    def test_login_page_does_not_reimplement_auth(self):
+        page = self._src("app_pages/login.py")
+        self.assertIn("ensure_logged_in()", page)
+        self.assertNotIn("bcrypt", page)
+        self.assertIn('st.switch_page("app_pages/home.py")', page)
+
+    def test_an_invite_goes_to_activate_and_a_reset_to_password_reset(self):
+        from core import user_emails as UE
+        orig = UE.send_email
+        got = {}
+        UE.send_email = lambda to, subject, html: got.update(html=html) or {}
+        try:
+            UE.send_welcome_email(to_email="a@x.org", to_name="T",
+                                  setup_link="https://x/?token=A1")
+            self.assertIn("/activate-account?token=A1", got["html"])
+            self.assertIn("Activate my account", got["html"])
+            UE.send_password_reset_email(to_email="a@x.org", to_name="T",
+                                         reset_link="https://x/?token=R2")
+            self.assertIn("/password-reset?token=R2", got["html"])
+            self.assertIn("Set a new password", got["html"])
+            self.assertNotIn("Activate my account", got["html"])
+        finally:
+            UE.send_email = orig

@@ -34,6 +34,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+from auth import authenticator as _auth  # noqa: E402
 from auth.authenticator import ensure_logged_in  # noqa: E402
 from core import permissions as _perms  # noqa: E402
 from core.app_header import render_app_header  # noqa: E402
@@ -89,11 +90,15 @@ def _pages(include_admin: bool) -> list:
         st.Page("app_pages/profile.py", title="Profile", icon="👤", url_path="profile"),
         st.Page("app_pages/help.py", title="Help", icon="❓", url_path="help"),
         st.Page("app_pages/search.py", title="Search", icon="🔍", url_path="search"),
-        # PUBLIC: reachable without signing in (see the gate below). A person holding an
-        # invitation has no password yet, so the activation flow cannot live behind the
-        # login gate.
+        # PUBLIC pages: reachable without signing in (see the gate below). Each exists
+        # because its visitor CANNOT sign in - a new joiner has no password yet, and
+        # somebody who has forgotten theirs is in the same position - so none of these can
+        # live behind the login gate.
+        st.Page("app_pages/login.py", title="Sign in", icon="🔐", url_path="login"),
         st.Page("app_pages/activate.py", title="Activate", icon="🔑",
                 url_path="activate-account"),
+        st.Page("app_pages/password_reset.py", title="Reset password", icon="🔓",
+                url_path="password-reset"),
     ]
     if include_admin:
         pages.append(st.Page("app_pages/admin.py", title="Settings", icon="⚙️", url_path="settings"))
@@ -113,10 +118,21 @@ _nav = st.navigation(_pages(_include_admin))
 # premise is that the visitor cannot sign in yet, so it cannot sit behind ensure_logged_in().
 # Only the paths named here are exempt, and each renders its own screen and stops - nothing
 # else on the app is reachable from them.
-_PUBLIC_URL_PATHS = {"activate-account"}
-if getattr(_nav, "url_path", None) in _PUBLIC_URL_PATHS:
+_PUBLIC_URL_PATHS = {"login", "activate-account", "password-reset"}
+_here = getattr(_nav, "url_path", None)
+if _here in _PUBLIC_URL_PATHS:
     _nav.run()
     st.stop()
+
+# ANONYMOUS VISITORS GO TO /login, so the address bar says which of the two things the app
+# root is. Guarded twice over, because getting this wrong would bounce a signed-in user off
+# the page they asked for:
+#   * only when session state holds no user, AND
+#   * only when there is demonstrably no session cookie to restore - `has_session_cookie`
+#     returns True on any doubt, and True means "do not redirect", so the fallback is the
+#     behaviour that has always worked: the login form renders in place.
+if _session_user is None and not _auth.has_session_cookie():
+    st.switch_page("app_pages/login.py")
 
 user = ensure_logged_in()
 if not user:
