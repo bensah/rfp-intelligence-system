@@ -209,6 +209,11 @@ class TheUiUsesOneVocabularyTests(unittest.TestCase):
         self.assertIn('st.session_state.pop("adu_open", None)', src)
         self.assertIn('_auto_close_dialog(open_key="adu_open")', src)
 
+    def test_the_users_table_delegates_status_to_the_tested_helper(self):
+        src = self._src("views/account_sections.py")
+        self.assertIn("from core.user_lifecycle import account_status", src)
+        self.assertNotIn('disp["Status"] = disp["is_active"].map(', src)
+
     def test_saving_a_user_forgets_the_cached_declarations(self):
         # Otherwise an admin adds a colleague, looks at a call, and sees the old verdict
         # with no way to tell whether the declaration took effect.
@@ -219,3 +224,61 @@ class TheUiUsesOneVocabularyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class AccountStatusTests(unittest.TestCase):
+    """An invitation SENT is not an account in USE (owner, 2026-08-17).
+
+    `users.is_active` is true from creation - it has to be, or the person could not sign in
+    once they activate - so a status read off that column alone says "Active" for somebody
+    who has never opened their invitation, and an admin cannot see who still owes them one.
+
+    Behavioural, not structural, because the first version of this logic looked right and
+    never fired: `None` arrives from pandas as the float `nan`, and `str(nan)` is "nan",
+    which is truthy. A test that grepped the source for "Pending" passed happily while the
+    branch was dead.
+    """
+
+    def _s(self, active, must_change, last_login):
+        from core.user_lifecycle import account_status
+        return account_status(active, must_change, last_login)
+
+    def test_a_freshly_invited_account_is_pending(self):
+        from core.user_lifecycle import STATUS_PENDING
+        self.assertEqual(self._s(True, True, None), STATUS_PENDING)
+
+    def test_a_nan_last_login_still_counts_as_never(self):
+        # The bug: pandas turns a NULL timestamp into float('nan').
+        from core.user_lifecycle import STATUS_PENDING
+        self.assertEqual(self._s(True, True, float("nan")), STATUS_PENDING)
+        self.assertEqual(self._s(True, True, "NaT"), STATUS_PENDING)
+        self.assertEqual(self._s(True, True, ""), STATUS_PENDING)
+
+    def test_once_they_have_signed_in_it_is_active(self):
+        from core.user_lifecycle import STATUS_ACTIVE
+        self.assertEqual(self._s(True, True, "2026-08-17T14:45"), STATUS_ACTIVE)
+
+    def test_a_forced_rotation_on_a_used_account_is_not_pending(self):
+        # Somebody who has signed in and been asked to rotate is an active user with a
+        # chore, not an outstanding invitation.
+        from core.user_lifecycle import STATUS_ACTIVE
+        self.assertEqual(self._s(True, True, "2026-01-01"), STATUS_ACTIVE)
+
+    def test_an_activated_account_is_active(self):
+        from core.user_lifecycle import STATUS_ACTIVE
+        self.assertEqual(self._s(True, False, "2026-08-01"), STATUS_ACTIVE)
+
+    def test_deactivated_beats_everything(self):
+        from core.user_lifecycle import STATUS_INACTIVE
+        self.assertEqual(self._s(False, True, None), STATUS_INACTIVE)
+        self.assertEqual(self._s(False, False, "2026-08-01"), STATUS_INACTIVE)
+
+    def test_it_survives_a_real_pandas_frame(self):
+        import pandas as pd
+        from core.user_lifecycle import account_status, STATUS_PENDING
+        df = pd.DataFrame([{"is_active": True, "must_change_password": True,
+                            "last_login_at": None}])
+        got = df.apply(lambda r: account_status(r.get("is_active"),
+                                               r.get("must_change_password"),
+                                               r.get("last_login_at")), axis=1)
+        self.assertEqual(list(got), [STATUS_PENDING])

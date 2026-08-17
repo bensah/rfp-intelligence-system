@@ -359,10 +359,8 @@ def render_my_profile(user: dict, sb) -> None:
 def render_change_password(user: dict, sb) -> None:
     me = _fetch_self(sb, user["email"])
     st.subheader("Change password")
-    st.caption(
-        "You'll need your current password to confirm. New password "
-        "must be at least 8 characters and include a mix of letters + "
-        "digits.")
+    from core.password_policy import PASSWORD_RULES_TEXT, password_problems
+    st.caption("You'll need your current password to confirm. " + PASSWORD_RULES_TEXT)
 
     with st.form("change_password_form", clear_on_submit=True):
         current_pw = st.text_input("Current password", type="password",
@@ -376,13 +374,9 @@ def render_change_password(user: dict, sb) -> None:
         errors: list[str] = []
         if not _verify_password(current_pw or "", me.get("password_hash") or ""):
             errors.append("Current password is incorrect.")
-        if not new_pw or len(new_pw) < 8:
-            errors.append("New password must be at least 8 characters.")
-        if new_pw and (not any(c.isalpha() for c in new_pw)
-                       or not any(c.isdigit() for c in new_pw)):
-            errors.append("New password must include letters AND digits.")
+        errors.extend(password_problems(new_pw))
         if new_pw != confirm_pw:
-            errors.append("Confirm password does not match.")
+            errors.append("The two passwords do not match.")
         if new_pw and new_pw == current_pw:
             errors.append("New password must be different from current.")
 
@@ -1474,8 +1468,13 @@ def render_manage_users(user: dict, sb) -> None:
                              .str[:16].str.replace("T", " ", regex=False))
     disp["Force PW reset"] = disp["must_change_password"] \
         .fillna(False).map(lambda v: "⚠ Yes" if bool(v) else "—")
-    disp["Status"] = disp["is_active"].map(
-        lambda v: "🟢 Active" if v else "⏸ Inactive")
+    # PENDING until the account has actually been used — see core.user_lifecycle for why
+    # `is_active` alone cannot answer this, and why the blank-value handling matters (a
+    # None arrives here from pandas as the float nan).
+    from core.user_lifecycle import account_status
+    disp["Status"] = df_u.apply(
+        lambda r: account_status(r.get("is_active"), r.get("must_change_password"),
+                                 r.get("last_login_at")), axis=1)
     if _mt:
         disp["Tenant"] = df_u["id"].map(lambda uid: _user_tenants.get(uid) or "—")
     disp_cols = (["email", "name", "role"] + (["Tenant"] if _mt else [])
