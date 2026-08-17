@@ -171,6 +171,42 @@ def _branded_html(*, recipient_name: str, body_html: str) -> str:
 """
 
 
+def _code_fallback(url: str) -> str:
+    """The token on its own, to be pasted into the app.
+
+    A LINK IS NOT A RELIABLE CARRIER on a hosted Streamlit app. The host bootstraps a
+    session before serving a cold request and the round trip drops the query string:
+
+        app.example/?token=ABC
+          -> share.streamlit.io/-/auth/app?redirect_uri=https%3A%2F%2Fapp.example%2F
+          -> app.example/-/login?payload=...        (the token is gone)
+
+    Clicking a link in an email IS the cold case, so the one visitor the link was written
+    for is precisely the one it fails for. Printing the token as a code, and accepting it
+    on the login screen, gives that person a route that does not depend on the query
+    surviving. Same single secret either way - nothing weaker is introduced.
+    """
+    import html as _html
+    token = ""
+    try:
+        from urllib.parse import urlsplit, parse_qs
+        token = (parse_qs(urlsplit(url).query).get("token") or [""])[0]
+    except Exception:
+        token = ""
+    if not token:
+        return ""
+    return f"""
+        <p style="font-size:13px; color:#475569; margin-top:20px;">
+          If that opens the app without asking for a password, choose
+          <strong>&#128273; Have an activation or reset code?</strong> on the sign-in
+          screen and paste this:
+        </p>
+        <p style="font-family:monospace; font-size:14px; background:#f8f9fa; padding:12px 14px; border-radius:6px; border:1px solid #e3e7e3; word-break:break-all; color:#1f2937;">
+          {_html.escape(token)}
+        </p>
+    """
+
+
 def _action_button(url: str, label: str) -> str:
     """A link styled as a button, with the URL also shown as text.
 
@@ -218,6 +254,7 @@ def send_welcome_email(
         <p>An administrator has created a {_html_escape(short)} account for you.</p>
         <p>Activate it and choose a password to finish:</p>
         {_action_button(setup_link, "Activate account")}
+        {_code_fallback(setup_link)}
         <p style="font-size:13px; color:#475569;">
           This link works once and expires in {_html_escape(expires_hint)}.
           If it expires, ask your administrator to send a new one.
@@ -249,6 +286,7 @@ def send_password_reset_email(
         {_html_escape(short)} account.</p>
         <p>Choose a new password:</p>
         {_action_button(reset_link, "Change my password")}
+        {_code_fallback(reset_link)}
         <p style="font-size:13px; color:#475569;">
           This link works once and expires in {_html_escape(expires_hint)}.
         </p>
