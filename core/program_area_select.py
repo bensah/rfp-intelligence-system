@@ -121,12 +121,22 @@ def program_area_multiselect(label, current, key, *, container=None, help="",
             known = []
     options = sorted(PROGRAM_AREA_KEYWORDS,
                      key=lambda k: (category_full(k), subarea_label(k)))
-    return c.multiselect(
-        label, options, default=[k for k in known if k in options], key=key,
+    kwargs = dict(
         help=help or "Pick from the shared programme-area list, so what you record here "
                      "matches how calls and funders are classified.",
         format_func=lambda k: f"{subarea_label(k)} · {category_full(k)}",
         disabled=disabled)
+    # `default` ONLY on the first render. Passing it on every run alongside a `key` makes
+    # Streamlit reset the widget from the default instead of honouring what the user
+    # picked - the selection is discarded AND the rerun that does it consumes the click on
+    # the surrounding form's submit button. Inside the Add-user dialog that reads exactly
+    # as "Create user does nothing": one click is swallowed, a second works. This file's
+    # own history records the same failure from a different cause (accept_new_options on a
+    # selectbox in this form), so it is worth being explicit about here.
+    if key in st.session_state:
+        return c.multiselect(label, options, key=key, **kwargs)
+    return c.multiselect(label, options, default=[k for k in known if k in options],
+                         key=key, **kwargs)
 
 
 def program_area_rating_editor(label, current_selection, current_ratings, key_prefix,
