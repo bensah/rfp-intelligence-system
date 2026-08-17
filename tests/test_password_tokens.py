@@ -271,23 +271,23 @@ class TheEmailIsFramedAsActivationTests(unittest.TestCase):
         self.assertNotIn("Set my password", got["html"])
         self.assertNotIn("temporary password", got["html"].lower())
 
-    def test_the_invite_carries_the_code_and_NOT_a_token_link(self):
-        """The token link is gone (owner, 2026-08-17).
+    def test_the_invite_offers_BOTH_a_link_and_the_code(self):
+        """Link first, code underneath (owner, 2026-08-17).
 
-        It was the headline action and it failed for the very person it was written for,
-        while the code beneath it worked. Leading with a button that does not work teaches
-        people the email is broken, so the code leads and the only link goes to the sign-in
-        page - carrying no credential, so nothing is lost if a mail client mangles it.
+        The link had been removed because it reliably failed - but the cause was a wrong
+        host in configuration, not anything about links. With the right host a click is
+        better than copying 43 characters, so the link leads again. The code stays because a
+        link still has ways to fail that are nobody's fault: a mail client rewriting it, a
+        forward to a phone, the host refusing the request before the app runs. Same single
+        secret either way.
         """
         from core import user_emails as UE
         got = self._sent(UE.send_welcome_email, to_email="a@example.org",
                          to_name="A", setup_link="https://x.example/?token=SECRET")
-        self.assertIn("SECRET", got["html"])                     # the code itself
-        self.assertNotIn("?token=SECRET", got["html"])            # never as a link
-        self.assertIn("?activate=1", got["html"])                 # opens the code box
-        self.assertIn("activation or reset code", got["html"])    # names the control
+        self.assertIn("/activate-account?token=SECRET", got["html"])   # the link
+        self.assertIn("SECRET", got["html"])                            # and the code
 
-    def test_the_invite_prints_the_token_as_a_pasteable_code(self):
+    def test_the_invite_still_prints_the_token_as_a_pasteable_code(self):
         # A link is not a reliable carrier: a hosted Streamlit app bootstraps a session
         # before serving a cold request, and the round trip DROPS THE QUERY STRING - so the
         # one visitor the link was written for is exactly the one it fails for. Measured on
@@ -296,7 +296,7 @@ class TheEmailIsFramedAsActivationTests(unittest.TestCase):
         got = self._sent(UE.send_welcome_email, to_email="a@example.org", to_name="A",
                          setup_link="https://app.example/?token=TOKEN123abc")
         self.assertIn("TOKEN123abc", got["html"])
-        self.assertIn("activation or reset code", got["html"])
+        self.assertIn("activation code", got["html"])
 
     def test_the_reset_prints_its_code_too(self):
         from core import user_emails as UE
@@ -314,7 +314,7 @@ class TheEmailIsFramedAsActivationTests(unittest.TestCase):
                          to_name="A", reset_link="https://x.example/?token=t")
         self.assertIn("Change your", got["subject"])
         self.assertIn("reset code", got["html"])
-        self.assertNotIn("?token=", got["html"])
+        self.assertIn("/activate-account?token=", got["html"])
 
 
 class ThePasswordRulesAreStatedTests(unittest.TestCase):
@@ -391,3 +391,58 @@ class TheMigrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TheActivationPageIsPublicTests(unittest.TestCase):
+    """A person holding an invitation cannot sign in — so activation cannot need a login.
+
+    The code box used to be an expander on the sign-in screen, beside a login form and a
+    forgot-password form: two of the three things in front of them were useless and the one
+    they needed was collapsed.
+    """
+
+    def _src(self, rel):
+        import io
+        with io.open(os.path.join(_ROOT, *rel.split("/")), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_the_page_exists_at_its_own_path(self):
+        app = self._src("App.py")
+        self.assertIn('url_path="activate-account"', app)
+
+    def test_it_runs_BEFORE_the_login_gate(self):
+        app = self._src("App.py")
+        self.assertIn("_PUBLIC_URL_PATHS", app)
+        self.assertLess(app.index("_PUBLIC_URL_PATHS"), app.index("user = ensure_logged_in()"),
+                        "the public-page bypass must precede the gate")
+
+    def test_only_that_one_path_is_public(self):
+        app = self._src("App.py")
+        line = next(l for l in app.split("\n") if "_PUBLIC_URL_PATHS = " in l)
+        self.assertEqual(line.count('"'), 2, "exactly one path may be exempt: " + line)
+        self.assertIn("activate-account", line)
+
+    def test_the_page_carries_no_login_form(self):
+        page = self._src("app_pages/activate.py")
+        self.assertIn("activation_code_entry(expanded=True)", page)
+        self.assertNotIn("get_authenticator", page)      # no login widget
+        self.assertNotIn("Forgot password", page)
+
+    def test_nothing_redirects_an_ordinary_visitor_here(self):
+        # Visiting the app root must still land on sign-in; being dumped onto an activation
+        # screen you did not ask for would be worse than the problem being fixed.
+        app = self._src("App.py")
+        self.assertNotIn('switch_page("app_pages/activate.py")', app)
+
+    def test_the_email_points_at_the_page_not_the_sign_in_screen(self):
+        from core import user_emails as UE
+        got = {}
+        orig = UE.send_email
+        UE.send_email = lambda to, subject, html: got.update(html=html) or {}
+        try:
+            UE.send_welcome_email(to_email="a@x.org", to_name="T",
+                                  setup_link="https://x/?token=C")
+        finally:
+            UE.send_email = orig
+        self.assertIn("/activate-account", got["html"])
+        self.assertNotIn("?activate=1", got["html"])   # the page itself, not the expander

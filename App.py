@@ -89,6 +89,11 @@ def _pages(include_admin: bool) -> list:
         st.Page("app_pages/profile.py", title="Profile", icon="👤", url_path="profile"),
         st.Page("app_pages/help.py", title="Help", icon="❓", url_path="help"),
         st.Page("app_pages/search.py", title="Search", icon="🔍", url_path="search"),
+        # PUBLIC: reachable without signing in (see the gate below). A person holding an
+        # invitation has no password yet, so the activation flow cannot live behind the
+        # login gate.
+        st.Page("app_pages/activate.py", title="Activate", icon="🔑",
+                url_path="activate-account"),
     ]
     if include_admin:
         pages.append(st.Page("app_pages/admin.py", title="Settings", icon="⚙️", url_path="settings"))
@@ -103,6 +108,15 @@ def _pages(include_admin: bool) -> list:
 _session_user = st.session_state.get("app_user")
 _include_admin = True if _session_user is None else _perms.is_admin(_session_user)
 _nav = st.navigation(_pages(_include_admin))
+
+# PUBLIC PAGES RUN BEFORE THE LOGIN GATE. Account activation is the one flow whose whole
+# premise is that the visitor cannot sign in yet, so it cannot sit behind ensure_logged_in().
+# Only the paths named here are exempt, and each renders its own screen and stops - nothing
+# else on the app is reachable from them.
+_PUBLIC_URL_PATHS = {"activate-account"}
+if getattr(_nav, "url_path", None) in _PUBLIC_URL_PATHS:
+    _nav.run()
+    st.stop()
 
 user = ensure_logged_in()
 if not user:

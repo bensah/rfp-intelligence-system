@@ -173,17 +173,23 @@ def _branded_html(*, recipient_name: str, body_html: str) -> str:
 
 def _activation_instructions(url: str, expires_hint: str,
                              what: str = "activation code") -> str:
-    """The whole instruction: the CODE first, and one link to the page that accepts it.
+    """One link that activates, and the same code underneath in case it cannot be followed.
 
-    THE TOKEN LINK IS GONE (owner, 2026-08-17). It was the headline action - a big "Activate
-    account" button - and in practice it failed for the person it was written for while the
-    code beneath it worked. Leading with a button that does not work, and burying the thing
-    that does in small print underneath, teaches people the email is broken.
+    THE LINK IS THE PRIMARY ROUTE AGAIN (owner, 2026-08-17). It had been removed because it
+    reliably failed - but the cause turned out to be a WRONG HOST in configuration: the
+    emails named a subdomain one syllable short of the deployment's, so every link 404'd at
+    the hosting edge. Nothing to do with links. With the right host the click works, and
+    asking somebody to copy a 43-character code when a button would do is a worse experience
+    for the sake of a bug that no longer exists.
 
-    What replaced it points at the SIGN-IN PAGE with `?activate=1`, which opens the code box
-    already expanded. That link has nothing to lose: it carries no credential, so a mail
-    client mangling it, or the host bouncing it, costs nothing - the code is right there to
-    paste by hand.
+    The code stays, below it, because a link still has ways to fail that are nobody's fault:
+    a mail client rewriting or wrapping the URL, a forward to a phone, the host refusing the
+    request before the app runs. Two routes to the same single secret - the code IS the
+    token - so neither is weaker than the other.
+
+    Both point at the dedicated activation page rather than the sign-in screen: someone
+    holding an invitation has no password yet, so a page framed as "sign in" offers them two
+    forms they cannot use.
     """
     import html as _html
     token = ""
@@ -195,24 +201,28 @@ def _activation_instructions(url: str, expires_hint: str,
     if not token:
         return ""
     base = _app_url().rstrip("/")
-    open_url = f"{base}/?activate=1"
-    safe_open = _html.escape(open_url, quote=True)
+    activate_url = f"{base}/activate-account?token={token}"
+    page_url = f"{base}/activate-account"
+    safe_activate = _html.escape(activate_url, quote=True)
+    safe_page = _html.escape(page_url, quote=True)
     return f"""
-        <p>Your {_html.escape(what)} is:</p>
-        <p style="font-family:monospace; font-size:16px; background:#f8f9fa; padding:14px 16px; border-radius:6px; border:1px solid #e3e7e3; word-break:break-all; color:#1f2937; letter-spacing:.5px;">
+        <p style="margin:24px 0;">
+          <a href="{safe_activate}" style="background:#00703C; color:#ffffff; text-decoration:none; padding:12px 22px; border-radius:6px; font-weight:600; display:inline-block;">Activate my account</a>
+        </p>
+        <p style="font-size:12px; color:#64748b; word-break:break-all;">
+          If the button does not work, paste this into your browser:<br>{safe_activate}
+        </p>
+        <p style="font-size:13px; color:#475569; margin-top:22px;">
+          Or, if neither opens, go to
+          <a href="{safe_page}" style="color:#00703C;">{safe_page}</a> and enter this
+          {_html.escape(what)}:
+        </p>
+        <p style="font-family:monospace; font-size:14px; background:#f8f9fa; padding:12px 14px; border-radius:6px; border:1px solid #e3e7e3; word-break:break-all; color:#1f2937;">
           {_html.escape(token)}
         </p>
-        <p style="margin:22px 0;">
-          <a href="{safe_open}" style="background:#00703C; color:#ffffff; text-decoration:none; padding:12px 22px; border-radius:6px; font-weight:600; display:inline-block;">Open the sign-in page</a>
-        </p>
         <p style="font-size:13px; color:#475569;">
-          On that page, open <strong>&#128273; Have an activation or reset code?</strong>,
-          paste the code above and choose your password. If the button does not work, go to
-          <a href="{safe_open}" style="color:#00703C;">{safe_open}</a> yourself.
-        </p>
-        <p style="font-size:13px; color:#475569;">
-          The code works once and expires in {_html_escape(expires_hint)}. If it expires,
-          ask your administrator to send a new one.
+          Either way it works once and expires in {_html_escape(expires_hint)}. If it
+          expires, ask your administrator to send a new one.
         </p>
     """
 
