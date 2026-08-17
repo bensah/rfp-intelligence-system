@@ -166,6 +166,34 @@ class TheUiUsesOneVocabularyTests(unittest.TestCase):
             self.assertIn("Strategic priority areas of interest", src)
             self.assertNotIn("Strategic priority areas (strategy", src)
 
+    def test_no_programme_area_picker_sits_inside_an_st_form(self):
+        """A multiselect inside st.form swallows the click on the submit button.
+
+        Reported as "Create user button is stale". This file already carried the same
+        failure from a different widget - a selectbox with accept_new_options in this very
+        form - and the remedy that worked was moving the widget OUT. Held down here because
+        the symptom is invisible in a unit test and only shows up as a dead button.
+        """
+        src = self._src("views/account_sections.py")
+        lines = src.split("\n")
+        offenders = []
+        for i, ln in enumerate(lines):
+            if "_program_areas_field(" not in ln or ln.lstrip().startswith("def "):
+                continue
+            indent = len(ln) - len(ln.lstrip())
+            for j in range(i - 1, max(0, i - 60), -1):
+                prev = lines[j]
+                if not prev.strip():
+                    continue
+                ind = len(prev) - len(prev.lstrip())
+                if ind >= indent:
+                    continue
+                if "with st.form(" in prev:
+                    offenders.append((i + 1, prev.strip()[:40]))
+                break
+        self.assertEqual(offenders, [],
+                         "programme-area picker(s) inside a form: %r" % (offenders,))
+
     def test_saving_a_user_forgets_the_cached_declarations(self):
         # Otherwise an admin adds a colleague, looks at a call, and sees the old verdict
         # with no way to tell whether the declaration took effect.

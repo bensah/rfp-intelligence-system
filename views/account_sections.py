@@ -163,6 +163,14 @@ def render_my_profile(user: dict, sb) -> None:
     st.text_input("Role (read-only)", value=me.get("role") or "collaborator",
                   disabled=True, key="pf_role")
 
+    # Outside the form, like the other programme-area pickers — a multiselect inside
+    # st.form swallows the click on the submit button (see the Add-user dialog).
+    new_program = _program_areas_field(
+        "Program areas", me.get("program"), "me_program",
+        help="Pick from the shared programme-area list. What you record here is treated "
+             "as evidence of your organisation's expertise in MUST-2, and the Report uses "
+             "it to attribute scans by programme focus.")
+
     with st.form("my_profile_form"):
         f1, f2 = st.columns(2)
         new_name = f1.text_input(
@@ -184,11 +192,6 @@ def render_my_profile(user: dict, sb) -> None:
         new_dept = f5.text_input(
             "Department", value=me.get("department") or "",
             help="e.g. 'Business Development', 'Programmes'.")
-        new_program = _program_areas_field(
-            "Program areas", me.get("program"), "me_program", container=f6,
-            help="Pick from the shared programme-area list. What you record here is "
-                 "treated as evidence of your organisation's expertise in MUST-2, and "
-                 "the Report uses it to attribute scans by programme focus.")
         # Location (migration 069). Country is a canonical dropdown so values stay
         # consistent for any downstream geo reporting.
         f7, f8 = st.columns(2)
@@ -1063,6 +1066,18 @@ def render_manage_users(user: dict, sb) -> None:
                      "**Individual** — a personal account, whose activity is visible "
                      "to all. This chooses which accounts the next question lists.")
 
+        # PROGRAMME AREAS LIVES OUTSIDE THE FORM, for the same reason Tenant type does.
+        # A multiselect in there swallowed the click on Create user: the first click
+        # returned save=False and the dialog just sat there. This file already records the
+        # identical failure from a selectbox with accept_new_options in this very form, and
+        # the remedy that worked was moving the widget out. Out here it publishes its value
+        # immediately, which is also what a reviewer expects when they add a chip.
+        d_program = _program_areas_field(
+            "Program areas", None, "adu_program",
+            help="Pick from the shared programme-area list — the same vocabulary calls "
+                 "and funders are classified with, so this person's areas can count as "
+                 "evidence of expertise in MUST-2.")
+
         with st.form("add_user_dialog_form", clear_on_submit=False):
             dc1, dc2 = st.columns(2)
             d_email = dc1.text_input(
@@ -1073,11 +1088,6 @@ def render_manage_users(user: dict, sb) -> None:
                 "Role", permissions.assignable_roles(user) or ["collaborator"],
                 index=0, key="adu_role")
             d_dept = dc4.text_input("Department", key="adu_dept")
-            d_program = _program_areas_field(
-                "Program areas", None, "adu_program",
-                help="Pick from the shared programme-area list — the same vocabulary "
-                     "calls and funders are classified with, so this person's areas can "
-                     "count as evidence of expertise in MUST-2.")
             if _mt and _is_super:
                 # The tenant list is FILTERED by the type chosen above (owner
                 # 2026-08-10). Previously "Individual" sat in the SAME list as the
@@ -1494,6 +1504,12 @@ def render_manage_users(user: dict, sb) -> None:
         current_role = _tgt.get("role") or "collaborator"
         role_options = list(dict.fromkeys(assignable + [current_role]))
 
+        # Outside the form — see the Add-user dialog for why.
+        e_program = _program_areas_field(
+            "Program areas", _tgt.get("program"), f"edit_program_{_tgt.get('id')}",
+            disabled=not profile_editable,
+            help="Pick from the shared programme-area list.")
+
         with st.form("edit_user_modal_form"):
             f1, f2 = st.columns(2)
             e_name = f1.text_input(
@@ -1515,10 +1531,6 @@ def render_manage_users(user: dict, sb) -> None:
             e_dept = f5.text_input(
                 "Department", value=_tgt.get("department") or "",
                 disabled=not profile_editable)
-            e_program = _program_areas_field(
-                "Program areas", _tgt.get("program"), f"edit_program_{_tgt.get('id')}",
-                container=f6, disabled=not profile_editable,
-                help="Pick from the shared programme-area list.")
             st.markdown("**Access**")
             f7, f8 = st.columns(2)
             e_role = f7.selectbox(
