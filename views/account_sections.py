@@ -110,8 +110,14 @@ def _program_areas_field(label, current, key, *, container=None, help="",
 
 
 def _gen_temp_password(length: int = 12) -> str:
-    """URL-safe random temp password (letters + digits). Used by admin
-    'reset password' — user is forced to change it on next login."""
+    """URL-safe random string (letters + digits).
+
+    No longer a password anybody is told. Both account creation and admin reset now email
+    a one-time link, but the users row still needs a password_hash, so it gets one nobody
+    knows: generated here, hashed, and discarded. That is what makes a new account
+    unreachable until its activation link is used - there is no interim credential to
+    intercept.
+    """
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
@@ -1028,9 +1034,10 @@ def render_manage_users(user: dict, sb) -> None:
     @st.dialog("Add a new user", width="large")
     def _add_user_dialog():
         st.caption(
-            "Creates the account immediately with a 12-char temp password "
-            "shown on save. Share the temp password out-of-band (Signal / "
-            "verbal — never email).")
+            "Creates the account and emails a one-time activation link. No password "
+            "is generated or sent — the account cannot be used until the recipient "
+            "follows the link and chooses one. The link works once and expires in "
+            "7 days.")
         from auth import tenant_context as tc
         _mt = tc.multitenant_enabled()
         _is_super = permissions.is_super_user(user)
@@ -1263,13 +1270,13 @@ def render_manage_users(user: dict, sb) -> None:
                 st.warning(
                     "Account created, but email service is not configured "
                     "(RESEND_API_KEY / RESEND_FROM_EMAIL missing from env). "
-                    "Share the one-time setup link below out-of-band "
+                    "Share the one-time activation link below out-of-band "
                     "(Signal / verbal) — it expires in 7 days.")
                 st.code(_setup_link)
             except Exception as exc:
                 st.warning(
                     f"Account created, but email send failed ({exc}). Share "
-                    f"the one-time setup link below out-of-band — it expires "
+                    f"the one-time activation link below out-of-band — it expires "
                     f"in 7 days.")
                 st.code(_setup_link)
 
@@ -1325,8 +1332,8 @@ def render_manage_users(user: dict, sb) -> None:
             if pending_resets:
                 st.info(
                     f"🔐 **{len(pending_resets)} password-reset request(s)** — "
-                    f"pick the user below and click Reset password to issue a "
-                    f"temp password: "
+                    f"pick the user below and click Reset password to email a "
+                    f"one-time link: "
                     + ", ".join(f"`{r['email']}`" for r in pending_resets[:5])
                     + (" …" if len(pending_resets) > 5 else ""))
 

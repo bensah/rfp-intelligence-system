@@ -729,10 +729,11 @@ def _hide_sidebar_on_login() -> None:
 # (is_active=false) so they can't log in until admin / super_user
 # approves them from the Manage Users tab.
 #
-# Forgot Password: writes a row to `password_reset_requests`. Admin
-# picks it up from the Manage Users banner and issues a temp password
-# via the existing reset action. No email infrastructure required —
-# the request is the notification.
+# Forgot Password: writes a row to `password_reset_requests`. Admin picks it
+# up from the Manage Users banner and uses the reset action, which emails a
+# one-time link. The request row is the notification, so the banner works
+# whether or not mail is configured; if it is not, the admin is shown the
+# link to pass on out-of-band.
 
 def _render_signup_and_reset_forms() -> None:
     """Render Sign Up + Forgot Password expanders below the login form.
