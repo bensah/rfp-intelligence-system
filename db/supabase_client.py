@@ -180,14 +180,36 @@ _TENANT_SCOPED_TABLES = {
     "resource_suggestions",
 }
 
-# Of the scoped tables, these user-facing ACTIVITY tables also surface rows owned by
-# PUBLIC ('individual', migration 078) tenants in everyone's read scope. Deliberately
-# EXCLUDES rfp_seen (a public tenant's tombstones must NOT suppress others' screening)
-# and scan_decisions (per-tenant ML training data). Writes are never broadened.
-_PUBLIC_VISIBLE_TABLES = {
-    "rfp_submissions", "meeting_logs", "meeting_schedule", "engagement_logs",
-    "applied_funding", "narrative_logs", "donor_contacts",
-}
+# Tables whose SELECT is broadened to also return rows owned by PUBLIC ('individual',
+# migration 078) tenants. EMPTY, deliberately — see below. Writes were never broadened.
+#
+# WHY THIS IS NOW EMPTY. It used to list rfp_submissions, meeting_logs, meeting_schedule,
+# engagement_logs, applied_funding, narrative_logs and donor_contacts, and the effect was a
+# reported cross-tenant leak: an organisation opened its weekly review and found 32
+# opportunities where only ONE was its own. The other 31 belonged to an unrelated
+# `kind='individual'` tenant, and the read that produced them was
+#
+#     tenant_id IN (<my tenant>, <every public tenant>)
+#
+# so they were not a bug in the wrapper - the wrapper was doing exactly what this set told
+# it to. Three things were wrong with that instruction:
+#
+#   1. These are private WORK RECORDS, not community content. A pipeline is a work list, a
+#      meeting log is who met whom, donor_contacts is named people at a funder. Merging
+#      another entity's copies of those into my read scope is not a feature.
+#   2. It corrupts every per-tenant number silently. Counts, the monthly report, exports
+#      and the review queue all read through this client, so they were measuring another
+#      tenant's rows as well as their own with nothing on screen to say so.
+#   3. It leaks in the direction that matters least and hurts most: an individual's private
+#      records are exposed to every organisation on the platform, while giving that
+#      individual nothing in return.
+#
+# Nothing in the codebase READS public rows deliberately - `public_tenant_ids` had exactly
+# one caller, the broadening below - so no feature depends on this. If a public/community
+# activity feed is wanted later, it should be an explicit query against
+# `public_tenant_ids()` at the point of use, where a reader can see that it crosses a
+# tenant boundary, rather than an invisible widening of every read of these tables.
+_PUBLIC_VISIBLE_TABLES: set[str] = set()
 
 
 def _stamp_tenant(rows, tid: str):
