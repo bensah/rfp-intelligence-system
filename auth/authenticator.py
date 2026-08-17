@@ -406,6 +406,10 @@ def ensure_logged_in() -> Optional[dict[str, Any]]:
         if not user:
             st.stop()
     """
+    # A setup/reset link is redeemed before any login logic: its holder
+    # cannot sign in yet, which is precisely why one was sent.
+    handle_setup_token()
+
     if "app_user" in st.session_state:
         # Cached — short-circuit the login flow, but DO re-render the
         # sidebar user block (Signed in / Logout). Without this the
@@ -460,6 +464,136 @@ def _maybe_onboard(user: dict[str, Any]) -> None:
 # they're trying to visit, then `st.stop()`s — they cannot access any
 # app content until the flag is cleared.
 
+def handle_setup_token() -> None:
+    """Redeem a ?token=... link from a setup or reset email.
+
+    Runs before the login gate, because the whole point is that the holder
+    cannot log in yet - either the account has never had a usable password,
+    or they have forgotten theirs.
+
+    The token IS the proof of identity, so this screen does not ask for a
+    current password. What it will not do is sign anyone in: a valid link
+    lets you set a password and then log in with it, deliberately. If an
+    invite is forwarded or an inbox is compromised, an attacker can seize
+    the account but cannot do it quietly - the real user's own login stops
+    working and they say so. A link that authenticated its bearer would
+    hand the account over with nobody noticing.
+
+    Silent no-op when there is no token, so an ordinary page load pays only
+    a dictionary lookup.
+    """
+    try:
+        raw = (st.query_params.get("token") or "").strip()
+    except Exception:
+        return
+    if not raw:
+        return
+
+    from core.password_tokens import (
+        consume_token, invalidate_tokens_for_user, peek_token)
+
+    _hide_sidebar_on_login()
+    record = peek_token(raw)
+
+    if record is None:
+        # Unknown, expired and already-used are deliberately one message.
+        # Distinguishing them tells a stranger holding a stale link whether
+        # the account exists, and which of the three cases it was.
+        st.title("This link is no longer valid")
+        st.error(
+            "Setup and reset links can only be used once, and they expire. "
+            "Ask an administrator to send you a new one."
+        )
+        st.stop()
+
+    target = record.get("user") or {}
+    email = target.get("email") or ""
+    is_invite = record.get("purpose") == "invite"
+
+    st.title("Choose your password")
+    st.caption(
+        f"Setting the password for **{email}**."
+        if is_invite else
+        f"Resetting the password for **{email}**."
+    )
+    if not is_invite:
+        st.info("Your current password keeps working until you save a new one here.")
+
+    # Plain widgets rather than st.form, matching _gate_must_change_password:
+    # a form-submit button rendered before st.navigation().run() does not
+    # reliably register its click in this app's MPA flow.
+    new_pw = st.text_input(
+        "New password", type="password", key="tok_new",
+        help="At least 8 characters, mix of letters and digits.")
+    confirm_pw = st.text_input(
+        "Confirm new password", type="password", key="tok_confirm")
+    submit = st.button("Save password", type="primary", key="tok_submit")
+
+    if submit:
+        errs: list[str] = []
+        if not new_pw or len(new_pw) < 8:
+            errs.append("Password must be at least 8 characters.")
+        if new_pw and (not any(c.isalpha() for c in new_pw)
+                       or not any(c.isdigit() for c in new_pw)):
+            errs.append("Password must include letters AND digits.")
+        if new_pw != confirm_pw:
+            errs.append("Confirm password does not match.")
+
+        if errs:
+            st.error("Please fix:\n\n- " + "\n- ".join(errs))
+        else:
+            # Burn the token BEFORE writing the password. If the write then
+            # fails the user asks for a new link, which is recoverable. The
+            # other order can leave a live link after the password has
+            # already changed - a credential nobody is tracking.
+            if consume_token(raw) is None:
+                st.error(
+                    "This link was just used somewhere else. Ask an "
+                    "administrator for a new one.")
+                st.stop()
+
+            saved, err = False, None
+            try:
+                # service_client, not get_client: this runs with nobody
+                # logged in, so there is no tenant context to scope by, and
+                # setting a password is an identity operation rather than
+                # tenant data. Any tenant filter reaching this update would
+                # match no row — and the token has already been burned
+                # above, stranding the user with a spent link.
+                from db.supabase_client import service_client as _svc
+                res = (_svc().table("users").update({
+                    "password_hash": hash_password(new_pw),
+                    "must_change_password": False,
+                    "password_changed_at":
+                        datetime.now(timezone.utc).isoformat(),
+                }).eq("id", target.get("id")).execute())
+                saved = bool(getattr(res, "data", None))
+            except Exception as exc:
+                err = str(exc)
+
+            if err or not saved:
+                st.error(
+                    f"Could not save the password: "
+                    f"{err or 'no account row was updated'}. "
+                    f"Ask an administrator for a new link.")
+                st.stop()
+
+            invalidate_tokens_for_user(target.get("id"))
+            clear_credentials_cache()
+            try:
+                # Drop the token from the address bar so a refresh, a
+                # bookmark or a shared screenshot does not carry a spent
+                # credential.
+                st.query_params.clear()
+            except Exception:
+                pass
+
+            st.success("Password saved. You can now sign in.")
+            st.stop()
+
+    st.stop()
+
+
 def _gate_must_change_password(user: dict[str, Any]) -> None:
     """Block all page rendering while user.must_change_password is True.
 
@@ -476,8 +610,8 @@ def _gate_must_change_password(user: dict[str, Any]) -> None:
 
     st.title("🔐 Set a new password")
     st.warning(
-        "You're using a temporary password issued by an administrator. "
-        "Choose a new password before continuing."
+        "An administrator has asked you to choose a new password before "
+        "continuing."
     )
 
     # Plain widgets + a regular button (NOT st.form). A form-submit button
@@ -730,9 +864,9 @@ def _render_signup_and_reset_forms() -> None:
 
     with st.expander("🔐 Forgot password?", expanded=False):
         st.caption(
-            "Enter your email and request a reset. Once an admin approves "
-            "it, the app emails you a temporary password — sign in with it "
-            "and you'll be prompted to set a new password immediately."
+            "Enter your email and request a reset. Once an admin approves it, "
+            "the app emails you a one-time link to set a new password. Your "
+            "current password keeps working until you use the link."
         )
         with st.form("forgot_pw_form", clear_on_submit=True):
             fp_email = st.text_input("Email", key="fp_email")
@@ -750,9 +884,9 @@ def _render_signup_and_reset_forms() -> None:
                         "email": fp_email.strip(),
                     }).execute()
                     st.success(
-                        "✅ Request received. After an admin approves it, "
-                        "the app will email you a temporary password. Sign "
-                        "in with it and set a new password right away."
+                        "✅ Request received. After an admin approves it, the "
+                        "app will email you a one-time link to set a new "
+                        "password. It expires in 2 hours."
                     )
                 except Exception as exc:
                     st.error(f"Could not record request: {exc}")

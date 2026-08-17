@@ -19,6 +19,7 @@ import os
 import re
 import secrets
 import string
+import time
 import unicodedata
 from datetime import datetime, timezone
 
@@ -73,6 +74,32 @@ def _gen_temp_password(length: int = 12) -> str:
     'reset password' — user is forced to change it on next login."""
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+# How long a finished dialog stays on screen before dismissing itself. Long
+# enough to read a two-line confirmation, short enough that it is quicker
+# than reaching for the X.
+_DIALOG_CLOSE_SECONDS = 4
+
+
+def _auto_close_dialog(seconds: int = _DIALOG_CLOSE_SECONDS) -> None:
+    """Dismiss the surrounding st.dialog once its result has been read.
+
+    st.rerun() is what closes a dialog — the delete modal already relies on
+    that. The delay is the entire point: rerunning immediately would wipe
+    the confirmation before anyone could read it, while leaving the dialog
+    up makes every successful action cost a second click on Cancel or X.
+    The rerun also refreshes the page underneath, so the user table shows
+    the change that was just made.
+
+    Call this ONLY on a success path. Where a fallback has printed a
+    one-time link on screen the dialog must stay open — closing it would
+    destroy the only copy of a credential that cannot be reissued without
+    invalidating it.
+    """
+    st.caption(f"Closing in {seconds} seconds…")
+    time.sleep(seconds)
+    st.rerun()
 
 
 # ===========================================================================
@@ -1067,7 +1094,12 @@ def render_manage_users(user: dict, sb) -> None:
                 return
 
             try:
-                temp = _gen_temp_password(12)
+                # No password is chosen for the user, and none is emailed.
+                # The row still needs a hash, so it gets one nobody knows -
+                # 32 bytes of urandom, hashed and discarded. The account is
+                # unreachable until the invite link is used, which is the
+                # point: there is no interim credential to intercept.
+                temp = _gen_temp_password(48)
                 _ins = service_client().table("users").insert({
                     "email": d_email.strip(),
                     "name": d_name.strip(),
@@ -1137,35 +1169,61 @@ def render_manage_users(user: dict, sb) -> None:
             except Exception as exc:
                 st.error(f"Create failed: {exc}")
                 return
+            # Minting the link and sending it are separate steps with
+            # separate failures. If the link cannot be issued there is
+            # nothing to fall back to; if only the send fails, the link is
+            # in hand and can go out-of-band, so it must be built before
+            # the send is attempted.
+            try:
+                from core.password_tokens import (
+                    PURPOSE_INVITE, issue_token, build_link)
+                from core.user_emails import _app_url
+                _raw, _ = issue_token(
+                    user_id=new_uid,
+                    purpose=PURPOSE_INVITE,
+                    created_by=user.get("email"),
+                )
+                _setup_link = build_link(_app_url(), _raw)
+            except Exception as exc:
+                st.error(
+                    f"Account created, but no setup link could be issued "
+                    f"({exc}). Use **Reset password** on the user to send "
+                    f"one — the account cannot be logged into until then.")
+                return
             try:
                 from core.user_emails import (
                     send_welcome_email, MailerNotConfigured)
-                send_welcome_email(to_email=d_email.strip(),
-                                   to_name=d_name.strip(), temp_password=temp)
+                send_welcome_email(
+                    to_email=d_email.strip(),
+                    to_name=d_name.strip(),
+                    setup_link=_setup_link,
+                )
                 st.success(
-                    f"✅ Created **{d_email}**. Temp password emailed "
-                    f"directly — they'll be forced to change it on first "
-                    f"login.")
+                    f"✅ Created **{d_email}**. A one-time setup link has "
+                    f"been emailed — it expires in 7 days, and they choose "
+                    f"their own password.")
+                _auto_close_dialog()
             except MailerNotConfigured:
                 st.warning(
                     "Account created, but email service is not configured "
                     "(RESEND_API_KEY / RESEND_FROM_EMAIL missing from env). "
-                    "Temp password shown below for out-of-band delivery — "
-                    "copy it now.")
-                st.code(temp)
+                    "Share the one-time setup link below out-of-band "
+                    "(Signal / verbal) — it expires in 7 days.")
+                st.code(_setup_link)
             except Exception as exc:
                 st.warning(
-                    f"Account created, but email send failed ({exc}). Temp "
-                    f"password shown below — share out-of-band.")
-                st.code(temp)
+                    f"Account created, but email send failed ({exc}). Share "
+                    f"the one-time setup link below out-of-band — it expires "
+                    f"in 7 days.")
+                st.code(_setup_link)
 
     # ─── Header row ─────────────────────────────────────────────────────
     _hcol_text, _hcol_btn = st.columns([5, 1])
     with _hcol_text:
         st.subheader("Manage users")
         st.caption(
-            "Add new teammates, change roles, deactivate accounts, or issue "
-            "a temporary password. **Super User** can manage admins; admins "
+            "Add new teammates, change roles, deactivate accounts, or send "
+            "a password-reset link. **Super User** can manage admins; admins "
             "can manage reviewers + collaborators only.")
     with _hcol_btn:
         st.markdown("<div style='padding-top:1.6rem'></div>",
@@ -1559,10 +1617,10 @@ def render_manage_users(user: dict, sb) -> None:
     @st.dialog(f"Reset password — {target_email}", width="medium")
     def _reset_dialog(_target_email=target_email, _tgt=tgt):
         st.warning(
-            f"This will generate a 12-character temporary password for "
-            f"**{_target_email}**, flip their `must_change_password` flag, "
-            f"and **email them the temp password directly**. They'll be "
-            f"forced to pick a new one on next login.")
+            f"This emails **{_target_email}** a **one-time link** that lets "
+            f"them choose a new password. The link expires in 2 hours and "
+            f"works once. Their current password keeps working until they "
+            f"use it, so this does not lock them out.")
         rc1, rc2 = st.columns([1, 1])
         confirm = rc1.button("🔄 Reset + email", type="primary",
                              width='stretch', key="reset_confirm_btn")
@@ -1570,11 +1628,13 @@ def render_manage_users(user: dict, sb) -> None:
             st.rerun()
         if confirm:
             try:
-                temp = _gen_temp_password(12)
+                # The existing password is deliberately left working until
+                # the link is used. Overwriting it here locks the user out
+                # the moment an admin clicks Reset - before the email has
+                # even arrived - and if the mail bounces they are stranded
+                # with no way in. The link, once used, replaces it.
                 service_client().table("users").update({
-                    "password_hash": hash_password(temp),
                     "must_change_password": True,
-                    "password_changed_at": datetime.now(timezone.utc).isoformat(),
                 }).eq("email", _target_email).execute()
                 try:
                     sb.table("password_reset_requests").update({
@@ -1588,26 +1648,46 @@ def render_manage_users(user: dict, sb) -> None:
             except Exception as exc:
                 st.error(f"Reset failed: {exc}")
                 return
+            # As with the invite: build the link first, so a send failure
+            # still leaves something to hand over out-of-band. There is no
+            # temporary password to fall back on any more — the link is the
+            # only credential this flow produces.
+            try:
+                from core.password_tokens import (
+                    PURPOSE_RESET, issue_token, build_link)
+                from core.user_emails import _app_url
+                _raw, _ = issue_token(
+                    user_id=_tgt.get("id"),
+                    purpose=PURPOSE_RESET,
+                    created_by=user.get("email"),
+                )
+                _reset_link = build_link(_app_url(), _raw)
+            except Exception as exc:
+                st.error(f"Could not issue a reset link: {exc}")
+                return
             try:
                 from core.user_emails import (
                     send_password_reset_email, MailerNotConfigured)
                 send_password_reset_email(
                     to_email=_target_email, to_name=_tgt.get("name"),
-                    temp_password=temp)
+                    reset_link=_reset_link)
                 st.success(
-                    f"✅ New temp password emailed to **{_target_email}**. "
-                    f"They'll be forced to set their own password on next "
-                    f"login.")
+                    f"✅ A one-time reset link has been emailed to "
+                    f"**{_target_email}**. It expires in 2 hours. Their "
+                    f"current password keeps working until they use it.")
+                _auto_close_dialog()
             except MailerNotConfigured:
                 st.warning(
-                    "Email service not configured — temp password shown "
-                    "below for out-of-band delivery only this once.")
-                st.code(temp)
+                    "Email service not configured — share the one-time reset "
+                    "link below out-of-band (Signal / verbal). It expires in "
+                    "2 hours.")
+                st.code(_reset_link)
             except Exception as exc:
                 st.warning(
-                    f"Reset succeeded but email failed ({exc}). Temp password "
-                    f"shown below — share out-of-band.")
-                st.code(temp)
+                    f"Reset started but email failed ({exc}). Share the "
+                    f"one-time reset link below out-of-band — it expires in "
+                    f"2 hours.")
+                st.code(_reset_link)
 
     # ─── Delete modal ───────────────────────────────────────────────────
     @st.dialog(f"Delete user — {target_email}", width="medium")
