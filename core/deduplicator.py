@@ -137,6 +137,50 @@ _GENERIC_TOKENS = {
 }
 
 
+def _title_countries(title: str) -> set[str]:
+    """Canonical countries named in a title. Empty when the title names none.
+
+    Deliberately COUNTRIES only, never regions or income tiers: "Sub-Saharan Africa" and
+    "LMICs" are qualifiers that two genuinely identical calls may word differently, while
+    a country is an identity.
+    """
+    try:
+        from core.auto_scorer import _COUNTRY_PATTERN
+        from core import geographies as geo
+    except Exception:                                    # pragma: no cover - import cycle
+        return set()
+    return {geo.canonical_geo(m).lower()
+            for m in _COUNTRY_PATTERN.findall(title or "") if m}
+
+
+def _different_countries(cand_title: str, row_title: str) -> bool:
+    """True when the two titles each name a country and the sets are DISJOINT.
+
+    THE COUNTRY IS THE IDENTITY IN A SIBLING-PROGRAMME FAMILY. Funders publish families
+    of calls whose titles are one boilerplate with the country swapped:
+
+        "Modern Slavery Fund Albania Programme 2026 to 2029: call for proposals"
+        "Modern Slavery Fund Viet Nam Programme 2026 to 2029: call for proposals"
+
+    Those are 91% similar as characters, which cleared the 0.90 title threshold, so the
+    two calls were declared the same one and merged. The country name — the single most
+    disambiguating word in the title — was the only thing that differed, and a character
+    ratio is structurally blind to WHICH characters differ. The same shape appears in
+    development-bank procurement notices ("IFB - Cabo Verde - ...", "SPN - Zimbabwe -
+    ...") and in EU topic families.
+
+    A merge is not a tie-break: it keeps one row's title and link and gap-fills the rest
+    from the other, so a wrong match does not lose a row, it CORRUPTS one — the surviving
+    call ends up wearing a different country's description and award value. That is worse
+    than keeping a duplicate, which a human can see and dismiss. So this vetoes.
+
+    Nothing is vetoed when only one side names a country (a general call and a
+    country-specific one may still be the same call reworded), or when the sets overlap.
+    """
+    a, b = _title_countries(cand_title), _title_countries(row_title)
+    return bool(a and b and not (a & b))
+
+
 def _distinctive_tokens(title: str) -> set[str]:
     """Meaningful, disambiguating tokens of a normalised title (drop generic
     grant vocabulary + bare years + 1-2 char noise)."""
@@ -194,8 +238,19 @@ def find_duplicates(
             matches.append({**row, "_reason": "identical link"})
             continue
 
+        # A country named on BOTH sides, disagreeing, settles it: these are different
+        # calls, and no amount of shared boilerplate says otherwise. Checked before the
+        # two similarity rules because both of them fired on real sibling programmes and
+        # the merge that followed corrupted the surviving row. Rules 1 and 2 above are
+        # left alone on purpose: an identical opportunity_id or an identical link is
+        # dispositive evidence of the SAME call, and outranks a country in the title.
+        _row_title_raw = row.get("opportunity_title")
+        if _different_countries(candidate.get("opportunity_title") or "",
+                                _row_title_raw or ""):
+            continue
+
         # 3. Title similarity
-        sim = _title_similarity(cand_title, _norm_title(row.get("opportunity_title")))
+        sim = _title_similarity(cand_title, _norm_title(_row_title_raw))
         if sim >= TITLE_THRESHOLD:
             matches.append({**row, "_reason": f"title similarity {sim:.0%}"})
             continue
