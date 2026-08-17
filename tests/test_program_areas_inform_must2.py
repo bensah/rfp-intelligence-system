@@ -194,6 +194,21 @@ class TheUiUsesOneVocabularyTests(unittest.TestCase):
         self.assertEqual(offenders, [],
                          "programme-area picker(s) inside a form: %r" % (offenders,))
 
+    def test_the_add_user_dialog_survives_a_rerun(self):
+        """A dialog opened as `if st.button(): dlg()` is gone after one keystroke.
+
+        Reproduced with AppTest: the dialog's own buttons vanish from the tree on the first
+        widget interaction, because the trigger is False on that rerun and the dialog
+        function is never called again. The Create-user handler lives inside that function,
+        so nothing happens when it is clicked. A persistent open flag is what keeps it.
+        """
+        src = self._src("views/account_sections.py")
+        self.assertIn('st.session_state["adu_open"] = True', src)
+        self.assertIn('if st.session_state.get("adu_open"):', src)
+        # And it must be cleared, or the dialog reopens after it finishes.
+        self.assertIn('st.session_state.pop("adu_open", None)', src)
+        self.assertIn('_auto_close_dialog(open_key="adu_open")', src)
+
     def test_saving_a_user_forgets_the_cached_declarations(self):
         # Otherwise an admin adds a colleague, looks at a call, and sees the old verdict
         # with no way to tell whether the declaration took effect.
