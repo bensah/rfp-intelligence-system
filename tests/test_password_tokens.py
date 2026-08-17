@@ -268,15 +268,24 @@ class TheEmailIsFramedAsActivationTests(unittest.TestCase):
         got = self._sent(UE.send_welcome_email, to_email="a@example.org",
                          to_name="A", setup_link="https://x.example/?token=t")
         self.assertIn("Activate your", got["subject"])
-        self.assertIn("Activate account", got["html"])
         self.assertNotIn("Set my password", got["html"])
         self.assertNotIn("temporary password", got["html"].lower())
 
-    def test_the_invite_still_carries_the_link_and_no_password(self):
+    def test_the_invite_carries_the_code_and_NOT_a_token_link(self):
+        """The token link is gone (owner, 2026-08-17).
+
+        It was the headline action and it failed for the very person it was written for,
+        while the code beneath it worked. Leading with a button that does not work teaches
+        people the email is broken, so the code leads and the only link goes to the sign-in
+        page - carrying no credential, so nothing is lost if a mail client mangles it.
+        """
         from core import user_emails as UE
         got = self._sent(UE.send_welcome_email, to_email="a@example.org",
                          to_name="A", setup_link="https://x.example/?token=SECRET")
-        self.assertIn("https://x.example/?token=SECRET", got["html"])
+        self.assertIn("SECRET", got["html"])                     # the code itself
+        self.assertNotIn("?token=SECRET", got["html"])            # never as a link
+        self.assertIn("?activate=1", got["html"])                 # opens the code box
+        self.assertIn("activation or reset code", got["html"])    # names the control
 
     def test_the_invite_prints_the_token_as_a_pasteable_code(self):
         # A link is not a reliable carrier: a hosted Streamlit app bootstraps a session
@@ -304,7 +313,65 @@ class TheEmailIsFramedAsActivationTests(unittest.TestCase):
         got = self._sent(UE.send_password_reset_email, to_email="a@example.org",
                          to_name="A", reset_link="https://x.example/?token=t")
         self.assertIn("Change your", got["subject"])
-        self.assertIn("Change my password", got["html"])
+        self.assertIn("reset code", got["html"])
+        self.assertNotIn("?token=", got["html"])
+
+
+class ThePasswordRulesAreStatedTests(unittest.TestCase):
+    """Reject-and-explain-nothing makes a person guess twice (owner, 2026-08-17)."""
+
+    def test_every_problem_is_named_at_once(self):
+        from core.password_policy import password_problems
+        probs = password_problems("abc")
+        self.assertEqual(len(probs), 2, probs)     # too short AND no digit
+        self.assertTrue(any("at least 8" in p for p in probs))
+        self.assertTrue(any("number" in p for p in probs))
+
+    def test_it_says_how_short_the_attempt_was(self):
+        from core.password_policy import password_problems
+        self.assertIn("has 3", " ".join(password_problems("abc")))
+
+    def test_a_missing_letter_is_named(self):
+        from core.password_policy import password_problems
+        self.assertEqual(password_problems("12345678"), ["Add at least one letter."])
+
+    def test_an_acceptable_password_has_no_problems(self):
+        from core.password_policy import password_problems
+        self.assertEqual(password_problems("correct7horse"), [])
+
+    def test_spaces_are_allowed_and_said_to_be(self):
+        from core.password_policy import password_problems, PASSWORD_RULES_TEXT
+        self.assertEqual(password_problems("two words 9"), [])
+        self.assertIn("Spaces are allowed", PASSWORD_RULES_TEXT)
+
+    def test_one_policy_shared_by_every_screen(self):
+        # Four screens had their own copy of the check and their own wording, so the rule a
+        # person was told could differ from the rule they were judged by.
+        import io
+        for rel in ("auth/authenticator.py", "views/account_sections.py"):
+            with io.open(os.path.join(_ROOT, *rel.split("/")), encoding="utf-8") as fh:
+                src = fh.read()
+            self.assertNotIn("must be at least 8 characters", src, rel)
+
+
+class TheDeadEndIsGoneTests(unittest.TestCase):
+    """"You can now sign in" with nothing to sign in with is a dead end."""
+
+    def _src(self):
+        import io
+        with io.open(os.path.join(_ROOT, "auth", "authenticator.py"),
+                     encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_the_success_screen_offers_a_way_in(self):
+        src = self._src()
+        self.assertIn("Go to sign in", src)
+        self.assertIn("_public_app_url()", src)
+
+    def test_the_code_box_opens_when_the_invitation_sends_them_there(self):
+        src = self._src()
+        self.assertIn('st.query_params.get("activate")', src)
+        self.assertIn("expanded=_want_open", src)
 
 
 class TheMigrationTests(unittest.TestCase):

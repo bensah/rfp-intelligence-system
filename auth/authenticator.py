@@ -73,6 +73,26 @@ _CRED_CACHE: dict[str, Any] = {"at": 0.0, "data": None}
 _CRED_TTL_SEC = 60.0
 
 
+# The password rule lives in core.password_policy - it is a policy, not a widget, and
+# keeping it out of here lets it be tested without importing Streamlit. Re-exported so the
+# screens in this module read naturally.
+from core.password_policy import (                      # noqa: E402
+    PASSWORD_MIN_LEN, PASSWORD_RULES_TEXT, password_problems)
+
+
+def _public_app_url() -> str:
+    """The deployment's own URL, for a link a person can click or copy.
+
+    Shared with the email templates rather than duplicated: whatever address invitations
+    are sent from is the address the app should point back to.
+    """
+    try:
+        from core.user_emails import _app_url
+        return _app_url()
+    except Exception:
+        return ""
+
+
 def clear_credentials_cache() -> None:
     _CRED_CACHE["at"] = 0.0
     _CRED_CACHE["data"] = None
@@ -506,7 +526,15 @@ def activation_code_entry() -> bool:
     (see `_activation_token`). The email prints the same code beneath the button, so a
     recipient whose link arrived stripped is not stuck waiting for an administrator.
     """
-    with st.expander("🔑 Have an activation or reset code?", expanded=False):
+    # OPEN ON ARRIVAL when the invitation sent them here. The email's only link is
+    # `?activate=1`, so a recipient lands with the box already open and the next thing they
+    # do is paste. Collapsed otherwise, so the sign-in screen stays a sign-in screen for
+    # everyone else.
+    try:
+        _want_open = bool(st.query_params.get("activate"))
+    except Exception:
+        _want_open = False
+    with st.expander("🔑 Have an activation or reset code?", expanded=_want_open):
         st.caption(
             "If the button in your email did not open a password screen, paste the code "
             "printed underneath it here.")
@@ -581,22 +609,21 @@ def handle_setup_token() -> None:
     # Plain widgets rather than st.form, matching _gate_must_change_password:
     # a form-submit button rendered before st.navigation().run() does not
     # reliably register its click in this app's MPA flow.
+    # THE RULES, BEFORE THE ATTEMPT. Rejecting a password and only then explaining what
+    # was wanted makes the person guess twice; the requirements are short enough to just
+    # state.
+    st.caption(PASSWORD_RULES_TEXT)
     new_pw = st.text_input(
         "New password", type="password", key="tok_new",
-        help="At least 8 characters, mix of letters and digits.")
+        help=PASSWORD_RULES_TEXT)
     confirm_pw = st.text_input(
         "Confirm new password", type="password", key="tok_confirm")
     submit = st.button("Save password", type="primary", key="tok_submit")
 
     if submit:
-        errs: list[str] = []
-        if not new_pw or len(new_pw) < 8:
-            errs.append("Password must be at least 8 characters.")
-        if new_pw and (not any(c.isalpha() for c in new_pw)
-                       or not any(c.isdigit() for c in new_pw)):
-            errs.append("Password must include letters AND digits.")
+        errs = list(password_problems(new_pw))
         if new_pw != confirm_pw:
-            errs.append("Confirm password does not match.")
+            errs.append("The two passwords do not match.")
 
         if errs:
             st.error("Please fix:\n\n- " + "\n- ".join(errs))
@@ -651,7 +678,18 @@ def handle_setup_token() -> None:
             # re-enter this screen on the next rerun with a token already spent.
             st.session_state.pop(_TOKEN_SS_KEY, None)
 
-            st.success("Password saved. You can now sign in.")
+            st.success("Password saved.")
+            # A dead end otherwise: the screen said "you can now sign in" and offered
+            # nothing to sign in WITH. The button reruns the app, which - with the token
+            # gone from the URL and from session state - renders the login form. The URL is
+            # printed too, for anyone who arrived here from a mail client that will not
+            # hand a click back to the app.
+            st.markdown("### Sign in")
+            if st.button("Go to sign in", type="primary", key="tok_goto_login"):
+                st.rerun()
+            _u = _public_app_url()
+            if _u:
+                st.caption(f"Or open {_u}")
             st.stop()
 
     st.stop()
@@ -702,13 +740,9 @@ def _gate_must_change_password(user: dict[str, Any]) -> None:
             ok = False
         if not ok:
             errs.append("Current password is incorrect.")
-        if not new_pw or len(new_pw) < 8:
-            errs.append("New password must be at least 8 characters.")
-        if new_pw and (not any(c.isalpha() for c in new_pw)
-                       or not any(c.isdigit() for c in new_pw)):
-            errs.append("New password must include letters AND digits.")
+        errs.extend(password_problems(new_pw))
         if new_pw != confirm_pw:
-            errs.append("Confirm password does not match.")
+            errs.append("The two passwords do not match.")
         if new_pw and new_pw == current_pw:
             errs.append("New password must be different from the "
                          "temporary one.")
@@ -863,15 +897,9 @@ def _render_signup_and_reset_forms() -> None:
                     errs.append("Valid email is required.")
                 if not su_name:
                     errs.append("Full name is required.")
-                if not su_pw or len(su_pw) < 8:
-                    errs.append("Password must be at least 8 "
-                                 "characters.")
-                if su_pw and (not any(c.isalpha() for c in su_pw)
-                               or not any(c.isdigit() for c in su_pw)):
-                    errs.append("Password must include letters AND "
-                                 "digits.")
+                errs.extend(password_problems(su_pw))
                 if su_pw != su_confirm:
-                    errs.append("Passwords do not match.")
+                    errs.append("The two passwords do not match.")
                 # Email uniqueness — fail-soft if Supabase blips.
                 if not errs:
                     try:
