@@ -1157,10 +1157,65 @@ def run_screening(*, dry_run: bool = False, status: str = "Open",
             _tc.reset_tenant_override(_tok)
 
 
+def unscoped_screening_reason(policies: dict | None = None) -> str:
+    """Why this tenant must not be auto-screened yet, or "" when it is safe to screen.
+
+    A TENANT WITH NO DECLARED PROGRAMME AREAS HAS NO THEME FILTER AT ALL. `_blank_policies`
+    sets `themes.required_any = []` (policies.py, "no theme gate -> every sector
+    populates"), `_seed_themes_from_profile` cannot repair it because the profile declares
+    no areas, and `theme_eligible` short-circuits on an empty list with "no theme
+    requirements set" - a pass for every candidate. Geography alone then decides, so a
+    health-focused tenant is offered anti-slavery funds, road-resurfacing tenders and
+    foreign trade-promotion schemes.
+
+    The docstring on `screen_all_tenants` describes the opposite intent - "a fresh tenant
+    with a minimal profile gets many rows, mostly Decline" (Option C). Measured on the run
+    that prompted this: 31 rows, none decided, 28 with no readable description, and roughly
+    19 of them rejectable on theme alone had a theme list existed. That is not a gentle
+    default, it is an unreadable review week, and the owner asked for it to stop
+    (2026-08-16): do not screen a tenant that has declared nothing to screen against.
+
+    Deliberately checks the RESOLVED policy rather than the profile directly, so a tenant
+    that sets an explicit scan policy instead of programme areas still screens.
+    """
+    from core.policies import get_policies
+    pol = policies if policies is not None else get_policies()
+    required = ((pol.get("themes") or {}).get("required_any") or [])
+    if not required:
+        return ("the organisation has declared no programme areas, so there is no theme "
+                "filter to screen against - set programme areas in the organisation "
+                "profile (or an explicit scan policy) first")
+    return ""
+
+
 def _run_screening_body(*, dry_run: bool, status: str, triggered_by: str) -> dict:
     import time as _time
     from core import extracted_store
     t0 = _time.time()
+
+    # Refuse rather than flood. Recorded in scan_logs with the reason in `errors`, so the
+    # run reads as a blocked onboarding step rather than as a week that found nothing.
+    _blocked = unscoped_screening_reason()
+    if _blocked:
+        log.warning("run_screening: skipped - %s", _blocked)
+        if not dry_run:
+            _srow = {"source": MATCH_RUN_LABEL, "triggered_by": triggered_by,
+                     "rfps_found": 0, "rfps_new": 0, "rfps_duplicate": 0,
+                     "rfps_rejected": 0, "duration_sec": round(_time.time() - t0, 3),
+                     "errors": f"screening skipped: {_blocked}"}
+            try:
+                from auth.tenant_context import current_tenant_id as _ctid
+                _t = _ctid()
+                if _t:
+                    _srow["tenant_id"] = _t
+            except Exception:
+                pass
+            try:
+                get_client().table("scan_logs").insert(_srow).execute()
+            except Exception as _exc:                       # logging must not break the run
+                log.debug("run_screening: could not log the skip: %s", _exc)
+        return {"considered": 0, "eligible": 0, "added": 0, "already_tracked": 0,
+                "rejected": 0, "skipped": _blocked}
 
     def _count() -> int:
         try:
