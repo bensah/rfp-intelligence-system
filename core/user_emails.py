@@ -15,6 +15,12 @@ Password screen until the user picks their own password.
 Why a separate module rather than inlining the email body in the User
 page: keeps the HTML template + branding logic out of the UI code and
 makes it trivial to swap the channel later (Resend → SendGrid → SES).
+
+Branding is resolved at send time from app_settings, never hardcoded:
+`email_product_name` for the header, `email_product_short_name` for
+subject lines. RFPIS is a multi-tenant product, so the deploying
+organisation's name belongs in that deployment's configuration and not in
+this repository.
 """
 from __future__ import annotations
 
@@ -49,11 +55,58 @@ def _powered_by() -> str:
     return (os.environ.get("EMAIL_POWERED_BY") or "").strip()
 
 
+def _product_name() -> str:
+    """The product name in the email header.
+
+    Resolved, not hardcoded, for the same reason `_powered_by()` is: RFPIS
+    is a multi-tenant product and the deploying organisation's name must not
+    be baked into the source. A deployment sets `email_product_name` in
+    app_settings (or EMAIL_PRODUCT_NAME in env) to brand its own mail —
+    e.g. prefixing the organisation's acronym — and the code stays generic.
+    """
+    try:
+        from core.settings import get_setting
+        v = (get_setting("email_product_name") or "").strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    return (os.environ.get("EMAIL_PRODUCT_NAME") or "").strip() or "RFP Intelligence System"
+
+
+def _short_name() -> str:
+    """Short form used in subject lines, where width is scarce.
+
+    Same resolution order as `_product_name()`. Kept separate so a
+    deployment can have a long header ("… RFP Intelligence System") and a
+    tight subject ("… RFPIS account") without one dictating the other.
+    """
+    try:
+        from core.settings import get_setting
+        v = (get_setting("email_product_short_name") or "").strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    return (os.environ.get("EMAIL_PRODUCT_SHORT_NAME") or "").strip() or "RFPIS"
+
+
+def _help_url() -> str:
+    """Deep link to the in-app Help page.
+
+    Streamlit serves pages under the url_path registered in App.py, so Help
+    is always <app>/help. Built from _app_url() rather than written out, so
+    a deployment that moves domain does not silently email a dead link.
+    """
+    return _app_url().rstrip("/") + "/help"
+
+
 def _branded_html(*, recipient_name: str, body_html: str) -> str:
     """Wrap a body in the RFPIS-branded email shell. Inline styles only —
     most email clients strip <style> blocks."""
     import html as _html
     app_url = _app_url()
+    help_url = _help_url()
     safe_name = recipient_name or "there"
     _pb = _powered_by()
     _powered_html = (
@@ -64,13 +117,15 @@ def _branded_html(*, recipient_name: str, body_html: str) -> str:
 <html>
   <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f5f7fa; padding:24px; margin:0;">
     <div style="max-width:560px; margin:0 auto; background:#ffffff; border-radius:8px; padding:32px 28px; border:1px solid #e3e7e3;">
-      <div style="font-size:18px; font-weight:700; color:#1e3a8a; margin-bottom:4px;">RFP Intelligence System</div>
+      <div style="font-size:18px; font-weight:700; color:#1e3a8a; margin-bottom:4px;">{_html.escape(_product_name())}</div>
       {_powered_html}
       <div style="font-size:15px; color:#1f2937; line-height:1.55;">
         <p>Hi <strong>{safe_name}</strong>,</p>
         {body_html}
         <p style="margin-top:28px; font-size:13px; color:#475569;">
-          Log in at <a href="{app_url}" style="color:#00703C;">{app_url}</a>.
+          Log in at <a href="{app_url}" style="color:#00703C;">{app_url}</a>
+          &nbsp;·&nbsp;
+          <a href="{help_url}" style="color:#00703C;">Help</a>
         </p>
         <p style="font-size:12px; color:#94a3b8; margin-top:24px;">
           This is an automated message. If you didn't expect this email,
@@ -103,7 +158,7 @@ def send_welcome_email(
     """
     return send_email(
         to=[to_email],
-        subject="Your RFPIS account — temporary password inside",
+        subject=f"Your {_short_name()} account — temporary password inside",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 
@@ -129,7 +184,7 @@ def send_password_reset_email(
     """
     return send_email(
         to=[to_email],
-        subject="RFPIS password reset — temporary password inside",
+        subject=f"{_short_name()} password reset — temporary password inside",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 
@@ -155,7 +210,7 @@ def send_signup_received_email(
     """
     return send_email(
         to=[to_email],
-        subject="RFPIS — your registration is pending approval",
+        subject=f"{_short_name()} — your registration is pending approval",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 
@@ -174,7 +229,7 @@ def send_account_approved_email(
     """
     return send_email(
         to=[to_email],
-        subject="RFPIS — your account is now active",
+        subject=f"{_short_name()} — your account is now active",
         html=_branded_html(recipient_name=to_name or "", body_html=body),
     )
 
