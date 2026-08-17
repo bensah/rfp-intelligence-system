@@ -40,8 +40,13 @@ _APP_OWNED_FIELDS = (
 
 
 def _blankish(v: Any) -> bool:
-    """True when a stored value carries no decision worth protecting."""
-    return v is None or str(v).strip().lower() in ("", "none", "nan", "not submitted")
+    """True when a stored value carries no decision worth protecting.
+
+    Delegates to core.donor_decision so the sync, the editor's suggestion and the Grants
+    display cannot disagree about what "no answer yet" means.
+    """
+    from core.donor_decision import is_no_answer
+    return is_no_answer(v)
 
 
 def _fetch_app_owned(sb, uids: list[str]) -> dict[str, dict[str, Any]]:
