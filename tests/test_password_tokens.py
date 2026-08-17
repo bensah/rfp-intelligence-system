@@ -532,3 +532,91 @@ class TheRoutesTests(unittest.TestCase):
             self.assertNotIn("Activate my account", got["html"])
         finally:
             UE.send_email = orig
+
+
+class ThePublicPagesAreNotInTheNavTests(unittest.TestCase):
+    """Registered for URLs, hidden from the sidebar rail.
+
+    Sign in / Activate / Reset password must be registered so the login gate can exempt them
+    and so an emailed link resolves - but they are meaningless to anybody who can see a
+    sidebar, because seeing one means you are already signed in. Offering "Activate" to an
+    activated account invites a click that ends in "this link is no longer valid".
+    """
+
+    def _src(self, rel):
+        import io
+        with io.open(os.path.join(_ROOT, *rel.split("/")), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_each_public_path_is_hidden_in_both_selectors(self):
+        css = self._src("core/app_header.py")
+        for slug in ("login", "activate-account", "password-reset"):
+            self.assertIn('[data-testid="stSidebarNav"] a[href$="/%s" i]' % slug, css)
+            self.assertIn('section[data-testid="stSidebar"] a[href$="/%s" i]' % slug, css)
+
+    def test_they_are_still_registered_so_the_urls_resolve(self):
+        # Hiding a link must not mean removing the page: the emails link straight to it.
+        app = self._src("App.py")
+        for slug in ("login", "activate-account", "password-reset"):
+            self.assertIn('url_path="%s"' % slug, app)
+
+    def test_settings_is_deliberately_still_visible(self):
+        # Guards the neighbouring rule: Settings is a first-class rail item for admins and
+        # must not be swept up by a broader hide.
+        css = self._src("core/app_header.py")
+        self.assertNotIn('a[href$="/settings" i]', css)
+
+
+class TheActivationWorkflowTests(unittest.TestCase):
+    """The owner's sequence, 2026-08-17:
+
+        admin adds user -> email -> click link -> activation page -> "Activate account"
+        -> account activated + choose password -> password saved -> LOGIN page -> signed in
+
+    Two things were wrong. A new joiner landed straight on a password form, skipping the
+    moment where they can see WHICH account they are activating - which matters when an
+    invitation has been forwarded or sent to the wrong address. And once the password was
+    saved the page fell back to its "paste your code" form, so a finished flow looked like it
+    had returned to the start.
+    """
+
+    def _src(self, rel):
+        import io
+        with io.open(os.path.join(_ROOT, *rel.split("/")), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_an_invite_asks_for_confirmation_first(self):
+        src = self._src("auth/authenticator.py")
+        self.assertIn('_activation_confirmed_', src)
+        self.assertIn('st.button("Activate account"', src)
+        self.assertIn("This invitation is for", src)
+
+    def test_it_names_the_account_being_activated(self):
+        # The point of the step: a forwarded invitation should be visibly for someone else.
+        src = self._src("auth/authenticator.py")
+        i = src.index("This invitation is for")
+        self.assertIn("{email}", src[i - 40:i + 60])
+
+    def test_a_reset_skips_that_step(self):
+        # The person asked for it and knows who they are.
+        src = self._src("auth/authenticator.py")
+        self.assertIn("if is_invite and not st.session_state.get(_confirm_key):", src)
+
+    def test_saving_records_completion_and_says_activated(self):
+        src = self._src("auth/authenticator.py")
+        self.assertIn('st.session_state["_password_set_for"] = email', src)
+        self.assertIn("Account activated. Your password is set.", src)
+
+    def test_the_finish_goes_to_the_login_page(self):
+        src = self._src("auth/authenticator.py")
+        i = src.index('key="tok_goto_login"')
+        self.assertIn('switch_page("app_pages/login.py")', src[i:i + 400])
+
+    def test_neither_public_page_falls_back_to_the_code_form_once_done(self):
+        for rel in ("app_pages/activate.py", "app_pages/password_reset.py"):
+            src = self._src(rel)
+            self.assertIn('_done_for = st.session_state.get("_password_set_for")', src)
+            # The guard must precede the code box, or the fallback still renders.
+            # Compared against the CALL, not the import at the top of the file.
+            self.assertLess(src.index("_password_set_for"),
+                            src.index("activation_code_entry(expanded=True)"), rel)
