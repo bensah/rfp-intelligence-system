@@ -656,6 +656,30 @@ def handle_setup_token() -> None:
     email = target.get("email") or ""
     is_invite = record.get("purpose") == "invite"
 
+    # ONE EXPLICIT STEP BEFORE THE PASSWORD (owner's workflow, 2026-08-17):
+    #   click the emailed link -> "Activate your account" with the account named ->
+    #   Activate -> choose a password -> confirmation -> sign in.
+    # Landing a new joiner straight on a password form skips the moment where they can see
+    # WHICH account they are activating, which matters when an invitation has been
+    # forwarded or an admin used the wrong address. A reset needs no such step - the person
+    # asked for it and already knows who they are - so it goes straight to the form.
+    _confirm_key = f"_activation_confirmed_{record.get('id')}"
+    if is_invite and not st.session_state.get(_confirm_key):
+        st.title("🔑 Activate your account")
+        st.write(f"This invitation is for **{email}**.")
+        st.caption(
+            "Activating sets up your sign-in. You will choose your own password on the "
+            "next screen - nobody else, including the administrator who invited you, "
+            "knows it."
+        )
+        if st.button("Activate account", type="primary", key="tok_activate"):
+            st.session_state[_confirm_key] = True
+            st.rerun()
+        st.stop()
+
+    if is_invite:
+        st.success("Account activated. One step left: choose your password.")
+
     st.title("Choose your password")
     st.caption(
         f"Setting the password for **{email}**."
@@ -737,18 +761,30 @@ def handle_setup_token() -> None:
             # re-enter this screen on the next rerun with a token already spent.
             st.session_state.pop(_TOKEN_SS_KEY, None)
 
-            st.success("Password saved.")
+            # Remembered so the activation / reset PAGE can show a completed state instead
+            # of re-rendering its "paste your code" form. That fallback is what made the
+            # flow feel circular: password saved, and then apparently back to the start.
+            st.session_state["_password_set_for"] = email
+            st.success("Account activated. Your password is set."
+                       if is_invite else "Password changed.")
             # A dead end otherwise: the screen said "you can now sign in" and offered
             # nothing to sign in WITH. The button reruns the app, which - with the token
             # gone from the URL and from session state - renders the login form. The URL is
             # printed too, for anyone who arrived here from a mail client that will not
             # hand a click back to the app.
             st.markdown("### Sign in")
+            st.caption("Use your email and the password you just chose.")
             if st.button("Go to sign in", type="primary", key="tok_goto_login"):
-                st.rerun()
+                # The login PAGE, so the address bar matches what is on screen. switch_page
+                # is inside a try because a bare st.rerun() is the correct fallback if the
+                # page is not registered in this deployment.
+                try:
+                    st.switch_page("app_pages/login.py")
+                except Exception:
+                    st.rerun()
             _u = _public_app_url()
             if _u:
-                st.caption(f"Or open {_u}")
+                st.caption(f"Or open {_u}/login")
             st.stop()
 
     st.stop()

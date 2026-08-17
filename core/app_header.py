@@ -1127,6 +1127,11 @@ def render_app_header() -> None:
     # `i` flag makes the match case-insensitive, so it works whether
     # Streamlit derives the href from the url_path (lowercase) or the page
     # title (capitalised).
+    # Sign in / Activate / Reset password are hidden for a different reason: they are
+    # registered so the login gate can exempt them and so an emailed link resolves, but
+    # they are meaningless to somebody already signed in - which is everybody who can see
+    # a sidebar. A signed-in user has no use for "Sign in", and offering "Activate" to an
+    # activated account invites a click that ends in "this link is no longer valid".
     # NOTE: **Settings** is intentionally NOT hidden — admins get it as a
     # first-class sidebar item (labelled when expanded, ⚙️ icon in the
     # collapsed rail). It's only registered in the nav for admins (App.py),
@@ -1138,10 +1143,16 @@ def render_app_header() -> None:
           [data-testid="stSidebarNav"] a[href$="/help" i],
           [data-testid="stSidebarNav"] a[href$="/search" i],
           [data-testid="stSidebarNav"] a[href$="/opportunity" i],
+          [data-testid="stSidebarNav"] a[href$="/login" i],
+          [data-testid="stSidebarNav"] a[href$="/activate-account" i],
+          [data-testid="stSidebarNav"] a[href$="/password-reset" i],
           section[data-testid="stSidebar"] a[href$="/profile" i],
           section[data-testid="stSidebar"] a[href$="/help" i],
           section[data-testid="stSidebar"] a[href$="/search" i],
-          section[data-testid="stSidebar"] a[href$="/opportunity" i] {
+          section[data-testid="stSidebar"] a[href$="/opportunity" i],
+          section[data-testid="stSidebar"] a[href$="/login" i],
+          section[data-testid="stSidebar"] a[href$="/activate-account" i],
+          section[data-testid="stSidebar"] a[href$="/password-reset" i] {
             display: none !important;
           }
         </style>

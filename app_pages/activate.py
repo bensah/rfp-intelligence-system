@@ -35,6 +35,20 @@ _hide_sidebar_on_login()
 # when there is no code to act on yet.
 handle_setup_token()
 
+# DONE MEANS DONE. Once a password has been set in this session, this page must not fall
+# back to its "paste your code" form - that is what made the flow feel circular: password
+# saved, and then apparently back to the beginning. The code that got you here is spent, so
+# there is nothing left to paste.
+_done_for = st.session_state.get("_password_set_for")
+if _done_for:
+    st.title("✅ All set")
+    st.write(f"**{_done_for}** is ready to use.")
+    st.caption("Sign in with your email and the password you just chose.")
+    if st.button("Go to sign in", type="primary"):
+        st.session_state.pop("_password_set_for", None)
+        st.switch_page("app_pages/login.py")
+    st.stop()
+
 st.title("🔑 Activate your account")
 st.caption(
     "Paste the activation code from your invitation email. If you are resetting a "
