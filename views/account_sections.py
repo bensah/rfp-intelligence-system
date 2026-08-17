@@ -128,8 +128,13 @@ def _gen_temp_password(length: int = 12) -> str:
 _DIALOG_CLOSE_SECONDS = 4
 
 
-def _auto_close_dialog(seconds: int = _DIALOG_CLOSE_SECONDS) -> None:
+def _auto_close_dialog(seconds: int = _DIALOG_CLOSE_SECONDS,
+                       open_key: str | None = None) -> None:
     """Dismiss the surrounding st.dialog once its result has been read.
+
+    `open_key` is the session-state flag that keeps the dialog re-opening across reruns
+    (see the Add-user trigger). It has to be cleared here, or the rerun that closes the
+    dialog immediately reopens it - the flag would still say "open".
 
     st.rerun() is what closes a dialog — the delete modal already relies on
     that. The delay is the entire point: rerunning immediately would wipe
@@ -145,6 +150,8 @@ def _auto_close_dialog(seconds: int = _DIALOG_CLOSE_SECONDS) -> None:
     """
     st.caption(f"Closing in {seconds} seconds…")
     time.sleep(seconds)
+    if open_key:
+        st.session_state.pop(open_key, None)
     st.rerun()
 
 
@@ -1135,6 +1142,7 @@ def render_manage_users(user: dict, sb) -> None:
         cancel = bc2.button("Cancel", width='stretch', key="adu_cancel")
 
         if cancel:
+            st.session_state.pop("adu_open", None)
             st.rerun()
 
         if save:
@@ -1270,7 +1278,7 @@ def render_manage_users(user: dict, sb) -> None:
                     f"✅ Created **{d_email}**. A one-time activation link has "
                     f"been emailed — it expires in 7 days, and they choose "
                     f"their own password.")
-                _auto_close_dialog()
+                _auto_close_dialog(open_key="adu_open")
             except MailerNotConfigured:
                 st.warning(
                     "Account created, but email service is not configured "
@@ -1296,8 +1304,24 @@ def render_manage_users(user: dict, sb) -> None:
     with _hcol_btn:
         st.markdown("<div style='padding-top:1.6rem'></div>",
                     unsafe_allow_html=True)
+        # A DIALOG MUST BE RE-OPENED ON EVERY RERUN, or it is not there to handle its own
+        # buttons. `if st.button(...): _dialog()` renders it ONLY on the run where the
+        # trigger was clicked; any widget interaction inside it reruns the script, the
+        # trigger is False again, the dialog function is never called, and the dialog stops
+        # being rendered mid-edit. The Create-user handler lives inside that function, so it
+        # never runs: fill the fields, click Create user, nothing happens.
+        #
+        # Reproduced with AppTest: after one keystroke in the Email field the dialog's own
+        # buttons disappeared from the tree entirely (dialog_runs stayed at 1), and clicking
+        # Create user raised KeyError 'adu_save' because the widget no longer existed.
+        #
+        # The flag makes the open state survive the rerun. Cleared where the dialog ends -
+        # Cancel, and the auto-close after a successful create - so the next page load does
+        # not reopen it.
         if st.button("➕ Add User", type="primary", width='stretch',
                      key="mu_add_user_top"):
+            st.session_state["adu_open"] = True
+        if st.session_state.get("adu_open"):
             _add_user_dialog()
 
     # ─── Pending approvals banner ───────────────────────────────────────
