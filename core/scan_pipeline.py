@@ -557,6 +557,18 @@ def ingest_candidates(
                 if (_dl["deadline"] and _dl["confidence"] in ("high", "medium")
                         and _dl["method"] != "default-rolling"):
                     cand["call_submission_deadline"] = _dl["deadline"]
+                elif (_dl["deadline"] and _dl["method"] != "default-rolling"
+                        and str(_dl["deadline"])[:10] < _date.today().isoformat()):
+                    # A LOW-confidence date that has already PASSED is still evidence.
+                    # The two questions are different: "is this good enough to publish as
+                    # the deadline" (no - we are not sure what it labels) and "does this
+                    # page describe a window that has closed" (yes - the date is in the
+                    # past whatever it labels). Discarding it on confidence alone is how a
+                    # call whose page reads "Open until 30 December 2017" stayed Open and
+                    # came back every week. Recorded as an expiry signal, NOT written to
+                    # call_submission_deadline, so nothing downstream shows a date we do
+                    # not trust.
+                    cand["_expired_window"] = str(_dl["deadline"])[:10]
             except Exception as _exc:
                 log.debug("deadline backstop skipped: %s", _exc)
         # Link sanity: after any resolve rewrite, the opportunity_link must be a real

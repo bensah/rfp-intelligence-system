@@ -685,6 +685,21 @@ def main() -> None:
         workers=args.workers,
         extract_only=_extract_only,
     )
+    # Age the store BEFORE screening. Screening is handed the whole Open set, so anything
+    # still marked Open is re-offered to every tenant on every run. Nothing did this
+    # before: mark_closed_past_deadline existed with no caller, and could not have closed
+    # an undated row anyway (`deadline < today` is never true for NULL). That is why calls
+    # whose windows had long passed kept reappearing week after week.
+    if not args.dry_run:
+        try:
+            from datetime import date as _date
+            _today = _date.today().isoformat()
+            _past = extracted_store.mark_closed_past_deadline(_today)
+            _stale = extracted_store.mark_closed_stale_undated(_today)
+            print(f"Store ageing · {_past} past-deadline · {_stale} stale undated → Closed")
+        except Exception as _aexc:
+            print(f"  (store ageing failed: {_aexc})", file=sys.stderr)
+
     # Option-C: after the shared-store crawl, auto-populate EACH tenant's pipeline by
     # screening the store against that tenant's own policies + profile.
     if _do_screen:

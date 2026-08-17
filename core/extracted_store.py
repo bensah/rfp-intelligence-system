@@ -153,11 +153,54 @@ def list_extracted(*, status: str | None = None, source: str | None = None,
 
 def mark_closed_past_deadline(today_iso: str) -> int:
     """Flip funding_status Open->Closed for rows whose deadline has passed. Returns
-    rows updated (best-effort; intended for a daily cron)."""
+    rows updated (best-effort; called from the weekly cron before screening).
+
+    This existed but had NO CALLER anywhere in the repository, so nothing ever aged a row
+    out of the store: screening is handed the whole Open set on every run
+    (`list_extracted(status="Open")`), and rows whose deadline had passed long ago were
+    re-offered to every tenant every week. Measured on the live store: 719 Open rows, 258
+    of them with a deadline already in the past.
+    """
     try:
         res = (get_client().table(_TABLE).update({"funding_status": "Closed"})
                .eq("funding_status", "Open").lt("deadline", today_iso).execute())
         return len(res.data or [])
     except Exception as exc:
-        log.debug("extracted_store.mark_closed failed: %s", exc)
+        log.warning("extracted_store.mark_closed failed: %s", exc)
         return 0
+
+
+# How long an undated row may sit in the Open set before it is treated as stale. Matches
+# auto_scorer._STALE_POSTING_DAYS - the same judgement about how long a call plausibly
+# stays open - so the two do not drift apart.
+_STALE_UNDATED_DAYS = 183
+
+
+def mark_closed_stale_undated(today_iso: str, *, days: int = _STALE_UNDATED_DAYS) -> int:
+    """Close Open rows that have NO deadline at all and have not been seen for `days`.
+
+    `mark_closed_past_deadline` cannot touch these: its predicate is `deadline < today`,
+    and a NULL deadline never satisfies a comparison, so an undated row was Open forever
+    by construction. Those are exactly the rows that kept coming back - 30 of them on the
+    live store, including every one of the repeatedly-reported expired calls.
+
+    A row is only closed when it is BOTH undated and stale, so a genuinely rolling call
+    that is still being re-crawled keeps its Open status (each crawl refreshes the
+    timestamp).
+    """
+    from datetime import date, timedelta
+    try:
+        cutoff = (date.fromisoformat(today_iso[:10]) - timedelta(days=days)).isoformat()
+    except (ValueError, TypeError):
+        return 0
+    closed = 0
+    for stamp in ("updated_at", "scraped_at", "created_at"):
+        try:
+            res = (get_client().table(_TABLE).update({"funding_status": "Closed"})
+                   .eq("funding_status", "Open").is_("deadline", "null")
+                   .lt(stamp, cutoff).execute())
+            closed += len(res.data or [])
+            break                       # the first column the table actually has wins
+        except Exception:
+            continue
+    return closed

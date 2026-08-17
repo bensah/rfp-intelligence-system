@@ -27,6 +27,14 @@ _SUBMIT_LABELS = (
     "due date", "last date", "final date", "submit by", "must be received by",
     "expressions of interest due", "eoi deadline", "proposals due",
     "date limite",                       # FR — francophone donors
+    # "Open until <date>" is how several donor-catalogue sites state their window, and its
+    # absence here is why an expired call kept coming back: the date fell into the
+    # unlabelled `other` bucket, came back confidence='low', and the scan pipeline
+    # discards anything below medium. The page said "Open until 30 December 2017" in plain
+    # words the whole time.
+    "open until", "open till", "open through", "accepting applications until",
+    "accepting submissions until", "submissions until", "applications until",
+    "ouvert jusqu'au", "jusqu'au",        # FR
 )
 # Context that marks a NON-submission date (must NOT be taken as the deadline).
 _NEGATIVE_LABELS = (
