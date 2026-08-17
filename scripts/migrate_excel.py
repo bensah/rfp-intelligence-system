@@ -569,7 +569,8 @@ def _load_workbook_retrying(xlsx_path: Path, attempts: int = 4):
     raise last if last else RuntimeError("could not open workbook")
 
 
-def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
+def migrate(xlsx_path: Path, dry_run: bool = False,
+            trust_sheet_decisions: bool = False) -> None:
     wb = _load_workbook_retrying(xlsx_path)
     sb = None if dry_run else get_client()
 
@@ -737,7 +738,7 @@ def migrate(xlsx_path: Path, dry_run: bool = False) -> None:
             _kept: list[str] = []
             for r in _existing:
                 payload = {k: v for k, v in r.items() if v is not None}
-                if not args.trust_sheet_decisions:
+                if not trust_sheet_decisions:
                     _stored = _existing_rows.get(r["uid"], {})
                     for _f in _APP_OWNED_FIELDS:
                         if _f not in payload:
@@ -1021,7 +1022,8 @@ def main() -> None:
         except Exception as _e:
             print(f"(tenant override unavailable, importing unscoped: {_e})")
     try:
-        migrate(args.xlsx, dry_run=args.dry_run)
+        migrate(args.xlsx, dry_run=args.dry_run,
+                trust_sheet_decisions=args.trust_sheet_decisions)
     finally:
         if _tok is not None:
             try:
