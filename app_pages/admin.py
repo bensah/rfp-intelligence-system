@@ -242,7 +242,12 @@ if tab_suggestions is not None:
 # super_user gets the management controls (add / suspend / blacklist / approve / developer).
 # User-admin logic lives in views/account_sections.py so pages share one impl.
 with tab_accounts:
-    _acct_tabs = st.tabs(["Users", "Tenants", "Blacklisted"])
+    # "Deployment" is super-only: it reports what this running instance read from its
+    # environment (secrets provenance, project ref, key kind, resolved tenant) — the
+    # answer to "the published app behaves differently from my machine".
+    _acct_tab_names = ["Users", "Tenants", "Blacklisted"] + (["Deployment"] if _is_super
+                                                             else [])
+    _acct_tabs = st.tabs(_acct_tab_names)
     with _acct_tabs[0]:
         _picked_user = render_manage_users(user, sb)
         if _picked_user:
@@ -252,6 +257,10 @@ with tab_accounts:
         render_manage_tenants(user, sb, can_manage=_is_super)
     with _acct_tabs[2]:
         render_blacklisted(user, sb, can_manage=_is_super)
+    if _is_super:
+        with _acct_tabs[3]:
+            from core.env_diag import render as render_env_diagnostics
+            render_env_diagnostics(user)
 if tab_analytics is not None:
     with tab_analytics:
         from views.super_analytics import render_super_analytics

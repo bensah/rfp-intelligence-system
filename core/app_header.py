@@ -1223,6 +1223,19 @@ def render_app_header() -> None:
     # Tenant switcher for a non-super user who belongs to >1 tenant (R3).
     _render_tenant_switcher()
 
+    # DEPLOYMENT-LEVEL safeguards (core.env_diag). The wrong-tenant landing that prompted
+    # these had no symptom at all beyond a name in the header, because a deployment whose
+    # multi-tenant switch is off still renders a complete, plausible app — just an
+    # unscoped one wearing the legacy org identity. The banner makes that state loud for
+    # admins; ?diag=1 shows a super_user exactly what THIS instance read from its
+    # environment, so local-vs-published differences are read rather than guessed.
+    try:
+        from core.env_diag import render_degradation_banner, render_if_requested
+        render_degradation_banner()
+        render_if_requested()
+    except Exception:
+        pass
+
     # No st.divider() here — the pinned top bar carries its own bottom
     # border (see `.st-key-rfpis_topbar` in _GLOBAL_CSS). A separate
     # divider would scroll away from the sticky header and leave a gap.

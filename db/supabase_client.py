@@ -73,17 +73,49 @@ def _force_http1_transport() -> None:
 _force_http1_transport()
 
 
-def _read_secret(name: str) -> str | None:
+def secret_lookup(name: str) -> tuple[str | None, str | None]:
+    """`(value, provenance)` for one configuration secret — the value and WHERE it was
+    found: ``"env"``, ``"st.secrets"``, ``"st.secrets[<section>]"``, or ``(None, None)``
+    when it isn't configured anywhere.
+
+    The provenance half exists because a deployment that reads a secret from a different
+    place than the developer's machine behaves like a different app while looking like the
+    same one (see core.env_diag). Nothing here ever returns the value to a UI — the
+    diagnostics render a fingerprint.
+
+    SECTION FALLBACK: Streamlit secrets written as
+
+        [supabase]
+        SUPABASE_JWT_SECRET = "..."
+
+    are NOT visible as ``st.secrets["SUPABASE_JWT_SECRET"]`` — they live one level down.
+    A secret that is set but silently unreadable is the worst failure mode this app has
+    (SUPABASE_JWT_SECRET is the multi-tenant master switch: unreadable = every user
+    silently drops to one unscoped pool), so we look one level into each mapping section
+    too. Only mappings are searched — a plain string section would make ``in`` a substring
+    test and could match by accident."""
     val = os.environ.get(name)
     if val:
-        return val
+        return val, "env"
     try:
         import streamlit as st  # type: ignore
         if name in st.secrets:
-            return str(st.secrets[name])
+            return str(st.secrets[name]), "st.secrets"
+        for section, block in st.secrets.items():
+            if not hasattr(block, "keys"):
+                continue                      # not a [section] table — skip
+            try:
+                if name in block:
+                    return str(block[name]), f"st.secrets[{section}]"
+            except Exception:
+                continue
     except Exception:
         pass
-    return None
+    return None, None
+
+
+def _read_secret(name: str) -> str | None:
+    return secret_lookup(name)[0]
 
 
 # True single-client singleton with a double-checked lock. (Was @lru_cache, which
