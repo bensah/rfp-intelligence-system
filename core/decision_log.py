@@ -170,6 +170,36 @@ def log_rejects(records: Iterable[dict]) -> int:
         return 0
 
 
+def log_human_reject(rows, by: str | None = None,
+                     reason: str | None = None) -> int:
+    """A reviewer removed these RFPs from their pipeline. Record it as a REJECT.
+
+    Removal is the most decisive judgement a reviewer makes — more certain than a Decline,
+    which still sits in the pipeline being argued about — and until now it was the only one
+    the system threw away. The row vanished, the scorer learned nothing, and the same call
+    came back on the next scan to be removed again. That is the loop behind "this donor's
+    expired calls keep leaking back in".
+
+    Logged as `human_reject`, deliberately distinct from `system_reject`: one is a rule
+    firing, the other is a person overruling everything the rules concluded. Mixing them
+    would let a training set treat a human's verdict as just another gate outcome.
+
+    Returns the number of rows recorded; never raises — losing the learning signal must
+    not block the removal the reviewer asked for."""
+    recorded = 0
+    for row in (rows or []):
+        try:
+            rec = _base_record(row, event_type="human_reject",
+                               label=(row.get("decision") or "Rejected"),
+                               reason=reason or row.get("decision_note"), by=by)
+            get_client().table(_TABLE).insert(rec).execute()
+            recorded += 1
+        except Exception as exc:
+            log.debug("decision_log.log_human_reject failed for %s: %s",
+                      (row or {}).get("uid"), exc)
+    return recorded
+
+
 def log_decision(row: dict, decision: str, by: str | None = None) -> bool:
     """Log a human Proceed / Park / Decline on a record — a training LABEL.
 

@@ -38,6 +38,22 @@ sb = get_client()
 is_admin = role in ("super_user", "admin")
 can_edit = role in ("super_user", "admin", "reviewer")
 
+# A developer tenant curates the shared store, so removal there really is a delete. For
+# every other tenant the row is THEIR copy, and taking it out of their pipeline is a
+# judgement about the opportunity — so it is called what it is, and it is kept.
+_IS_DEVELOPER_VIEW = False
+try:
+    from core import permissions as _perms_mod
+    _IS_DEVELOPER_VIEW = bool(_perms_mod.is_developer_admin(user))
+except Exception:
+    _IS_DEVELOPER_VIEW = False
+_REMOVE_VERB = "Delete" if _IS_DEVELOPER_VIEW else "Reject"
+_REMOVE_ICON = "🗑" if _IS_DEVELOPER_VIEW else "🚫"
+_REMOVE_HELP = ("Remove the record from the shared store."
+                if _IS_DEVELOPER_VIEW else
+                "Remove this RFP from your pipeline and record it as rejected, so the "
+                "scorer learns from it and the next scan does not bring it back.")
+
 st.subheader("Records — All RFPs")
 st.caption(
     "Every submission (auto-scanned + manually captured). "
@@ -416,9 +432,9 @@ if is_multi:
     blacklist_clicked = False
     view_clicked = False
     delete_clicked = ab2.button(
-        f"🗑 Delete {len(selected_full_rows)} RFPs",
+        f"{_REMOVE_ICON} {_REMOVE_VERB} {len(selected_full_rows)} RFPs",
         width='stretch', disabled=not is_admin,
-        help=None if is_admin else "Admins only.",
+        help=_REMOVE_HELP if is_admin else "Admins only.",
     )
     share_clicked = ab3.button(
         f"📤 Share {len(selected_full_rows)} RFPs",
@@ -432,8 +448,8 @@ else:
                                    "(filled + blank) in one window.")
     edit_clicked = ab1.button("✏ Edit", width='stretch', disabled=not can_edit)
     delete_clicked = ab2.button(
-        "🗑 Delete", width='stretch', disabled=not is_admin,
-        help=None if is_admin else "Admins only.",
+        f"{_REMOVE_ICON} {_REMOVE_VERB}", width='stretch', disabled=not is_admin,
+        help=_REMOVE_HELP if is_admin else "Admins only.",
     )
     share_clicked = ab3.button("📤 Share", width='stretch')
     blacklist_clicked = ab4.button(
@@ -672,16 +688,27 @@ def view_dialog(row: dict) -> None:
 @st.dialog("Confirm delete", width="medium")
 def delete_dialog(rows: list[dict]) -> None:
     n = len(rows)
+    _reject = not _IS_DEVELOPER_VIEW
     if n == 1:
         row = rows[0]
-        st.error("This permanently deletes the record. There is no undo.")
+        if _reject:
+            st.warning("This removes the RFP from your pipeline and records it as "
+                       "**rejected**. The rejection is kept — it trains the scorer and "
+                       "stops the same call returning on the next scan.")
+        else:
+            st.error("This permanently deletes the record. There is no undo.")
         st.markdown(
             f"- **UID:** `{row['uid']}`\n"
             f"- **Title:** {row.get('opportunity_title') or '(no title)'}\n"
             f"- **Funder:** {row.get('funding_agency') or '—'}"
         )
     else:
-        st.error(f"This permanently deletes **{n} records**. There is no undo.")
+        if _reject:
+            st.warning(f"This removes **{n} RFPs** from your pipeline and records them as "
+                       f"**rejected** — kept as a training signal, and not re-ingested by "
+                       f"the next scan.")
+        else:
+            st.error(f"This permanently deletes **{n} records**. There is no undo.")
         preview = rows[:12]
         for r in preview:
             st.markdown(
@@ -690,8 +717,9 @@ def delete_dialog(rows: list[dict]) -> None:
         if n > len(preview):
             st.markdown(f"_… and {n - len(preview)} more_")
     c1, c2 = st.columns(2)
+    _verb = _REMOVE_VERB.lower()
     if c1.button(
-        f"Confirm delete ({n})" if n > 1 else "Confirm delete",
+        f"Confirm {_verb} ({n})" if n > 1 else f"Confirm {_verb}",
         type="primary", width='stretch',
     ):
         uids = [r["uid"] for r in rows]
@@ -700,14 +728,32 @@ def delete_dialog(rows: list[dict]) -> None:
             # was captured once at import and can hold a stale/expired per-session JWT
             # client, whose write then hangs. safe_execute bounds the call with the
             # client's timeouts + a short retry so a transient blip can't stall the dialog.
-            with st.spinner("Deleting…"):
+            with st.spinner(f"{_REMOVE_VERB}ing…" if not _reject else "Rejecting…"):
+                if _reject:
+                    # ORDER MATTERS: the row IS the evidence, and after the delete there
+                    # is nothing left to learn from or to tombstone with. Both steps are
+                    # best-effort — a lost learning signal must never block the removal
+                    # the reviewer asked for.
+                    try:
+                        from core import decision_log as _dlog
+                        _dlog.log_human_reject(rows, by=user.get("email"))
+                    except Exception as _lexc:
+                        st.caption(f"(rejection not recorded for learning: {_lexc})")
+                    try:
+                        from core import seen_ledger as _seen
+                        for _r in rows:
+                            _seen.record_one(_r, reason="human_reject")
+                    except Exception:
+                        pass               # tombstone is a convenience, not the action
                 safe_execute(get_client().table("rfp_submissions")
                              .delete().in_("uid", uids))
             st.cache_data.clear()
-            st.toast(f"Deleted {n} record(s)", icon="🗑")
+            st.toast(f"{'Rejected' if _reject else 'Deleted'} {n} record(s)",
+                     icon="🚫" if _reject else "🗑")
             st.rerun()
         except Exception as exc:
-            st.error(f"Delete failed — nothing was removed. {type(exc).__name__}: {exc}")
+            st.error(f"{_REMOVE_VERB} failed — nothing was removed. "
+                     f"{type(exc).__name__}: {exc}")
     if c2.button("Cancel", width='stretch'):
         st.rerun()
 
