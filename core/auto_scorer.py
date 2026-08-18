@@ -1483,7 +1483,12 @@ def language_eligible(candidate: dict[str, Any]) -> tuple[bool, str]:
 # this many days ago is almost certainly closed — real application windows run
 # weeks to a few months, not years. Rolling / open-ended calls are exempt (they
 # say so in the text). Conservative end of the user's 3-6 month guidance.
-_STALE_POSTING_DAYS = 183  # ~6 months
+# How long an undated call stays plausible. Owner's rule (2026-08-18): three months, not
+# six. The window exists to protect a genuine rolling call that we happened to find late,
+# or one whose source we verified after it was published — not to keep a closed page alive.
+# Six months was letting a January call sit in an August review week.
+_STALE_POSTING_DAYS = 90   # ~3 months
+
 _ROLLING_RE = re.compile(
     r"(rolling\s+basis|on\s+a\s+rolling|no\s+(?:fixed\s+|set\s+)?deadline"
     r"|deadline\s*:?\s*(?:none|n/?a|ongoing|rolling|continuous)"

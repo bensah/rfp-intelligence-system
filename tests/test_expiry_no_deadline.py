@@ -252,3 +252,33 @@ class TheStoreIsAgedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ThreeMonthWindowTests(unittest.TestCase):
+    """The undated-call window is three months, not six (owner, 2026-08-18).
+
+    Six months meant a call posted in January was still plausible in August. The window
+    exists to protect a genuine rolling call found late, or one whose source was verified
+    after publication — not to keep a closed page alive for half a year."""
+
+    def test_the_window_is_ninety_days(self):
+        self.assertEqual(A._STALE_POSTING_DAYS, 90)
+
+    def test_a_call_posted_four_months_ago_with_no_deadline_is_expired(self):
+        from datetime import date, timedelta
+        cand = {"date_posted": (date.today() - timedelta(days=120)).isoformat()}
+        keep, why = A.deadline_in_future(cand)
+        self.assertFalse(keep)
+        self.assertIn("120d ago", why)
+
+    def test_a_call_posted_last_month_is_still_plausible(self):
+        from datetime import date, timedelta
+        cand = {"date_posted": (date.today() - timedelta(days=30)).isoformat()}
+        self.assertTrue(A.deadline_in_future(cand)[0])
+
+    def test_an_explicit_rolling_call_is_never_aged_out(self):
+        from datetime import date, timedelta
+        cand = {"date_posted": (date.today() - timedelta(days=400)).isoformat(),
+                "funding_window": "Rolling",
+                "opportunity_title": "Applications accepted on a rolling basis"}
+        self.assertTrue(A.deadline_in_future(cand)[0])
