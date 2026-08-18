@@ -232,6 +232,16 @@ def snapshot(user: dict | None = None) -> dict[str, Any]:
     except Exception as exc:
         snap.setdefault("memberships", {})["error"] = f"{type(exc).__name__}: {exc}"
 
+    # -- The headless browser the PDF export needs ---------------------------
+    # pip installs the Playwright package, not the browser, and no host runs
+    # `playwright install` for us — so "the PDF export only fails on the deployed app" is a
+    # deployment fact, which is exactly what this report exists to show.
+    try:
+        from core import playwright_setup
+        snap["pdf_engine"] = playwright_setup.status()
+    except Exception as exc:
+        snap["pdf_engine"] = {"error": f"{type(exc).__name__}: {exc}"}
+
     # -- Which org identity the header is showing, and from which store ------
     ident: dict[str, Any] = {}
     try:
@@ -307,6 +317,13 @@ def verdicts(snap: dict[str, Any]) -> list[tuple[str, str]]:
             out.append(("info", "No browser session here (CLI / cron), so no tenant "
                                 "resolves and reads are unscoped - expected outside the "
                                 "app. Compare the sections above, not this line."))
+    pdf = snap.get("pdf_engine") or {}
+    if pdf.get("chromium_ready") is False:
+        out.append(("warning",
+                    "The PDF export engine (headless Chromium) is not installed here. The "
+                    "first export downloads it into "
+                    f"{pdf.get('browsers_path')} (~150MB, once per container) and takes a "
+                    f"couple of minutes. Current state: {pdf.get('detail')}"))
     if mt.get("tenants_query_error"):
         out.append(("error", f"The tenants table could not be read: "
                              f"{mt['tenants_query_error']}"))

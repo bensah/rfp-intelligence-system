@@ -553,9 +553,37 @@ def render_pdf(html: str, *, chart_count: int, header_text: str,
     with open(script_path, "w", encoding="utf-8") as fh:
         fh.write(_RENDER)
 
+    # The browser is a separate ~150MB download that pip does not perform, and no host
+    # runs `playwright install` for us — so make sure one exists before launching it, and
+    # hand the child the SAME browsers path we installed into (its own default resolves
+    # from $HOME, which on some hosts is not the account the app runs as).
+    from core import playwright_setup
+    ready, detail = playwright_setup.ensure_chromium()
+    if not ready:
+        raise RuntimeError(
+            "The PDF engine (headless Chromium) isn't available on this deployment, so the "
+            "report can't be rendered here. Everything else on the page still works, and "
+            "Export Data gives you the same numbers as a workbook.\n\n" + detail)
+
     proc = subprocess.run(
         [sys.executable, script_path, html_path, out_path, str(chart_count), header, footer],
-        capture_output=True, text=True, timeout=timeout)
+        capture_output=True, text=True, timeout=timeout,
+        env=playwright_setup.child_env())
+    if (proc.returncode != 0 or not os.path.exists(out_path)) and (
+            "Executable doesn't exist" in (proc.stderr or "")
+            or "playwright install" in (proc.stderr or "")):
+        # The browser went missing between the check and the launch — a host that wipes its
+        # cache, or a Playwright upgrade demanding a newer build number. Reinstall once and
+        # retry, rather than showing the user the same traceback twice.
+        ready, detail = playwright_setup.ensure_chromium(force=True)
+        if not ready:
+            raise RuntimeError("The PDF engine (headless Chromium) could not be restored "
+                               "on this deployment.\n\n" + detail)
+        proc = subprocess.run(
+            [sys.executable, script_path, html_path, out_path, str(chart_count), header,
+             footer],
+            capture_output=True, text=True, timeout=timeout,
+            env=playwright_setup.child_env())
     if proc.returncode != 0 or not os.path.exists(out_path):
         raise RuntimeError("PDF render failed.\n"
                            f"stdout: {proc.stdout[-1500:]}\nstderr: {proc.stderr[-1500:]}")

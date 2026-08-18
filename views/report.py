@@ -3089,11 +3089,29 @@ if _gen_name and _gen_email:
 else:
     _gen_by = _gen_name or _gen_email or "unknown user"
 
+def _report_pdf_engine_ready() -> bool:
+    """Is the headless browser already on disk? This only picks the spinner wording, so any
+    doubt answers False — over-warning about a wait costs nothing, under-warning looks like
+    a hang."""
+    try:
+        from core import playwright_setup
+        return bool(playwright_setup.chromium_ready())
+    except Exception:
+        return False
+
+
 _pdf_doc = (_report_pdf.current() or _PDF_DOC).finish()
 
 if st.session_state.pop("_rfpis_make_pdf", False):
     try:
-        with st.spinner("Building the PDF — laying out charts at page width…"):
+        # The first export on a fresh deployment also downloads the headless browser
+        # (~150MB, once per container), so say so — a silent two-minute spinner reads as a
+        # hang, and the user cancels the very run that would have fixed the problem.
+        _pdf_wait = ("Building the PDF — laying out charts at page width…"
+                     if _report_pdf_engine_ready()
+                     else "Preparing the PDF engine (one-time setup on this deployment, "
+                          "up to a couple of minutes) — then building the PDF…")
+        with st.spinner(_pdf_wait):
             _html_doc = _report_pdf.build_html(
                 _pdf_doc,
                 title=_report_name(),

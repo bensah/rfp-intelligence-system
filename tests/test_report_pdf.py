@@ -182,6 +182,15 @@ class ARealRenderTests(unittest.TestCase):
             import playwright  # noqa: F401
         except Exception:
             raise unittest.SkipTest("playwright not installed")
+        # render_pdf now DOWNLOADS a browser when one is missing (that is the fix for the
+        # deployed app, where nothing else ever runs `playwright install`). A test suite
+        # must not pull 150MB down as a side effect, so skip instead — the browser being
+        # absent is a setup fact, not a failing assertion.
+        from core import playwright_setup
+        if not playwright_setup.chromium_ready():
+            raise unittest.SkipTest(
+                "chromium not installed — run `playwright install chromium` to exercise "
+                "the end-to-end render")
         cls.doc = rp.Document()
         cls.doc.section("1 · First", "Caption.")
         for i in range(3):
