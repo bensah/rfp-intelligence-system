@@ -319,8 +319,20 @@ def login_gate() -> Optional[dict[str, Any]]:
         return None
 
     _record_login(email, user.get("id"))
+    # SESSION HANDOVER. This browser session may still be carrying the previous
+    # account's tenant context (Streamlit session_state outlives sign-out), which is how
+    # one person could land in another tenant's account on a shared computer. Bind the
+    # session to THIS identity before anything reads tenant state; a foreign session is
+    # wiped, including the per-user display name.
+    try:
+        from auth.tenant_context import adopt_session_identity
+        if adopt_session_identity(user):
+            for _stale in ("display_name", "_tenant_denied", "tenant_switcher"):
+                st.session_state.pop(_stale, None)
+    except Exception:
+        pass
     st.session_state["app_user"] = user
-    st.session_state.setdefault("display_name", name or email)
+    st.session_state["display_name"] = name or email
 
     _render_sidebar_user(user, auth=auth)
     return user

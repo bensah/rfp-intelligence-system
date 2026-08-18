@@ -132,6 +132,14 @@ if _here in _PUBLIC_URL_PATHS:
 #     returns True on any doubt, and True means "do not redirect", so the fallback is the
 #     behaviour that has always worked: the login form renders in place.
 if _session_user is None and not _auth.has_session_cookie():
+    # st.switch_page drops the query string, so ?diag=1 asked for from a cold link would
+    # be lost at the login bounce (which is exactly when it is wanted). Carry it in the
+    # session instead; core.env_diag honours the sticky flag after sign-in.
+    try:
+        if str(st.query_params.get("diag") or "").lower() in ("1", "true", "yes"):
+            st.session_state["_diag_sticky"] = True
+    except Exception:
+        pass
     st.switch_page("app_pages/login.py")
 
 user = ensure_logged_in()
