@@ -120,6 +120,8 @@ class ProbeTests(_Reset):
 class EnsureChromiumTests(_Reset):
     def test_present_browser_short_circuits_without_installing(self):
         with mock.patch.object(ps, "probe", return_value=(True, "/browsers/chrome")), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(True, "launches", None)), \
              mock.patch.object(ps.subprocess, "run",
                                side_effect=AssertionError("must not install")):
             ok, msg = ps.ensure_chromium()
@@ -129,6 +131,8 @@ class EnsureChromiumTests(_Reset):
     def test_missing_browser_is_installed_once_then_remembered(self):
         answers = [(False, "/browsers/chrome"), (True, "/browsers/chrome")]
         with mock.patch.object(ps, "probe", side_effect=lambda: answers.pop(0)), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(True, "launches", None)), \
              mock.patch.object(ps.subprocess, "run", return_value=_completed()) as run:
             self.assertTrue(ps.ensure_chromium()[0])
             self.assertEqual(run.call_count, 1)
@@ -166,6 +170,61 @@ class EnsureChromiumTests(_Reset):
         self.assertIn("browsers_path", st)
 
 
+class MissingLibraryTests(_Reset):
+    """A downloaded browser that cannot link its system libraries is a THIRD failure, with
+    a different fix (packages.txt + reboot) from "not installed" (wait for the download)."""
+
+    def test_the_library_name_is_extracted_from_the_launch_error(self):
+        err = ("/root/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-"
+               "shell: error while loading shared libraries: libglib-2.0.so.0: cannot "
+               "open shared object file: No such file or directory")
+        self.assertEqual(ps.missing_library(err), "libglib-2.0.so.0")
+
+    def test_unrelated_errors_do_not_produce_a_library_name(self):
+        self.assertIsNone(ps.missing_library("Target page crashed"))
+        self.assertIsNone(ps.missing_library(None))
+
+    def test_launch_probe_names_the_library_and_points_at_packages_txt(self):
+        err = "error while loading shared libraries: libnss3.so: cannot open shared object"
+        with mock.patch.object(ps.subprocess, "run",
+                               return_value=_completed(stderr=err, code=3)):
+            ok, why, lib = ps.launch_probe()
+        self.assertFalse(ok)
+        self.assertEqual(lib, "libnss3.so")
+        self.assertIn("libnss3.so", why)
+        self.assertIn("packages.txt", why)
+
+    def test_a_browser_that_exists_but_cannot_launch_is_not_ready(self):
+        # And it must NOT be re-downloaded: reinstalling never supplies a system library.
+        with mock.patch.object(ps, "probe", return_value=(True, "/browsers/chrome")), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(False, "cannot start",
+                                             "libglib-2.0.so.0")), \
+             mock.patch.object(ps.subprocess, "run",
+                               side_effect=AssertionError("must not install")):
+            ok, msg = ps.ensure_chromium()
+        self.assertFalse(ok)
+        self.assertIn("cannot start", msg)
+
+    def test_status_separates_installed_from_launches(self):
+        with mock.patch.object(ps, "probe", return_value=(True, "/browsers/chrome")), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(False, "cannot start",
+                                             "libglib-2.0.so.0")):
+            st = ps.status()
+        self.assertTrue(st["chromium_installed"])
+        self.assertFalse(st["chromium_launches"])
+        self.assertFalse(st["chromium_ready"])
+        self.assertEqual(st["missing_library"], "libglib-2.0.so.0")
+
+    def test_a_healthy_engine_reports_ready(self):
+        with mock.patch.object(ps, "probe", return_value=(True, "/browsers/chrome")), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(True, "Chromium launches.", None)):
+            st = ps.status()
+        self.assertTrue(st["chromium_ready"])
+
+
 class RenderPdfWiringTests(_Reset):
     """core.report_pdf must bootstrap before launching, and pass the path to the child."""
 
@@ -183,6 +242,21 @@ class RenderPdfWiringTests(_Reset):
         self.assertIn("Export Data", msg)        # tells them what still works
         self.assertIn("libnss3.so", msg)         # and why it failed
 
+    def test_a_launch_failure_mid_render_still_names_the_library(self):
+        from core import report_pdf as rp
+        err = ("chrome-headless-shell: error while loading shared libraries: "
+               "libglib-2.0.so.0: cannot open shared object file")
+        with mock.patch.object(ps, "ensure_chromium", return_value=(True, "ok")), \
+             mock.patch.object(rp.subprocess, "run",
+                               return_value=_completed(stderr=err, code=1)):
+            with self.assertRaises(RuntimeError) as caught:
+                rp.render_pdf("<html></html>", chart_count=0, header_text="h",
+                              footer_text="f")
+        msg = str(caught.exception)
+        self.assertIn("libglib-2.0.so.0", msg)
+        self.assertIn("packages.txt", msg)
+        self.assertNotIn("ScreenshotNewSurface", msg)      # not the raw command line
+
     def test_render_hands_the_browsers_path_to_the_child(self):
         from core import report_pdf as rp
         with mock.patch.object(ps, "ensure_chromium", return_value=(True, "ok")), \
@@ -199,3 +273,36 @@ class RenderPdfWiringTests(_Reset):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class HostLibraryTests(_Reset):
+    """Distinguishing "the apt step did nothing" from "one package name is wrong" — the two
+    causes that produce an identical `libglib-2.0.so.0` error."""
+
+    def test_non_linux_hosts_are_not_interrogated(self):
+        with mock.patch.object(ps.sys, "platform", "win32"):
+            self.assertEqual(ps.host_libraries()["checked"], 0)
+
+    def test_libraries_present_in_the_loader_index_are_not_reported_missing(self):
+        index = set(ps._REQUIRED_SONAMES)
+        with mock.patch.object(ps.sys, "platform", "linux"), \
+             mock.patch.object(ps, "_loader_index", return_value=index), \
+             mock.patch.object(ps, "_os_release", return_value={"ID": "debian"}):
+            out = ps.host_libraries()
+        self.assertEqual(out["missing"], [])
+        self.assertEqual(out["checked"], len(ps._REQUIRED_SONAMES))
+
+    def test_an_empty_loader_index_reports_every_library_missing(self):
+        # The signature of an apt step that never ran: not one or two names, all of them.
+        with mock.patch.object(ps.sys, "platform", "linux"), \
+             mock.patch.object(ps, "_loader_index", return_value=set()), \
+             mock.patch.object(ps, "_os_release", return_value={"ID": "debian"}), \
+             mock.patch("ctypes.util.find_library", return_value=None):
+            out = ps.host_libraries()
+        self.assertEqual(len(out["missing"]), len(ps._REQUIRED_SONAMES))
+        self.assertIn("libglib-2.0.so.0", out["missing"])
+
+    def test_packages_txt_is_read_from_the_deployed_tree(self):
+        out = ps.packages_txt()
+        self.assertTrue(out["present"])
+        self.assertIn("libglib2.0-0", out["packages"])

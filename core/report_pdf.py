@@ -585,6 +585,14 @@ def render_pdf(html: str, *, chart_count: int, header_text: str,
             capture_output=True, text=True, timeout=timeout,
             env=playwright_setup.child_env())
     if proc.returncode != 0 or not os.path.exists(out_path):
+        lib = playwright_setup.missing_library((proc.stderr or "") + (proc.stdout or ""))
+        if lib:
+            raise RuntimeError(
+                f"The PDF engine can't start on this deployment: the host is missing the "
+                f"system library {lib}. Those come from `packages.txt` at the repository "
+                f"root, which this repo ships — the app needs a reboot to pick it up if it "
+                f"was added after the last deploy. Export Data gives you the same numbers "
+                f"as a workbook in the meantime.")
         raise RuntimeError("PDF render failed.\n"
                            f"stdout: {proc.stdout[-1500:]}\nstderr: {proc.stderr[-1500:]}")
     with open(out_path, "rb") as fh:
