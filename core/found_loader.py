@@ -181,6 +181,9 @@ def load_candidate(candidate: dict, user: dict | None = None, *,
         row.pop("decision", None)
         row["decision"] = None
 
+        from core.funder_names import canonical_funder as _canon_funder
+        if row.get("funding_agency"):
+            row["funding_agency"] = _canon_funder(row["funding_agency"])
         sb = get_client()
         sb.table("rfp_submissions").insert(row).execute()
         try:
