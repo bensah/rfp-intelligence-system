@@ -156,6 +156,20 @@ gitignored — never commit it.
      after changing that file**, or the browser will download successfully and
      still refuse to start.
 
+   Two warnings about that file, both learned the hard way. Apt is
+   ALL-OR-NOTHING: one unresolvable or conflicting name and the whole
+   transaction installs nothing, so a single bad entry looks exactly like no
+   file at all — and the app then fails to start with "Error installing
+   requirements", not just the export. And the package NAMES depend on the base
+   image: Debian 13 / Ubuntu 24.04 renamed six of them with a `t64` suffix
+   (`libglib2.0-0t64`, `libasound2t64`, `libatk1.0-0t64`,
+   `libatk-bridge2.0-0t64`, `libatspi2.0-0t64`, `libcups2t64`). Asking for the
+   pre-rename name on such an image can resolve to an older release's package
+   whose own dependencies are gone, which is what took this app down once. The
+   authoritative per-distro lists ship inside Playwright itself
+   (`playwright/driver/package/lib/server/registry/nativeDeps.ts`); `?diag=1`
+   reports the host's `/etc/os-release` so you can pick the matching one.
+
    Settings → Accounts → Deployment (or `?diag=1`) reports both halves
    separately — installed, and launches — and names the missing library if one
    is.
