@@ -173,7 +173,7 @@ def mark_closed_past_deadline(today_iso: str) -> int:
 # How long an undated row may sit in the Open set before it is treated as stale. Matches
 # auto_scorer._STALE_POSTING_DAYS - the same judgement about how long a call plausibly
 # stays open - so the two do not drift apart.
-_STALE_UNDATED_DAYS = 183
+_STALE_UNDATED_DAYS = 90
 
 
 def mark_closed_stale_undated(today_iso: str, *, days: int = _STALE_UNDATED_DAYS) -> int:
