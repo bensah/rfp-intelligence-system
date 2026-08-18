@@ -180,8 +180,27 @@ class MembershipGateTests(unittest.TestCase):
     def test_revoked_membership_is_not_renewed_at_refresh(self):
         _signed_in_as(USER_B, ORG_B, "Client Org", fresh=False)   # token due for refresh
         with mock.patch.object(tc, "_resolve_user_id", side_effect=lambda u: u.get("id")), \
-             mock.patch.object(tc, "active_memberships", return_value=[]):
+             mock.patch.object(tc, "active_memberships", return_value=[]), \
+             mock.patch.object(tc, "membership_status", return_value=False):
             tc.ensure_tenant_context(USER_B)
+        self.assertIsNone(_fake_st.session_state["tenant_id"])
+
+    def test_unverifiable_check_keeps_a_session_that_was_already_granted(self):
+        # UNKNOWN (database unreachable) -> renew, do not evict. The membership was
+        # verified when it was granted; throwing a legitimate user out of their tenant on
+        # a network blip is damage, not safety. The GRANT path still refuses on unknown.
+        _signed_in_as(USER_B, ORG_B, "Client Org", fresh=False)
+        with mock.patch.object(tc, "_resolve_user_id", side_effect=lambda u: u.get("id")), \
+             mock.patch.object(tc, "membership_status", return_value=None):
+            tc.ensure_tenant_context(USER_B)
+        self.assertEqual(_fake_st.session_state["tenant_id"], ORG_B)
+
+    def test_grant_still_refuses_when_the_check_cannot_be_made(self):
+        _session(app_user=USER_B)
+        with mock.patch.object(tc, "_resolve_user_id", side_effect=lambda u: u.get("id")), \
+             mock.patch.object(tc, "active_memberships", return_value=[]), \
+             mock.patch.object(tc, "membership_status", return_value=None):
+            self.assertFalse(tc.set_active_tenant(USER_B, ORG_B, name="Client Org"))
         self.assertIsNone(_fake_st.session_state["tenant_id"])
 
     def test_a_just_created_membership_is_not_refused_by_a_stale_cache(self):
@@ -203,8 +222,10 @@ class MembershipGateTests(unittest.TestCase):
         _session(app_user=USER_B)
         with mock.patch.object(tc, "_resolve_user_id", side_effect=lambda u: u.get("id")), \
              mock.patch.object(tc, "active_memberships",
-                               side_effect=RuntimeError("db down")):
-            self.assertFalse(tc.tenant_allowed(USER_B, ORG_B))
+                               side_effect=RuntimeError("db down")), \
+             mock.patch.object(tc, "service_client", side_effect=RuntimeError("db down")):
+            self.assertIsNone(tc.membership_status(USER_B, ORG_B))   # unknown, not "no"
+            self.assertFalse(tc.tenant_allowed(USER_B, ORG_B))       # grant refuses anyway
 
 
 class SignOutSourceTests(unittest.TestCase):

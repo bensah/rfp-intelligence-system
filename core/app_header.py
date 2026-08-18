@@ -954,20 +954,67 @@ def _render_org_identity() -> None:
         unsafe_allow_html=True)
 
 
-def _apply_super_view_from_query() -> None:
-    """Super_user 'view-as tenant' (sticky): a ?tenant=<slug|id> link from Settings →
-    Tenants puts the super_user into a view of that tenant that persists across EVERY data
-    page (Pipelines/Grants/Actions/Report/Home/Organization) until they Return to their own
-    account. Stores su_view_tenant/su_view_name/su_view_slug in the session, and keeps
-    ?tenant=<slug> in the browser URL on EVERY page so it is always visible which tenant
-    is being viewed. No-op — and cleared — for non-super users, so the mode can never
-    stick to a normal user."""
+def _session_tenant_slug() -> str | None:
+    """The slug of the session's OWN tenant, cached per tenant in the session.
+    `set_active_tenant` stores it when the membership row carries one; this fills the gap
+    for a session that resolved before slugs were threaded through, or a tenant renamed
+    mid-session. Best-effort — no slug simply means no ?tenant= in the URL."""
+    ss = st.session_state
+    tid = ss.get("tenant_id")
+    if not tid:
+        return None
+    if ss.get("tenant_slug") and ss.get("_tenant_slug_for") == tid:
+        return ss["tenant_slug"]
+    try:
+        from db.supabase_client import service_client
+        rows = (service_client().table("tenants").select("slug")
+                .eq("id", tid).limit(1).execute().data or [])
+        slug = (rows[0].get("slug") if rows else None) or None
+    except Exception:
+        slug = None
+    ss["tenant_slug"] = slug
+    ss["_tenant_slug_for"] = tid
+    return slug
+
+
+def _stamp_tenant_param(slug: str | None) -> None:
+    """Make ?tenant=<slug> name the tenant this page is showing. Guarded on a difference so
+    it never loops, and removed entirely when no tenant resolves — an address bar that
+    still names a tenant you are not in is worse than none."""
+    try:
+        current = st.query_params.get("tenant")
+        if slug:
+            if current != slug:
+                st.query_params["tenant"] = slug
+        elif current is not None:
+            del st.query_params["tenant"]
+    except Exception:
+        pass
+
+
+def _apply_tenant_url() -> None:
+    """Keep ?tenant=<slug> in the address bar naming the tenant actually being shown — for
+    EVERY signed-in user, so the URL answers "which tenant am I in?" without reading the
+    header, and a bookmark returns you to the same place.
+
+    The parameter means two different things, deliberately:
+
+      * SUPER_USER — it SELECTS. A ?tenant=<slug|id> link from Settings → Tenants puts them
+        into a sticky view of that tenant that persists across every data page
+        (Pipelines/Grants/Actions/Report/Home/Organization) until they Return to their own
+        account, and the slug is re-stamped on every page so the view is always visible.
+      * EVERYONE ELSE — it DESCRIBES. Their own tenant's slug is written into the URL and
+        an incoming value is never read, only overwritten. A URL must not be able to move a
+        user into a tenant: that is the hole the membership gate in auth.tenant_context
+        closes, and it would be pointless to leave the front door open here. A copied link
+        therefore cannot carry anyone into another account — it just shows them theirs."""
     from core import permissions
     _u = st.session_state.get("app_user") or {}
     if not permissions.is_super_user(_u):
         st.session_state.pop("su_view_tenant", None)
         st.session_state.pop("su_view_name", None)
         st.session_state.pop("su_view_slug", None)
+        _stamp_tenant_param(_session_tenant_slug())
         return
     try:
         _key = st.query_params.get("tenant")
@@ -994,14 +1041,9 @@ def _apply_super_view_from_query() -> None:
                            "or removed. Reopen it from Settings → Tenants.")
         # fall through to (re)stamp the canonical slug, normalizing a raw id → slug.
     # (Re)stamp the URL to the canonical slug so EVERY page shows which tenant is being
-    # viewed (readable slug, not a UUID). Guarded on a diff so it never loops.
-    _slug = st.session_state.get("su_view_slug")
-    if _slug:
-        try:
-            if st.query_params.get("tenant") != _slug:
-                st.query_params["tenant"] = _slug
-        except Exception:
-            pass
+    # viewed (readable slug, not a UUID) — the tenant being VIEWED if there is one, else
+    # the super's own home tenant.
+    _stamp_tenant_param(st.session_state.get("su_view_slug") or _session_tenant_slug())
 
 
 def _render_tenant_switcher() -> None:
@@ -1092,10 +1134,11 @@ def render_app_header() -> None:
     # ────────────────── Global theme CSS ──────────────────────────────
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
 
-    # Super_user 'view-as tenant' — resolve the ?tenant= link into a sticky session view
+    # Tenant in the URL: resolve a super_user's ?tenant= link into a sticky session view
     # BEFORE anything reads data (notifications below + the page body after this call), so
-    # every scoped read this render targets the viewed tenant.
-    _apply_super_view_from_query()
+    # every scoped read this render targets the viewed tenant — and stamp the effective
+    # tenant's slug into the address bar for everyone else.
+    _apply_tenant_url()
 
     # ── Native hover tooltips on the collapsed icon rail ───────────────
     # The collapsed rail shows page icons only. A CSS flyout label proved

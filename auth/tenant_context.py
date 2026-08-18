@@ -425,7 +425,7 @@ def _default_membership(user: dict, mems: list[dict[str, Any]]) -> dict[str, Any
 _IDENTITY_KEY = "_tenant_identity"
 
 _SESSION_TENANT_KEYS = (
-    "tenant_id", "tenant_name",              # the resolved tenant
+    "tenant_id", "tenant_name", "tenant_slug",   # the resolved tenant
     "_tenant_jwt", "_tenant_jwt_exp",        # the bearer that RLS trusts
     "_tenant_client", "_tenant_client_jwt",  # the client built from that bearer
     "su_view_tenant", "su_view_name", "su_view_slug",   # a super's view-as target
@@ -478,6 +478,46 @@ def adopt_session_identity(user: dict) -> bool:
         return False
 
 
+def membership_status(user: dict, tenant_id: str | None) -> Optional[bool]:
+    """Tri-state membership answer — the distinction that keeps the gate strict without
+    making it fragile:
+
+        True  — an ACTIVE membership in this tenant exists;
+        False — checked, and there is none (or its tenant is pending/blacklisted);
+        None  — could NOT be checked (database unreachable, identity unresolvable).
+
+    `active_memberships` cannot express None: it swallows errors into an empty list, so a
+    dropped connection reads as "belongs to nothing". Granting on that is unsafe, but
+    REVOKING on it is just as wrong — it evicts a session that was properly verified when
+    it was granted, which on a flaky connection looks like being thrown out of your tenant
+    at random. Callers decide: grants treat None as a refusal, live sessions ride it out.
+
+    One indexed query (user + tenant), not the cached list, so the answer is fresh and its
+    failure mode is visible."""
+    if not tenant_id:
+        return False
+    try:
+        uid = _resolve_user_id(user)
+    except Exception:
+        return None
+    if not uid:
+        return None
+    try:
+        rows = (service_client().table("tenant_memberships")
+                .select("tenant_id, tenants(status)")
+                .eq("user_id", uid).eq("tenant_id", str(tenant_id))
+                .eq("status", "active").limit(1).execute().data or [])
+    except Exception:
+        return None
+    if not rows:
+        return False
+    # Mirror active_memberships: a blacklisted or pending tenant grants no runtime context.
+    t = rows[0].get("tenants") if isinstance(rows[0].get("tenants"), dict) else {}
+    if (t or {}).get("status") in ("blacklisted", "pending"):
+        return False
+    return True
+
+
 def tenant_allowed(user: dict, tenant_id: str | None) -> bool:
     """True only when `tenant_id` is one of THIS user's ACTIVE memberships.
 
@@ -495,19 +535,24 @@ def tenant_allowed(user: dict, tenant_id: str | None) -> bool:
         return False
     try:
         uid = _resolve_user_id(user)
-        if not uid:
-            return False
-        tid = str(tenant_id)
-        if any(str(m.get("tenant_id")) == tid for m in active_memberships(uid)):
-            return True
-        clear_membership_cache(uid)          # could be a cache older than the membership
-        return any(str(m.get("tenant_id")) == tid for m in active_memberships(uid))
+        if uid and any(str(m.get("tenant_id")) == str(tenant_id)
+                       for m in active_memberships(uid)):
+            return True                      # cached fast path — the common case
+        if uid:
+            clear_membership_cache(uid)      # the cache may predate the membership
+            if any(str(m.get("tenant_id")) == str(tenant_id)
+                   for m in active_memberships(uid)):
+                return True
     except Exception:
-        return False                         # fail CLOSED: no proof of membership, no access
+        pass
+    # Nothing in the cached view — ask directly, and treat "couldn't check" as a refusal.
+    # This is the GRANT path: no proof of membership, no access.
+    return membership_status(user, tenant_id) is True
 
 
 def set_active_tenant(user: dict, tenant_id: str | None, *, role: str | None = None,
-                      name: str | None = None) -> bool:
+                      name: str | None = None, slug: str | None = None,
+                      verified: bool = False) -> bool:
     """Set THIS session's identity: mint the JWT and stash tenant id/name in
     session_state. `tenant_id=None` mints a tenant-LESS authenticated token (for a
     logged-in user still in onboarding — lets them create/join a tenant under RLS).
@@ -520,7 +565,7 @@ def set_active_tenant(user: dict, tenant_id: str | None, *, role: str | None = N
     # AUTHORISATION GATE. Nothing scopes a session to a tenant without a membership to
     # back it — a refusal degrades to a tenant-LESS session (which fails closed to zero
     # rows) rather than to somebody else's data.
-    if tenant_id is not None and not tenant_allowed(user, tenant_id):
+    if tenant_id is not None and not (verified or tenant_allowed(user, tenant_id)):
         st.session_state["_tenant_denied"] = str(tenant_id)
         tenant_id, role, name = None, None, None
     else:
@@ -531,6 +576,8 @@ def set_active_tenant(user: dict, tenant_id: str | None, *, role: str | None = N
                           email=user.get("email"))
     st.session_state["tenant_id"] = tenant_id
     st.session_state["tenant_name"] = name
+    if slug or tenant_id is None:
+        st.session_state["tenant_slug"] = slug     # keeps ?tenant=<slug> truthful
     st.session_state["_tenant_jwt"] = tok
     st.session_state["_tenant_jwt_exp"] = (int(time.time()) + _JWT_TTL) if tok else 0
     st.session_state[_IDENTITY_KEY] = identity_of(user)   # whose tenant state this is
@@ -574,11 +621,15 @@ def ensure_tenant_context(user: dict) -> None:
             return                                        # still-fresh token — nothing to do
         tid = st.session_state.get("tenant_id")
         if tid:                                           # known tenant → near-expiry refresh
-            # Re-authorise on every refresh: the membership may have been revoked while
-            # the session stayed open, and a refresh must not renew access it no longer
-            # has. Not allowed → drop it and resolve from scratch below.
-            if tenant_allowed(user, tid):
-                set_active_tenant(user, tid, name=st.session_state.get("tenant_name"))
+            # Re-authorise on every refresh: a membership revoked while the session
+            # stayed open must not be renewed. But only a DEFINITE "not a member" tears
+            # the session down — an unverifiable answer (database unreachable) renews the
+            # tenant that was already verified when it was granted, because evicting a
+            # legitimate session on a network blip is damage, not safety.
+            status = membership_status(user, tid)
+            if status is not False:
+                set_active_tenant(user, tid, name=st.session_state.get("tenant_name"),
+                                  slug=st.session_state.get("tenant_slug"), verified=True)
                 return
             clear_tenant_session()
         uid = _resolve_user_id(user)
@@ -590,8 +641,8 @@ def ensure_tenant_context(user: dict) -> None:
             # (_platform_home_membership) — if their platform membership really is gone,
             # the refusal below leaves them tenant-less rather than in a tenant they have
             # no row for, which is the correct, visible failure.
-            set_active_tenant(user, chosen["tenant_id"],
-                              role=chosen.get("role"), name=chosen.get("name"))
+            set_active_tenant(user, chosen["tenant_id"], role=chosen.get("role"),
+                              name=chosen.get("name"), slug=chosen.get("slug"))
         else:
             # No resolvable default (0 memberships, or >1 for a non-super user) → mint a
             # tenant-LESS authenticated token so the user still has an identity for
