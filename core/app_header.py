@@ -811,8 +811,16 @@ def _render_user_menu() -> None:
             st.session_state["logout"] = True
             for k in ("app_user", "_post_login_nav_synced",
                       "_auth_cookie_settled", "authentication_status",
-                      "name", "username"):
+                      "name", "username", "display_name", "_tenant_denied"):
                 st.session_state.pop(k, None)
+            # And the TENANT context — the tenant id, the minted JWT, the client built
+            # from it and any view-as target. Leaving those behind is what let the next
+            # person to sign in on this browser inherit this session's tenant.
+            try:
+                from auth.tenant_context import clear_tenant_session
+                clear_tenant_session()
+            except Exception:
+                pass
             st.rerun()
 
 

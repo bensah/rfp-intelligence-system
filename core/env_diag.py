@@ -347,10 +347,18 @@ def render_if_requested(user: dict | None = None) -> None:
     already misbehaving, and Settings may be one of the pages that is wrong."""
     import streamlit as st  # type: ignore
     try:
-        want = str(st.query_params.get("diag") or "").lower() in ("1", "true", "yes")
+        raw = str(st.query_params.get("diag") or "").lower()
     except Exception:
+        raw = ""
+    if raw in ("0", "off", "false"):
+        st.session_state.pop("_diag_sticky", None)      # explicit dismissal
         return
+    want = raw in ("1", "true", "yes")
     if want:
+        # Survive the redirect to /login (App.py sets the same flag before bouncing an
+        # anonymous visitor) and the reruns after sign-in, which drop the query string.
+        st.session_state["_diag_sticky"] = True
+    if want or st.session_state.get("_diag_sticky"):
         render(user)
 
 
@@ -390,6 +398,15 @@ def render_degradation_banner(user: dict | None = None) -> None:
     try:
         from core import permissions
         u = user or st.session_state.get("app_user") or {}
+        # A REFUSED tenant is shown to whoever it happened to, admin or not: their session
+        # is deliberately tenant-less (zero rows), and silence there just looks like the
+        # app losing their data.
+        if st.session_state.get("_tenant_denied"):
+            st.error(
+                "⚠️ **This session was not scoped to the requested tenant** — your "
+                "account has no active membership in it, so access was refused and the "
+                "session is left without a tenant. Ask an administrator to add you, or "
+                "sign out and sign in again.")
         if not permissions.is_admin(u):
             return
         from auth import tenant_context as tc
