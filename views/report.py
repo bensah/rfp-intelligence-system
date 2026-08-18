@@ -1842,12 +1842,25 @@ if _show_sec("1"):
         # Snapshot of which donors contribute the most RFPs to the
         # pipeline. Top 15, horizontal so long donor names fit.
         if _show("s1_donor") and not disc.empty:
+            # Group by funder IDENTITY, not by the literal string. The same donor typed
+            # with a hyphen and with an en dash ("BMGF - Gates Foundation" / "BMGF – Gates
+            # Foundation") is one funder; counting the spellings separately drew it as two
+            # shorter bars and understated a funder the org has a real relationship with.
+            # The label is the spelling that appears most often, so the chart still reads
+            # in the organisation's own words. Historical rows are covered whether or not
+            # they have been reconciled in the database.
+            from core.funder_names import dominant_spelling as _fname
+            from core.funder_names import funder_key as _fkey
+            _raw_funders = (disc["funding_agency"].fillna("(unspecified)")
+                            .replace("", "(unspecified)").astype(str))
+            _grouped = pd.DataFrame({"raw": _raw_funders,
+                                     "key": _raw_funders.map(_fkey)}).groupby("key")["raw"]
             donor_counts = (
-                disc["funding_agency"].fillna("(unspecified)")
-                .replace("", "(unspecified)")
-                .value_counts().head(15).reset_index()
+                pd.DataFrame({"Donor": _grouped.agg(_fname),
+                              "RFPs": _grouped.size()})
+                .sort_values("RFPs", ascending=False)
+                .head(15).reset_index(drop=True)
             )
-            donor_counts.columns = ["Donor", "RFPs"]
             if not donor_counts.empty:
                 _h5("Which funders our calls come from")
                 fig_dn = px.bar(

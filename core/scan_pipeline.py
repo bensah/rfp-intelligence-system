@@ -997,6 +997,11 @@ def ingest_candidates(
                 row["brief_description"] = _clean_brief(
                     row.get("brief_description"),
                     cand.get("raw_text") or cand.get("_page_text")) or None
+                # One spelling per donor, decided at the write (core.funder_names): a
+                # scraped funder can carry any dash variant the source page used.
+                from core.funder_names import canonical_funder as _canon_funder
+                if row.get("funding_agency"):
+                    row["funding_agency"] = _canon_funder(row["funding_agency"])
                 safe_execute(sb.table("rfp_submissions").insert(row))
                 # Tombstone immediately so it's remembered even if later deleted.
                 seen_ledger.record_one(row, reason="ingested")

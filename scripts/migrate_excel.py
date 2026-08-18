@@ -85,6 +85,8 @@ for _stream in (sys.stdout, sys.stderr):
 # Allow running as `python scripts/migrate_excel.py` from repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.funder_names import canonical_funder  # noqa: E402
+
 from db.supabase_client import get_client  # noqa: E402
 from core.scorer import CRITERIA, score_submission  # noqa: E402
 from core.review_week import review_week_label  # noqa: E402
@@ -235,7 +237,10 @@ def map_form1_row_by_header(row: list[Any], col_map: dict[str, int],
         "opportunity_title": title,
         "brief_description": _txt(get("Brief Description")),
         "date_posted": _date(get("Date Posted")),
-        "funding_agency": _txt(get("Funding Agency", "Funder")),
+        # Canonicalised on the way in: Word/Excel autocorrect turns the workbook's
+        # "ACRONYM - Name" into an EN DASH, which used to split one donor into two
+        # on every chart that groups by the literal string (see core.funder_names).
+        "funding_agency": canonical_funder(_txt(get("Funding Agency", "Funder"))),
         "call_geographic_scope": _multi(get("Geographic Scope", "Applicant Country")),
         "call_domain_areas": _multi(get("Program Area")),
         "focus_theme": _txt(get("Focus Theme")),
