@@ -151,3 +151,36 @@ class ManualScanSurfaceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ManualScanLayoutTests(unittest.TestCase):
+    """Manual Scan is three sub-tabs: Search | Eligibility Scan | Excel Sync.
+
+    The split exists so search — the thing every tenant does constantly — is reachable
+    where people look for scanning tools, WITHOUT rearranging the working scan page around
+    it. So these assertions are as much about what stayed put as what moved."""
+
+    def setUp(self):
+        with open(os.path.join(_ROOT, "app_pages", "admin.py"), encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_the_three_sub_tabs_exist_in_order(self):
+        self.assertIn('["🔍 Search", "🎯 Eligibility Scan", "📊 Excel Sync"]', self.src)
+
+    def test_search_reuses_the_existing_engine_rather_than_a_second_one(self):
+        # It hands off to the results page on the same contract the header 🔍 uses: query
+        # in the URL, session copy as fallback. No second relevance ranking to maintain.
+        self.assertIn('st.session_state["site_search_query"] = _q', self.src)
+        self.assertIn('st.switch_page("app_pages/search.py")', self.src)
+        for helper in ("search_opportunities", "search_donors"):
+            self.assertNotIn(helper, self.src)      # results are NOT re-implemented here
+
+    def test_the_excel_ui_lives_in_the_excel_sub_tab(self):
+        self.assertIn("_excel_area = _t_excel.container()", self.src)
+        self.assertIn("_xls_slot = _excel_area.empty() if _show_excel else None", self.src)
+        self.assertIn("with _excel_area:", self.src)
+
+    def test_the_scan_controls_and_histories_stayed_together(self):
+        scan = self.src.split("with _t_scan:", 1)[1].split("with _excel_area:", 1)[0]
+        for kept in ("admin_match_btn", "Eligible funding history", "Extraction history"):
+            self.assertIn(kept, scan, kept)
