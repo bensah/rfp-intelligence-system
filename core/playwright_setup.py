@@ -286,6 +286,92 @@ def ensure_chromium(*, force: bool = False) -> tuple[bool, str]:
         return False, msg
 
 
+# The shared objects chrome-headless-shell links against, in the form the dynamic loader
+# names them. Package names differ across base images (Ubuntu 24.04 and Debian 13 renamed
+# five of them with a `t64` suffix); SONAMEs do not, which is why the check is done at this
+# level — it answers "can the loader find it" without needing to know the distro.
+_REQUIRED_SONAMES = (
+    "libglib-2.0.so.0", "libnss3.so", "libnspr4.so", "libatk-1.0.so.0",
+    "libatk-bridge-2.0.so.0", "libatspi.so.0", "libcups.so.2", "libdbus-1.so.3",
+    "libdrm.so.2", "libgbm.so.1", "libxkbcommon.so.0", "libpango-1.0.so.0",
+    "libcairo.so.2", "libasound.so.2", "libX11.so.6", "libxcb.so.1",
+    "libXcomposite.so.1", "libXdamage.so.1", "libXext.so.6", "libXfixes.so.3",
+    "libXrandr.so.2",
+)
+
+
+def _os_release() -> dict[str, str]:
+    """`/etc/os-release` as a dict — the base image, which decides package NAMES."""
+    out: dict[str, str] = {}
+    try:
+        with open("/etc/os-release", encoding="utf-8") as fh:
+            for line in fh:
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    out[key.strip()] = value.strip().strip('"')
+    except Exception:
+        pass
+    return {k: out[k] for k in ("ID", "VERSION_ID", "VERSION_CODENAME", "PRETTY_NAME")
+            if k in out}
+
+
+def _loader_index() -> set[str]:
+    """Every SONAME the dynamic loader knows about, from `ldconfig -p`."""
+    try:
+        out = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, timeout=30)
+    except Exception:
+        return set()
+    names = set()
+    for line in (out.stdout or "").splitlines():
+        head = line.strip().split(" ", 1)[0]
+        if head.startswith("lib"):
+            names.add(head)
+    return names
+
+
+def host_libraries() -> dict[str, object]:
+    """Which of Chromium's libraries this host can actually load.
+
+    The point is to separate two indistinguishable-from-the-error causes:
+      * EVERY library missing — the apt step never ran, or aborted (apt installs nothing if
+        one name in the list is unresolvable), so `packages.txt` had no effect;
+      * ONE OR TWO missing — the list is nearly right and needs those names for this image.
+    Non-Linux hosts report `checked: 0`; the question is meaningless there."""
+    if not sys.platform.startswith("linux"):
+        return {"platform": sys.platform, "checked": 0}
+    index = _loader_index()
+    missing = []
+    for soname in _REQUIRED_SONAMES:
+        if soname in index:
+            continue
+        try:
+            import ctypes.util
+            if ctypes.util.find_library(soname.split(".so")[0][3:]):
+                continue                      # loader index unavailable but the lib is there
+        except Exception:
+            pass
+        missing.append(soname)
+    return {"os_release": _os_release(),
+            "checked": len(_REQUIRED_SONAMES),
+            "missing": missing,
+            "loader_index_read": bool(index)}
+
+
+def packages_txt() -> dict[str, object]:
+    """Is `packages.txt` actually in the DEPLOYED tree, and what does it ask for?
+
+    A file that exists in the repository but not in the running deployment explains an apt
+    step that appears to have done nothing — and is a fact only the deployment can report."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "packages.txt")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            entries = [ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")]
+        return {"present": True, "entries": len(entries), "packages": entries}
+    except Exception:
+        return {"present": False, "entries": 0, "packages": []}
+
+
 def status() -> dict[str, object]:
     """A snapshot for the deployment diagnostics — no side effects, no download. Reports
     both halves separately, because "the file is there" and "it runs" fail for completely
@@ -302,4 +388,6 @@ def status() -> dict[str, object]:
         out["chromium_launches"] = False
         out["launch_detail"] = "not installed yet"
     out["chromium_ready"] = bool(ok and out["chromium_launches"])
+    out["host_libraries"] = host_libraries()
+    out["packages_txt"] = packages_txt()
     return out

@@ -324,6 +324,22 @@ def verdicts(snap: dict[str, Any]) -> list[tuple[str, str]]:
                     "The first export downloads it into "
                     f"{pdf.get('browsers_path')} (~150MB, once per container) and takes a "
                     f"couple of minutes."))
+    elif pdf.get("chromium_launches") is False and (pdf.get("host_libraries") or {}).get(
+            "missing") and len((pdf["host_libraries"]["missing"])) >= 5:
+        # Nearly everything missing means the apt step did not take effect at all — apt
+        # installs NOTHING if a single name in packages.txt is unresolvable on the image,
+        # so one bad name looks exactly like no file at all.
+        hl = pdf["host_libraries"]
+        pk = pdf.get("packages_txt") or {}
+        out.append(("error",
+                    f"The PDF engine cannot start and {len(hl['missing'])} of "
+                    f"{hl['checked']} of Chromium's system libraries are missing from this "
+                    f"host — so the apt step either never ran or aborted, not just one bad "
+                    f"package. packages.txt in the deployed tree: "
+                    f"{'present with ' + str(pk.get('entries')) + ' entries' if pk.get('present') else 'NOT PRESENT'}"
+                    f". Base image: {hl.get('os_release', {}).get('PRETTY_NAME') or 'unknown'}"
+                    f". Check the host's build log for the apt-get output — a single "
+                    f"unresolvable package name there explains all of these."))
     elif pdf.get("chromium_launches") is False:
         # Downloaded but unable to link its system libraries — no amount of re-downloading
         # fixes that, so it is an error, not a wait.

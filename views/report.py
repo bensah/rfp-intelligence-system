@@ -3136,6 +3136,25 @@ if st.session_state.pop("_rfpis_make_pdf", False):
     except Exception as _pdf_exc:
         st.session_state["_rfpis_pdf_bytes"] = None
         st.error(f"Couldn't build the PDF: {_pdf_exc}")
+        # The PDF is Chromium's rendering of an HTML document this app already built, and
+        # that document is complete, self-contained and printable. When the browser can't
+        # run on the host there is no reason to withhold it: the reader gets the same
+        # report and their own browser does the page layout (File -> Print -> Save as PDF).
+        try:
+            st.session_state["_rfpis_report_html"] = _html_doc
+        except Exception:
+            st.session_state.pop("_rfpis_report_html", None)
+
+if st.session_state.get("_rfpis_report_html") and not st.session_state.get(
+        "_rfpis_pdf_bytes"):
+    st.download_button(
+        "⬇ Download the report as HTML instead",
+        data=st.session_state["_rfpis_report_html"].encode("utf-8"),
+        file_name=(st.session_state.get("_rfpis_pdf_name") or _pdf_name).replace(
+            ".pdf", ".html"),
+        mime="text/html", key="report_html_download",
+        help="The same report, as a self-contained web page. Open it and use your "
+             "browser's Print → Save as PDF for a paginated copy.")
 
 # On the run that just BUILT the file, the slot is still holding the Export Report button, so
 # fill it now. On any later run the download button was already rendered at the top of the page

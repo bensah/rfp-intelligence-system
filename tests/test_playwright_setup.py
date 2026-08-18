@@ -273,3 +273,36 @@ class RenderPdfWiringTests(_Reset):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class HostLibraryTests(_Reset):
+    """Distinguishing "the apt step did nothing" from "one package name is wrong" — the two
+    causes that produce an identical `libglib-2.0.so.0` error."""
+
+    def test_non_linux_hosts_are_not_interrogated(self):
+        with mock.patch.object(ps.sys, "platform", "win32"):
+            self.assertEqual(ps.host_libraries()["checked"], 0)
+
+    def test_libraries_present_in_the_loader_index_are_not_reported_missing(self):
+        index = set(ps._REQUIRED_SONAMES)
+        with mock.patch.object(ps.sys, "platform", "linux"), \
+             mock.patch.object(ps, "_loader_index", return_value=index), \
+             mock.patch.object(ps, "_os_release", return_value={"ID": "debian"}):
+            out = ps.host_libraries()
+        self.assertEqual(out["missing"], [])
+        self.assertEqual(out["checked"], len(ps._REQUIRED_SONAMES))
+
+    def test_an_empty_loader_index_reports_every_library_missing(self):
+        # The signature of an apt step that never ran: not one or two names, all of them.
+        with mock.patch.object(ps.sys, "platform", "linux"), \
+             mock.patch.object(ps, "_loader_index", return_value=set()), \
+             mock.patch.object(ps, "_os_release", return_value={"ID": "debian"}), \
+             mock.patch("ctypes.util.find_library", return_value=None):
+            out = ps.host_libraries()
+        self.assertEqual(len(out["missing"]), len(ps._REQUIRED_SONAMES))
+        self.assertIn("libglib-2.0.so.0", out["missing"])
+
+    def test_packages_txt_is_read_from_the_deployed_tree(self):
+        out = ps.packages_txt()
+        self.assertTrue(out["present"])
+        self.assertIn("libglib2.0-0", out["packages"])
