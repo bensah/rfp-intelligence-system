@@ -318,12 +318,23 @@ def verdicts(snap: dict[str, Any]) -> list[tuple[str, str]]:
                                 "resolves and reads are unscoped - expected outside the "
                                 "app. Compare the sections above, not this line."))
     pdf = snap.get("pdf_engine") or {}
-    if pdf.get("chromium_ready") is False:
+    if pdf.get("chromium_installed") is False:
         out.append(("warning",
-                    "The PDF export engine (headless Chromium) is not installed here. The "
-                    "first export downloads it into "
+                    "The PDF export engine (headless Chromium) is not installed here yet. "
+                    "The first export downloads it into "
                     f"{pdf.get('browsers_path')} (~150MB, once per container) and takes a "
-                    f"couple of minutes. Current state: {pdf.get('detail')}"))
+                    f"couple of minutes."))
+    elif pdf.get("chromium_launches") is False:
+        # Downloaded but unable to link its system libraries — no amount of re-downloading
+        # fixes that, so it is an error, not a wait.
+        lib = pdf.get("missing_library")
+        out.append(("error",
+                    (f"The PDF export engine is installed but cannot start: this host is "
+                     f"missing the system library {lib}. System packages come from "
+                     f"`packages.txt` at the repository root; reboot the app after adding "
+                     f"or changing it.") if lib else
+                    f"The PDF export engine is installed but cannot start: "
+                    f"{pdf.get('launch_detail')}"))
     if mt.get("tenants_query_error"):
         out.append(("error", f"The tenants table could not be read: "
                              f"{mt['tenants_query_error']}"))

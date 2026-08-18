@@ -143,12 +143,22 @@ gitignored — never commit it.
 2. `share.streamlit.io` → New app → pick the repo → main branch →
    `App.py` as the entry.
 3. App settings → Secrets — paste the same `.env` values.
-4. Deploy. Note that `pip install playwright` does NOT fetch a browser, and
-   the host does not run `playwright install` for you: the first PDF export
-   downloads headless Chromium itself (~150MB, once per container, into a
-   directory the app proves is writable). That first export therefore takes a
-   couple of minutes; later ones are fast. Settings → Accounts → Deployment
-   (or `?diag=1`) reports whether the browser is already present.
+4. Deploy. The PDF export needs headless Chromium, which takes two things the
+   host does not provide by itself:
+   * the **browser binary** — `pip install playwright` does not fetch it and
+     nothing runs `playwright install` for you, so the first PDF export
+     downloads it (~150MB, once per container, into a directory the app proves
+     is writable). That first export takes a couple of minutes; later ones are
+     fast.
+   * its **system libraries** — Chromium links against ~20 shared objects that a
+     slim container omits. They are listed in `packages.txt` at the repo root,
+     which Streamlit Cloud installs with apt at build time. **Reboot the app
+     after changing that file**, or the browser will download successfully and
+     still refuse to start.
+
+   Settings → Accounts → Deployment (or `?diag=1`) reports both halves
+   separately — installed, and launches — and names the missing library if one
+   is.
 
 ---
 

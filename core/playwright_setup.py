@@ -24,6 +24,15 @@ Two things are wrong in that message and this module fixes both.
    Overriding the default unconditionally would be its own bug: it strands the browser a
    developer already installed and re-downloads 150MB on every machine.
 
+3. A DOWNLOADED BROWSER IS NOT A WORKING BROWSER. Chromium links against ~20 system
+   libraries a slim container does not ship, and the failure arrives as `error while
+   loading shared libraries: libglib-2.0.so.0: cannot open shared object file` buried under
+   a 40-line command line — a message that never mentions Playwright. So the bootstrap
+   TEST-LAUNCHES the browser, not merely checks the file exists, and names the missing
+   library. The libraries themselves come from `packages.txt` at the repository root, which
+   is how Streamlit Community Cloud installs apt packages; the app must be rebooted after
+   that file changes.
+
 Everything is best-effort and returns a reason instead of raising: a missing browser must
 degrade to "this export is unavailable, here is why", never take a page down.
 """
@@ -31,6 +40,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -164,6 +174,66 @@ def chromium_ready() -> bool:
     return probe()[0]
 
 
+_LAUNCH_PROBE = """
+import sys
+from playwright.sync_api import sync_playwright
+try:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=["--no-sandbox"])
+        browser.close()
+except Exception as exc:
+    print("ERR", exc)
+    sys.exit(3)
+print("OK")
+"""
+
+
+def missing_library(text: str | None) -> str | None:
+    """The shared object a failed launch complained about, if that is what went wrong.
+
+    A downloaded browser is not a working browser: Chromium links against ~20 system
+    libraries that a slim container does not ship, and the failure surfaces as
+    `error while loading shared libraries: libglib-2.0.so.0: cannot open shared object
+    file` — a message that says nothing about Playwright, so it reads like a mystery
+    crash unless it is named."""
+    if not text:
+        return None
+    match = re.search(r"error while loading shared libraries: ([^:]+): cannot open", text)
+    if match:
+        return match.group(1).strip()
+    match = re.search(r"([\w.+-]+\.so[\w.]*): cannot open shared object file", text)
+    return match.group(1).strip() if match else None
+
+
+def launch_probe() -> tuple[bool, str, str | None]:
+    """Actually start and stop a browser: `(ok, reason, missing_library)`.
+
+    The library is returned SEPARATELY rather than left for callers to re-parse out of the
+    reason: the reason is a sentence written for a human, and re-extracting a filename from
+    prose is the kind of round trip that silently yields None.
+
+    Existence is not readiness. This costs a second or two, runs once per process, and is
+    the difference between "your export failed, here is a 40-line Chromium command line"
+    and "this host is missing libglib-2.0.so.0"."""
+    try:
+        out = subprocess.run([sys.executable, "-c", _LAUNCH_PROBE], capture_output=True,
+                             text=True, timeout=_PROBE_TIMEOUT, env=child_env())
+    except Exception as exc:
+        return False, f"could not test-launch Chromium ({type(exc).__name__}: {exc})", None
+    text = ((out.stdout or "") + "\n" + (out.stderr or "")).strip()
+    if out.returncode == 0 and text.startswith("OK"):
+        return True, "Chromium launches.", None
+    lib = missing_library(text)
+    if lib:
+        return False, (
+            f"Chromium is installed but cannot start: this host is missing the system "
+            f"library {lib}. System packages come from `packages.txt` at the repository "
+            f"root (this repo ships one with Chromium's dependencies) — if you are seeing "
+            f"this, the app has not been rebooted since that file was added, or the host "
+            f"could not install every package in it."), lib
+    return False, f"Chromium failed to launch: {text[-600:] or 'no output'}", None
+
+
 def ensure_chromium(*, force: bool = False) -> tuple[bool, str]:
     """Guarantee a launchable Chromium, downloading it once if needed.
 
@@ -179,8 +249,15 @@ def ensure_chromium(*, force: bool = False) -> tuple[bool, str]:
             return True, str(_state.get("message") or "Chromium already installed.")
         ok, detail = probe()
         if ok:
-            _state.update(ready=True, message=f"Chromium present at {detail}")
-            return True, str(_state["message"])
+            # Present on disk — but a downloaded browser that cannot link its system
+            # libraries is not a usable one, and finding that out inside the render (as a
+            # wall of Chromium command line) helps nobody. Test-launch it here.
+            launched, why, _lib = launch_probe()
+            if launched:
+                _state.update(ready=True, message=f"Chromium present at {detail}")
+                return True, str(_state["message"])
+            _state.update(ready=False, message=why)
+            return False, why
         log.info("playwright: chromium missing (%s) — installing into %s",
                  detail, browsers_path())
         try:
@@ -193,8 +270,14 @@ def ensure_chromium(*, force: bool = False) -> tuple[bool, str]:
             return False, msg
         ok, detail = probe()
         if ok:
-            _state.update(ready=True, message=f"Chromium installed at {detail}")
-            return True, str(_state["message"])
+            launched, why, _lib = launch_probe()
+            if launched:
+                _state.update(ready=True, message=f"Chromium installed at {detail}")
+                return True, str(_state["message"])
+            # Downloaded fine, still cannot run — the missing-library case, which no
+            # amount of re-downloading fixes. Say which library.
+            _state.update(ready=False, message=why)
+            return False, why
         tail = ((out.stderr or out.stdout or "").strip()[-800:]
                 or f"installer exited {out.returncode} with no output")
         msg = (f"Chromium is still not launchable after installing into "
@@ -204,6 +287,19 @@ def ensure_chromium(*, force: bool = False) -> tuple[bool, str]:
 
 
 def status() -> dict[str, object]:
-    """A snapshot for the deployment diagnostics — no side effects, no download."""
+    """A snapshot for the deployment diagnostics — no side effects, no download. Reports
+    both halves separately, because "the file is there" and "it runs" fail for completely
+    different reasons and have completely different fixes."""
     ok, detail = probe()
-    return {"browsers_path": browsers_path(), "chromium_ready": ok, "detail": detail}
+    out: dict[str, object] = {"browsers_path": browsers_path(),
+                              "chromium_installed": ok, "detail": detail}
+    if ok:
+        launched, why, lib = launch_probe()
+        out["chromium_launches"] = launched
+        out["launch_detail"] = why
+        out["missing_library"] = lib
+    else:
+        out["chromium_launches"] = False
+        out["launch_detail"] = "not installed yet"
+    out["chromium_ready"] = bool(ok and out["chromium_launches"])
+    return out
