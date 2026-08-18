@@ -1336,15 +1336,28 @@ if _cat_tab is not None:
 with tab_scan:
     st.subheader("Trigger a manual scan")
     from core.scan_runner import scannable_source_count as _src_count
-    st.caption(
-        "Two workflows. **⛏ Run Extraction** crawls every catalogued funding source "
-        f"and extracts opportunities into the global store — a full run ({_src_count()} "
-        "sources with detail-page + PDF + LLM enrichment) is the slow backend job "
-        "(**~20-40 minutes**, no org screening). **🎯 Eligibility Scan** then "
-        "screens that store against this organisation's eligibility (Settings → Scan "
-        "eligibility & auto-scoring policies) — fast, no crawl. **📊 Sync Excel** (when a "
-        "workbook is configured) imports the master workbook into **this tenant's** pipeline."
-    )
+    # WHO IS READING THIS. Extraction is a platform job on a store shared by every tenant,
+    # runnable only from a developer tenant; describing it to an admin who cannot run it
+    # (and showing them its counters) invited the reasonable question of why another
+    # organisation's crawl was appearing in their account. Each role gets the page it can
+    # actually act on.
+    if _dev_admin:
+        st.caption(
+            "Two workflows. **⛏ Run Extraction** crawls every catalogued funding source "
+            f"and extracts opportunities into the global store — a full run ({_src_count()} "
+            "sources with detail-page + PDF + LLM enrichment) is the slow backend job "
+            "(**~20-40 minutes**, no org screening). **🎯 Eligibility Scan** then "
+            "screens that store against this organisation's eligibility (Settings → Scan "
+            "eligibility & auto-scoring policies) — fast, no crawl. **📊 Sync Excel** (when "
+            "a workbook is configured) imports the master workbook into **this tenant's** "
+            "pipeline.")
+    else:
+        st.caption(
+            "**🎯 Eligibility Scan** screens the curated funding store against this "
+            "organisation's eligibility (Settings → Scan eligibility & auto-scoring "
+            "policies) — fast, no crawl. The store itself is kept up to date centrally by "
+            "the system administrator. **📊 Sync Excel** (when a workbook is configured) "
+            "imports your master workbook into **this tenant's** pipeline.")
 
     from core.scan_pipeline import MATCH_RUN_LABEL
     from datetime import timedelta as _td
@@ -1444,26 +1457,30 @@ with tab_scan:
 
     # Run Extraction + Eligibility Scan (+ Sync Excel when available) sit together on the
     # RIGHT — compact narrow columns, wide spacer on the left.
-    if _excel_available and is_admin:
+    # A disabled button is an invitation to ask why it is disabled. Extraction simply is
+    # not part of this page for a client tenant, so it is not drawn at all.
+    _show_excel = bool(_excel_available and is_admin)
+    if _dev_admin and _show_excel:
         _bcsp, _bc1, _bc2, _bc3 = st.columns([3.6, 1.5, 1.7, 1.5])
-        _xls_slot = _bc3.empty()
-    else:
+        _ext_slot, _match_slot, _xls_slot = _bc1.empty(), _bc2.empty(), _bc3.empty()
+    elif _dev_admin:
         _bcsp, _bc1, _bc2 = st.columns([5.2, 1.5, 1.6])
-        _xls_slot = None
-    _ext_slot = _bc1.empty()
-    _match_slot = _bc2.empty()
+        _ext_slot, _match_slot, _xls_slot = _bc1.empty(), _bc2.empty(), None
+    elif _show_excel:
+        _bcsp, _bc2, _bc3 = st.columns([5.2, 1.7, 1.5])
+        _ext_slot, _match_slot, _xls_slot = None, _bc2.empty(), _bc3.empty()
+    else:
+        _bcsp, _bc2 = st.columns([6.7, 1.7])
+        _ext_slot, _match_slot, _xls_slot = None, _bc2.empty(), None
     # Run Extraction is a PLATFORM job that crawls every source into the SHARED global
     # store (no per-tenant screening) — a developer task. Restricted to an admin/super
     # of a developer tenant. The "Eligibility Scan" screening
     # button beside it stays available to every tenant admin (it's tenant-scoped).
     _do_extract = _ext_slot.button(
         "⛏ Run Extraction", type="secondary", key="admin_extract_btn", width='stretch',
-        disabled=not _dev_admin,
-        help=("Platform job: crawl all funding sources and extract into the global "
-              "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
-              "(~20-40 min for a full run).") if _dev_admin else
-             ("Developer task — restricted to an admin/Super User of a developer "
-              "tenant. Use 🎯 Eligibility Scan to screen this org."))
+        help="Platform job: crawl all funding sources and extract into the global "
+             "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
+             "(~20-40 min for a full run).") if _ext_slot is not None else False
     _do_match = _match_slot.button(
         "🎯 Eligibility Scan", type="primary", key="admin_match_btn", width='stretch',
         help="Screen the curated store against this org's eligibility (geography + "
@@ -1525,7 +1542,14 @@ with tab_scan:
         with st.expander(_wb_label, expanded=False):
             _last_mt, _last_ts = _xls.get_last_sync()
             if _excel_available:
-                st.caption(f"Resolved via **{_xls_resolved.get('source')}** → `{_xls_path}`")
+                # The full server path is developer detail; for a tenant upload the file
+                # name is all that is meaningful, and printing the directory would expose
+                # the storage layout.
+                if _xls_resolved.get("source") == "tenant upload":
+                    st.caption(f"Uploaded for this tenant → `{_xls_path.name}`")
+                else:
+                    st.caption(f"Resolved via **{_xls_resolved.get('source')}** → "
+                               f"`{_xls_path}`")
                 if _last_ts:
                     st.caption(f"Last synced: {_last_ts}")
                 st.caption(
@@ -1535,17 +1559,19 @@ with tab_scan:
                 if _xls_resolved.get("error"):
                     st.warning(_xls_resolved["error"])
                 st.caption(
-                    "No workbook found. Set `EXCEL_SOURCE_PATH` in `.env`, drop an "
-                    "`.xlsx` at the repo root, or upload one below (saved beside the "
-                    "project as a gitignored local copy).")
+                    "No workbook for this tenant yet. Upload one below — it is stored "
+                    "privately for this tenant and is not visible to any other.")
             _up = st.file_uploader("Upload a master workbook (.xlsx)", type=["xlsx"],
                                    key="admin_excel_upload")
             if _up is not None and st.button("Save workbook", key="admin_excel_save"):
                 try:
-                    from core.excel_sync import REPO_ROOT as _RR
-                    _dest = _RR / _up.name
-                    _dest.write_bytes(_up.getbuffer())
-                    st.success(f"Saved `{_dest.name}`. Reopen this tab, then Sync Excel.")
+                    # Stored under this tenant's own directory, never beside the project:
+                    # a shared path made one organisation's workbook visible to every
+                    # other tenant (see core.excel_sync).
+                    from core.excel_sync import save_tenant_workbook as _save_wb
+                    _dest = _save_wb(_up.name, _up.getbuffer().tobytes())
+                    st.success(f"Saved `{_dest.name}` for this tenant. Reopen this tab, "
+                               f"then Sync Excel.")
                     st.rerun()
                 except Exception as _e:
                     st.error(f"Could not save workbook: {type(_e).__name__}: {_e}")
@@ -1554,8 +1580,23 @@ with tab_scan:
                 st.code((_out.get("stdout") or "") + "\n" + (_out.get("stderr") or ""),
                         language="text")
 
-    # Extraction summary cards (BELOW the buttons).
+    # Extraction summary cards (BELOW the buttons) — DEVELOPER TENANT ONLY. These count a
+    # crawl of the shared store; they are not this tenant's numbers, and showing them in a
+    # client account read as another organisation's activity leaking in.
     _ext = _run_summary(_ext_rows)
+    if _ext and not _dev_admin:
+        # What a client tenant actually needs to know: the store behind their screening was
+        # refreshed, by whom, and whether they have screened it since.
+        _mine = _run_summary(_match_rows)
+        _screened_since = bool(_mine and _mine["ts"] >= _ext["ts"])
+        st.info(
+            f"The funding store was last refreshed by the system administrator on "
+            f"**{_ext['ts']}**."
+            + (f"  \n✅ Your last **Eligibility Scan** ran on **{_mine['ts']}**, after "
+               f"that refresh." if _screened_since else
+               "  \n🎯 You have not screened it since — run an **Eligibility Scan** to see "
+               "what this organisation is now eligible for."))
+        _ext = None                      # fall through without drawing the crawl counters
     if _ext:
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Last extraction", _ext["ts"])
@@ -1586,12 +1627,16 @@ with tab_scan:
     extr_logs = logs[~_is_match] if not logs.empty else logs
     match_logs = logs[_is_match] if not logs.empty else logs
 
-    # --- Extraction history (the donor-source crawl) ---
-    st.subheader("Extraction history")
-    st.caption("Each donor-source crawl (“Run Extraction”). Most recent 500 runs.")
-    if extr_logs.empty:
+    # --- Extraction history (the donor-source crawl) — DEVELOPER TENANT ONLY ---
+    # Same reasoning as the counters above: this is the log of a platform crawl over the
+    # shared store, not a record of anything this tenant did. "Eligible funding history"
+    # below IS per-tenant and stays visible to everyone.
+    if _dev_admin:
+        st.subheader("Extraction history")
+        st.caption("Each donor-source crawl (“Run Extraction”). Most recent 500 runs.")
+    if _dev_admin and extr_logs.empty:
         st.info("No extraction runs recorded yet.")
-    else:
+    elif _dev_admin:
         hist_cols = [
             "scan_date", "triggered_by", "source",
             "rfps_found", "rfps_new", "rfps_duplicate",
