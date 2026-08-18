@@ -1335,374 +1335,418 @@ if _cat_tab is not None:
 # -----------------------------------------------------------------------------
 with tab_scan:
     st.subheader("Trigger a manual scan")
-    from core.scan_runner import scannable_source_count as _src_count
-    # WHO IS READING THIS. Extraction is a platform job on a store shared by every tenant,
-    # runnable only from a developer tenant; describing it to an admin who cannot run it
-    # (and showing them its counters) invited the reasonable question of why another
-    # organisation's crawl was appearing in their account. Each role gets the page it can
-    # actually act on.
-    if _dev_admin:
+
+    # Three jobs, three sub-tabs. They were one page, and the page was growing a second
+    # purpose: Search is a thing you do constantly, Eligibility Scan and Excel Sync are
+    # things you trigger occasionally. Splitting them also keeps the scan controls and
+    # their histories exactly as they were, rather than rearranging a working page to make
+    # room. Search comes first because it is the one every tenant uses.
+    _t_search, _t_scan, _t_excel = st.tabs(
+        ["🔍 Search", "🎯 Eligibility Scan", "📊 Excel Sync"])
+    _excel_area = _t_excel.container()
+
+    with _t_search:
+        # The search engine already exists and is reachable from the header 🔍 — it covers
+        # stored opportunities, donors, app pages and the web. This is the same entry
+        # point surfaced where people come looking for scanning tools; submitting hands
+        # off to the results page rather than re-implementing results here, so there stays
+        # one search UI, one relevance ranking and one place feedback is recorded.
+        st.markdown("#### Search opportunities, donors and the web")
         st.caption(
-            "Two workflows. **⛏ Run Extraction** crawls every catalogued funding source "
-            f"and extracts opportunities into the global store — a full run ({_src_count()} "
-            "sources with detail-page + PDF + LLM enrichment) is the slow backend job "
-            "(**~20-40 minutes**, no org screening). **🎯 Eligibility Scan** then "
-            "screens that store against this organisation's eligibility (Settings → Scan "
-            "eligibility & auto-scoring policies) — fast, no crawl. **📊 Sync Excel** (when "
-            "a workbook is configured) imports the master workbook into **this tenant's** "
-            "pipeline.")
-    else:
-        st.caption(
-            "**🎯 Eligibility Scan** screens the curated funding store against this "
-            "organisation's eligibility (Settings → Scan eligibility & auto-scoring "
-            "policies) — fast, no crawl. The store itself is kept up to date centrally by "
-            "the system administrator. **📊 Sync Excel** (when a workbook is configured) "
-            "imports your master workbook into **this tenant's** pipeline.")
+            "Searches this organisation's stored opportunities and donors, the app's own "
+            "pages, and the open web. Results open on the Search page, where you can "
+            "refine the query, rate a result or track an opportunity.")
+        _sq = st.text_input(
+            "Search", key="scan_search_q", label_visibility="collapsed",
+            placeholder="e.g. maternal health diagnostics, or a donor's name")
+        _sgo, _slink = st.columns([1.3, 6])
+        _submitted = _sgo.button("🔍 Search", type="primary", key="scan_search_go",
+                                 width='stretch')
+        with _slink:
+            st.page_link("app_pages/search.py", label="Open the full search page",
+                         icon="🔍")
+        if _submitted and (_sq or "").strip():
+            # Same handoff the header uses: the query rides in the URL so a refresh or a
+            # shared link reproduces the search, with the session copy as the fallback.
+            _q = _sq.strip()
+            st.session_state["site_search_query"] = _q
+            try:
+                st.query_params["q"] = _q
+            except Exception:
+                pass
+            st.switch_page("app_pages/search.py")
 
-    from core.scan_pipeline import MATCH_RUN_LABEL
-    from datetime import timedelta as _td
-
-    def _pretty_trigger(raw: str | None) -> str:
-        """Strip the audit prefix (manual:/extraction:/match:) so the display reads
-        as the user's name. The DB keeps the prefixed value for audit."""
-        if not raw:
-            return "—"
-        for _p in ("manual:", "extraction:", "match:"):
-            if raw.startswith(_p):
-                return raw.split(_p, 1)[1]
-        return raw
-
-    def _run_summary(rows: list[dict]) -> dict | None:
-        """Aggregate the EXACT most-recent run within `rows` (newest-first). Every
-        scan_logs row of one run shares a `run_id` (migration 065), so we group by the
-        latest row's run_id — no cumulative bleed from an earlier run. Legacy rows with
-        no run_id fall back to the old timestamp-gap heuristic (contiguous rows < 15 min
-        apart = one run), stopping before any newer run_id'd run."""
-        if not rows:
-            return None
-        latest = rows[0]
-        trig = latest.get("triggered_by")
-        rid = latest.get("run_id")
-        if rid:
-            grp = [r for r in rows if r.get("run_id") == rid]
+    with _t_scan:
+        from core.scan_runner import scannable_source_count as _src_count
+        # WHO IS READING THIS. Extraction is a platform job on a store shared by every tenant,
+        # runnable only from a developer tenant; describing it to an admin who cannot run it
+        # (and showing them its counters) invited the reasonable question of why another
+        # organisation's crawl was appearing in their account. Each role gets the page it can
+        # actually act on.
+        if _dev_admin:
+            st.caption(
+                "Two workflows. **⛏ Run Extraction** crawls every catalogued funding source "
+                f"and extracts opportunities into the global store — a full run ({_src_count()} "
+                "sources with detail-page + PDF + LLM enrichment) is the slow backend job "
+                "(**~20-40 minutes**, no org screening). **🎯 Eligibility Scan** then "
+                "screens that store against this organisation's eligibility (Settings → Scan "
+                "eligibility & auto-scoring policies) — fast, no crawl. Importing a master "
+                "workbook into **this tenant's** pipeline moved to the **📊 Excel Sync** "
+                "sub-tab, and **🔍 Search** looks across stored opportunities, donors and "
+                "the web.")
         else:
-            grp = [latest]
-            prev_ts = pd.to_datetime(latest["scan_date"])
-            for r in rows[1:]:
-                if r.get("run_id"):           # don't merge legacy into a newer real run
-                    break
-                ts = pd.to_datetime(r["scan_date"])
-                if (prev_ts - ts).total_seconds() > 900:   # >15-min gap → different run
-                    break
-                if r.get("triggered_by") == trig:
-                    grp.append(r)
-                prev_ts = ts
-        return {
-            "ts": latest["scan_date"][:16].replace("T", " "),
-            "trigger": _pretty_trigger(trig),
-            "found": sum(int(r.get("rfps_found") or 0) for r in grp),
-            "new": sum(int(r.get("rfps_new") or 0) for r in grp),
-            "rejected": sum(int(r.get("rfps_rejected") or 0) for r in grp),
-        }
+            st.caption(
+                "**🎯 Eligibility Scan** screens the curated funding store against this "
+                "organisation's eligibility (Settings → Scan eligibility & auto-scoring "
+                "policies) — fast, no crawl. The store itself is kept up to date centrally "
+                "by the system administrator. Your master workbook is imported from the "
+                "**📊 Excel Sync** sub-tab, and **🔍 Search** looks across stored "
+                "opportunities, donors and the web.")
 
-    try:
-        _all_logs = (safe_execute(
-            sb.table("scan_logs").select("*").order("scan_date", desc=True).limit(500)
-        ).data or [])
-    except Exception as exc:
-        _all_logs = []
-        st.warning(f"Couldn't load scan history (transient connection issue) — "
-                   f"refresh to retry. ({type(exc).__name__})")
-    _ext_rows = [r for r in _all_logs if r.get("source") != MATCH_RUN_LABEL]
-    _match_rows = [r for r in _all_logs if r.get("source") == MATCH_RUN_LABEL]
+        from core.scan_pipeline import MATCH_RUN_LABEL
+        from datetime import timedelta as _td
 
-    # Compact metric-card fonts so long values (e.g. the extraction timestamp)
-    # show in full instead of truncating. Applies to BOTH summary-card rows
-    # (extraction + Eligible funding history) — same st.metric testid.
-    st.markdown(
-        "<style>[data-testid='stMetricValue']{font-size:1.05rem;line-height:1.3;"
-        "white-space:normal;overflow:visible;}"
-        "[data-testid='stMetricLabel']{font-size:0.8rem;}</style>",
-        unsafe_allow_html=True,
-    )
+        def _pretty_trigger(raw: str | None) -> str:
+            """Strip the audit prefix (manual:/extraction:/match:) so the display reads
+            as the user's name. The DB keeps the prefixed value for audit."""
+            if not raw:
+                return "—"
+            for _p in ("manual:", "extraction:", "match:"):
+                if raw.startswith(_p):
+                    return raw.split(_p, 1)[1]
+            return raw
 
-    # Two SEPARATE workflows (DATA_SCHEMA_ETL.md §2-3):
-    #   • Run Extraction      — crawl every donor source → extract into the global
-    #     store. PURE extraction, NO org screening (extract_only=True). Slow.
-    #   • Eligibility Scan — screen the INTERNAL store against this org
-    #     (geography + MUST/PREFER) → the funding the org is potentially eligible
-    #     for. Fast (no crawl). Tenant-facing version = the Pipeline "Scan now".
-    #   • Sync Excel (optional) — import a master workbook into THIS tenant's
-    #     pipeline; shown only when a workbook resolves.
-    # Buttons sit ABOVE the summary cards. Each flips to a disabled "running…"
-    # label in place while it works.
-    _who = user.get("name") or user.get("email") or "admin"
-    # The whole Admin page is admin-gated at the top (permissions.is_admin), so anyone here
-    # is an admin of the acting tenant — Excel sync is open to ANY tenant admin (not just a
-    # developer tenant), per the "admin from any tenant" requirement.
-    is_admin = permissions.is_admin(user)
-    # Excel workbook availability — the "📊 Sync Excel" button appears ONLY when a workbook
-    # resolves for this deployment (optional feature; some tenants have no workbook). Sync is
-    # now available to ANY tenant admin (was developer-only) and is TENANT-AWARE: rows land in
-    # the acting tenant's pipeline (excel_sync passes the tenant to the importer's override).
-    from core import excel_sync as _xls
-    _xls_resolved = _xls.resolve_excel_path()
-    _xls_path = _xls_resolved.get("resolved_path")
-    _excel_available = _xls_path is not None
-    try:
-        from auth.tenant_context import current_tenant_id as _ctid
-        _cur_tid = _ctid()
-    except Exception:
-        _cur_tid = None
-
-    # Run Extraction + Eligibility Scan (+ Sync Excel when available) sit together on the
-    # RIGHT — compact narrow columns, wide spacer on the left.
-    # A disabled button is an invitation to ask why it is disabled. Extraction simply is
-    # not part of this page for a client tenant, so it is not drawn at all.
-    _show_excel = bool(_excel_available and is_admin)
-    if _dev_admin and _show_excel:
-        _bcsp, _bc1, _bc2, _bc3 = st.columns([3.6, 1.5, 1.7, 1.5])
-        _ext_slot, _match_slot, _xls_slot = _bc1.empty(), _bc2.empty(), _bc3.empty()
-    elif _dev_admin:
-        _bcsp, _bc1, _bc2 = st.columns([5.2, 1.5, 1.6])
-        _ext_slot, _match_slot, _xls_slot = _bc1.empty(), _bc2.empty(), None
-    elif _show_excel:
-        _bcsp, _bc2, _bc3 = st.columns([5.2, 1.7, 1.5])
-        _ext_slot, _match_slot, _xls_slot = None, _bc2.empty(), _bc3.empty()
-    else:
-        _bcsp, _bc2 = st.columns([6.7, 1.7])
-        _ext_slot, _match_slot, _xls_slot = None, _bc2.empty(), None
-    # Run Extraction is a PLATFORM job that crawls every source into the SHARED global
-    # store (no per-tenant screening) — a developer task. Restricted to an admin/super
-    # of a developer tenant. The "Eligibility Scan" screening
-    # button beside it stays available to every tenant admin (it's tenant-scoped).
-    _do_extract = _ext_slot.button(
-        "⛏ Run Extraction", type="secondary", key="admin_extract_btn", width='stretch',
-        help="Platform job: crawl all funding sources and extract into the global "
-             "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
-             "(~20-40 min for a full run).") if _ext_slot is not None else False
-    _do_match = _match_slot.button(
-        "🎯 Eligibility Scan", type="primary", key="admin_match_btn", width='stretch',
-        help="Screen the curated store against this org's eligibility (geography + "
-             "MUST/PREFER) — the funding you're potentially eligible for. Fast.")
-    _do_excel = (_xls_slot.button(
-        "📊 Sync Excel", type="secondary", key="admin_excel_btn", width='stretch',
-        help="Import the master Excel workbook into THIS tenant's pipeline (rows are "
-             "tagged to your tenant). Optional — shown only when a workbook is configured.")
-        if _xls_slot is not None else False)
-
-    if _do_extract and _dev_admin:          # defense in depth (button is also disabled)
-        # Replace the button in place with a disabled "running" label during the run.
-        _ext_slot.button("⏳ Running extraction…", disabled=True, width='stretch',
-                         key="admin_extract_running")
-        try:
-            from core.scan_runner import run_scan_now
-            run_scan_now(triggered_by=f"extraction:{_who}", extract_only=True)
-        except Exception as exc:
-            st.session_state["admin_scan_banner"] = {
-                "ok": False, "msg": f"❌ Extraction crashed: `{type(exc).__name__}: {exc}`."}
-        st.rerun()
-
-    if _do_match:
-        _match_slot.button("⏳ Selecting eligible funding…", disabled=True,
-                           width='stretch', key="admin_match_running")
-        try:
-            from core.scan_runner import run_screening_now
-            run_screening_now(triggered_by=f"match:{_who}")
-        except Exception as exc:
-            st.session_state["admin_scan_banner"] = {
-                "ok": False,
-                "msg": f"❌ Eligibility Scan failed: `{type(exc).__name__}: {exc}`."}
-        st.rerun()
-
-    if _do_excel and _xls_slot is not None and is_admin:   # defense in depth
-        _xls_slot.button("⏳ Syncing Excel…", disabled=True, width='stretch',
-                         key="admin_excel_running")
-        with st.spinner("Importing the workbook into this tenant…"):
-            _res = _xls.sync(updated_by=user.get("email"), tenant_id=_cur_tid)
-        st.session_state["admin_scan_banner"] = (
-            {"ok": True, "msg": f"✓ Excel synced from `{_res.get('path')}` into this tenant."}
-            if _res.get("ok") else
-            {"ok": False, "msg": f"❌ Excel sync failed: {_res.get('error') or 'see output below'}"})
-        st.session_state["admin_excel_output"] = _res
-        st.rerun()
-
-    # Banner from the previous run (survives the post-scan rerun).
-    _scan_banner = st.session_state.pop("admin_scan_banner", None)
-    if _scan_banner:
-        (st.success if _scan_banner.get("ok") else st.error)(_scan_banner["msg"])
-
-    # ----- Excel workbook: status + upload (any tenant admin) ------------------
-    # Optional feature: a tenant admin can point this deployment at a master workbook
-    # and sync it into THEIR pipeline. Shown to admins whether or not a workbook is
-    # currently resolved, so a tenant with none can add one.
-    if is_admin:
-        _wb_label = (f"📊 Excel workbook — `{_xls_path.name}` ready"
-                     if _excel_available else "📊 Excel workbook — none configured")
-        with st.expander(_wb_label, expanded=False):
-            _last_mt, _last_ts = _xls.get_last_sync()
-            if _excel_available:
-                # The full server path is developer detail; for a tenant upload the file
-                # name is all that is meaningful, and printing the directory would expose
-                # the storage layout.
-                if _xls_resolved.get("source") == "tenant upload":
-                    st.caption(f"Uploaded for this tenant → `{_xls_path.name}`")
-                else:
-                    st.caption(f"Resolved via **{_xls_resolved.get('source')}** → "
-                               f"`{_xls_path}`")
-                if _last_ts:
-                    st.caption(f"Last synced: {_last_ts}")
-                st.caption(
-                    "Use the **📊 Sync Excel** button above to import into this tenant. "
-                    "Rows are tagged to your current tenant.")
+        def _run_summary(rows: list[dict]) -> dict | None:
+            """Aggregate the EXACT most-recent run within `rows` (newest-first). Every
+            scan_logs row of one run shares a `run_id` (migration 065), so we group by the
+            latest row's run_id — no cumulative bleed from an earlier run. Legacy rows with
+            no run_id fall back to the old timestamp-gap heuristic (contiguous rows < 15 min
+            apart = one run), stopping before any newer run_id'd run."""
+            if not rows:
+                return None
+            latest = rows[0]
+            trig = latest.get("triggered_by")
+            rid = latest.get("run_id")
+            if rid:
+                grp = [r for r in rows if r.get("run_id") == rid]
             else:
-                if _xls_resolved.get("error"):
-                    st.warning(_xls_resolved["error"])
-                st.caption(
-                    "No workbook for this tenant yet. Upload one below — it is stored "
-                    "privately for this tenant and is not visible to any other.")
-            _up = st.file_uploader("Upload a master workbook (.xlsx)", type=["xlsx"],
-                                   key="admin_excel_upload")
-            if _up is not None and st.button("Save workbook", key="admin_excel_save"):
-                try:
-                    # Stored under this tenant's own directory, never beside the project:
-                    # a shared path made one organisation's workbook visible to every
-                    # other tenant (see core.excel_sync).
-                    from core.excel_sync import save_tenant_workbook as _save_wb
-                    _dest = _save_wb(_up.name, _up.getbuffer().tobytes())
-                    st.success(f"Saved `{_dest.name}` for this tenant. Reopen this tab, "
-                               f"then Sync Excel.")
-                    st.rerun()
-                except Exception as _e:
-                    st.error(f"Could not save workbook: {type(_e).__name__}: {_e}")
-            _out = st.session_state.pop("admin_excel_output", None)
-            if _out and (_out.get("stdout") or _out.get("stderr")):
-                st.code((_out.get("stdout") or "") + "\n" + (_out.get("stderr") or ""),
-                        language="text")
+                grp = [latest]
+                prev_ts = pd.to_datetime(latest["scan_date"])
+                for r in rows[1:]:
+                    if r.get("run_id"):           # don't merge legacy into a newer real run
+                        break
+                    ts = pd.to_datetime(r["scan_date"])
+                    if (prev_ts - ts).total_seconds() > 900:   # >15-min gap → different run
+                        break
+                    if r.get("triggered_by") == trig:
+                        grp.append(r)
+                    prev_ts = ts
+            return {
+                "ts": latest["scan_date"][:16].replace("T", " "),
+                "trigger": _pretty_trigger(trig),
+                "found": sum(int(r.get("rfps_found") or 0) for r in grp),
+                "new": sum(int(r.get("rfps_new") or 0) for r in grp),
+                "rejected": sum(int(r.get("rfps_rejected") or 0) for r in grp),
+            }
 
-    # Extraction summary cards (BELOW the buttons) — DEVELOPER TENANT ONLY. These count a
-    # crawl of the shared store; they are not this tenant's numbers, and showing them in a
-    # client account read as another organisation's activity leaking in.
-    _ext = _run_summary(_ext_rows)
-    if _ext and not _dev_admin:
-        # What a client tenant actually needs to know: the store behind their screening was
-        # refreshed, by whom, and whether they have screened it since.
-        _mine = _run_summary(_match_rows)
-        _screened_since = bool(_mine and _mine["ts"] >= _ext["ts"])
-        st.info(
-            f"The funding store was last refreshed by the system administrator on "
-            f"**{_ext['ts']}**."
-            + (f"  \n✅ Your last **Eligibility Scan** ran on **{_mine['ts']}**, after "
-               f"that refresh." if _screened_since else
-               "  \n🎯 You have not screened it since — run an **Eligibility Scan** to see "
-               "what this organisation is now eligible for."))
-        _ext = None                      # fall through without drawing the crawl counters
-    if _ext:
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Last extraction", _ext["ts"])
-        c2.metric("Triggered by", _ext["trigger"])
-        c3.metric("Found", _ext["found"],
-                  help="Candidates returned by the crawlers across all sources.")
-        c4.metric("Extracted", _ext["new"],
-                  help="Written to the global Extracted Solicitations store.")
-        c5.metric("Rejected", _ext["rejected"],
-                  help="Failed the extraction gate (not-an-rfp / off-theme / "
-                       "opportunity-type / language / past-deadline).")
+        try:
+            _all_logs = (safe_execute(
+                sb.table("scan_logs").select("*").order("scan_date", desc=True).limit(500)
+            ).data or [])
+        except Exception as exc:
+            _all_logs = []
+            st.warning(f"Couldn't load scan history (transient connection issue) — "
+                       f"refresh to retry. ({type(exc).__name__})")
+        _ext_rows = [r for r in _all_logs if r.get("source") != MATCH_RUN_LABEL]
+        _match_rows = [r for r in _all_logs if r.get("source") == MATCH_RUN_LABEL]
 
-    # ----- History (split): Extraction runs (the crawl) vs Found-matches runs --
-    from core.scan_pipeline import MATCH_RUN_LABEL
-    st.markdown("---")
-    # Reuse the rows already fetched above (`_all_logs`) instead of re-running the identical
-    # scan_logs select — it is the same query, and Streamlit re-runs this whole tab body on
-    # every widget interaction, so the duplicate cost a round-trip (~0.35s) every click.
-    logs = clean_df(pd.DataFrame(_all_logs or []))
-    if not logs.empty and "triggered_by" in logs.columns:
-        logs["triggered_by"] = (
-            logs["triggered_by"].fillna("").astype(str).map(_pretty_trigger)
-        )
-    if not logs.empty and "source" in logs.columns:
-        _is_match = logs["source"].astype(str) == MATCH_RUN_LABEL
-    else:
-        _is_match = pd.Series([False] * len(logs), index=logs.index)
-    extr_logs = logs[~_is_match] if not logs.empty else logs
-    match_logs = logs[_is_match] if not logs.empty else logs
-
-    # --- Extraction history (the donor-source crawl) — DEVELOPER TENANT ONLY ---
-    # Same reasoning as the counters above: this is the log of a platform crawl over the
-    # shared store, not a record of anything this tenant did. "Eligible funding history"
-    # below IS per-tenant and stays visible to everyone.
-    if _dev_admin:
-        st.subheader("Extraction history")
-        st.caption("Each donor-source crawl (“Run Extraction”). Most recent 500 runs.")
-    if _dev_admin and extr_logs.empty:
-        st.info("No extraction runs recorded yet.")
-    elif _dev_admin:
-        hist_cols = [
-            "scan_date", "triggered_by", "source",
-            "rfps_found", "rfps_new", "rfps_duplicate",
-        ]
-        if "rfps_rejected" in extr_logs.columns:
-            hist_cols.append("rfps_rejected")
-        hist_cols += ["duration_sec", "errors"]
-        st.dataframe(
-            extr_logs[[c for c in hist_cols if c in extr_logs.columns]],
-            width='stretch',
-            hide_index=True,
-            column_config={
-                "scan_date": st.column_config.TextColumn("Scan time"),
-                "triggered_by": st.column_config.TextColumn("Triggered by"),
-                "source": st.column_config.TextColumn("Source"),
-                "rfps_found": st.column_config.NumberColumn("Found"),
-                "rfps_new": st.column_config.NumberColumn("New"),
-                "rfps_duplicate": st.column_config.NumberColumn("Dup"),
-                "rfps_rejected": st.column_config.NumberColumn(
-                    "Rejected",
-                    help="Filtered out by the strict eligibility gate "
-                         "(country / theme / deadline / feasibility).",
-                ),
-                "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.2f"),
-                "errors": st.column_config.TextColumn("Errors"),
-            },
+        # Compact metric-card fonts so long values (e.g. the extraction timestamp)
+        # show in full instead of truncating. Applies to BOTH summary-card rows
+        # (extraction + Eligible funding history) — same st.metric testid.
+        st.markdown(
+            "<style>[data-testid='stMetricValue']{font-size:1.05rem;line-height:1.3;"
+            "white-space:normal;overflow:visible;}"
+            "[data-testid='stMetricLabel']{font-size:0.8rem;}</style>",
+            unsafe_allow_html=True,
         )
 
-    # --- Eligible funding history (the fast internal re-screen) ---
-    st.markdown("---")
-    st.subheader("Eligible funding history")
-    # Summary cards for the latest "My eligible funding" run.
-    _mt = _run_summary(_match_rows)
-    if _mt:
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Last run", _mt["ts"])
-        m2.metric("Triggered by", _mt["trigger"])
-        m3.metric("Considered", _mt["found"],
-                  help="Curated solicitations screened against your org.")
-        m4.metric("Eligible", _mt["new"],
-                  help="Newly eligible for your org (passed geography + MUST/PREFER).")
-        m5.metric("Not a fit", _mt["rejected"])
-    st.caption("Each “My eligible funding” run — a fast internal screen of the "
-               "curated store against this org's eligibility policies.")
-    if match_logs.empty:
-        st.info("No “My eligible funding” runs yet.")
-    else:
-        _mcols = ["scan_date", "triggered_by", "rfps_found", "rfps_new",
-                  "rfps_duplicate", "rfps_rejected", "duration_sec"]
-        st.dataframe(
-            match_logs[[c for c in _mcols if c in match_logs.columns]],
-            width='stretch',
-            hide_index=True,
-            column_config={
-                "scan_date": st.column_config.TextColumn("Run time"),
-                "triggered_by": st.column_config.TextColumn("Run by"),
-                "rfps_found": st.column_config.NumberColumn(
-                    "Considered",
-                    help="Curated solicitations screened against your org."),
-                "rfps_new": st.column_config.NumberColumn("Eligible"),
-                "rfps_duplicate": st.column_config.NumberColumn("Already tracked"),
-                "rfps_rejected": st.column_config.NumberColumn("Not a fit"),
-                "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.2f"),
-            },
-        )
+        # Two SEPARATE workflows (DATA_SCHEMA_ETL.md §2-3):
+        #   • Run Extraction      — crawl every donor source → extract into the global
+        #     store. PURE extraction, NO org screening (extract_only=True). Slow.
+        #   • Eligibility Scan — screen the INTERNAL store against this org
+        #     (geography + MUST/PREFER) → the funding the org is potentially eligible
+        #     for. Fast (no crawl). Tenant-facing version = the Pipeline "Scan now".
+        #   • Sync Excel (optional) — import a master workbook into THIS tenant's
+        #     pipeline; shown only when a workbook resolves.
+        # Buttons sit ABOVE the summary cards. Each flips to a disabled "running…"
+        # label in place while it works.
+        _who = user.get("name") or user.get("email") or "admin"
+        # The whole Admin page is admin-gated at the top (permissions.is_admin), so anyone here
+        # is an admin of the acting tenant — Excel sync is open to ANY tenant admin (not just a
+        # developer tenant), per the "admin from any tenant" requirement.
+        is_admin = permissions.is_admin(user)
+        # Excel workbook availability — the "📊 Sync Excel" button appears ONLY when a workbook
+        # resolves for this deployment (optional feature; some tenants have no workbook). Sync is
+        # now available to ANY tenant admin (was developer-only) and is TENANT-AWARE: rows land in
+        # the acting tenant's pipeline (excel_sync passes the tenant to the importer's override).
+        from core import excel_sync as _xls
+        _xls_resolved = _xls.resolve_excel_path()
+        _xls_path = _xls_resolved.get("resolved_path")
+        _excel_available = _xls_path is not None
+        try:
+            from auth.tenant_context import current_tenant_id as _ctid
+            _cur_tid = _ctid()
+        except Exception:
+            _cur_tid = None
 
+        # Run Extraction + Eligibility Scan (+ Sync Excel when available) sit together on the
+        # RIGHT — compact narrow columns, wide spacer on the left.
+        # A disabled button is an invitation to ask why it is disabled. Extraction simply is
+        # not part of this page for a client tenant, so it is not drawn at all.
+        _show_excel = bool(_excel_available and is_admin)
+        # Sync Excel now lives in its own sub-tab, so its slot is opened THERE while the code
+        # that reads it stays here — a container bound to a tab accepts writes from anywhere,
+        # which keeps the run/`⏳ Syncing…` handling in one place instead of duplicated.
+        _xls_slot = _excel_area.empty() if _show_excel else None
+        if _dev_admin:
+            _bcsp, _bc1, _bc2 = st.columns([5.2, 1.5, 1.6])
+            _ext_slot, _match_slot = _bc1.empty(), _bc2.empty()
+        else:
+            _bcsp, _bc2 = st.columns([6.7, 1.7])
+            _ext_slot, _match_slot = None, _bc2.empty()
+        # Run Extraction is a PLATFORM job that crawls every source into the SHARED global
+        # store (no per-tenant screening) — a developer task. Restricted to an admin/super
+        # of a developer tenant. The "Eligibility Scan" screening
+        # button beside it stays available to every tenant admin (it's tenant-scoped).
+        _do_extract = _ext_slot.button(
+            "⛏ Run Extraction", type="secondary", key="admin_extract_btn", width='stretch',
+            help="Platform job: crawl all funding sources and extract into the global "
+                 "Extracted Solicitations store. No org screening here. Slow, LLM-enriched "
+                 "(~20-40 min for a full run).") if _ext_slot is not None else False
+        _do_match = _match_slot.button(
+            "🎯 Eligibility Scan", type="primary", key="admin_match_btn", width='stretch',
+            help="Screen the curated store against this org's eligibility (geography + "
+                 "MUST/PREFER) — the funding you're potentially eligible for. Fast.")
+        _do_excel = (_xls_slot.button(
+            "📊 Sync Excel", type="secondary", key="admin_excel_btn", width='stretch',
+            help="Import the master Excel workbook into THIS tenant's pipeline (rows are "
+                 "tagged to your tenant). Optional — shown only when a workbook is configured.")
+            if _xls_slot is not None else False)
+
+        if _do_extract and _dev_admin:          # defense in depth (button is also disabled)
+            # Replace the button in place with a disabled "running" label during the run.
+            _ext_slot.button("⏳ Running extraction…", disabled=True, width='stretch',
+                             key="admin_extract_running")
+            try:
+                from core.scan_runner import run_scan_now
+                run_scan_now(triggered_by=f"extraction:{_who}", extract_only=True)
+            except Exception as exc:
+                st.session_state["admin_scan_banner"] = {
+                    "ok": False, "msg": f"❌ Extraction crashed: `{type(exc).__name__}: {exc}`."}
+            st.rerun()
+
+        if _do_match:
+            _match_slot.button("⏳ Selecting eligible funding…", disabled=True,
+                               width='stretch', key="admin_match_running")
+            try:
+                from core.scan_runner import run_screening_now
+                run_screening_now(triggered_by=f"match:{_who}")
+            except Exception as exc:
+                st.session_state["admin_scan_banner"] = {
+                    "ok": False,
+                    "msg": f"❌ Eligibility Scan failed: `{type(exc).__name__}: {exc}`."}
+            st.rerun()
+
+        if _do_excel and _xls_slot is not None and is_admin:   # defense in depth
+            _xls_slot.button("⏳ Syncing Excel…", disabled=True, width='stretch',
+                             key="admin_excel_running")
+            with st.spinner("Importing the workbook into this tenant…"):
+                _res = _xls.sync(updated_by=user.get("email"), tenant_id=_cur_tid)
+            st.session_state["admin_scan_banner"] = (
+                {"ok": True, "msg": f"✓ Excel synced from `{_res.get('path')}` into this tenant."}
+                if _res.get("ok") else
+                {"ok": False, "msg": f"❌ Excel sync failed: {_res.get('error') or 'see output below'}"})
+            st.session_state["admin_excel_output"] = _res
+            st.rerun()
+
+        # Banner from the previous run (survives the post-scan rerun).
+        _scan_banner = st.session_state.pop("admin_scan_banner", None)
+        if _scan_banner:
+            (st.success if _scan_banner.get("ok") else st.error)(_scan_banner["msg"])
+
+        # Extraction summary cards (BELOW the buttons) — DEVELOPER TENANT ONLY. These count a
+        # crawl of the shared store; they are not this tenant's numbers, and showing them in a
+        # client account read as another organisation's activity leaking in.
+        _ext = _run_summary(_ext_rows)
+        if _ext and not _dev_admin:
+            # What a client tenant actually needs to know: the store behind their screening was
+            # refreshed, by whom, and whether they have screened it since.
+            _mine = _run_summary(_match_rows)
+            _screened_since = bool(_mine and _mine["ts"] >= _ext["ts"])
+            st.info(
+                f"The funding store was last refreshed by the system administrator on "
+                f"**{_ext['ts']}**."
+                + (f"  \n✅ Your last **Eligibility Scan** ran on **{_mine['ts']}**, after "
+                   f"that refresh." if _screened_since else
+                   "  \n🎯 You have not screened it since — run an **Eligibility Scan** to see "
+                   "what this organisation is now eligible for."))
+            _ext = None                      # fall through without drawing the crawl counters
+        if _ext:
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Last extraction", _ext["ts"])
+            c2.metric("Triggered by", _ext["trigger"])
+            c3.metric("Found", _ext["found"],
+                      help="Candidates returned by the crawlers across all sources.")
+            c4.metric("Extracted", _ext["new"],
+                      help="Written to the global Extracted Solicitations store.")
+            c5.metric("Rejected", _ext["rejected"],
+                      help="Failed the extraction gate (not-an-rfp / off-theme / "
+                           "opportunity-type / language / past-deadline).")
+
+        # ----- History (split): Extraction runs (the crawl) vs Found-matches runs --
+        from core.scan_pipeline import MATCH_RUN_LABEL
+        st.markdown("---")
+        # Reuse the rows already fetched above (`_all_logs`) instead of re-running the identical
+        # scan_logs select — it is the same query, and Streamlit re-runs this whole tab body on
+        # every widget interaction, so the duplicate cost a round-trip (~0.35s) every click.
+        logs = clean_df(pd.DataFrame(_all_logs or []))
+        if not logs.empty and "triggered_by" in logs.columns:
+            logs["triggered_by"] = (
+                logs["triggered_by"].fillna("").astype(str).map(_pretty_trigger)
+            )
+        if not logs.empty and "source" in logs.columns:
+            _is_match = logs["source"].astype(str) == MATCH_RUN_LABEL
+        else:
+            _is_match = pd.Series([False] * len(logs), index=logs.index)
+        extr_logs = logs[~_is_match] if not logs.empty else logs
+        match_logs = logs[_is_match] if not logs.empty else logs
+
+        # --- Extraction history (the donor-source crawl) — DEVELOPER TENANT ONLY ---
+        # Same reasoning as the counters above: this is the log of a platform crawl over the
+        # shared store, not a record of anything this tenant did. "Eligible funding history"
+        # below IS per-tenant and stays visible to everyone.
+        if _dev_admin:
+            st.subheader("Extraction history")
+            st.caption("Each donor-source crawl (“Run Extraction”). Most recent 500 runs.")
+        if _dev_admin and extr_logs.empty:
+            st.info("No extraction runs recorded yet.")
+        elif _dev_admin:
+            hist_cols = [
+                "scan_date", "triggered_by", "source",
+                "rfps_found", "rfps_new", "rfps_duplicate",
+            ]
+            if "rfps_rejected" in extr_logs.columns:
+                hist_cols.append("rfps_rejected")
+            hist_cols += ["duration_sec", "errors"]
+            st.dataframe(
+                extr_logs[[c for c in hist_cols if c in extr_logs.columns]],
+                width='stretch',
+                hide_index=True,
+                column_config={
+                    "scan_date": st.column_config.TextColumn("Scan time"),
+                    "triggered_by": st.column_config.TextColumn("Triggered by"),
+                    "source": st.column_config.TextColumn("Source"),
+                    "rfps_found": st.column_config.NumberColumn("Found"),
+                    "rfps_new": st.column_config.NumberColumn("New"),
+                    "rfps_duplicate": st.column_config.NumberColumn("Dup"),
+                    "rfps_rejected": st.column_config.NumberColumn(
+                        "Rejected",
+                        help="Filtered out by the strict eligibility gate "
+                             "(country / theme / deadline / feasibility).",
+                    ),
+                    "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.2f"),
+                    "errors": st.column_config.TextColumn("Errors"),
+                },
+            )
+
+        # --- Eligible funding history (the fast internal re-screen) ---
+        st.markdown("---")
+        st.subheader("Eligible funding history")
+        # Summary cards for the latest "My eligible funding" run.
+        _mt = _run_summary(_match_rows)
+        if _mt:
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Last run", _mt["ts"])
+            m2.metric("Triggered by", _mt["trigger"])
+            m3.metric("Considered", _mt["found"],
+                      help="Curated solicitations screened against your org.")
+            m4.metric("Eligible", _mt["new"],
+                      help="Newly eligible for your org (passed geography + MUST/PREFER).")
+            m5.metric("Not a fit", _mt["rejected"])
+        st.caption("Each “My eligible funding” run — a fast internal screen of the "
+                   "curated store against this org's eligibility policies.")
+        if match_logs.empty:
+            st.info("No “My eligible funding” runs yet.")
+        else:
+            _mcols = ["scan_date", "triggered_by", "rfps_found", "rfps_new",
+                      "rfps_duplicate", "rfps_rejected", "duration_sec"]
+            st.dataframe(
+                match_logs[[c for c in _mcols if c in match_logs.columns]],
+                width='stretch',
+                hide_index=True,
+                column_config={
+                    "scan_date": st.column_config.TextColumn("Run time"),
+                    "triggered_by": st.column_config.TextColumn("Run by"),
+                    "rfps_found": st.column_config.NumberColumn(
+                        "Considered",
+                        help="Curated solicitations screened against your org."),
+                    "rfps_new": st.column_config.NumberColumn("Eligible"),
+                    "rfps_duplicate": st.column_config.NumberColumn("Already tracked"),
+                    "rfps_rejected": st.column_config.NumberColumn("Not a fit"),
+                    "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.2f"),
+                },
+            )
+
+
+
+    with _excel_area:
+        # ----- Excel workbook: status + upload (any tenant admin) ------------------
+        # Optional feature: a tenant admin can point this deployment at a master workbook
+        # and sync it into THEIR pipeline. Shown to admins whether or not a workbook is
+        # currently resolved, so a tenant with none can add one.
+        if is_admin:
+            _wb_label = (f"📊 Excel workbook — `{_xls_path.name}` ready"
+                         if _excel_available else "📊 Excel workbook — none configured")
+            with st.expander(_wb_label, expanded=False):
+                _last_mt, _last_ts = _xls.get_last_sync()
+                if _excel_available:
+                    # The full server path is developer detail; for a tenant upload the file
+                    # name is all that is meaningful, and printing the directory would expose
+                    # the storage layout.
+                    if _xls_resolved.get("source") == "tenant upload":
+                        st.caption(f"Uploaded for this tenant → `{_xls_path.name}`")
+                    else:
+                        st.caption(f"Resolved via **{_xls_resolved.get('source')}** → "
+                                   f"`{_xls_path}`")
+                    if _last_ts:
+                        st.caption(f"Last synced: {_last_ts}")
+                    st.caption(
+                        "Use the **📊 Sync Excel** button above to import into this tenant. "
+                        "Rows are tagged to your current tenant.")
+                else:
+                    if _xls_resolved.get("error"):
+                        st.warning(_xls_resolved["error"])
+                    st.caption(
+                        "No workbook for this tenant yet. Upload one below — it is stored "
+                        "privately for this tenant and is not visible to any other.")
+                _up = st.file_uploader("Upload a master workbook (.xlsx)", type=["xlsx"],
+                                       key="admin_excel_upload")
+                if _up is not None and st.button("Save workbook", key="admin_excel_save"):
+                    try:
+                        # Stored under this tenant's own directory, never beside the project:
+                        # a shared path made one organisation's workbook visible to every
+                        # other tenant (see core.excel_sync).
+                        from core.excel_sync import save_tenant_workbook as _save_wb
+                        _dest = _save_wb(_up.name, _up.getbuffer().tobytes())
+                        st.success(f"Saved `{_dest.name}` for this tenant. Reopen this tab, "
+                                   f"then Sync Excel.")
+                        st.rerun()
+                    except Exception as _e:
+                        st.error(f"Could not save workbook: {type(_e).__name__}: {_e}")
+                _out = st.session_state.pop("admin_excel_output", None)
+                if _out and (_out.get("stdout") or _out.get("stderr")):
+                    st.code((_out.get("stdout") or "") + "\n" + (_out.get("stderr") or ""),
+                            language="text")
 
 # -----------------------------------------------------------------------------
 # Sources → Blocked (formerly the top-level "Blacklist" tab) — hard-reject URL
