@@ -413,24 +413,177 @@ def _default_membership(user: dict, mems: list[dict[str, Any]]) -> dict[str, Any
     return sorted(mems, key=lambda m: (m.get("name") or "").lower())[0]
 
 
+# ---------------------------------------------------------------------------
+# Session identity binding
+# ---------------------------------------------------------------------------
+# Streamlit session_state belongs to the BROWSER TAB, not to the signed-in user: it
+# survives sign-out and is inherited whole by whoever signs in next on that tab. Every key
+# below carries tenant identity, so a stale one is not a cosmetic bug — it silently scopes
+# the next person's session to the previous person's tenant. They are stamped with the
+# identity that set them (_IDENTITY_KEY) and destroyed the moment a different identity
+# takes the session over.
+_IDENTITY_KEY = "_tenant_identity"
+
+_SESSION_TENANT_KEYS = (
+    "tenant_id", "tenant_name", "tenant_slug",   # the resolved tenant
+    "_tenant_jwt", "_tenant_jwt_exp",        # the bearer that RLS trusts
+    "_tenant_client", "_tenant_client_jwt",  # the client built from that bearer
+    "su_view_tenant", "su_view_name", "su_view_slug",   # a super's view-as target
+    _IDENTITY_KEY,
+)
+
+
+def identity_of(user: dict | None) -> str:
+    """A stable per-account key for the signed-in user. Prefers the uuid, falls back to
+    the email (unique in `users`) — deliberately NO database round-trip: this runs on
+    every page render, and it only has to distinguish one account from another."""
+    u = user or {}
+    return str(u.get("id") or u.get("email") or "")
+
+
+def clear_tenant_session() -> None:
+    """Destroy every tenant-identity key in this Streamlit session, plus the shared
+    membership cache. Call on sign-out and whenever a different account takes over a
+    session. Never raises (it runs from a logout handler, where an exception would strand
+    the user signed-in)."""
+    try:
+        for key in _SESSION_TENANT_KEYS:
+            st.session_state.pop(key, None)
+    except Exception:
+        pass
+    try:
+        clear_membership_cache()
+    except Exception:
+        pass
+
+
+def adopt_session_identity(user: dict) -> bool:
+    """Bind this session to `user`, wiping tenant state left by anyone else. Returns True
+    when a wipe happened (the caller may then also drop its own per-user caches).
+
+    Two cases are treated as foreign, both of which produced the cross-account bleed:
+      * a stamp from a DIFFERENT account — sign-out then sign-in on a shared browser;
+      * tenant state with NO stamp at all — a session opened before this binding existed,
+        or state set outside the normal path. Unowned tenant state is never inherited."""
+    try:
+        ident = identity_of(user)
+        stamped = st.session_state.get(_IDENTITY_KEY)
+        foreign = (stamped is not None and stamped != ident) or (
+            stamped is None and bool(st.session_state.get("tenant_id")))
+        if foreign:
+            clear_tenant_session()
+        st.session_state[_IDENTITY_KEY] = ident
+        return foreign
+    except Exception:
+        return False
+
+
+def membership_status(user: dict, tenant_id: str | None) -> Optional[bool]:
+    """Tri-state membership answer — the distinction that keeps the gate strict without
+    making it fragile:
+
+        True  — an ACTIVE membership in this tenant exists;
+        False — checked, and there is none (or its tenant is pending/blacklisted);
+        None  — could NOT be checked (database unreachable, identity unresolvable).
+
+    `active_memberships` cannot express None: it swallows errors into an empty list, so a
+    dropped connection reads as "belongs to nothing". Granting on that is unsafe, but
+    REVOKING on it is just as wrong — it evicts a session that was properly verified when
+    it was granted, which on a flaky connection looks like being thrown out of your tenant
+    at random. Callers decide: grants treat None as a refusal, live sessions ride it out.
+
+    One indexed query (user + tenant), not the cached list, so the answer is fresh and its
+    failure mode is visible."""
+    if not tenant_id:
+        return False
+    try:
+        uid = _resolve_user_id(user)
+    except Exception:
+        return None
+    if not uid:
+        return None
+    try:
+        rows = (service_client().table("tenant_memberships")
+                .select("tenant_id, tenants(status)")
+                .eq("user_id", uid).eq("tenant_id", str(tenant_id))
+                .eq("status", "active").limit(1).execute().data or [])
+    except Exception:
+        return None
+    if not rows:
+        return False
+    # Mirror active_memberships: a blacklisted or pending tenant grants no runtime context.
+    t = rows[0].get("tenants") if isinstance(rows[0].get("tenants"), dict) else {}
+    if (t or {}).get("status") in ("blacklisted", "pending"):
+        return False
+    return True
+
+
+def tenant_allowed(user: dict, tenant_id: str | None) -> bool:
+    """True only when `tenant_id` is one of THIS user's ACTIVE memberships.
+
+    The hard authorisation check behind every tenant assignment: a session may never be
+    scoped to a tenant the account does not belong to, whatever put the id there (stale
+    session state, a hand-edited URL, a revoked membership, a bug in a caller). A miss is
+    re-checked against fresh rows before it is refused, so a just-created membership
+    (onboarding creates the tenant, then scopes into it) is never rejected by a stale
+    30-second cache.
+
+    Super_users are NOT exempt. Their cross-tenant power runs through `su_view_tenant`
+    (view-as, gated on the super role and scoped per read) — their own session tenant is
+    still their real membership, so a super cannot silently occupy a client tenant."""
+    if not tenant_id:
+        return False
+    try:
+        uid = _resolve_user_id(user)
+        if uid and any(str(m.get("tenant_id")) == str(tenant_id)
+                       for m in active_memberships(uid)):
+            return True                      # cached fast path — the common case
+        if uid:
+            clear_membership_cache(uid)      # the cache may predate the membership
+            if any(str(m.get("tenant_id")) == str(tenant_id)
+                   for m in active_memberships(uid)):
+                return True
+    except Exception:
+        pass
+    # Nothing in the cached view — ask directly, and treat "couldn't check" as a refusal.
+    # This is the GRANT path: no proof of membership, no access.
+    return membership_status(user, tenant_id) is True
+
+
 def set_active_tenant(user: dict, tenant_id: str | None, *, role: str | None = None,
-                      name: str | None = None) -> bool:
+                      name: str | None = None, slug: str | None = None,
+                      verified: bool = False) -> bool:
     """Set THIS session's identity: mint the JWT and stash tenant id/name in
     session_state. `tenant_id=None` mints a tenant-LESS authenticated token (for a
     logged-in user still in onboarding — lets them create/join a tenant under RLS).
-    Clears any cached per-session client so it rebuilds with the new token. Returns
-    True if a JWT was minted (secret configured), else False."""
+    Clears any cached per-session client so it rebuilds with the new token, and stamps the
+    session with this user's identity so the next account cannot inherit it.
+
+    REFUSES a tenant the user has no active membership in (see `tenant_allowed`) —
+    the session falls back to tenant-LESS instead, and `_tenant_denied` records the
+    attempt. Returns True only when the session is now scoped to the requested tenant."""
+    # AUTHORISATION GATE. Nothing scopes a session to a tenant without a membership to
+    # back it — a refusal degrades to a tenant-LESS session (which fails closed to zero
+    # rows) rather than to somebody else's data.
+    if tenant_id is not None and not (verified or tenant_allowed(user, tenant_id)):
+        st.session_state["_tenant_denied"] = str(tenant_id)
+        tenant_id, role, name = None, None, None
+    else:
+        st.session_state.pop("_tenant_denied", None)
     uid = _resolve_user_id(user)
     tok = mint_tenant_jwt(uid, tenant_id,
                           user_role=role or user.get("role") or "collaborator",
                           email=user.get("email"))
     st.session_state["tenant_id"] = tenant_id
     st.session_state["tenant_name"] = name
+    if slug or tenant_id is None:
+        st.session_state["tenant_slug"] = slug     # keeps ?tenant=<slug> truthful
     st.session_state["_tenant_jwt"] = tok
     st.session_state["_tenant_jwt_exp"] = (int(time.time()) + _JWT_TTL) if tok else 0
+    st.session_state[_IDENTITY_KEY] = identity_of(user)   # whose tenant state this is
     st.session_state.pop("_tenant_client", None)          # force rebuild in get_client()
     st.session_state.pop("_tenant_client_jwt", None)
-    return tok is not None
+    return bool(tok) and tenant_id is not None
 
 
 def current_tenant_id() -> Optional[str]:
@@ -459,19 +612,37 @@ def ensure_tenant_context(user: dict) -> None:
     try:
         if not jwt_secret():
             return                                        # dormant until configured
+        # WHOSE session is this? A Streamlit session outlives sign-out, so tenant state
+        # here may belong to the previous person on this browser. Bind it to the current
+        # account first — anything foreign is destroyed, never refreshed onto them.
+        adopt_session_identity(user)
         exp = st.session_state.get("_tenant_jwt_exp", 0)
         if st.session_state.get("_tenant_jwt") and (exp - int(time.time())) > _JWT_SKEW:
             return                                        # still-fresh token — nothing to do
         tid = st.session_state.get("tenant_id")
         if tid:                                           # known tenant → near-expiry refresh
-            set_active_tenant(user, tid, name=st.session_state.get("tenant_name"))
-            return
+            # Re-authorise on every refresh: a membership revoked while the session
+            # stayed open must not be renewed. But only a DEFINITE "not a member" tears
+            # the session down — an unverifiable answer (database unreachable) renews the
+            # tenant that was already verified when it was granted, because evicting a
+            # legitimate session on a network blip is damage, not safety.
+            status = membership_status(user, tid)
+            if status is not False:
+                set_active_tenant(user, tid, name=st.session_state.get("tenant_name"),
+                                  slug=st.session_state.get("tenant_slug"), verified=True)
+                return
+            clear_tenant_session()
         uid = _resolve_user_id(user)
         mems = active_memberships(uid) if uid else []
         chosen = _default_membership(user, mems)
         if chosen is not None:
-            set_active_tenant(user, chosen["tenant_id"],
-                              role=chosen.get("role"), name=chosen.get("name"))
+            # set_active_tenant re-checks membership. The one path that can propose a
+            # tenant the user does not hold is the super's direct platform-home lookup
+            # (_platform_home_membership) — if their platform membership really is gone,
+            # the refusal below leaves them tenant-less rather than in a tenant they have
+            # no row for, which is the correct, visible failure.
+            set_active_tenant(user, chosen["tenant_id"], role=chosen.get("role"),
+                              name=chosen.get("name"), slug=chosen.get("slug"))
         else:
             # No resolvable default (0 memberships, or >1 for a non-super user) → mint a
             # tenant-LESS authenticated token so the user still has an identity for
