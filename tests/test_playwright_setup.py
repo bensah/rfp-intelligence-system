@@ -120,6 +120,8 @@ class ProbeTests(_Reset):
 class EnsureChromiumTests(_Reset):
     def test_present_browser_short_circuits_without_installing(self):
         with mock.patch.object(ps, "probe", return_value=(True, "/browsers/chrome")), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(True, "launches", None)), \
              mock.patch.object(ps.subprocess, "run",
                                side_effect=AssertionError("must not install")):
             ok, msg = ps.ensure_chromium()
@@ -129,6 +131,8 @@ class EnsureChromiumTests(_Reset):
     def test_missing_browser_is_installed_once_then_remembered(self):
         answers = [(False, "/browsers/chrome"), (True, "/browsers/chrome")]
         with mock.patch.object(ps, "probe", side_effect=lambda: answers.pop(0)), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(True, "launches", None)), \
              mock.patch.object(ps.subprocess, "run", return_value=_completed()) as run:
             self.assertTrue(ps.ensure_chromium()[0])
             self.assertEqual(run.call_count, 1)
@@ -166,6 +170,61 @@ class EnsureChromiumTests(_Reset):
         self.assertIn("browsers_path", st)
 
 
+class MissingLibraryTests(_Reset):
+    """A downloaded browser that cannot link its system libraries is a THIRD failure, with
+    a different fix (packages.txt + reboot) from "not installed" (wait for the download)."""
+
+    def test_the_library_name_is_extracted_from_the_launch_error(self):
+        err = ("/root/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-"
+               "shell: error while loading shared libraries: libglib-2.0.so.0: cannot "
+               "open shared object file: No such file or directory")
+        self.assertEqual(ps.missing_library(err), "libglib-2.0.so.0")
+
+    def test_unrelated_errors_do_not_produce_a_library_name(self):
+        self.assertIsNone(ps.missing_library("Target page crashed"))
+        self.assertIsNone(ps.missing_library(None))
+
+    def test_launch_probe_names_the_library_and_points_at_packages_txt(self):
+        err = "error while loading shared libraries: libnss3.so: cannot open shared object"
+        with mock.patch.object(ps.subprocess, "run",
+                               return_value=_completed(stderr=err, code=3)):
+            ok, why, lib = ps.launch_probe()
+        self.assertFalse(ok)
+        self.assertEqual(lib, "libnss3.so")
+        self.assertIn("libnss3.so", why)
+        self.assertIn("packages.txt", why)
+
+    def test_a_browser_that_exists_but_cannot_launch_is_not_ready(self):
+        # And it must NOT be re-downloaded: reinstalling never supplies a system library.
+        with mock.patch.object(ps, "probe", return_value=(True, "/browsers/chrome")), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(False, "cannot start",
+                                             "libglib-2.0.so.0")), \
+             mock.patch.object(ps.subprocess, "run",
+                               side_effect=AssertionError("must not install")):
+            ok, msg = ps.ensure_chromium()
+        self.assertFalse(ok)
+        self.assertIn("cannot start", msg)
+
+    def test_status_separates_installed_from_launches(self):
+        with mock.patch.object(ps, "probe", return_value=(True, "/browsers/chrome")), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(False, "cannot start",
+                                             "libglib-2.0.so.0")):
+            st = ps.status()
+        self.assertTrue(st["chromium_installed"])
+        self.assertFalse(st["chromium_launches"])
+        self.assertFalse(st["chromium_ready"])
+        self.assertEqual(st["missing_library"], "libglib-2.0.so.0")
+
+    def test_a_healthy_engine_reports_ready(self):
+        with mock.patch.object(ps, "probe", return_value=(True, "/browsers/chrome")), \
+             mock.patch.object(ps, "launch_probe",
+                               return_value=(True, "Chromium launches.", None)):
+            st = ps.status()
+        self.assertTrue(st["chromium_ready"])
+
+
 class RenderPdfWiringTests(_Reset):
     """core.report_pdf must bootstrap before launching, and pass the path to the child."""
 
@@ -182,6 +241,21 @@ class RenderPdfWiringTests(_Reset):
         self.assertIn("headless Chromium", msg)
         self.assertIn("Export Data", msg)        # tells them what still works
         self.assertIn("libnss3.so", msg)         # and why it failed
+
+    def test_a_launch_failure_mid_render_still_names_the_library(self):
+        from core import report_pdf as rp
+        err = ("chrome-headless-shell: error while loading shared libraries: "
+               "libglib-2.0.so.0: cannot open shared object file")
+        with mock.patch.object(ps, "ensure_chromium", return_value=(True, "ok")), \
+             mock.patch.object(rp.subprocess, "run",
+                               return_value=_completed(stderr=err, code=1)):
+            with self.assertRaises(RuntimeError) as caught:
+                rp.render_pdf("<html></html>", chart_count=0, header_text="h",
+                              footer_text="f")
+        msg = str(caught.exception)
+        self.assertIn("libglib-2.0.so.0", msg)
+        self.assertIn("packages.txt", msg)
+        self.assertNotIn("ScreenshotNewSurface", msg)      # not the raw command line
 
     def test_render_hands_the_browsers_path_to_the_child(self):
         from core import report_pdf as rp
