@@ -1,8 +1,21 @@
 """Excel → Supabase sync, callable from the Streamlit app.
 
 Resolves the source workbook in this order:
-  1. EXCEL_SOURCE_PATH environment variable / Streamlit secret
-  2. Local copy at the repo root (any *.xlsx — gitignored)
+  1. This TENANT's uploaded workbook (multi-tenant only)
+  2. EXCEL_SOURCE_PATH environment variable / Streamlit secret
+  3. Local copy at the repo root (any *.xlsx — gitignored), SINGLE-TENANT ONLY
+
+The tenant step exists because of a real cross-tenant leak. An uploaded workbook used to
+be written to the repo root and resolved with a glob over that same directory — one
+filesystem path shared by the whole deployment. So a workbook uploaded by one organisation
+appeared in every other tenant's Settings, named after its owner, and any admin pressing
+"Sync Excel" would have imported that organisation's pipeline into their own. Uploads now
+land under `.workbooks/<tenant-id>/` and are resolved only for the tenant that owns them.
+
+The repo-root fallback is a DEVELOPER convenience and is disabled whenever multi-tenant is
+on, for the same reason: a file lying beside the project belongs to nobody in particular,
+so it must not become everybody's. A deployment that legitimately shares one workbook can
+still point EXCEL_SOURCE_PATH at it deliberately.
 
 Sync runs migrate_excel.py as a subprocess so import-time state is fresh
 (no stale openpyxl handles between runs) and stdout is captured for display.
@@ -59,10 +72,82 @@ def _unescape_path(raw: str) -> str:
                .replace("\t", "\\t"))
 
 
+WORKBOOK_DIRNAME = ".workbooks"
+
+
+def _multitenant() -> bool:
+    try:
+        from auth.tenant_context import multitenant_enabled
+        return bool(multitenant_enabled())
+    except Exception:
+        return False
+
+
+def _current_tenant() -> Optional[str]:
+    try:
+        from auth.tenant_context import current_tenant_id
+        tid = current_tenant_id()
+        return str(tid) if tid else None
+    except Exception:
+        return None
+
+
+def workbook_dir(tenant_id: Optional[str] = None, *, create: bool = False) -> Optional[Path]:
+    """Where THIS tenant's uploaded workbook lives: `.workbooks/<tenant-id>/`.
+
+    One directory per tenant is what makes the isolation structural rather than a filter
+    somebody has to remember — a tenant's resolve looks in its own directory and there is
+    nowhere else for it to see. Returns None when no tenant resolves, which is exactly when
+    an upload must not be accepted."""
+    tid = tenant_id or _current_tenant()
+    if not tid:
+        return None
+    path = REPO_ROOT / WORKBOOK_DIRNAME / str(tid)
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def tenant_workbook(tenant_id: Optional[str] = None) -> Optional[Path]:
+    """The newest .xlsx this tenant has uploaded, or None."""
+    directory = workbook_dir(tenant_id)
+    if not directory or not directory.exists():
+        return None
+    books = sorted(directory.glob("*.xlsx"), key=lambda f: f.stat().st_mtime, reverse=True)
+    return books[0] if books else None
+
+
+def save_tenant_workbook(name: str, data: bytes, tenant_id: Optional[str] = None) -> Path:
+    """Store an uploaded workbook for one tenant. Raises when no tenant resolves — an
+    upload with nowhere tenant-specific to go is the leak, not a fallback."""
+    directory = workbook_dir(tenant_id, create=True)
+    if directory is None:
+        raise RuntimeError("No tenant is active, so there is nowhere private to store this "
+                           "workbook. Sign in to the tenant it belongs to and try again.")
+    safe = Path(str(name or "workbook.xlsx")).name        # never escape the directory
+    if not safe.lower().endswith(".xlsx"):
+        safe += ".xlsx"
+    for old_book in directory.glob("*.xlsx"):             # one master workbook per tenant
+        if old_book.name != safe:
+            try:
+                old_book.unlink()
+            except Exception:
+                pass
+    dest = directory / safe
+    dest.write_bytes(data)
+    return dest
+
+
 def resolve_excel_path() -> dict:
     """Diagnostic: returns {env_value, resolved_path, source, error}."""
     raw = _secret("EXCEL_SOURCE_PATH")
     out: dict = {"env_value": raw, "resolved_path": None, "source": None, "error": None}
+    # THIS tenant's own upload wins over anything shared — see the module docstring.
+    own = tenant_workbook()
+    if own is not None:
+        out["resolved_path"] = own
+        out["source"] = "tenant upload"
+        return out
     if raw:
         cleaned = _unescape_path(raw).strip().strip('"').strip("'")
         p = Path(cleaned)
@@ -75,9 +160,12 @@ def resolve_excel_path() -> dict:
             "If the path contains \\n (e.g. \\youruser), wrap the .env value in "
             "single quotes — double quotes let dotenv interpret \\n as a newline."
         )
-    # Repo-root fallback: pick any *.xlsx sitting beside the project.
-    # Excel workbooks are gitignored so this is a developer-local
-    # convenience, not a shipped path.
+    # Repo-root fallback: any *.xlsx sitting beside the project. A developer-local
+    # convenience ONLY — under multi-tenant it is somebody else's data by definition, so
+    # it is not offered to anyone. (This is the path that leaked one tenant's workbook to
+    # the whole deployment.)
+    if _multitenant():
+        return out
     for candidate in REPO_ROOT.glob("*.xlsx"):
         out["resolved_path"] = candidate
         out["source"] = "repo fallback"
