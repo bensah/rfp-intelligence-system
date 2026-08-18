@@ -143,8 +143,12 @@ gitignored — never commit it.
 2. `share.streamlit.io` → New app → pick the repo → main branch →
    `App.py` as the entry.
 3. App settings → Secrets — paste the same `.env` values.
-4. Deploy. First boot will run `playwright install chromium` if you
-   added the optional dependency.
+4. Deploy. Note that `pip install playwright` does NOT fetch a browser, and
+   the host does not run `playwright install` for you: the first PDF export
+   downloads headless Chromium itself (~150MB, once per container, into a
+   directory the app proves is writable). That first export therefore takes a
+   couple of minutes; later ones are fast. Settings → Accounts → Deployment
+   (or `?diag=1`) reports whether the browser is already present.
 
 ---
 
