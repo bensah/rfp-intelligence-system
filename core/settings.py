@@ -218,6 +218,24 @@ def _tenant_ctx(tenant_id: Optional[str] = None):
         return None
 
 
+def _legacy_identity_allowed() -> bool:
+    """True when the GLOBAL app_settings org identity is still the right answer — i.e.
+    this is a single-tenant deployment (multi-tenant master switch off).
+
+    Under multi-tenant, that global record is the deployment's PRE-multi-tenant identity:
+    one organisation's name and logo, left over from before tenants existed. Serving it as
+    the fallback made an unresolved tenant look exactly like a successful login to the
+    WRONG tenant — the whole app dressed as somebody else's organisation, with no error
+    anywhere. So when multi-tenant is on we return the neutral placeholder defaults
+    instead: an unresolved tenant should look unresolved. Best-effort; any failure keeps
+    the legacy behaviour (the safer default for a single-tenant install)."""
+    try:
+        from auth import tenant_context as tc
+        return not tc.multitenant_enabled()
+    except Exception:
+        return True
+
+
 def _clear_org_cache() -> None:
     _ORG_CACHE.clear()
     _IDENT_CACHE.clear()
@@ -255,6 +273,8 @@ def get_org(tenant_id: Optional[str] = None) -> dict[str, str]:
             _ORG_CACHE[tid] = (_now(), dict(out))
             return out
         # rows is None (error) or [] (tenant not found) → fall through to legacy
+    if not _legacy_identity_allowed():
+        return dict(_ORG_DEFAULTS)     # multi-tenant: placeholder, never another org's name
     out = {}
     for key, default in _ORG_DEFAULTS.items():
         out[key] = get_setting(key, default) or default
@@ -382,6 +402,8 @@ def get_org_logo(tenant_id: Optional[str] = None) -> tuple[bytes | None, str | N
             except (ValueError, TypeError):
                 return None, None
         # ident is None (error / missing column) → fall through to legacy
+    if not _legacy_identity_allowed():
+        return None, None              # multi-tenant: no logo beats the wrong org's logo
     b64 = get_setting("org_logo_b64", "")
     mime = get_setting("org_logo_mime", "image/png")
     if not b64:
