@@ -478,6 +478,32 @@ _GLOBAL_CSS = f"""
     color: {THEME_PRIMARY};
     font-weight: 650;
   }}
+  /* QUICK-START CARDS. The card is now a real st.container so its headline can be a
+     button; these rules give that container the .quickcard look (green spine, card
+     background, even height) and make the headline button read as a heading. */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker) {{
+    border-left: 4px solid {THEME_PRIMARY};
+    border-radius: 6px;
+    background: {THEME_BG_CARD};
+    min-height: 9.5rem;
+    margin-bottom: 0.5rem;
+  }}
+  .qc-marker {{ display: none; }}
+  [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker)
+    [data-testid="stBaseButton-tertiary"] {{
+    color: {THEME_PRIMARY};
+    font-size: 1rem;
+    font-weight: 650;
+    justify-content: flex-start;
+    text-align: left;
+    padding: 0;
+  }}
+  .qc-body {{
+    margin: 4px 0 0;
+    color: #475569;
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }}
   .quickcard p  {{
     margin: 0;
     color: #475569;
@@ -908,13 +934,24 @@ def _render_notifications_popover(_notif, feed, seen, email, unread) -> None:
         if not feed:
             st.caption("No recent activity yet.")
         else:
-            for it in feed[:15]:
+            # A notification names a thing that happened; the reader's next move is
+            # always to go and look at it. It used to be inert text, so they had to find
+            # the page themselves and then find the row on it. The headline is now the
+            # control — in-session (see core.ui_links), so opening one from the bell does
+            # not reload the app and lose where they were.
+            from core import ui_links as _links
+            for _i, it in enumerate(feed[:15]):
                 is_new = (seen is None) or (it["ts"] and it["ts"] > seen)
                 dot = "🟢 " if is_new else ""
+                _head = (f"{dot}{it['icon']} **{it['title']}** · "
+                         f"{_notif.relative_time(it['ts'])}")
+                if it.get("nav"):
+                    _links.internal_nav(_head, it["nav"], key=f"notif_go_{_i}",
+                                        uid=it.get("uid"), width="stretch",
+                                        help="Open this")
+                else:
+                    st.markdown(_head)
                 st.markdown(
-                    f"{dot}{it['icon']} **{it['title']}** "
-                    f"<span style='color:{THEME_SLATE_LIGHT};font-size:0.78rem'>"
-                    f"· {_notif.relative_time(it['ts'])}</span><br>"
                     f"<span style='color:{THEME_SLATE};font-size:0.85rem'>"
                     f"{it['detail']}</span>",
                     unsafe_allow_html=True)
@@ -1273,6 +1310,16 @@ def render_app_header() -> None:
 
     # Tenant switcher for a non-super user who belongs to >1 tenant (R3).
     _render_tenant_switcher()
+
+    # ONE STEP BACK. Every page is reachable from the rail, but a reader who followed a
+    # trail into a page — Report, then an opportunity off the feed — had no way back to
+    # where they came from except to work out which rail item it had been. Renders nothing
+    # on the first page of a session, so it never appears as a dead control.
+    try:
+        from core import ui_links as _uilinks_back
+        _uilinks_back.render_back_button()
+    except Exception:
+        pass
 
     # DEPLOYMENT-LEVEL safeguards (core.env_diag). The wrong-tenant landing that prompted
     # these had no symptom at all beyond a name in the header, because a deployment whose

@@ -19,6 +19,11 @@ from unittest import mock
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+
+# AppTest resolves a RELATIVE path against the file that calls it — i.e. tests/ — so
+# "app_pages/report.py" looked for tests/app_pages/report.py and this whole probe (and the
+# two test classes that depend on it) errored out at setUpClass rather than running.
+_APP_PAGE = os.path.join(_ROOT, "app_pages", "report.py")
 os.environ.setdefault("SUPABASE_URL", "https://dummy.supabase.co")
 os.environ.setdefault("SUPABASE_KEY", "sb_secret_dummy")
 
@@ -203,7 +208,7 @@ class _Client:
 def main() -> int:
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file("app_pages/report.py", default_timeout=180)
+    at = AppTest.from_file(_APP_PAGE, default_timeout=180)
     at.session_state["app_user"] = {"email": "dev@example.com", "role": "super_user"}
     # Everything below the advanced filter sits behind a Generate gate that ends the script
     # with st.stop(), so without this the page renders the filter and nothing else.

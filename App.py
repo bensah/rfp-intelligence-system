@@ -112,7 +112,13 @@ def _pages(include_admin: bool) -> list:
 # gating *before* any page renders, so a non-admin never executes /admin.
 _session_user = st.session_state.get("app_user")
 _include_admin = True if _session_user is None else _perms.is_admin(_session_user)
-_nav = st.navigation(_pages(_include_admin))
+# expanded=True: show EVERY registered page in the rail, no "View N more" collapse.
+# Streamlit's default collapses the list past a threshold, and it counts pages BEFORE our
+# CSS hides the menu-only ones (profile / help / search / opportunity / the three public
+# auth pages). So the control advertised "View 6 more" and then expanded to reveal almost
+# nothing — and worse, it pushed **Settings** below the fold, which is the one rail item an
+# admin most needs. With this on, the rail is exactly the pages the CSS leaves visible.
+_nav = st.navigation(_pages(_include_admin), expanded=True)
 
 # PUBLIC PAGES RUN BEFORE THE LOGIN GATE. Account activation is the one flow whose whole
 # premise is that the visitor cannot sign in yet, so it cannot sit behind ensure_logged_in().
@@ -140,6 +146,17 @@ if _session_user is None and not _auth.has_session_cookie():
             st.session_state["_diag_sticky"] = True
     except Exception:
         pass
+    # AND THE SAME PROBLEM, for every other deep link. A shared or bookmarked
+    # /opportunity?uid=AS-1 that arrives without a readable cookie was bounced here and the
+    # uid went with the query string, so signing in landed on Home and the opportunity was
+    # simply gone — indistinguishable, to the reader, from a link that does not work.
+    # Remember where they were going and finish the journey after sign-in.
+    try:
+        if _here and _here not in _PUBLIC_URL_PATHS:
+            st.session_state["_post_login_dest"] = {
+                "page": _here, "params": dict(st.query_params)}
+    except Exception:
+        pass
     st.switch_page("app_pages/login.py")
 
 user = ensure_logged_in()
@@ -155,6 +172,29 @@ if not user:
 if not st.session_state.get("_post_login_nav_synced"):
     st.session_state["_post_login_nav_synced"] = True
     st.rerun()
+
+# Resume a deep link that the anonymous bounce above had to interrupt. Popped BEFORE the
+# switch so a failed resolve cannot put the session in a loop, and only ever acted on when
+# we are not already there.
+_dest = st.session_state.pop("_post_login_dest", None)
+if isinstance(_dest, dict) and _dest.get("page") and _dest["page"] != _here:
+    from core.ui_links import PAGE_SCRIPTS as _PAGE_SCRIPTS
+    _script = _PAGE_SCRIPTS.get(str(_dest["page"]))
+    if _script:
+        try:
+            for _k, _v in (_dest.get("params") or {}).items():
+                st.query_params[_k] = _v
+        except Exception:
+            pass
+        st.switch_page(_script)
+
+# Note where we are, for the Back control the header renders. Before the header, so the
+# trail is already correct when it draws.
+try:
+    from core import ui_links as _uilinks_hist
+    _uilinks_hist.record_visit(_here or "home", dict(st.query_params))
+except Exception:
+    pass
 
 render_app_header()
 

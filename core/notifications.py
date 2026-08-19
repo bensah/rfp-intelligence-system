@@ -87,7 +87,9 @@ def recent_feed(scope_tid: str | None = None, is_super: bool = False,
       * new opportunities (rfp_submissions): the get_client() wrapper already scopes the
         read to the viewer's tenant (super_user / single-tenant → all).
 
-    Each item: {ts, icon, title, detail, page}.
+    Each item: {ts, icon, title, detail, page, nav, uid}. `nav` is the url_path the bell
+    can switch to (core.ui_links.PAGE_SCRIPTS), and `uid` the opportunity it is about when
+    there is one — a notification that names a thing should be able to open it.
     """
     sb = get_client()
     items: list[dict] = []
@@ -121,7 +123,8 @@ def recent_feed(scope_tid: str | None = None, is_super: bool = False,
         items.append({
             "ts": _parse(s.get("scan_date")), "icon": icon,
             "title": f"{_kind.get(s.get('triggered_by'), 'Scan')} completed",
-            "detail": detail, "page": "app_pages/report.py",
+            "detail": detail, "page": "app_pages/report.py", "nav": "report",
+            "uid": None,
         })
 
     # ── Newly added opportunities (manual entries) ──────────────────────
@@ -131,7 +134,7 @@ def recent_feed(scope_tid: str | None = None, is_super: bool = False,
     try:
         rfps = (safe_execute(
             sb.table("rfp_submissions")
-            .select("opportunity_title,source,search_date,submitted_by")
+            .select("uid,opportunity_title,source,search_date,submitted_by")
             .order("search_date", desc=True).limit(limit_rfps)).data or [])
     except Exception:
         rfps = []
@@ -145,6 +148,10 @@ def recent_feed(scope_tid: str | None = None, is_super: bool = False,
             "title": "New opportunity",
             "detail": (f"{title[:64]}" + (f" — {who}" if who else "")),
             "page": "app_pages/pipelines.py",
+            # An opportunity notification opens THAT opportunity, not the list it is
+            # somewhere in. Falls back to the pipeline list when the row has no uid.
+            "nav": ("opportunity" if str(r.get("uid") or "").strip() else "pipelines"),
+            "uid": str(r.get("uid") or "").strip() or None,
         })
 
     items = [it for it in items if it["ts"] is not None]
