@@ -1446,6 +1446,13 @@ with tab_scan:
                 "trigger": _pretty_trigger(trig),
                 "found": sum(int(r.get("rfps_found") or 0) for r in grp),
                 "new": sum(int(r.get("rfps_new") or 0) for r in grp),
+                # Rows this run CREATED (migration 094). None when no row in the group
+                # recorded one — a pre-094 run, or an extract-only crawl, which inserts
+                # nothing into the pipeline. Summing NULLs as zero would report "added 0"
+                # for a run that never counted, which is a different claim entirely.
+                "added": (sum(int(r["rfps_added"]) for r in grp
+                              if r.get("rfps_added") is not None)
+                          if any(r.get("rfps_added") is not None for r in grp) else None),
                 "rejected": sum(int(r.get("rfps_rejected") or 0) for r in grp),
             }
 
@@ -1647,7 +1654,13 @@ with tab_scan:
                     "triggered_by": st.column_config.TextColumn("Triggered by"),
                     "source": st.column_config.TextColumn("Source"),
                     "rfps_found": st.column_config.NumberColumn("Found"),
-                    "rfps_new": st.column_config.NumberColumn("New"),
+                    "rfps_new": st.column_config.NumberColumn(
+                        "Extracted",
+                        help="Calls written to the shared extracted store by this run. "
+                             "An extraction run adds nothing to anyone's pipeline — "
+                             "screening does that — so this is not a count of new "
+                             "opportunities to review.",
+                    ),
                     "rfps_duplicate": st.column_config.NumberColumn("Dup"),
                     "rfps_rejected": st.column_config.NumberColumn(
                         "Rejected",
@@ -1665,21 +1678,25 @@ with tab_scan:
         # Summary cards for the latest "My eligible funding" run.
         _mt = _run_summary(_match_rows)
         if _mt:
-            m1, m2, m3, m4, m5 = st.columns(5)
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
             m1.metric("Last run", _mt["ts"])
             m2.metric("Triggered by", _mt["trigger"])
             m3.metric("Considered", _mt["found"],
                       help="Curated solicitations screened against your org.")
             m4.metric("Eligible", _mt["new"],
-                      help="Newly eligible for your org (passed geography + MUST/PREFER).")
-            m5.metric("Not a fit", _mt["rejected"])
+                      help="Passed geography + MUST/PREFER. Includes calls already in "
+                           "your pipeline — see Added for what this run put there.")
+            m5.metric("Added", "—" if _mt.get("added") is None else _mt["added"],
+                      help="Rows this run created in your pipeline. Eligible minus "
+                           "Added is what was already tracked and simply refreshed.")
+            m6.metric("Not a fit", _mt["rejected"])
         st.caption("Each “My eligible funding” run — a fast internal screen of the "
                    "curated store against this org's eligibility policies.")
         if match_logs.empty:
             st.info("No “My eligible funding” runs yet.")
         else:
             _mcols = ["scan_date", "triggered_by", "rfps_found", "rfps_new",
-                      "rfps_duplicate", "rfps_rejected", "duration_sec"]
+                      "rfps_added", "rfps_duplicate", "rfps_rejected", "duration_sec"]
             st.dataframe(
                 match_logs[[c for c in _mcols if c in match_logs.columns]],
                 width='stretch',
@@ -1690,7 +1707,15 @@ with tab_scan:
                     "rfps_found": st.column_config.NumberColumn(
                         "Considered",
                         help="Curated solicitations screened against your org."),
-                    "rfps_new": st.column_config.NumberColumn("Eligible"),
+                    "rfps_new": st.column_config.NumberColumn(
+                        "Eligible",
+                        help="Passed geography + MUST/PREFER in this run — including "
+                             "calls already in your pipeline, which are refreshed "
+                             "rather than added."),
+                    "rfps_added": st.column_config.NumberColumn(
+                        "Added",
+                        help="Rows this run created in your pipeline. Blank for runs "
+                             "from before this was recorded."),
                     "rfps_duplicate": st.column_config.NumberColumn("Already tracked"),
                     "rfps_rejected": st.column_config.NumberColumn("Not a fit"),
                     "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.2f"),

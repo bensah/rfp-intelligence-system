@@ -500,6 +500,11 @@ def _load_scan_logs(scope: str, start_iso: str | None, end_iso: str | None) -> p
         for c in ("rfps_found", "rfps_new", "rfps_duplicate", "rfps_rejected"):
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+        # rfps_added is DELIBERATELY not in that loop: .fillna(0) would turn "this run
+        # never recorded a created count" into "this run created nothing", which is the
+        # exact conflation migration 094 exists to end. Coerce, and let NaN stay NaN.
+        if "rfps_added" in df.columns:
+            df["rfps_added"] = pd.to_numeric(df["rfps_added"], errors="coerce")
         # Multi-tenant: a tenant's Activity Report reflects only ITS OWN runs (eligibility
         # / "Find my matches" screening). The system-wide discovery crawl (cron, tenant_id
         # NULL) is excluded here — it's shared, not this tenant's activity. Super_user and
@@ -1244,7 +1249,11 @@ def _build_excel_export() -> bytes:
             ("",                    ""),
             ("Scan runs",           int(scans["scan_date"].dt.normalize().nunique()) if not scans.empty else 0),
             ("RFPs found (scans)",  int(scans["rfps_found"].sum()) if not scans.empty else 0),
-            ("New (admitted)",      int(scans["rfps_new"].sum()) if not scans.empty else 0),
+            ("Eligible (admitted)", int(scans["rfps_new"].sum()) if not scans.empty else 0),
+            ("Added to pipeline",   (int(scans["rfps_added"].dropna().sum())
+                                     if (not scans.empty and "rfps_added" in scans
+                                         and not scans["rfps_added"].dropna().empty)
+                                     else "not recorded")),
             ("Duplicates filtered", int(scans["rfps_duplicate"].sum()) if not scans.empty else 0),
             ("Rejected at gate",    int(scans.get("rfps_rejected", pd.Series(dtype=int)).sum())),
             ("Unique RFPs (period)", int(len(rfps_period[~rfps_period["is_duplicate"]])) if not rfps_period.empty else 0),
@@ -1734,22 +1743,39 @@ if _show_sec("1"):
         n_new = int(scans["rfps_new"].sum())
         n_dup = int(scans["rfps_duplicate"].sum())
         n_rej = int(scans.get("rfps_rejected", pd.Series(dtype=int)).sum())
+        # None (not 0) when no run in the period recorded a created count — pre-094 runs,
+        # and extract-only crawls, which insert nothing into the pipeline. Zero would be a
+        # claim; blank is the truth.
+        _added_col = scans.get("rfps_added", pd.Series(dtype="float64"))
+        n_added = (int(_added_col.dropna().sum())
+                   if hasattr(_added_col, "dropna") and not _added_col.dropna().empty
+                   else None)
         err_runs = int((scans.get("errors", pd.Series(dtype=str)).fillna("") != "").sum())
 
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
         k1.metric("Scan runs", n_runs,
                   help="Distinct days a scan was triggered (cron or manual).")
         k2.metric("RFPs found", n_found,
                   help="Total candidates returned by donor sources.")
-        k3.metric("New (admitted)", n_new,
-                  help="Passed eligibility gate + inserted into the DB.")
-        k4.metric("Duplicates", n_dup,
+        # "inserted into the DB" was never what this counted. rfps_new is everything that
+        # PASSED THE GATE, merge-updates of already-tracked calls included, so this KPI
+        # overstated discovery by however much of the week's yield was a refresh. The
+        # honest count lives in rfps_added (migration 094); shown beside it once runs in
+        # the period have recorded one.
+        k3.metric("Eligible (admitted)", n_new,
+                  help="Passed the eligibility gate. Includes calls already tracked, "
+                       "which are refreshed rather than added — see Added.")
+        k4.metric("Added", "—" if n_added is None else n_added,
+                  help="Rows these runs created in the pipeline. Eligible minus Added is "
+                       "what was already tracked. Blank when no run in the period "
+                       "recorded it (extraction-only runs add nothing here).")
+        k5.metric("Duplicates", n_dup,
                   help="Caught by dedup (URL / opportunity_id / title / triple).")
-        k5.metric("Rejected at gate", n_rej,
+        k6.metric("Rejected at gate", n_rej,
                   help="Filtered out at scan-time by the eligibility gate "
                        "(deadline / country / theme / closure / language). "
                        "These NEVER enter the DB.")
-        k6.metric("Source errors", err_runs,
+        k7.metric("Source errors", err_runs,
                   delta_color="inverse" if err_runs else "off",
                   help="Scan attempts that crashed mid-run (network timeout, "
                        "donor portal HTML changed, parser exception). Each "

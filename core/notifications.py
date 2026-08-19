@@ -74,6 +74,28 @@ def relative_time(ts: datetime | None, now: datetime | None = None) -> str:
     return f"in {unit}" if future else f"{unit} ago"
 
 
+def scan_icon_and_detail(row: dict) -> tuple[str, str]:
+    """How one scan_logs row reads in the bell.
+
+    THREE NUMBERS, NOT ONE. "12 new" used to mean rfps_new, which counts everything that
+    passed the eligibility gate — including calls already in the pipeline that were merely
+    refreshed. So the bell could say 12 while the Screen tab showed nothing new, and a
+    reader went looking for twelve things that were not there.
+
+    rfps_added (migration 094) is the count they can act on, so it leads. NULL means the
+    run predates the column, or was an extract-only crawl that inserts nothing into any
+    pipeline — then say nothing rather than assert a zero the data cannot support.
+    """
+    if row.get("errors"):
+        return "⚠️", "completed with errors"
+    eligible = row.get("rfps_new") or 0
+    found = row.get("rfps_found") or 0
+    added = row.get("rfps_added")
+    if added is None:
+        return "🔎", f"{eligible} eligible · {found} found"
+    return "🔎", f"{int(added)} new · {eligible} eligible · {found} found"
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def recent_feed(scope_tid: str | None = None, is_super: bool = False,
                 limit_scans: int = 12, limit_rfps: int = 15) -> list[dict]:
@@ -114,12 +136,7 @@ def recent_feed(scope_tid: str | None = None, is_super: bool = False,
     _kind = {"cron": "Auto-scan", "manual": "Manual scan",
              "startup": "Startup scan", "test": "Test scan"}
     for s in scans:
-        new = s.get("rfps_new") or 0
-        found = s.get("rfps_found") or 0
-        if s.get("errors"):
-            icon, detail = "⚠️", "completed with errors"
-        else:
-            icon, detail = "🔎", f"{new} new · {found} found"
+        icon, detail = scan_icon_and_detail(s)
         items.append({
             "ts": _parse(s.get("scan_date")), "icon": icon,
             "title": f"{_kind.get(s.get('triggered_by'), 'Scan')} completed",
