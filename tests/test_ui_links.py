@@ -173,10 +173,11 @@ class TheHandoffTests(unittest.TestCase):
                                 f"{slug} -> {script} does not exist")
 
 
-class TheBackTrailTests(unittest.TestCase):
+class TheBreadcrumbTrailTests(unittest.TestCase):
     """Streamlit has no back button, so the app keeps its own trail. The rules that matter:
-    a rerun is not a move, and arriving via Back is not a move — get either wrong and Back
-    walks you through your own widget clicks instead of your pages."""
+    a rerun is not a move, arriving via a crumb is not a move, and the trail is the path
+    TAKEN — revisiting a page truncates back to it rather than appending, or the crumbs
+    become a history log that repeats itself."""
 
     class _SS(dict):
         pass
@@ -188,35 +189,65 @@ class TheBackTrailTests(unittest.TestCase):
         _sys.modules["streamlit"] = types.SimpleNamespace(session_state=self._SS(state))
         return _sys.modules["streamlit"]
 
+    def _pages(self, fake):
+        return [e["page"] for e in fake.session_state.get(links.NAV_HISTORY_KEY, [])]
+
     def tearDown(self):
         import sys as _sys
         if getattr(self, "_real", None) is not None:
             _sys.modules["streamlit"] = self._real
 
-    def test_moving_between_pages_builds_a_trail(self):
+    def test_moving_deeper_builds_a_trail(self):
         fake = self._install({})
-        links.record_visit("report", {})
+        links.record_visit("home", {})
+        links.record_visit("pipelines", {})
         links.record_visit("opportunity", {"uid": "AS-1"})
-        trail = [e["page"] for e in fake.session_state[links.NAV_HISTORY_KEY]]
-        self.assertEqual(trail, ["report", "opportunity"])
+        self.assertEqual(self._pages(fake), ["home", "pipelines", "opportunity"])
 
     def test_a_rerun_of_the_same_page_is_not_a_move(self):
         fake = self._install({})
         for _ in range(5):
             links.record_visit("report", {})
-        self.assertEqual(len(fake.session_state[links.NAV_HISTORY_KEY]), 1)
+        self.assertEqual(len(self._pages(fake)), 1)
 
-    def test_the_same_page_with_a_different_uid_is_a_move(self):
+    def test_going_back_up_truncates_rather_than_repeats(self):
+        # Pipelines -> opportunity -> Pipelines is standing where you started, not three
+        # levels deep. Without this the crumbs would read Pipelines > Opportunity >
+        # Pipelines, which is a log, not a path.
         fake = self._install({})
+        links.record_visit("pipelines", {})
+        links.record_visit("opportunity", {"uid": "AS-1"})
+        links.record_visit("pipelines", {})
+        self.assertEqual(self._pages(fake), ["pipelines"])
+
+    def test_a_sibling_opportunity_replaces_rather_than_stacks(self):
+        fake = self._install({})
+        links.record_visit("pipelines", {})
         links.record_visit("opportunity", {"uid": "AS-1"})
         links.record_visit("opportunity", {"uid": "AS-2"})
-        self.assertEqual(len(fake.session_state[links.NAV_HISTORY_KEY]), 2)
+        self.assertEqual(self._pages(fake), ["pipelines", "opportunity"])
 
-    def test_arriving_via_back_does_not_re_push(self):
+    def test_home_resets_the_trail(self):
+        # Home is the root. Arriving there is not one level deeper than wherever you were.
+        fake = self._install({})
+        links.record_visit("pipelines", {})
+        links.record_visit("opportunity", {"uid": "AS-1"})
+        links.record_visit("home", {})
+        self.assertEqual(self._pages(fake), ["home"])
+
+    def test_the_router_and_the_links_agree_on_home(self):
+        # The router reports Home as "" (it is the default page); everything else calls it
+        # "home". Two names would put both in the trail and match neither.
+        fake = self._install({})
+        links.record_visit("", {})
+        links.record_visit("home", {})
+        self.assertEqual(self._pages(fake), ["home"])
+
+    def test_arriving_via_a_crumb_does_not_re_push(self):
         fake = self._install({links._NAV_BACK_FLAG: True,
                               links.NAV_HISTORY_KEY: [{"page": "report", "params": {}}]})
         links.record_visit("report", {})
-        self.assertEqual(len(fake.session_state[links.NAV_HISTORY_KEY]), 1)
+        self.assertEqual(len(self._pages(fake)), 1)
         self.assertNotIn(links._NAV_BACK_FLAG, fake.session_state,
                          "the flag must be consumed, or the next real move is swallowed")
 
@@ -226,14 +257,24 @@ class TheBackTrailTests(unittest.TestCase):
         fake = self._install({})
         links.record_visit("report", {})
         links.record_visit("report", {"tenant": "client"})
-        self.assertEqual(len(fake.session_state[links.NAV_HISTORY_KEY]), 1)
+        self.assertEqual(len(self._pages(fake)), 1)
 
     def test_the_trail_is_capped(self):
         fake = self._install({})
         for i in range(60):
-            links.record_visit("opportunity", {"uid": f"AS-{i}"})
-        self.assertLessEqual(len(fake.session_state[links.NAV_HISTORY_KEY]),
-                             links._HISTORY_CAP)
+            links.record_visit(f"page-{i}", {})
+        self.assertLessEqual(len(self._pages(fake)), links._HISTORY_CAP)
+
+    def test_the_trail_is_always_rooted_at_home(self):
+        # A session that starts on a deep link (a shared /opportunity URL) still has to
+        # offer a way up, so Home is supplied even though it was never visited.
+        self._install({links.NAV_HISTORY_KEY: [{"page": "opportunity",
+                                                "params": {"uid": "AS-1"}}]})
+        self.assertEqual([e["page"] for e in links.nav_trail()], ["home", "opportunity"])
+
+    def test_an_empty_trail_stays_empty(self):
+        self._install({})
+        self.assertEqual(links.nav_trail(), [])
 
     def test_every_titled_page_is_a_navigable_page(self):
         for slug in links.PAGE_TITLES:
