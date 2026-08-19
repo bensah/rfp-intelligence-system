@@ -361,6 +361,7 @@ def ingest_candidates(
     dry_run: bool = False,
     extract_only: bool = False,
     llm_adjudicate: bool = False,
+    stats: dict[str, int] | None = None,
 ) -> tuple[int, int, int, int]:
     """Process a list of candidate dicts.
 
@@ -371,6 +372,13 @@ def ingest_candidates(
         feasibility eligibility gate; never touched the DB
       * store_errors — extract_only rows that passed the gate but whose DB write
         failed (RLS/connectivity) — an infra error, surfaced apart from declines
+
+    The collapsed 4-tuple is why scan_logs.rfps_new could never say how many rows a run
+    actually CREATED: `inserted` and `updated` are counted separately in here and then
+    added together on the way out. Pass a dict as `stats` to receive the uncollapsed
+    breakdown — inserted, updated, extracted, duplicate_unchanged, suppressed_seen,
+    rejected, store_errors. An out-param rather than a wider return, so the several
+    existing callers that unpack four values keep working untouched.
     """
     # Per-SCAN, not per-process: the ceiling is a budget for this run, so a long-lived worker
     # does not carry a spent counter into the next scan and silently stop synthesising.
@@ -380,6 +388,10 @@ def ingest_candidates(
         pass
 
     if not candidates:
+        if stats is not None:
+            stats.update({"inserted": 0, "updated": 0, "extracted": 0,
+                          "duplicate_unchanged": 0, "suppressed_seen": 0,
+                          "rejected": 0, "store_errors": 0})
         return (0, 0, 0, 0)
 
     sb = None if dry_run else get_client()
@@ -1077,6 +1089,16 @@ def ingest_candidates(
         "suppressed_seen=%d rejected=%d store_errors=%d",
         inserted, updated, duplicate_unchanged, suppressed_seen, rejected, store_errors,
     )
+    if stats is not None:
+        # The uncollapsed truth, for a caller that needs to tell a created row from a
+        # refreshed one (scan_logs.rfps_added). Written before every return so no path
+        # can hand back a half-filled dict.
+        stats.update({
+            "inserted": inserted, "updated": updated, "extracted": extracted,
+            "duplicate_unchanged": duplicate_unchanged,
+            "suppressed_seen": suppressed_seen, "rejected": rejected,
+            "store_errors": store_errors,
+        })
     if extract_only:
         # "new" column carries the extracted count; nothing inserted into Screened.
         return (extracted, 0, rejected, store_errors)
@@ -1281,9 +1303,17 @@ def _run_screening_body(*, dry_run: bool, status: str, triggered_by: str) -> dic
         before = 0 if dry_run else _count()
         # llm_adjudicate=True: regex-first, then LLM ONLY for silent-geography
         # survivors (bounded by the per-process LLM call cap).
+        _st: dict[str, int] = {}
         eligible, dup, rejected, _store_err = ingest_candidates(
-            cands, dry_run=dry_run, llm_adjudicate=True)   # screening: no store writes
-        added = max(0, (_count() - before)) if not dry_run else 0
+            cands, dry_run=dry_run, llm_adjudicate=True,   # screening: no store writes
+            stats=_st)
+        # `inserted` is the pipeline's own count of rows it created. The before/after
+        # table count it replaces was a proxy, and a poor one: the read is tenant-scoped
+        # and any concurrent write lands in the difference. Kept as the fallback only for
+        # the case where stats came back empty (an older code path).
+        added = (_st.get("inserted") if _st else None)
+        if added is None:
+            added = max(0, (_count() - before)) if not dry_run else 0
         res = {"considered": len(cands), "eligible": eligible, "added": added,
                "already_tracked": max(0, eligible - added), "rejected": rejected}
     if not dry_run:                              # log for the Eligible-funding history
@@ -1293,6 +1323,10 @@ def _run_screening_body(*, dry_run: bool, status: str, triggered_by: str) -> dic
         _row = {
             "source": MATCH_RUN_LABEL, "triggered_by": triggered_by,
             "rfps_found": res["considered"], "rfps_new": res["eligible"],
+            # THE NUMBER A READER CAN ACT ON. rfps_new counts everything that passed the
+            # gate, refreshes of already-tracked calls included, so a run can log "12 new"
+            # and add nothing to the Screen tab. rfps_added is what this run created.
+            "rfps_added": res["added"],
             "rfps_duplicate": res["already_tracked"], "rfps_rejected": res["rejected"],
             "duration_sec": round(_time.time() - t0, 3), "errors": None,
         }
@@ -1306,10 +1340,14 @@ def _run_screening_body(*, dry_run: bool, status: str, triggered_by: str) -> dic
         try:
             get_client().table("scan_logs").insert(_row).execute()
         except Exception as exc:
-            # Retry without tenant_id in case migration 074 isn't applied yet, so the
-            # run is still logged (just without tenant scoping).
-            if "tenant_id" in _row:
-                _row.pop("tenant_id", None)
+            # Retry without the columns a not-yet-applied migration would be missing
+            # (tenant_id = 074, rfps_added = 094), so the run is still logged. Losing a
+            # count is a smaller loss than losing the whole row, and a deployment can be
+            # on either side of a migration at any moment.
+            _dropped = [k for k in ("tenant_id", "rfps_added") if k in _row]
+            if _dropped:
+                for _k in _dropped:
+                    _row.pop(_k, None)
                 try:
                     get_client().table("scan_logs").insert(_row).execute()
                 except Exception as exc2:

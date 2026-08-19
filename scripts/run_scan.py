@@ -290,7 +290,7 @@ def count_scannable_sources() -> int:
 def _log_scan(sb, *, source: str, triggered_by: str,
               found: int, new: int, dup: int, rejected: int,
               duration: float, errors: str | None = None,
-              run_id: str | None = None) -> None:
+              run_id: str | None = None, added: int | None = None) -> None:
     from db.supabase_client import safe_execute
     row = {
         "source": source,
@@ -302,14 +302,23 @@ def _log_scan(sb, *, source: str, triggered_by: str,
         "duration_sec": round(duration, 3),
         "errors": errors,
     }
+    # rfps_added = rows this run CREATED, as opposed to rfps_new, which counts everything
+    # that passed the gate — merge-updates of already-tracked calls included. None means
+    # not recorded rather than zero, so it is written only when there is a real count:
+    # an extract-only run inserts nothing into rfp_submissions and passes None. See
+    # migration 094.
+    if added is not None:
+        row["rfps_added"] = added
     if run_id:                       # migration 065 — groups all rows of ONE run
         row["run_id"] = run_id
     try:
         safe_execute(sb.table("scan_logs").insert(row))
     except Exception:
-        # Column may not exist yet (migration 065 not applied) → retry without it,
-        # so telemetry still records and the scan never crashes on a logging write.
+        # A column may not exist yet (run_id = migration 065, rfps_added = 094) → retry
+        # without them, so telemetry still records and the scan never crashes on a
+        # logging write. A deployment can be on either side of a migration at any moment.
         row.pop("run_id", None)
+        row.pop("rfps_added", None)
         safe_execute(sb.table("scan_logs").insert(row))
 
 
@@ -528,10 +537,12 @@ def run(
         dup = 0
         rejected = 0
         store_err = 0
+        ingest_stats: dict[str, int] = {}
         if batch["results"]:
             try:
                 new, dup, rejected, store_err = ingest_candidates(
                     batch["results"], dry_run=dry_run, extract_only=extract_only,
+                    stats=ingest_stats,
                 )
             except Exception as exc:
                 err = (err + " | " if err else "") + f"ingest: {type(exc).__name__}: {exc}"
@@ -572,9 +583,14 @@ def run(
 
         if not dry_run:
             try:
+                # Extract-only writes to the shared extracted store, not to
+                # rfp_submissions, so it has no "created" count to report and passes
+                # None (= not recorded). A full ingest reports the pipeline's own
+                # inserted count.
+                _added = None if extract_only else ingest_stats.get("inserted")
                 _log_scan(sb, source=name, triggered_by=triggered_by, run_id=run_id,
                           found=found, new=new, dup=dup, rejected=rejected,
-                          duration=duration, errors=err)
+                          duration=duration, errors=err, added=_added)
             except Exception as _le:           # telemetry must never crash the scan
                 print(f"  (scan_logs insert failed for {name}: {_le})",
                       file=sys.stderr)
