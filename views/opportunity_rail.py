@@ -138,8 +138,8 @@ def _deadline_chip(item: dict) -> str:
     return f"🗓 {d}d"
 
 
-def _render_item(item: dict) -> None:
-    # Title links to THAT opportunity's own page, carrying its uid. Every title used to
+def _render_item(item: dict, key_prefix: str = "rail") -> None:
+    # Title opens THAT opportunity's own page, carrying its uid. Every title used to
     # link to the bare `/pipelines` — the same destination for all of them, so the click
     # told you nothing and you still had to find the row by hand. Worse, a FEATURED item
     # comes from the shared catalogue and is not in rfp_submissions at all, so no
@@ -148,10 +148,13 @@ def _render_item(item: dict) -> None:
     title = (item["title"][:70] + "…") if len(item["title"]) > 70 else item["title"]
     uid = str(item.get("uid") or "").strip()
     if uid:
-        # SAME TAB: this is another page of this app, and a markdown link would have opened a
-        # new browser tab (Streamlit renders markdown links with target=_blank).
-        st.markdown(_links.internal_link(title, "opportunity", bold=True, uid=uid),
-                    unsafe_allow_html=True)
+        # IN-SESSION, not an anchor. An anchor reloaded the whole app, which emptied
+        # st.session_state and sent the click back through the cold login path — the
+        # "clicks but never opens" a beta reader reported. internal_nav switches page
+        # inside the live session; tertiary keeps it looking like the link it was.
+        _links.internal_nav(f"**{title}**", "opportunity",
+                            key=f"{key_prefix}_{uid}", uid=uid,
+                            help="Open this opportunity in full")
     else:
         # No uid to link to (shouldn't happen — both stores carry one). Don't emit a link
         # that goes nowhere useful; the external ↗ below is still offered.
@@ -170,7 +173,8 @@ def _render_item(item: dict) -> None:
         st.caption(f":green[**Why:** {item['_why']}]")
 
 
-def _card(title: str, help_txt: str, items: list[dict], empty: str) -> None:
+def _card(title: str, help_txt: str, items: list[dict], empty: str,
+          key_prefix: str = "c") -> None:
     with st.container(border=True):
         st.markdown(f"#### {title}")
         st.caption(help_txt)
@@ -178,7 +182,9 @@ def _card(title: str, help_txt: str, items: list[dict], empty: str) -> None:
             st.caption(f"_{empty}_")
             return
         for i, it in enumerate(items):
-            _render_item(it)
+            # Key prefix from the CARD, because the same opportunity can legitimately
+            # appear in two cards and Streamlit keys must be unique per widget.
+            _render_item(it, key_prefix=f"rail_{key_prefix}_{i}")
             if i < len(items) - 1:
                 st.divider()
 
@@ -221,13 +227,13 @@ def render_opportunity_rail() -> None:
     _card("🎯 Featured for you",
           "Ranked from the whole catalog against your geography, programme areas and the "
           "funders you work with — including calls your screening didn't pick up.",
-          _featured, "Nothing to feature yet — run an extraction.")
+          _featured, "Nothing to feature yet — run an extraction.", key_prefix="feat")
     _card("✅ Top Matches",
           _labels.fill("Strong fit for {tenant} (Proceed / Park / high alignment)."),
-          groups["top_matches"], "No strong matches yet.")
+          groups["top_matches"], "No strong matches yet.", key_prefix="match")
     _card("💰 Top Funding",
           _labels.fill("Biggest / most-urgent calls {tenant} is geographically "
                        "eligible for."),
-          groups["top_funding"], "No live opportunities yet — run a scan.")
+          groups["top_funding"], "No live opportunities yet — run a scan.", key_prefix="fund")
     _card("✨ Also Interesting", "Fresh calls that aren't a match but are worth a look.",
-          groups["other"], "Nothing else new right now.")
+          groups["other"], "Nothing else new right now.", key_prefix="other")

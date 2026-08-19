@@ -925,9 +925,10 @@ if not edit_mode:
     # read the call it is about.
     st.markdown("<div style='margin-top:18px'></div>", unsafe_allow_html=True)
     _vc1, _vc2, _vc3 = st.columns([1, 1, 3])
-    _vc1.markdown(_links.internal_button("🔍 View opportunity", "opportunity",
-                                        uid=str(row.get("uid") or "")),
-                  unsafe_allow_html=True)
+    with _vc1:
+        _links.internal_nav("View opportunity", "opportunity", icon="🔍", button=True,
+                            key=f"review_view_opp_{row.get('uid') or 'x'}",
+                            uid=str(row.get("uid") or ""), width="stretch")
 
     if can_edit:
         # Breathing room between the decision card and the Update Decision button.

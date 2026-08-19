@@ -30,7 +30,20 @@ from core import settings as _settings_mod
 from db.supabase_client import get_client
 
 user = st.session_state.get("app_user") or {}
+# TWO WAYS IN, because this page is reached two ways and only one of them is a URL.
+#   * a cold load - a bookmark, a shared address, a refresh - carries ?uid= in the query;
+#   * a click from the rail / a review switches page inside the SAME session, and
+#     st.switch_page cannot carry a query string, so the uid is parked in session state.
+# The query wins when both are present. When only the hand-off is, the uid is restated in
+# the address bar, so the URL a reader copies from here is still the URL that works.
 _uid = (st.query_params.get("uid") or "").strip()
+if not _uid:
+    _uid = str(_uilinks.take_handoff("opportunity").get("uid") or "").strip()
+    if _uid:
+        try:
+            st.query_params["uid"] = _uid
+        except Exception:
+            pass
 
 # ── page styling: cards, chips, criterion rows ──────────────────────────────
 st.markdown("""
@@ -147,8 +160,8 @@ if not _uid:
     st.title("Opportunity")
     st.info("No opportunity selected. Open one from the **Live Opportunity Feed** on "
             "Home or Pipelines.")
-    st.markdown(_uilinks.internal_link("📚 Go to Pipelines", "pipelines"),
-                unsafe_allow_html=True)
+    _uilinks.internal_nav("Go to Pipelines", "pipelines", key="opp_empty_to_pipelines",
+                          icon="📚")
     st.stop()
 
 try:
@@ -164,8 +177,8 @@ if not _kind:
     st.title("Opportunity")
     st.warning(f"Couldn't find an opportunity with uid `{_uid}`. It may have been "
                "deleted, or it belongs to another tenant.")
-    st.markdown(_uilinks.internal_link("📚 Back to Pipelines", "pipelines"),
-                unsafe_allow_html=True)
+    _uilinks.internal_nav("Back to Pipelines", "pipelines", key="opp_missing_to_pipelines",
+                          icon="📚")
     st.stop()
 
 _view = _od.standard_view(_kind, _row, _ext)
@@ -561,9 +574,8 @@ with _main:
     # ── decision ────────────────────────────────────────────────────────────
     st.divider()
     if _kind == _od.KIND_PIPELINE:
-        st.markdown(_uilinks.internal_link("✏️ Open in Review", "pipelines", uid=_uid,
-                                         style="font-size:1.15rem;font-weight:700"),
-                    unsafe_allow_html=True)
+        _uilinks.internal_nav("**Open in Review**", "pipelines", key="opp_review_self",
+                              icon="✏️", uid=_uid, button=True)
         st.caption("Already in your pipeline — score the criteria and record the team "
                    "decision there.")
     else:
@@ -578,14 +590,13 @@ with _main:
         _rejected = st.session_state.get(f"_opp_rejected_{_uid}")
         if _tracked:
             st.success(f"✓ In your pipeline as `{_tracked}`.")
-            st.markdown(_uilinks.internal_link("✏️ Open in Review", "pipelines",
-                                             uid=_tracked,
-                                             style="font-size:1.15rem;font-weight:700"),
-                        unsafe_allow_html=True)
+            _uilinks.internal_nav("**Open in Review**", "pipelines",
+                                  key="opp_review_tracked", icon="✏️", uid=_tracked,
+                                  button=True)
         elif _rejected:
             st.info("Marked not relevant — noted for the learning engine.")
-            st.markdown(_uilinks.internal_link("📚 Back to Pipelines", "pipelines"),
-                        unsafe_allow_html=True)
+            _uilinks.internal_nav("Back to Pipelines", "pipelines",
+                                  key="opp_rejected_to_pipelines", icon="📚")
         else:
             st.markdown("**Add this to your pipeline?** Adding scores it against your "
                         "eligibility criteria and queues it for review — nothing is "

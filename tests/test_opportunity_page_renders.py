@@ -22,6 +22,11 @@ from unittest import mock
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+
+# AppTest resolves a RELATIVE path against the file that calls it — i.e. tests/ — so
+# "app_pages/opportunity.py" looked for tests/app_pages/opportunity.py and every test here
+# errored instead of running.
+_APP_PAGE = os.path.join(_ROOT, "app_pages", "opportunity.py")
 os.environ.setdefault("SUPABASE_URL", "https://dummy.supabase.co")
 os.environ.setdefault("SUPABASE_KEY", "sb_secret_dummy")
 
@@ -70,7 +75,7 @@ def tearDownModule():
 
 def _run(uid="es_test_1"):
     from streamlit.testing.v1 import AppTest
-    at = AppTest.from_file("app_pages/opportunity.py", default_timeout=120)
+    at = AppTest.from_file(_APP_PAGE, default_timeout=120)
     at.query_params["uid"] = uid
     at.session_state["app_user"] = {"email": "dev@example.com", "role": "super_user"}
     with mock.patch("db.supabase_client.get_client"), \

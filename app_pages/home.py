@@ -226,15 +226,21 @@ with _main:
                       "Org profile, year setting, Excel sync, currency rates, Manage Users + User Access, "
                       "the full Records backend, donor sources, manual scans. Also in the 👤 menu (top-right)."))
 
+    # THE CARD IS THE CONTROL. Each card used to be inert HTML with an "Open <page>"
+    # button bolted underneath, so every tile carried a second, redundant thing to read and
+    # the obvious click — the headline — did nothing. The headline is now the button
+    # (tertiary, so it still reads as a heading rather than a form control) and the
+    # separate Open button is gone. st.switch_page, so it stays in the same session.
     cols = st.columns(3)
     for i, (page, path, icon, headline, body) in enumerate(CARDS):
         with cols[i % 3]:
-            st.markdown(
-                f"<div class='quickcard'><h4>{icon} &nbsp; {headline}</h4><p>{body}</p></div>",
-                unsafe_allow_html=True,
-            )
-            if st.button(f"Open {page}", key=f"qs_{page}", width='stretch'):
-                st.switch_page(path)
+            with st.container(border=True):
+                st.markdown("<div class='qc-marker'></div>", unsafe_allow_html=True)
+                if st.button(f"{icon}  {headline}", key=f"qs_{page}",
+                             type="tertiary", width="stretch",
+                             help=f"Go to {page}"):
+                    st.switch_page(path)
+                st.markdown(f"<p class='qc-body'>{body}</p>", unsafe_allow_html=True)
 
 
     # -----------------------------------------------------------------------------

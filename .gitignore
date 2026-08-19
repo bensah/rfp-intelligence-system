@@ -50,3 +50,7 @@ data/team_roster.local.json
 
 # Per-tenant uploaded Excel workbooks (tenant data, never committed)
 .workbooks/
+
+# Local secrets crib sheet - real API keys in plaintext, never committed.
+# The authoritative values live in the deployment's own secrets store.
+docs/secrets_database

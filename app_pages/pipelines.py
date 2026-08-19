@@ -48,6 +48,18 @@ with _main:
     # view on its own instead: the link opens exactly that RFP, in the normal read-only
     # view, with its existing Update Decision / Edit RFP buttons.
     _focus_uid = (st.query_params.get("uid") or "").strip()
+    if not _focus_uid:
+        # Reached by an in-session switch_page (the opportunity page's "Open in Review",
+        # the rail): st.switch_page cannot carry a query string, so the uid arrives in
+        # session state instead. Restate it in the URL so this focused view is still
+        # something a reader can bookmark or send to a colleague.
+        from core import ui_links as _ui
+        _focus_uid = str(_ui.take_handoff("pipelines").get("uid") or "").strip()
+        if _focus_uid:
+            try:
+                st.query_params["uid"] = _focus_uid
+            except Exception:
+                pass
     if _focus_uid:
         _b1, _b2 = st.columns([1, 4])
         if _b1.button("← All pipelines", key="pipelines_exit_focus"):
