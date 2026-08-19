@@ -170,16 +170,27 @@ def take_handoff(slug: str) -> dict:
     return out if isinstance(out, dict) else {}
 
 
-# ── in-app history ──────────────────────────────────────────────────────────────────────
-# Streamlit has no back button of its own, and the browser's is a poor substitute here: a
-# page reached by st.switch_page shares a history entry with the one it replaced, so
-# browser-back can jump two moves at once or leave the app entirely. So the app keeps its
-# own trail of where the reader has been, in the session, and offers one step back.
+# ── where you are, and how you got here ─────────────────────────────────────────────────
+# Streamlit has no back button, and the browser's is a poor substitute here: a page reached
+# by st.switch_page shares a history entry with the one it replaced, so browser-back can
+# jump two moves at once or leave the app entirely.
+#
+# A plain back button was the first answer and it was the wrong shape. It only ever offered
+# ONE step, it appeared on Home — where there is by definition nothing behind you — and it
+# could not say where it went without being clicked. Breadcrumbs answer all three: every
+# level is visible and clickable, the current page is named, and a trail of one renders
+# nothing at all.
+#
+# The trail is the path TAKEN, not a log of every page seen: revisiting a page already in
+# it truncates back to that page rather than appending. Without that, walking
+# Pipelines → an opportunity → Pipelines → another opportunity would grow a trail of
+# repeats, and a breadcrumb that repeats is a history list wearing a breadcrumb's clothes.
 NAV_HISTORY_KEY = "_nav_history"
 _NAV_BACK_FLAG = "_nav_going_back"
-_HISTORY_CAP = 25
+_HISTORY_CAP = 12
+_ROOT_PAGE = "home"
 
-# Human names for the trail, so "Back" can say what it goes back TO.
+# Human names for the trail, so a crumb can say where it goes.
 PAGE_TITLES: dict[str, str] = {
     "": "Home", "home": "Home", "pipelines": "Pipelines", "grants": "Grants",
     "actions": "Actions", "report": "Report", "donors": "Donors",
@@ -188,50 +199,94 @@ PAGE_TITLES: dict[str, str] = {
 }
 
 
+def _norm(page: str | None) -> str:
+    """Home is registered as the default page, so it arrives as "" from the router and as
+    "home" from everywhere else. One name, or the trail can hold both and never match."""
+    p = str(page or "").strip().lstrip("/")
+    return _ROOT_PAGE if p in ("", "home") else p
+
+
 def record_visit(slug: str | None, params: dict | None = None) -> None:
     """Note the page being rendered. Called once per run, from the router.
 
-    A RERUN is not a move: the same page with the same query is folded into the entry
-    already on top, or every widget interaction would bury the reader's real previous page
-    under a stack of duplicates. Arriving via Back is not a move either — the stack was
-    rewritten before the switch.
+    A RERUN is not a move: the same page with the same query folds into the entry already
+    on top, or every widget click would bury the real trail under duplicates. Arriving via
+    a crumb is not a move either — the trail was truncated before the switch.
     """
     import streamlit as st
 
     ss = st.session_state
     if ss.pop(_NAV_BACK_FLAG, False):
         return
-    page = str(slug or "home")
+    page = _norm(slug)
     entry = {"page": page, "params": {k: v for k, v in (params or {}).items()
                                       if k != "tenant"}}
     hist = ss.setdefault(NAV_HISTORY_KEY, [])
     if hist and hist[-1] == entry:
         return
+    # Home is the root of every trail. Reaching it is not a step deeper, it is a reset.
+    if page == _ROOT_PAGE:
+        ss[NAV_HISTORY_KEY] = [entry]
+        return
+    for i, e in enumerate(hist):
+        if e["page"] == page:              # been here before → this is a step BACK up
+            del hist[i:]
+            break
     hist.append(entry)
     if len(hist) > _HISTORY_CAP:
         del hist[:-_HISTORY_CAP]
 
 
-def render_back_button(*, key: str = "nav_back") -> bool:
-    """One step back, if there is one. Renders nothing on the first page of a session.
+def nav_trail() -> list[dict]:
+    """The path taken, root first, current page last. Always rooted at Home."""
+    import streamlit as st
 
-    Uses the same hand-off as `internal_nav`, so returning to an opportunity returns to
-    THAT opportunity rather than the empty page.
+    hist = list(st.session_state.get(NAV_HISTORY_KEY) or [])
+    if not hist:
+        return []
+    if hist[0]["page"] != _ROOT_PAGE:
+        hist.insert(0, {"page": _ROOT_PAGE, "params": {}})
+    return hist
+
+
+def _go(entry: dict) -> None:
+    """Switch to a trail entry, restoring the query values it was visited with."""
+    import streamlit as st
+
+    st.session_state[_NAV_BACK_FLAG] = True          # the arrival is not a new move
+    st.session_state[NAV_HANDOFF_KEY] = {"page": entry.get("page"),
+                                         "params": entry.get("params") or {}}
+    st.switch_page(PAGE_SCRIPTS[str(entry["page"])])
+
+
+def render_breadcrumbs(*, key: str = "crumb") -> bool:
+    """`Home › Pipelines › Opportunity` — every level but the current one clickable.
+
+    Renders NOTHING when the trail is just Home: the root page has nothing above it, and a
+    lone unclickable crumb is furniture. Returns whether anything was drawn.
     """
     import streamlit as st
 
-    hist = st.session_state.get(NAV_HISTORY_KEY) or []
-    if len(hist) < 2:
+    trail = nav_trail()
+    if len(trail) < 2:
         return False
-    prev = hist[-2]
-    script = PAGE_SCRIPTS.get(str(prev.get("page") or ""))
-    if not script:
-        return False
-    name = PAGE_TITLES.get(str(prev.get("page") or ""), "the previous page")
-    if st.button("← Back", key=key, type="tertiary", help=f"Back to {name}"):
-        hist.pop()                                   # leave the page we are on
-        st.session_state[_NAV_BACK_FLAG] = True      # the arrival is not a new move
-        st.session_state[NAV_HANDOFF_KEY] = {"page": prev.get("page"),
-                                             "params": prev.get("params") or {}}
-        st.switch_page(script)
+    with st.container(horizontal=True, horizontal_alignment="left", gap="small",
+                      key=f"rfpis_{key}s"):
+        for i, entry in enumerate(trail):
+            page = str(entry.get("page") or "")
+            name = PAGE_TITLES.get(page, page or "Home")
+            last = (i == len(trail) - 1)
+            if last or page not in PAGE_SCRIPTS:
+                # The page you are ON is a label, not a link — clicking it goes nowhere,
+                # and offering it as a control is a promise the app cannot keep.
+                st.markdown(f"<span class='rfpis-crumb-here'>{html.escape(name)}</span>",
+                            unsafe_allow_html=True)
+            else:
+                if st.button(name, key=f"{key}_{i}_{page}", type="tertiary",
+                             help=f"Back to {name}"):
+                    trail_entry = entry
+                    st.session_state[NAV_HISTORY_KEY] = trail[:i + 1]
+                    _go(trail_entry)
+                st.markdown("<span class='rfpis-crumb-sep'>›</span>",
+                            unsafe_allow_html=True)
     return True

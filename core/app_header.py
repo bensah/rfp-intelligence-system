@@ -498,6 +498,23 @@ _GLOBAL_CSS = f"""
     text-align: left;
     padding: 0;
   }}
+  /* BREADCRUMBS. The trail sits between the top bar and the page body: quiet by default
+     (it is orientation, not content), with the current page in the app's own green so the
+     reader can see at a glance which crumb they are standing on. */
+  [class*='st-key-rfpis_crumbs'] {{ margin: 2px 0 10px; align-items: center; }}
+  [class*='st-key-rfpis_crumbs'] [data-testid="stBaseButton-tertiary"] {{
+    color: {THEME_SLATE};
+    font-size: 0.86rem;
+    font-weight: 500;
+    padding: 0;
+    min-height: 0;
+  }}
+  [class*='st-key-rfpis_crumbs'] [data-testid="stBaseButton-tertiary"]:hover {{
+    color: {THEME_PRIMARY};
+    text-decoration: underline;
+  }}
+  .rfpis-crumb-sep {{ color: #94a3b8; font-size: 0.86rem; padding: 0 2px; }}
+  .rfpis-crumb-here {{ color: {THEME_PRIMARY}; font-size: 0.86rem; font-weight: 650; }}
   .qc-body {{
     margin: 4px 0 0;
     color: #475569;
@@ -1311,13 +1328,15 @@ def render_app_header() -> None:
     # Tenant switcher for a non-super user who belongs to >1 tenant (R3).
     _render_tenant_switcher()
 
-    # ONE STEP BACK. Every page is reachable from the rail, but a reader who followed a
-    # trail into a page — Report, then an opportunity off the feed — had no way back to
-    # where they came from except to work out which rail item it had been. Renders nothing
-    # on the first page of a session, so it never appears as a dead control.
+    # WHERE YOU ARE, AND HOW YOU GOT HERE. Every page is reachable from the rail, but a
+    # reader who followed a trail into one — Report, then an opportunity off the feed — had
+    # no way back to where they came from except to work out which rail item it had been.
+    # Breadcrumbs rather than a back button: every level is visible and clickable, not just
+    # the last one, and a trail of one (Home) renders nothing, so the root page is not
+    # given a control that goes nowhere.
     try:
-        from core import ui_links as _uilinks_back
-        _uilinks_back.render_back_button()
+        from core import ui_links as _uilinks_crumbs
+        _uilinks_crumbs.render_breadcrumbs()
     except Exception:
         pass
 
