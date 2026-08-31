@@ -172,6 +172,7 @@ from core import org_profile as _orgp
 from core import settings as _settings
 from core import criteria_factors as _cf
 from core import criteria_derive as _cderive
+from core import applicant_graph as _ag
 _org_prof = _orgp.get_profile()
 _org_set = _settings.get_org()
 _donor = None
@@ -197,8 +198,15 @@ try:
 except Exception:
     _rfp_flags = {}
 _donor_eff = _cderive._merge_rfp_compliance(_donor, _rfp_flags)
+# Applicant graph — lets a Sub inherit the Prime's/parent's transferable standing
+# (registration today; signatory/relationships/competitiveness/geo as later phases land).
+# Fail-closed to a self-only graph inside resolve(); None would also be self-only.
 try:
-    _derived = _cderive.derive_criteria(row, _org_prof, _donor_eff, _org_set)
+    _graph = _ag.resolve(row, _org_prof)
+except Exception:
+    _graph = None
+try:
+    _derived = _cderive.derive_criteria(row, _org_prof, _donor_eff, _org_set, graph=_graph)
 except Exception:
     _derived = {}
 _reviewed = bool(str(row.get("decision_date") or "").strip())   # genuine human Review save
@@ -230,7 +238,7 @@ try:
     _sysvals = {k: (_derived.get(k) or row.get(k)) for k in CRITERIA}
     _pm = _matching.composite_match({**row, **_sysvals}, _org_prof, _donor_eff, _org_set)
     _pcomp = round(_pm["composite"], 1)          # 100% of the 9 weighted criteria
-    _pfatal, _ = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set)
+    _pfatal, _ = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set, graph=_graph)
     _sys_dec = ("Decline" if _pfatal else
                 "Proceed" if _pcomp >= 90 else "Park" if _pcomp >= 70 else "Decline")
 except Exception:
@@ -495,9 +503,10 @@ if isinstance(_overrides, str):
 if not isinstance(_overrides, dict):
     _overrides = {}
 try:
-    _is_fatal, _trigger = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set)
+    _is_fatal, _trigger = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set,
+                                                 graph=_graph)
     _bd = _cderive.factor_breakdown(row, _org_prof, _donor_eff, _org_set,
-                                    overrides=_overrides)
+                                    overrides=_overrides, graph=_graph)
 except Exception:
     _is_fatal, _trigger, _bd = False, None, {}
 

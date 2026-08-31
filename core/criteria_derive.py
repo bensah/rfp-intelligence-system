@@ -2023,7 +2023,7 @@ def _invitation_only(rfp: dict, donor: dict | None = None) -> bool:
 
 
 def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
-                          org_settings: dict | None = None) -> list[dict]:
+                          org_settings: dict | None = None, graph=None) -> list[dict]:
     """MUST-1 — LEGAL STATUS & QUALIFICATION (reworked 2026-06-28; D/F revised
     2026-06-29). SIX scored items: A legal type · B entity type · C HQ · D registration
     · E individual-PI · F prior beneficiary — all HARD (0/1). Strict rule: an active item
@@ -2122,10 +2122,30 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     region = [] if explicit_any else list(reg_req)
     if not region and not explicit_any and _is_us_federal(rfp):
         region = ["United States"]               # US-federal / US-only → must be US-registered
+    # TENANT GRAPH (owner 2026-08-31): registration is a CONSORTIUM/PARENT-transferable
+    # gate — a child Sub inherits the Prime's (or parent org's) registration. With a
+    # `graph`, coverage is tested across self → parent → prime (`for_registration`);
+    # WITHOUT one, self only, so every graph-less caller is byte-for-byte unchanged.
+    if graph is not None:
+        _reg_covered = explicit_any or any(
+            _region_covered(region, p) for p in graph.for_registration())
+        _reg_role = graph.role
+    else:
+        _reg_covered = explicit_any or _region_covered(region, org)
+        _reg_role = ""
+    # A Sub whose Prime carries the US-registration burden and whom we could not confirm
+    # scores 0.5 "unclear" (met=None → NON-FATAL: `fatal_decline` gates only on met is
+    # False) rather than a hard 0 — the PRIME, not the Sub, must be registered. A Prime
+    # (or single applicant) that is not registered still hard-fails at 0.
+    if _reg_covered:
+        _reg_score = 1.0
+    elif region and _reg_role == "sub":
+        _reg_score = 0.5
+    else:
+        _reg_score = 0.0
     items.append(_qfactor("local_registration", "Registration region",
                           active=bool(explicit_any or region),
-                          score=(1.0 if (explicit_any or _region_covered(region, org)) else 0.0),
-                          hard=True))
+                          score=_reg_score, hard=True))
 
     # --- E. Individual-PI — PI gate then base country -------------------------
     _qtext = " ".join(str(rfp.get(x) or "") for x in
@@ -2244,28 +2264,29 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
 
 def qualification_bid_strength(org: dict, rfp: dict, donor: dict | None = None,
                                org_settings: dict | None = None,
-                               rfp_compliance: dict | None = None) -> tuple[float, int]:
+                               rfp_compliance: dict | None = None, graph=None) -> tuple[float, int]:
     """(numerator, denominator) over ACTIVE MUST-1 items — numerator = Σ scores,
     denominator = count. Bid Strength = numerator ÷ denominator (caller divides;
     denominator 0 → undefined → 'Not sure'). Transparency only — NOT forced to 0
     when the label is a decline. `rfp_compliance` folds in call-stated requirements."""
     items = [x for x in qualification_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
         if x["active"] and x["score"] is not None]            # denominator = ACTIVE only
     return sum(x["score"] for x in items), len(items)
 
 
 def derive_qualification(org: dict, rfp: dict, donor: dict | None = None,
                          org_settings: dict | None = None,
-                         rfp_compliance: dict | None = None) -> str:
+                         rfp_compliance: dict | None = None, graph=None) -> str:
     """MUST-1 label (2026-06-28 rework). Decision order over ACTIVE items:
       denominator 0 (nothing imposed) → 'Not sure';
       any item scored 0 → 'No, not eligible' (one mismatch overrides all);
       any item scored 0.5 → 'Mostly, one item unclear';
       all items scored 1 → 'Yes, fully'.
-    `rfp_compliance` folds in requirements the CALL itself states (extraction)."""
+    `rfp_compliance` folds in requirements the CALL itself states (extraction).
+    `graph` (applicant graph) lets a Sub inherit the Prime's/parent's registration."""
     scores = [x["score"] for x in qualification_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
         if x["active"] and x["score"] is not None]            # ACTIVE items only
     if not scores:
         return "Not sure"                                     # denominator 0
@@ -2278,11 +2299,12 @@ def derive_qualification(org: dict, rfp: dict, donor: dict | None = None,
 
 def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = None,
                     org_settings: dict | None = None,
-                    policies: dict | None = None) -> dict[str, str | None]:
-    """All 9 derived labels (None where not determinable)."""
+                    policies: dict | None = None, graph=None) -> dict[str, str | None]:
+    """All 9 derived labels (None where not determinable). `graph` (applicant graph,
+    optional) feeds the transfer-aware criteria; None → single-tenant behaviour."""
     org = org or {}
     return {
-        "qualification": derive_qualification(org, rfp, donor, org_settings),
+        "qualification": derive_qualification(org, rfp, donor, org_settings, graph=graph),
         "strategic_fit": derive_strategic_fit(org, rfp, donor),
         "capacity": derive_capacity(org, rfp, donor, org_settings),
         "geographic_fit": derive_geographic_fit(org, rfp, org_settings, donor),
@@ -2615,13 +2637,15 @@ _NON_FATAL_QUALIFICATION = frozenset({"invitation_only", "applicant_countries"})
 
 def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
                   org_settings: dict | None = None,
-                  rfp_compliance: dict | None = None) -> tuple[bool, str | None]:
+                  rfp_compliance: dict | None = None, graph=None) -> tuple[bool, str | None]:
     """THE auto-Decline gate (replaces the blanket 'any MUST<2 → Decline').
     Returns (decline?, trigger_name). True ONLY when a 🔒 non-dynamic factor is
     EXPLICITLY failed (met is False) — a structural ineligibility the org can't
     fix before the deadline: a MUST-1 identity gate or no geographic reach. (MUST-5
     has no fatal floor — its credential gates are acquirable.) Unknowns (None) never
-    trigger a decline — they only soften the score (→ usually Park for review)."""
+    trigger a decline — they only soften the score (→ usually Park for review).
+    `graph`: with an applicant graph a Sub's inherited/unclear registration reads 0.5
+    (met None) and no longer fatally declines — the Prime carries that burden."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     # MUST-1 — identity / qualification gates.
@@ -2635,7 +2659,7 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     # `invitation_only` is exactly that: whether we hold an invitation to a closed round is
     # not visible on the call page. It still takes MUST-1 to 0 through the ordinary mean, so
     # an uninvited org still reads Decline — it is simply reviewable rather than closed.
-    for f in qualification_factors(org, rfp, eff, org_settings):
+    for f in qualification_factors(org, rfp, eff, org_settings, graph):
         if f["key"] in _NON_FATAL_QUALIFICATION:
             continue
         if f["active"] and f["met"] is False:
@@ -2713,7 +2737,7 @@ def apply_component_overrides(breakdown: dict[str, list[dict]],
 def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = None,
                      org_settings: dict | None = None,
                      rfp_compliance: dict | None = None,
-                     overrides: dict | None = None) -> dict[str, list[dict]]:
+                     overrides: dict | None = None, graph=None) -> dict[str, list[dict]]:
     """Per-criterion sub-factor lists for the Review per-criterion cards — for ALL
     9 criteria. Each factor carries `active` (whether THIS call/donor imposes it):
     inactive factors are KEPT so the card can show them as "? Not applicable", and
@@ -2725,7 +2749,7 @@ def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = No
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     out = {
-        "qualification": qualification_factors(org, rfp, eff, org_settings),
+        "qualification": qualification_factors(org, rfp, eff, org_settings, graph),
         "strategic_fit": _strategic_factors(org, rfp, donor),
         "capacity": _capacity_factors(org, rfp, eff, org_settings),
         "geographic_fit": _geo_factors(org, rfp, org_settings, eff),
