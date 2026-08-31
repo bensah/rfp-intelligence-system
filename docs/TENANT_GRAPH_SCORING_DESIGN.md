@@ -312,7 +312,13 @@ every existing test and caller is byte-for-byte unaffected.
   single-tenant); `resolve()` wired into review_rfp, opportunity_scoring, auto_scorer
   (fail-closed). Sub → 0.5 "unclear" (non-fatal), inherits a registered prime/parent →
   1.0. `tests/test_must1_sub_registration_graph.py`.
-- **P4 — Signatory + PREFER-7 graph:** §5.2.
+- **P4 — Signatory + PREFER-7 graph (DONE):** §5.2. Shared graph helpers
+  (`_sig_match_graph`/`_grantee_graph`/`_shared_graph`/`_engaged_graph` over
+  `_graph_profiles`) drive BOTH the PREFER-7 label and its components (never disagree)
+  and the MUST-5 signatory item. `graph=` threaded through `compliance_factors`/
+  `cofinancing_bid_strength`/`derive_cofinancing`/`derive_funder_relationship`/
+  `_relationship_factors`. Honest (0/None when no profile holds it); graph=None
+  unchanged. `tests/test_prefer7_signatory_graph.py`.
 - **P5 — PREFER-8 portal (US-federal + parent) + track-record parent-max:** §5.3–5.4.
 - **P6 — UI:** parent-link picker + `share_for_consortium_scoring` toggle in
   Settings/Tenant admin (reusing the mig-082 create→pending→approve flow), and the
