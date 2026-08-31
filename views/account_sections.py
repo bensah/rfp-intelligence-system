@@ -488,6 +488,36 @@ def _set_many_developer(svc, tids: list[str], on: bool) -> None:
         st.error(f"Developer-flag change failed (did you run migration 079?): {exc}")
 
 
+def _set_many_consortium_consent(svc, tids: list[str], on: bool) -> None:
+    """Opt tenants in/out of consortium-scoring sharing (migration 095). When ON, a
+    tenant's whitelisted profile may be read to score a call where it is named as a
+    co-applicant (lead/sub) on ANOTHER tenant's RFP. Parent↔child inheritance does NOT
+    need this — it is authorized by the ownership link."""
+    if not tids:
+        return
+    try:
+        svc.table("tenants").update(
+            {"share_for_consortium_scoring": bool(on)}).in_("id", tids).execute()
+        from core import applicant_graph as _ag
+        _ag.clear_cache()                       # the resolver caches the tenant rows
+    except Exception as exc:
+        st.error(f"Consortium-sharing change failed (did you run migration 095?): {exc}")
+
+
+def _set_parent(svc, child_id: str, parent_id: str | None) -> None:
+    """Link (or unlink) a tenant to a PARENT tenant (migration 095). The child then
+    inherits the parent's transferable standing (registration, signatory, relationships,
+    competitiveness, geography) in scoring. The DB cycle-guard rejects a link that would
+    loop the parent chain — surfaced here as an error."""
+    try:
+        svc.table("tenants").update(
+            {"parent_tenant_id": parent_id}).eq("id", child_id).execute()
+        from core import applicant_graph as _ag
+        _ag.clear_cache()
+    except Exception as exc:
+        st.error(f"Parent link failed (migration 095? a cycle is rejected by design): {exc}")
+
+
 def _norm_tenant_name(s: str | None) -> str:
     """Normalize a tenant name for dedup: NFKC + casefold (folds full-width/compatibility/
     case variants so 'ＲＦＰ'/'Rfp'/'RFP' compare equal — the exact-dup block can't be
@@ -705,7 +735,9 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
     # Try selecting `is_developer` (migration 079) + `kind` (078); fall back column-set by
     # column-set so the table still loads before either migration is applied.
     tenants, _last_exc = None, None
-    for _sel in ("id,name,slug,status,kind,is_developer,created_at,org_profile",
+    for _sel in ("id,name,slug,status,kind,is_developer,parent_tenant_id,"
+                 "share_for_consortium_scoring,created_at,org_profile",
+                 "id,name,slug,status,kind,is_developer,created_at,org_profile",
                  "id,name,slug,status,kind,created_at,org_profile",
                  "id,name,slug,status,created_at,org_profile"):
         try:
@@ -747,12 +779,14 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
     # The `&label=<name>` suffix on the href lets the LinkColumn show the tenant NAME as
     # the clickable text (regex-extracted); the app reads only ?tenant= and ignores label.
     # Tick rows to Suspend / Activate in bulk.
+    _name_by_id = {t["id"]: (t.get("name") or "—") for t in tenants}
     _rows = []
     for t in tenants:
         tid = t["id"]
         prof = t.get("org_profile") if isinstance(t.get("org_profile"), dict) else {}
         _key = t.get("slug") or tid
         _name = t.get("name") or "—"
+        _parent_id = t.get("parent_tenant_id")
         _rows.append({
             "id": tid,
             "slug": _key,
@@ -762,6 +796,10 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
             "Kind": "🧑 Individual" if t.get("kind") == "individual" else "🏢 Org",
             "Dev": "🛠 Dev" if t.get("is_developer") else "🙂 Regular",
             "_is_dev": bool(t.get("is_developer")),
+            "_parent_id": _parent_id,
+            "_share": bool(t.get("share_for_consortium_scoring")),
+            "Parent": _name_by_id.get(_parent_id, "—") if _parent_id else "—",
+            "Sharing": "🤝 Shared" if t.get("share_for_consortium_scoring") else "—",
             "_status": (t.get("status") or "active"),
             "Status": {"active": "🟢 Active", "suspended": "⏸ Suspended",
                        "pending": "🕓 Pending"}.get(t.get("status") or "active",
@@ -782,9 +820,11 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
                  "you Return to your account (banner up top).")
         if can_manage else
         st.column_config.TextColumn("Organization", width="large"))
+    _cols = (["Organization", "Kind", "Dev", "Parent", "Sharing", "Status", "Members",
+              "Pending", "Profile", "Created"] if can_manage else
+             ["Organization", "Kind", "Status", "Members", "Pending", "Profile", "Created"])
     _sel = st.dataframe(
-        _df[["Organization", "Kind", "Dev", "Status", "Members", "Pending", "Profile",
-             "Created"]],
+        _df[_cols],
         hide_index=True, width="stretch", key="tenants_table",
         selection_mode="multi-row", on_select="rerun" if can_manage else "ignore",
         column_config={
@@ -793,6 +833,17 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
                 "Kind", width="small",
                 help="🏢 Org = a normal organization tenant. 🧑 Individual = a personal "
                      "account whose activity is visible to all users."),
+            "Parent": st.column_config.TextColumn(
+                "Parent", width="small",
+                help="Parent organization. A child tenant inherits the parent's "
+                     "transferable standing (registration, authorized signatory, funder "
+                     "relationships, competitiveness, geographic reach) in scoring. Select "
+                     "a single tenant below to set or change its parent."),
+            "Sharing": st.column_config.TextColumn(
+                "Sharing", width="small",
+                help="🤝 Shared = this tenant has opted its whitelisted profile in to "
+                     "consortium scoring, so it counts when named as a co-applicant on "
+                     "another tenant's RFP. Parent↔child inheritance does not need this."),
             "Dev": st.column_config.TextColumn(
                 "Dev", width="small",
                 help="🛠 Dev = a DEVELOPER / system tenant: its "
@@ -858,6 +909,48 @@ def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> 
                  help="Revoke developer-tenant status."
                  if _can_unmark_dev else "None of the selected tenants are developer tenants."):
         _set_many_developer(svc, _sel_ids, False); st.rerun()
+
+    # ── Consortium-scoring consent (migration 095). Lets a tenant's whitelisted profile
+    # be read when it is named as a co-applicant on ANOTHER tenant's RFP. Parent↔child
+    # inheritance does NOT need this — it rides the ownership link below. ──
+    _share_states = {bool(r.get("_share")) for r in _sel_rows}
+    _can_share = any(s is False for s in _share_states)
+    _can_unshare = any(s is True for s in _share_states)
+    c1, c2, _csp = st.columns([2.1, 1.9, 4.0])
+    if c1.button("🤝 Enable consortium sharing", width="stretch", key="tn_bulk_share",
+                 disabled=not _can_share,
+                 help="Allow these tenants' whitelisted profiles to count when named as a "
+                      "co-applicant on another tenant's RFP."
+                 if _can_share else "All selected tenants already share for consortium scoring."):
+        _set_many_consortium_consent(svc, _sel_ids, True); st.rerun()
+    if c2.button("Disable sharing", width="stretch", key="tn_bulk_unshare",
+                 disabled=not _can_unshare,
+                 help="Stop these tenants from being read as co-applicants."
+                 if _can_unshare else "None of the selected tenants share for consortium scoring."):
+        _set_many_consortium_consent(svc, _sel_ids, False); st.rerun()
+
+    # ── Parent organization link (migration 095). One child → one parent, so this is a
+    # SINGLE-selection action. The child inherits the parent's transferable standing in
+    # scoring. Reassignable any time; the DB cycle-guard rejects a loop. ──
+    if len(_sel_ids) == 1:
+        _child = _sel_rows[0]
+        _others = [t for t in tenants if t["id"] != _child["id"]]
+        _opts = [("— none (no parent) —", None)] + [(t.get("name") or "—", t["id"])
+                                                    for t in _others]
+        _cur = _child.get("_parent_id")
+        _cur_idx = next((i for i, (_, pid) in enumerate(_opts) if pid == _cur), 0)
+        st.markdown(f"**Parent organization for `{_child['name']}`** — link it to a parent "
+                    "so it inherits the parent's registration, authorized signatory, funder "
+                    "relationships, competitiveness and geographic reach in scoring.")
+        p1, p2 = st.columns([3.5, 1.2])
+        _pick_idx = p1.selectbox(
+            "Parent", options=range(len(_opts)), index=_cur_idx,
+            format_func=lambda i: _opts[i][0], key="tn_parent_pick",
+            label_visibility="collapsed")
+        if p2.button("Link parent", type="primary", width="stretch", key="tn_link_parent"):
+            _set_parent(svc, _child["id"], _opts[_pick_idx][1]); st.rerun()
+    else:
+        st.caption("Select a **single** tenant to set or change its parent organization.")
 
 
 def render_org_suspend(user: dict, sb) -> None:

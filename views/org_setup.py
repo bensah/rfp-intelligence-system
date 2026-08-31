@@ -597,12 +597,14 @@ def render_org_setup(user, sb, tenant_id=None):
         # authorized-signatory sign-off from; a call that requires it scores 1 only if its
         # donor is in this list (e.g. Wellcome Trust). MUST-5.
         authorized_signatory_donors = _ms(dr2,
-            "Authorized signatory obtained from (donors)", _donor_names,
+            "Leadership authorized signatory — donors we can sign for", _donor_names,
             "org_authorized_signatory_donors",
-            help="Donors you have already secured an authorized-signatory sign-off from. "
-                 "A call that requires one scores 1 only if its donor is in this list; "
-                 "matching is robust to acronyms / short / full names (MUST-5). Pick from "
-                 "the catalog, or type a name not listed to add it.")
+            help="Donors for which this entity holds a leadership authorized signatory "
+                 "(e.g. US-government awards via SAM/UEI). A call that requires one scores "
+                 "1 only if its donor is in this list; matching is robust to acronyms / "
+                 "short / full names (MUST-5). Pick from the catalog, or type a name not "
+                 "listed to add it. If a PARENT organization holds the signatory, record it "
+                 "on the parent tenant — a child inherits it automatically in scoring.")
 
         # ── Funders & donor registrations (registrations swapped to here) ────
         fr1, fr2 = st.columns(2)
