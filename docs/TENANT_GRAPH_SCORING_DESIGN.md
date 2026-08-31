@@ -327,9 +327,13 @@ every existing test and caller is byte-for-byte unaffected.
     `fix/us-federal-portal-familiarity`. Portal **parent-transfer** (checking a
     parent's `org_donor_registrations`) is a small follow-up to fold in when that
     branch merges.
-- **P6 — UI:** parent-link picker + `share_for_consortium_scoring` toggle in
-  Settings/Tenant admin (reusing the mig-082 create→pending→approve flow), and the
-  **"Leadership authorized signatory" validated multiselect** (§5.2) on the org profile.
+- **P6 — UI (DONE):** Settings → Tenants (`render_manage_tenants`) gains a Parent
+  column + single-select "Link parent" picker (writes `parent_tenant_id`; DB cycle-guard
+  rejects loops) and a Sharing column + bulk enable/disable of
+  `share_for_consortium_scoring`; both clear the resolver cache. The org-profile
+  authorized-signatory picker (already a validated donor multiselect) is relabelled
+  "Leadership authorized signatory" with parent-inheritance help. Tenant creation still
+  reuses the mig-082 request→pending→approve flow.
 - **P5b — MUST-4 geographic consortium transfer (DONE):** §4, `_geo_presence`. When
   self reads "No presence there" but a `for_geographic()` profile (Prime / co-Sub /
   parent) covers scope → "Yes, via a partner" (0.5), moving the label off the fatal
