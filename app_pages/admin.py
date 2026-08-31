@@ -25,7 +25,7 @@ from core.records import clean_df
 from db.supabase_client import get_client, safe_execute
 from views.account_sections import (
     render_manage_users, render_user_access, render_manage_tenants,
-    render_blacklisted, render_org_suspend)
+    render_blacklisted, render_org_suspend, render_active_tenant)
 from views.org_setup import render_org_setup
 from core.cache_scope import scope_key
 
@@ -245,20 +245,28 @@ with tab_accounts:
     # "Deployment" is super-only: it reports what this running instance read from its
     # environment (secrets provenance, project ref, key kind, resolved tenant) — the
     # answer to "the published app behaves differently from my machine".
-    _acct_tab_names = ["Users", "Tenants", "Blacklisted"] + (["Deployment"] if _is_super
-                                                             else [])
+    # "Active tenant" (first tab) lets a NON-super member who belongs to >1 tenant choose
+    # which tenant the session is scoped to — moved here from the global header banner so
+    # switching is a deliberate Settings action. Super users browse via the Tenants
+    # view-as flow instead, so they don't get this tab.
+    _acct_tab_names = (["Active tenant"] if not _is_super else []) + \
+        ["Users", "Tenants", "Blacklisted"] + (["Deployment"] if _is_super else [])
     _acct_tabs = st.tabs(_acct_tab_names)
-    with _acct_tabs[0]:
+    _acct_by = dict(zip(_acct_tab_names, _acct_tabs))
+    if "Active tenant" in _acct_by:
+        with _acct_by["Active tenant"]:
+            render_active_tenant(user, sb)
+    with _acct_by["Users"]:
         _picked_user = render_manage_users(user, sb)
         if _picked_user:
             st.divider()
             render_user_access(user, target=_picked_user)
-    with _acct_tabs[1]:
+    with _acct_by["Tenants"]:
         render_manage_tenants(user, sb, can_manage=_is_super)
-    with _acct_tabs[2]:
+    with _acct_by["Blacklisted"]:
         render_blacklisted(user, sb, can_manage=_is_super)
     if _is_super:
-        with _acct_tabs[3]:
+        with _acct_by["Deployment"]:
             from core.env_diag import render as render_env_diagnostics
             render_env_diagnostics(user)
 if tab_analytics is not None:
