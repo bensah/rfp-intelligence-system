@@ -1875,12 +1875,12 @@ def _flag(donor: dict, names) -> bool:
 
 
 def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
-                           org_settings: dict | None = None) -> str | None:
+                           org_settings: dict | None = None, graph=None) -> str | None:
     """Composite "how well-positioned are we to win?" — org age (older=stronger)
     plus, per the donor's requirements: grassroots/local-org, local board,
     co-financing, multi-country presence, and HQ-country match. None when there's
     no signal at all (reviewer picks). Each factor degrades gracefully if its
-    donor flag is absent."""
+    donor flag is absent. `graph`: track record is parent-transferable (parent-MAX)."""
     from datetime import date
     org = org or {}
     org_settings = org_settings or {}
@@ -1889,7 +1889,7 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
     # Track record on the RFP's EXACT program area — the strongest competitiveness
     # signal. Build the org's 0–5 domain (experience) vector and read the best
     # rating across the call's program keys: strong record = an edge; none = wide open.
-    _tr = _track_record_band(org, rfp, donor)
+    _tr = _track_record_band(org, rfp, donor, graph)
     if _tr is not None:
         signals += 1
         _sc = _tr[0]                                       # 0 / 0.5 / 1 (org ÷ donor band)
@@ -2361,7 +2361,7 @@ def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = Non
                                            graph=graph),
         "funding_quality": derive_funding_quality(rfp, org, policies),
         "funder_relationship": derive_funder_relationship(org, rfp, donor, graph=graph),
-        "competitiveness": derive_competitiveness(org, rfp, donor, org_settings),
+        "competitiveness": derive_competitiveness(org, rfp, donor, org_settings, graph=graph),
         "bid_effort": derive_bid_effort(rfp, org_settings),
     }
 
@@ -2527,7 +2527,7 @@ def _funder_country(rfp: dict, donor: dict | None) -> str:
     return _CURRENCY_COUNTRY.get(str(rfp.get("currency") or "").strip().upper(), "")
 
 
-def _track_record_band(org: dict, rfp: dict, donor: dict | None):
+def _track_record_band(org: dict, rfp: dict, donor: dict | None, graph=None):
     """PREFER-8 track record — the org's TRACK-RECORD rating (0–5) in the call's program
     area, judged against the DONOR's PRIORITY for that area (default 5 when the donor
     isn't graded for it). Returns (score 0/0.5/1, org_rating, donor_priority, area_label)
@@ -2535,12 +2535,24 @@ def _track_record_band(org: dict, rfp: dict, donor: dict | None):
     Scored on the WEAKER of the two — band(min(org, donor)): a strong track record in an
     area the donor barely prioritises is no edge, and vice-versa. 4–5 → High (1.0) · 2–3
     → Moderate (0.5) · else Low (0.0). The call area with the best band wins (tie → the
-    org's strongest). So org 3 vs donor 5 → Moderate (3/5); org 5 vs donor 5 → High."""
+    org's strongest). So org 3 vs donor 5 → Moderate (3/5); org 5 vs donor 5 → High.
+
+    `graph` (owner 2026-08-31): track record is PARENT-transferable — the org's rating in
+    each area is the MAX across self + parent (`for_competitiveness`), so a child that
+    hasn't rated an area yet still shows the parent org's demonstrated record there. Self
+    only when no graph (byte-for-byte)."""
     rfp_keys = _rfp_program_keys(rfp)
-    if not rfp_keys or not (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
-        return None
     from core.matching import _priority_vector
-    dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
+    _profiles = _graph_profiles(graph, "for_competitiveness", org)
+    if not rfp_keys or not any(
+            p.get("org_domain_expertise") or p.get("org_domain_ratings") for p in _profiles):
+        return None
+    # MAX org rating per program key across self + parent.
+    dvec: dict = {}
+    for p in _profiles:
+        for k, v in _priority_vector(p.get("org_domain_expertise"),
+                                     p.get("org_domain_ratings")).items():
+            dvec[k] = max(dvec.get(k, 0.0), float(v or 0.0))
     donor = donor or {}
     dprio = _theme_scores_flat(donor.get("donor_priority_areas"),
                                _ratings(donor.get("donor_priority_ratings")), 5.0)
@@ -2557,7 +2569,7 @@ def _track_record_band(org: dict, rfp: dict, donor: dict | None):
 
 
 def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
-                             org_settings: dict | None = None) -> list[dict]:
+                             org_settings: dict | None = None, graph=None) -> list[dict]:
     """PREFER-8 sub-factors mirroring derive_competitiveness signals."""
     from datetime import date
     org = org or {}
@@ -2567,8 +2579,8 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
     dhq = _funder_country(rfp, donor).strip().lower()
     ohq = str(osx.get("org_hq_country") or osx.get("org_country") or "").strip().lower()
     # Track record — a GRADED component (org rating ÷ donor priority), shown with its
-    # band + ratio so the user can see why (e.g. "Moderate (3/5)").
-    _tr = _track_record_band(org, rfp, donor)
+    # band + ratio so the user can see why (e.g. "Moderate (3/5)"). Parent-MAX via graph.
+    _tr = _track_record_band(org, rfp, donor, graph)
     comp_track = _qfactor("comp_track", "Track record in this program area",
                           active=_tr is not None, score=(_tr[0] if _tr else None),
                           hard=False, source="RG")
@@ -2807,7 +2819,7 @@ def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = No
         "cofinancing": compliance_factors(org, rfp, eff, org_settings, graph),
         "funding_quality": _funding_quality_factors(rfp, org),
         "funder_relationship": _relationship_factors(org, rfp, donor, graph),
-        "competitiveness": _competitiveness_factors(org, rfp, eff, org_settings),
+        "competitiveness": _competitiveness_factors(org, rfp, eff, org_settings, graph),
         "bid_effort": _bid_effort_factors(rfp, org_settings),
     }
     out = apply_component_overrides(out, overrides)
