@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core import applicant_graph as _ag
 from core import criteria_derive as _cd
 from core import criteria_review as _crev
 from core import data_quality as _dq
@@ -101,11 +102,16 @@ def analyse(rfp: dict, org: dict | None, donor: dict | None,
     """
     org = org or {}
     donor_eff = _cd._merge_rfp_compliance(donor, rfp_compliance)
-    derived = _cd.derive_criteria(rfp, org, donor_eff, org_settings)
-    bd = _cd.factor_breakdown(rfp, org, donor_eff, org_settings,
-                              overrides=overrides or {})
+    # Applicant graph (Sub/parent/consortium proxy). Fail-closed to self-only.
     try:
-        fatal, trigger = _cd.fatal_decline(org, rfp, donor_eff, org_settings)
+        graph = _ag.resolve(rfp, org)
+    except Exception:
+        graph = None
+    derived = _cd.derive_criteria(rfp, org, donor_eff, org_settings, graph=graph)
+    bd = _cd.factor_breakdown(rfp, org, donor_eff, org_settings,
+                              overrides=overrides or {}, graph=graph)
+    try:
+        fatal, trigger = _cd.fatal_decline(org, rfp, donor_eff, org_settings, graph=graph)
     except Exception:
         fatal, trigger = False, None
 

@@ -809,11 +809,17 @@ def _geo_scope_with_source(rfp: dict, donor: dict | None) -> tuple[list[str], st
 
 
 def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
-                  org_settings: dict | None = None) -> dict:
+                  org_settings: dict | None = None, graph=None) -> dict:
     """MUST-4 tiered result: {active, score 1/0.5/0, label, scope, via}. ACTIVE-ONLY
     (owner 2026-06-29b): a US-federal / US-only call (no intl cue) → scope = United
     States; a call/donor with a stated scope → tiered match; NO scope at all → 'Not
-    sure' (active=False, excluded)."""
+    sure' (active=False, excluded).
+
+    `graph` (owner 2026-08-31): geographic reach is CONSORTIUM-transferable — a Sub with
+    no OWN presence in the work scope still delivers when the Prime / a co-Sub / the parent
+    operates there. That scores as "via a partner" (0.5), never our own 1.0, and it moves
+    the label off "No presence there" so the fatal geo gate no longer fires. Own presence
+    still wins; self-only when no graph (byte-for-byte)."""
     # Strip the label-not-a-place values BEFORE deciding whether a scope exists, so a row
     # scoped only "Regional" reads as unstated rather than as somewhere we are not.
     scope, scope_src = _geo_scope_with_source(rfp, donor)
@@ -870,23 +876,34 @@ def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
         # registration proxy on 2026-08-07.
         return {"active": False, "score": None, "label": "Not sure", "scope": scope,
                 "via": "the call states who may apply but not where the work happens"}
+    # CONSORTIUM (P5b): we have no own presence, but a Prime / co-Sub / parent operates in
+    # scope — the consortium covers the work geography. Scores "via a partner" (0.5), never
+    # our own 1.0, and the label moves off "No presence there" so this no longer fatal-gates.
+    if graph is not None:
+        for p in _graph_profiles(graph, "for_geographic", org)[1:]:      # skip self
+            if (_covers_scope(p.get("org_registered_countries") or [], scope)
+                    or _covers_scope(p.get("org_operating_countries") or [], scope)
+                    or _geo_partner_in_scope(p, scope)):
+                return {"active": True, "score": 0.5, "label": "Yes, via a partner",
+                        "scope": scope, "via": "a co-applicant / parent operates in scope"}
     return {"active": True, "score": 0.0, "label": "No presence there", "scope": scope,
             "via": ""}
 
 
 def derive_geographic_fit(org: dict, rfp: dict, org_settings: dict | None = None,
-                          donor: dict | None = None) -> str | None:
+                          donor: dict | None = None, graph=None) -> str | None:
     """MUST-4 GEOGRAPHIC FIT label — registered ∩ scope → 'Yes, our own presence';
     operation ∩ scope / qualifying partner → 'Yes, via a partner'; neither → 'No
-    presence there'. Scope = call ∪ donor; no scope → 'Not sure' (Park)."""
-    return _geo_presence(org, rfp, donor, org_settings)["label"]
+    presence there'. Scope = call ∪ donor; no scope → 'Not sure' (Park). `graph`: a
+    Sub inherits a consortium member's / parent's in-scope presence ('via a partner')."""
+    return _geo_presence(org, rfp, donor, org_settings, graph)["label"]
 
 
 def geographic_bid_strength(org: dict, rfp: dict, org_settings: dict | None = None,
-                            donor: dict | None = None) -> tuple[float, int]:
+                            donor: dict | None = None, graph=None) -> tuple[float, int]:
     """(score, denom) — MUST-4 is ONE tiered component (own=1 · via partner=0.5 ·
     none=0); denom 0 when no scope (Not sure)."""
-    g = _geo_presence(org, rfp, donor, org_settings)
+    g = _geo_presence(org, rfp, donor, org_settings, graph)
     return (g["score"], 1) if g["active"] else (0.0, 0)
 
 
@@ -1187,6 +1204,49 @@ def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
     return _canonical_donor_match(org.get("org_authorized_signatory_donors"), donor, rfp)
 
 
+# --- TENANT-GRAPH proxy helpers (owner 2026-08-31) ---------------------------------
+# A child Sub inherits transferable standing from the parent org / Prime / co-Subs. Each
+# helper ORs its self-only predicate across the profiles the applicant graph says may be
+# consulted for that transfer class; with NO graph it is exactly the self-only predicate,
+# so every graph-less caller is byte-for-byte unchanged. HONEST: when no consulted profile
+# holds the credential/relationship, the result is still False — the graph can only RAISE.
+def _graph_profiles(graph, accessor: str, org: dict) -> list[dict]:
+    """Profiles to consult for a transfer class (self-only when no graph). `accessor`
+    is an ApplicantGraph method name: for_signatory / for_relationships / …."""
+    if graph is None:
+        return [org or {}]
+    fn = getattr(graph, accessor, None)
+    return (fn() or [org or {}]) if callable(fn) else [org or {}]
+
+
+def _sig_match_graph(org: dict, donor: dict, rfp: dict, graph=None) -> bool:
+    """MUST-5 authorized signatory held by self OR a transferable profile (parent /
+    Prime / co-Sub). Honest — 0 when NO consulted profile holds it for this donor."""
+    return any(_signatory_donor_match(p, donor, rfp)
+               for p in _graph_profiles(graph, "for_signatory", org))
+
+
+def _grantee_graph(org: dict, rfp: dict, donor: dict | None, graph=None) -> bool:
+    return any(_is_past_grantee(p, rfp, donor)
+               for p in _graph_profiles(graph, "for_relationships", org))
+
+
+def _shared_graph(org: dict, donor: dict | None, graph=None) -> bool:
+    return any(bool(_shared_collaborator(p, donor))
+               for p in _graph_profiles(graph, "for_relationships", org))
+
+
+def _engaged_graph(org: dict, rfp: dict, donor: dict | None, graph=None):
+    """(score, source). The reviewer's per-RFP answer wins (checked via _donor_engaged on
+    self); else any consulted profile's engaged-donors list."""
+    sc, src = _donor_engaged(org, rfp, donor)
+    if sc is None and graph is not None:
+        for p in _graph_profiles(graph, "for_relationships", org)[1:]:      # skip self
+            if _canonical_donor_match(p.get("org_engaged_donors"), donor, rfp):
+                return 1.0, "from a consortium / parent profile"
+    return sc, src
+
+
 def _capacity_score(level: Any) -> float | None:
     """An org co-financing / pre-financing capacity level → its component score.
 
@@ -1225,7 +1285,7 @@ def _requirement(donor: dict, *cols: str) -> str:
 
 
 def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
-                       org_settings: dict | None = None) -> list[dict]:
+                       org_settings: dict | None = None, graph=None) -> list[dict]:
     """MUST-5 COFINANCING & COMPLIANCE (rework 2026-06-29; ACTIVE-ONLY 2026-06-29b).
     Each component is ACTIVE only when the donor explicitly imposes it OR the call
     detects it (no proxy applies to these credentials). An undetected component is
@@ -1400,9 +1460,12 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     # Authorized-signatory — matched to the org's list of donors it has ALREADY
     # obtained an authorized signatory from (not a generic checkbox).
     a_sig = _need("donor_authorized_signatory_signoff_required", "donor_welcome_registration_required")
+    # Parent/consortium-transferable: a signatory the PARENT (or Prime / co-Sub) already
+    # holds for this donor counts (owner 2026-08-31). Honest — 0 when NO consulted profile
+    # holds it; the graph never forces a pass. Self-only when no graph.
     items.append(_qfactor("authorized_signatory", "Authorized signatory (this donor)",
                           active=a_sig,
-                          score=(1.0 if _signatory_donor_match(org, donor, rfp) else 0.0),
+                          score=(1.0 if _sig_match_graph(org, donor, rfp, graph) else 0.0),
                           hard=True))
 
     # Partnership mandatory — org has an Implementing/Collaborator partner. (The
@@ -1455,24 +1518,24 @@ def _settle_all_clear(items: list[dict]) -> list[dict]:
 
 def cofinancing_bid_strength(org: dict, rfp: dict, donor: dict | None = None,
                              org_settings: dict | None = None,
-                             rfp_compliance: dict | None = None) -> tuple[float, int]:
+                             rfp_compliance: dict | None = None, graph=None) -> tuple[float, int]:
     """(numerator, denominator) over the MUST-5 components — Σ scores ÷ count."""
     items = [f for f in compliance_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
         if f["active"] and f["score"] is not None]
     return sum(f["score"] for f in items), len(items)
 
 
 def derive_cofinancing(org: dict, rfp: dict, donor: dict | None = None,
                        rfp_compliance: dict | None = None,
-                       org_settings: dict | None = None) -> str | None:
+                       org_settings: dict | None = None, graph=None) -> str | None:
     """MUST-5 label (gate logic over ACTIVE components only): any 0 → 'Not met';
     any 0.5 → 'Partial, with effort'; all 1 → 'Yes, fully met'. NO active component
     (nothing the call/donor imposes) → 'Not sure' → scores value 1 (Park). MUST-5 spans
     co-financing AND the compliance gates (SAM/tax-exempt/…), so ANY unmet requirement —
     a hard non-dynamic gate OR co-financing — forces 'Not met' even if the rest are met."""
     scores = [f["score"] for f in compliance_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
         if f["active"] and f["score"] is not None]
     if not scores:
         return "Not sure"
@@ -1721,19 +1784,22 @@ def _norm_rel(s: Any) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip().lower())
 
 
-def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) -> str | None:
+def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None,
+                               graph=None) -> str | None:
     """FUNDER OR PARTNER relationship (PREFER 7). Past grantee of this donor
     (org.funder_history ∋ donor) → "Current/past grantee" (strongest). Else a warm
     route in → "Some contact": we've ENGAGED this donor before (org.engaged_donors),
     OR a SHARED COLLABORATOR — an org we partner with is also among the donor's
     partners/collaborators — OR we're registered on their portal. Else "None"; None
-    only when we hold no relationship data."""
+    only when we hold no relationship data. `graph`: grantee / engaged / shared are
+    parent+consortium-transferable, so the same fact held by the parent org / Prime /
+    a co-Sub counts (label + components share the graph helpers → never disagree)."""
     hist = [h for h in (org.get("org_funder_history") or []) if h]
-    if _is_past_grantee(org, rfp, donor):
+    if _grantee_graph(org, rfp, donor, graph):
         return "Current/past grantee"
-    _eng, _ = _donor_engaged(org, rfp, donor)
+    _eng, _ = _engaged_graph(org, rfp, donor, graph)
     if ((_eng is not None and _eng > 0.0)
-            or _shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor)):
+            or _shared_graph(org, donor, graph) or _registered_on_portal(org, rfp, donor)):
         return "Some contact"
     if (not hist and not (org.get("org_donor_registrations") or [])
             and not (org.get("trusted_partners") or [])
@@ -1839,12 +1905,12 @@ def _flag(donor: dict, names) -> bool:
 
 
 def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
-                           org_settings: dict | None = None) -> str | None:
+                           org_settings: dict | None = None, graph=None) -> str | None:
     """Composite "how well-positioned are we to win?" — org age (older=stronger)
     plus, per the donor's requirements: grassroots/local-org, local board,
     co-financing, multi-country presence, and HQ-country match. None when there's
     no signal at all (reviewer picks). Each factor degrades gracefully if its
-    donor flag is absent."""
+    donor flag is absent. `graph`: track record is parent-transferable (parent-MAX)."""
     from datetime import date
     org = org or {}
     org_settings = org_settings or {}
@@ -1853,7 +1919,7 @@ def derive_competitiveness(org: dict, rfp: dict, donor: dict | None = None,
     # Track record on the RFP's EXACT program area — the strongest competitiveness
     # signal. Build the org's 0–5 domain (experience) vector and read the best
     # rating across the call's program keys: strong record = an edge; none = wide open.
-    _tr = _track_record_band(org, rfp, donor)
+    _tr = _track_record_band(org, rfp, donor, graph)
     if _tr is not None:
         signals += 1
         _sc = _tr[0]                                       # 0 / 0.5 / 1 (org ÷ donor band)
@@ -2036,7 +2102,7 @@ def _invitation_only(rfp: dict, donor: dict | None = None) -> bool:
 
 
 def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
-                          org_settings: dict | None = None) -> list[dict]:
+                          org_settings: dict | None = None, graph=None) -> list[dict]:
     """MUST-1 — LEGAL STATUS & QUALIFICATION (reworked 2026-06-28; D/F revised
     2026-06-29). SIX scored items: A legal type · B entity type · C HQ · D registration
     · E individual-PI · F prior beneficiary — all HARD (0/1). Strict rule: an active item
@@ -2135,10 +2201,30 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     region = [] if explicit_any else list(reg_req)
     if not region and not explicit_any and _is_us_federal(rfp):
         region = ["United States"]               # US-federal / US-only → must be US-registered
+    # TENANT GRAPH (owner 2026-08-31): registration is a CONSORTIUM/PARENT-transferable
+    # gate — a child Sub inherits the Prime's (or parent org's) registration. With a
+    # `graph`, coverage is tested across self → parent → prime (`for_registration`);
+    # WITHOUT one, self only, so every graph-less caller is byte-for-byte unchanged.
+    if graph is not None:
+        _reg_covered = explicit_any or any(
+            _region_covered(region, p) for p in graph.for_registration())
+        _reg_role = graph.role
+    else:
+        _reg_covered = explicit_any or _region_covered(region, org)
+        _reg_role = ""
+    # A Sub whose Prime carries the US-registration burden and whom we could not confirm
+    # scores 0.5 "unclear" (met=None → NON-FATAL: `fatal_decline` gates only on met is
+    # False) rather than a hard 0 — the PRIME, not the Sub, must be registered. A Prime
+    # (or single applicant) that is not registered still hard-fails at 0.
+    if _reg_covered:
+        _reg_score = 1.0
+    elif region and _reg_role == "sub":
+        _reg_score = 0.5
+    else:
+        _reg_score = 0.0
     items.append(_qfactor("local_registration", "Registration region",
                           active=bool(explicit_any or region),
-                          score=(1.0 if (explicit_any or _region_covered(region, org)) else 0.0),
-                          hard=True))
+                          score=_reg_score, hard=True))
 
     # --- E. Individual-PI — PI gate then base country -------------------------
     _qtext = " ".join(str(rfp.get(x) or "") for x in
@@ -2257,28 +2343,29 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
 
 def qualification_bid_strength(org: dict, rfp: dict, donor: dict | None = None,
                                org_settings: dict | None = None,
-                               rfp_compliance: dict | None = None) -> tuple[float, int]:
+                               rfp_compliance: dict | None = None, graph=None) -> tuple[float, int]:
     """(numerator, denominator) over ACTIVE MUST-1 items — numerator = Σ scores,
     denominator = count. Bid Strength = numerator ÷ denominator (caller divides;
     denominator 0 → undefined → 'Not sure'). Transparency only — NOT forced to 0
     when the label is a decline. `rfp_compliance` folds in call-stated requirements."""
     items = [x for x in qualification_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
         if x["active"] and x["score"] is not None]            # denominator = ACTIVE only
     return sum(x["score"] for x in items), len(items)
 
 
 def derive_qualification(org: dict, rfp: dict, donor: dict | None = None,
                          org_settings: dict | None = None,
-                         rfp_compliance: dict | None = None) -> str:
+                         rfp_compliance: dict | None = None, graph=None) -> str:
     """MUST-1 label (2026-06-28 rework). Decision order over ACTIVE items:
       denominator 0 (nothing imposed) → 'Not sure';
       any item scored 0 → 'No, not eligible' (one mismatch overrides all);
       any item scored 0.5 → 'Mostly, one item unclear';
       all items scored 1 → 'Yes, fully'.
-    `rfp_compliance` folds in requirements the CALL itself states (extraction)."""
+    `rfp_compliance` folds in requirements the CALL itself states (extraction).
+    `graph` (applicant graph) lets a Sub inherit the Prime's/parent's registration."""
     scores = [x["score"] for x in qualification_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
         if x["active"] and x["score"] is not None]            # ACTIVE items only
     if not scores:
         return "Not sure"                                     # denominator 0
@@ -2291,29 +2378,31 @@ def derive_qualification(org: dict, rfp: dict, donor: dict | None = None,
 
 def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = None,
                     org_settings: dict | None = None,
-                    policies: dict | None = None) -> dict[str, str | None]:
-    """All 9 derived labels (None where not determinable)."""
+                    policies: dict | None = None, graph=None) -> dict[str, str | None]:
+    """All 9 derived labels (None where not determinable). `graph` (applicant graph,
+    optional) feeds the transfer-aware criteria; None → single-tenant behaviour."""
     org = org or {}
     return {
-        "qualification": derive_qualification(org, rfp, donor, org_settings),
+        "qualification": derive_qualification(org, rfp, donor, org_settings, graph=graph),
         "strategic_fit": derive_strategic_fit(org, rfp, donor),
         "capacity": derive_capacity(org, rfp, donor, org_settings),
-        "geographic_fit": derive_geographic_fit(org, rfp, org_settings, donor),
-        "cofinancing": derive_cofinancing(org, rfp, donor, org_settings=org_settings),
+        "geographic_fit": derive_geographic_fit(org, rfp, org_settings, donor, graph=graph),
+        "cofinancing": derive_cofinancing(org, rfp, donor, org_settings=org_settings,
+                                           graph=graph),
         "funding_quality": derive_funding_quality(rfp, org, policies),
-        "funder_relationship": derive_funder_relationship(org, rfp, donor),
-        "competitiveness": derive_competitiveness(org, rfp, donor, org_settings),
+        "funder_relationship": derive_funder_relationship(org, rfp, donor, graph=graph),
+        "competitiveness": derive_competitiveness(org, rfp, donor, org_settings, graph=graph),
         "bid_effort": derive_bid_effort(rfp, org_settings),
     }
 
 
 # --- factor breakdowns for the graded criteria (Review pass/fail panel) ------
 def _geo_factors(org: dict, rfp: dict, org_settings: dict | None = None,
-                 donor: dict | None = None) -> list[dict]:
+                 donor: dict | None = None, graph=None) -> list[dict]:
     """MUST-4 is ONE tiered component "Geographic presence" (own=1 · via partner=0.5 ·
     none=0). Carries `_via` + `_scope` for the Review info line. No scope → permissive
     default pass."""
-    g = _geo_presence(org, rfp, donor, org_settings)
+    g = _geo_presence(org, rfp, donor, org_settings, graph)
     it = _qfactor("geo_presence", "Geographic presence", active=g["active"],
                   score=g["score"], hard=False)
     it["_via"] = g.get("via", "")
@@ -2348,7 +2437,8 @@ def _donor_engaged(org: dict, rfp: dict, donor: dict | None) -> tuple[float | No
     return None, ""
 
 
-def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> list[dict]:
+def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None,
+                          graph=None) -> list[dict]:
     # Match the funder history CANONICALLY, not by raw name. `_funder_in_history` compares
     # `rfp.funding_agency` as a STRING, so a call published under a programme brand missed
     # the funder behind it: "Grand Challenges" never matched an org history holding "Bill &
@@ -2358,7 +2448,7 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
     # authorized-signatory and PREFER-8's portal checks match the same fact — PREFER-7 was
     # the odd one out. The raw-name test is KEPT as a fallback for free-typed funders that
     # are not in the donor catalog at all.
-    grantee = _is_past_grantee(org, rfp, donor)
+    grantee = _grantee_graph(org, rfp, donor, graph)
     # PORTAL REGISTRATION IS NOT A RELATIONSHIP. This read
     # `_shared_collaborator(...) or _registered_on_portal(...)`, and the portal arm was
     # answering a different question: having an account on the submission platform says
@@ -2374,8 +2464,8 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
     # submission platform is a real competitiveness edge and is what the owner added it
     # for (2026-07-20). PREFER-7 asks whether we know the FUNDER, so the only warm route
     # left here is a partner of ours who is also a partner of theirs.
-    contact = bool(_shared_collaborator(org, donor))
-    sc, src = _donor_engaged(org, rfp, donor)
+    contact = _shared_graph(org, donor, graph)
+    sc, src = _engaged_graph(org, rfp, donor, graph)
     eng = _factor("rel_engaged", "Donor already engaged on this opportunity", "R",
                   (None if sc is None else sc >= 1.0 if sc >= 1.0 else sc > 0.0),
                   active=sc is not None, score=sc)
@@ -2467,7 +2557,7 @@ def _funder_country(rfp: dict, donor: dict | None) -> str:
     return _CURRENCY_COUNTRY.get(str(rfp.get("currency") or "").strip().upper(), "")
 
 
-def _track_record_band(org: dict, rfp: dict, donor: dict | None):
+def _track_record_band(org: dict, rfp: dict, donor: dict | None, graph=None):
     """PREFER-8 track record — the org's TRACK-RECORD rating (0–5) in the call's program
     area, judged against the DONOR's PRIORITY for that area (default 5 when the donor
     isn't graded for it). Returns (score 0/0.5/1, org_rating, donor_priority, area_label)
@@ -2475,12 +2565,24 @@ def _track_record_band(org: dict, rfp: dict, donor: dict | None):
     Scored on the WEAKER of the two — band(min(org, donor)): a strong track record in an
     area the donor barely prioritises is no edge, and vice-versa. 4–5 → High (1.0) · 2–3
     → Moderate (0.5) · else Low (0.0). The call area with the best band wins (tie → the
-    org's strongest). So org 3 vs donor 5 → Moderate (3/5); org 5 vs donor 5 → High."""
+    org's strongest). So org 3 vs donor 5 → Moderate (3/5); org 5 vs donor 5 → High.
+
+    `graph` (owner 2026-08-31): track record is PARENT-transferable — the org's rating in
+    each area is the MAX across self + parent (`for_competitiveness`), so a child that
+    hasn't rated an area yet still shows the parent org's demonstrated record there. Self
+    only when no graph (byte-for-byte)."""
     rfp_keys = _rfp_program_keys(rfp)
-    if not rfp_keys or not (org.get("org_domain_expertise") or org.get("org_domain_ratings")):
-        return None
     from core.matching import _priority_vector
-    dvec = _priority_vector(org.get("org_domain_expertise"), org.get("org_domain_ratings"))
+    _profiles = _graph_profiles(graph, "for_competitiveness", org)
+    if not rfp_keys or not any(
+            p.get("org_domain_expertise") or p.get("org_domain_ratings") for p in _profiles):
+        return None
+    # MAX org rating per program key across self + parent.
+    dvec: dict = {}
+    for p in _profiles:
+        for k, v in _priority_vector(p.get("org_domain_expertise"),
+                                     p.get("org_domain_ratings")).items():
+            dvec[k] = max(dvec.get(k, 0.0), float(v or 0.0))
     donor = donor or {}
     dprio = _theme_scores_flat(donor.get("donor_priority_areas"),
                                _ratings(donor.get("donor_priority_ratings")), 5.0)
@@ -2497,7 +2599,7 @@ def _track_record_band(org: dict, rfp: dict, donor: dict | None):
 
 
 def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
-                             org_settings: dict | None = None) -> list[dict]:
+                             org_settings: dict | None = None, graph=None) -> list[dict]:
     """PREFER-8 sub-factors mirroring derive_competitiveness signals."""
     from datetime import date
     org = org or {}
@@ -2507,8 +2609,8 @@ def _competitiveness_factors(org: dict, rfp: dict, donor: dict | None = None,
     dhq = _funder_country(rfp, donor).strip().lower()
     ohq = str(osx.get("org_hq_country") or osx.get("org_country") or "").strip().lower()
     # Track record — a GRADED component (org rating ÷ donor priority), shown with its
-    # band + ratio so the user can see why (e.g. "Moderate (3/5)").
-    _tr = _track_record_band(org, rfp, donor)
+    # band + ratio so the user can see why (e.g. "Moderate (3/5)"). Parent-MAX via graph.
+    _tr = _track_record_band(org, rfp, donor, graph)
     comp_track = _qfactor("comp_track", "Track record in this program area",
                           active=_tr is not None, score=(_tr[0] if _tr else None),
                           hard=False, source="RG")
@@ -2628,13 +2730,15 @@ _NON_FATAL_QUALIFICATION = frozenset({"invitation_only", "applicant_countries"})
 
 def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
                   org_settings: dict | None = None,
-                  rfp_compliance: dict | None = None) -> tuple[bool, str | None]:
+                  rfp_compliance: dict | None = None, graph=None) -> tuple[bool, str | None]:
     """THE auto-Decline gate (replaces the blanket 'any MUST<2 → Decline').
     Returns (decline?, trigger_name). True ONLY when a 🔒 non-dynamic factor is
     EXPLICITLY failed (met is False) — a structural ineligibility the org can't
     fix before the deadline: a MUST-1 identity gate or no geographic reach. (MUST-5
     has no fatal floor — its credential gates are acquirable.) Unknowns (None) never
-    trigger a decline — they only soften the score (→ usually Park for review)."""
+    trigger a decline — they only soften the score (→ usually Park for review).
+    `graph`: with an applicant graph a Sub's inherited/unclear registration reads 0.5
+    (met None) and no longer fatally declines — the Prime carries that burden."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     # MUST-1 — identity / qualification gates.
@@ -2648,7 +2752,7 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     # `invitation_only` is exactly that: whether we hold an invitation to a closed round is
     # not visible on the call page. It still takes MUST-1 to 0 through the ordinary mean, so
     # an uninvited org still reads Decline — it is simply reviewable rather than closed.
-    for f in qualification_factors(org, rfp, eff, org_settings):
+    for f in qualification_factors(org, rfp, eff, org_settings, graph):
         if f["key"] in _NON_FATAL_QUALIFICATION:
             continue
         if f["active"] and f["met"] is False:
@@ -2668,8 +2772,10 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     for p in _capacity_value_parts(org, rfp, eff):
         if p["hard"] and p["score"] <= 0.0:
             return True, p["name"]
-    # MUST-4 — no geographic reach (own presence or a partner in the call's scope).
-    if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
+    # MUST-4 — no geographic reach (own presence or a partner in the call's scope). With a
+    # graph, a Sub inheriting a consortium member's / parent's in-scope presence reads
+    # "Yes, via a partner" (0.5), not "No presence there", so it no longer fatal-gates.
+    if derive_geographic_fit(org, rfp, org_settings, eff, graph=graph) == "No presence there":
         return True, "Geographic reach (no presence or partner)"
     # MUST-5 has NO structural auto-Decline gate (owner 2026-06-30): the hard credential
     # gates are all acquirable before the deadline, and funding-route / funding-platform
@@ -2726,7 +2832,7 @@ def apply_component_overrides(breakdown: dict[str, list[dict]],
 def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = None,
                      org_settings: dict | None = None,
                      rfp_compliance: dict | None = None,
-                     overrides: dict | None = None) -> dict[str, list[dict]]:
+                     overrides: dict | None = None, graph=None) -> dict[str, list[dict]]:
     """Per-criterion sub-factor lists for the Review per-criterion cards — for ALL
     9 criteria. Each factor carries `active` (whether THIS call/donor imposes it):
     inactive factors are KEPT so the card can show them as "? Not applicable", and
@@ -2738,14 +2844,14 @@ def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = No
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     out = {
-        "qualification": qualification_factors(org, rfp, eff, org_settings),
+        "qualification": qualification_factors(org, rfp, eff, org_settings, graph),
         "strategic_fit": _strategic_factors(org, rfp, donor),
         "capacity": _capacity_factors(org, rfp, eff, org_settings),
-        "geographic_fit": _geo_factors(org, rfp, org_settings, eff),
-        "cofinancing": compliance_factors(org, rfp, eff, org_settings),
+        "geographic_fit": _geo_factors(org, rfp, org_settings, eff, graph),
+        "cofinancing": compliance_factors(org, rfp, eff, org_settings, graph),
         "funding_quality": _funding_quality_factors(rfp, org),
-        "funder_relationship": _relationship_factors(org, rfp, donor),
-        "competitiveness": _competitiveness_factors(org, rfp, eff, org_settings),
+        "funder_relationship": _relationship_factors(org, rfp, donor, graph),
+        "competitiveness": _competitiveness_factors(org, rfp, eff, org_settings, graph),
         "bid_effort": _bid_effort_factors(rfp, org_settings),
     }
     out = apply_component_overrides(out, overrides)

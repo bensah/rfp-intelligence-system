@@ -2882,8 +2882,14 @@ def auto_score(
                 _donor_row = criteria_derive._merge_rfp_compliance(_donor_row, _cf)
         except Exception:
             pass
+        try:
+            from core import applicant_graph as _ag
+            _graph = _ag.resolve(candidate, _orgp.get_profile())
+        except Exception:
+            _graph = None
         _derived = criteria_derive.derive_criteria(
-            candidate, _orgp.get_profile(), _donor_row, _settings.get_org(), policies)
+            candidate, _orgp.get_profile(), _donor_row, _settings.get_org(), policies,
+            graph=_graph)
         for _k, _lbl in _derived.items():
             if _lbl is not None:
                 values[_k] = _lbl
@@ -2949,8 +2955,13 @@ def auto_score(
         from core import criteria_derive as _cd
         from core import org_profile as _op
         from core import settings as _st
+        from core import applicant_graph as _ag2
+        try:
+            _fg = _ag2.resolve(candidate, _op.get_profile())
+        except Exception:
+            _fg = None
         _is_fatal, _ = _cd.fatal_decline(
-            _op.get_profile(), candidate, _donor_row, _st.get_org())
+            _op.get_profile(), candidate, _donor_row, _st.get_org(), graph=_fg)
     except Exception:
         _is_fatal = False
     try:
