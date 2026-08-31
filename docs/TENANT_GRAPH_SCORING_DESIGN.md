@@ -319,7 +319,14 @@ every existing test and caller is byte-for-byte unaffected.
   `cofinancing_bid_strength`/`derive_cofinancing`/`derive_funder_relationship`/
   `_relationship_factors`. Honest (0/None when no profile holds it); graph=None
   unchanged. `tests/test_prefer7_signatory_graph.py`.
-- **P5 — PREFER-8 portal (US-federal + parent) + track-record parent-max:** §5.3–5.4.
+- **P5 — PREFER-8 track-record parent-MAX (DONE):** §5.4. `_track_record_band` takes
+  the MAX org rating per program key across self + parent (`for_competitiveness`);
+  threaded through `derive_competitiveness` (label) + `_competitiveness_factors`
+  (components). `tests/test_prefer8_trackrecord_parent_max.py`.
+  - PREFER-8 **portal (US-federal, §5.3)** shipped on branch
+    `fix/us-federal-portal-familiarity`. Portal **parent-transfer** (checking a
+    parent's `org_donor_registrations`) is a small follow-up to fold in when that
+    branch merges.
 - **P6 — UI:** parent-link picker + `share_for_consortium_scoring` toggle in
   Settings/Tenant admin (reusing the mig-082 create→pending→approve flow), and the
   **"Leadership authorized signatory" validated multiselect** (§5.2) on the org profile.
