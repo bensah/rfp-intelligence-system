@@ -1344,13 +1344,24 @@ if _cat_tab is not None:
 with tab_scan:
     st.subheader("Trigger a manual scan")
 
-    # Three jobs, three sub-tabs. They were one page, and the page was growing a second
-    # purpose: Search is a thing you do constantly, Eligibility Scan and Excel Sync are
-    # things you trigger occasionally. Splitting them also keeps the scan controls and
-    # their histories exactly as they were, rather than rearranging a working page to make
-    # room. Search comes first because it is the one every tenant uses.
-    _t_search, _t_scan, _t_excel = st.tabs(
-        ["🔍 Search", "🎯 Eligibility Scan", "📊 Excel Sync"])
+    # Four sub-tabs, one per job. Extraction (the platform crawl) and Eligibility Scan (the
+    # per-tenant re-screen) are DIFFERENT workflows and are kept as SEPARATE tabs so the two
+    # are never mixed (owner 2026-08-31). Order: Extraction → Eligibility Scan → Search →
+    # Excel Sync. The Run Extraction control + its history render into the Extraction tab via
+    # `_extract_area`; the eligibility controls + eligible-funding history stay on the
+    # Eligibility tab — same container-routing the Excel tab uses.
+    # Extraction is a PLATFORM job (crawl the shared store) runnable only from a developer
+    # tenant, so the Extraction tab is shown to developer admins only. A client tenant admin
+    # sees just Eligibility Scan / Search / Excel Sync. `_extract_area` is None for them, and
+    # every write to it is already gated on `_dev_admin`.
+    if _dev_admin:
+        _t_extract, _t_scan, _t_search, _t_excel = st.tabs(
+            ["⛏ Extraction", "🎯 Eligibility Scan", "🔍 Search", "📊 Excel Sync"])
+        _extract_area = _t_extract.container()
+    else:
+        _t_scan, _t_search, _t_excel = st.tabs(
+            ["🎯 Eligibility Scan", "🔍 Search", "📊 Excel Sync"])
+        _extract_area = None
     _excel_area = _t_excel.container()
 
     with _t_search:
@@ -1391,17 +1402,24 @@ with tab_scan:
         # (and showing them its counters) invited the reasonable question of why another
         # organisation's crawl was appearing in their account. Each role gets the page it can
         # actually act on.
+        # Extraction-tab caption (developer tenants only — extraction is a platform job).
+        if _dev_admin:
+            with _extract_area:
+                st.caption(
+                    "**⛏ Run Extraction** crawls every catalogued funding source "
+                    f"({_src_count()} sources with detail-page + PDF + LLM enrichment) and "
+                    "extracts opportunities into the shared global store — the slow backend "
+                    "job (**~20-40 minutes**, no org screening). It refreshes the store that "
+                    "the **🎯 Eligibility Scan** tab then screens against this organisation's "
+                    "eligibility.")
+        # Eligibility-tab caption.
         if _dev_admin:
             st.caption(
-                "Two workflows. **⛏ Run Extraction** crawls every catalogued funding source "
-                f"and extracts opportunities into the global store — a full run ({_src_count()} "
-                "sources with detail-page + PDF + LLM enrichment) is the slow backend job "
-                "(**~20-40 minutes**, no org screening). **🎯 Eligibility Scan** then "
-                "screens that store against this organisation's eligibility (Settings → Scan "
-                "eligibility & auto-scoring policies) — fast, no crawl. Importing a master "
-                "workbook into **this tenant's** pipeline moved to the **📊 Excel Sync** "
-                "sub-tab, and **🔍 Search** looks across stored opportunities, donors and "
-                "the web.")
+                "**🎯 Eligibility Scan** screens the shared funding store against this "
+                "organisation's eligibility (Settings → Scan eligibility & auto-scoring "
+                "policies) — fast, no crawl. Refresh the store from the **⛏ Extraction** tab; "
+                "import a master workbook from **📊 Excel Sync**; **🔍 Search** looks across "
+                "stored opportunities, donors and the web.")
         else:
             st.caption(
                 "**🎯 Eligibility Scan** screens the curated funding store against this "
@@ -1523,12 +1541,17 @@ with tab_scan:
         # that reads it stays here — a container bound to a tab accepts writes from anywhere,
         # which keeps the run/`⏳ Syncing…` handling in one place instead of duplicated.
         _xls_slot = _excel_area.empty() if _show_excel else None
+        # Eligibility Scan button — THIS (Eligibility) tab, right-aligned.
+        _msp, _mbc = st.columns([6.7, 1.7])
+        _match_slot = _mbc.empty()
+        # Run Extraction button — the EXTRACTION tab (developer tenants only). Routed via
+        # `_extract_area` so the two workflows never share a tab.
         if _dev_admin:
-            _bcsp, _bc1, _bc2 = st.columns([5.2, 1.5, 1.6])
-            _ext_slot, _match_slot = _bc1.empty(), _bc2.empty()
+            with _extract_area:
+                _esp, _ebc = st.columns([6.7, 1.7])
+                _ext_slot = _ebc.empty()
         else:
-            _bcsp, _bc2 = st.columns([6.7, 1.7])
-            _ext_slot, _match_slot = None, _bc2.empty()
+            _ext_slot = None
         # Run Extraction is a PLATFORM job that crawls every source into the SHARED global
         # store (no per-tenant screening) — a developer task. Restricted to an admin/super
         # of a developer tenant. The "Eligibility Scan" screening
@@ -1556,7 +1579,7 @@ with tab_scan:
                 from core.scan_runner import run_scan_now
                 run_scan_now(triggered_by=f"extraction:{_who}", extract_only=True)
             except Exception as exc:
-                st.session_state["admin_scan_banner"] = {
+                st.session_state["admin_extract_banner"] = {
                     "ok": False, "msg": f"❌ Extraction crashed: `{type(exc).__name__}: {exc}`."}
             st.rerun()
 
@@ -1584,7 +1607,12 @@ with tab_scan:
             st.session_state["admin_excel_output"] = _res
             st.rerun()
 
-        # Banner from the previous run (survives the post-scan rerun).
+        # Banners from the previous run (survive the post-run rerun). Extraction feedback
+        # goes to the Extraction tab; eligibility / excel feedback stays on this tab.
+        _extract_banner = st.session_state.pop("admin_extract_banner", None)
+        if _extract_banner:
+            with _extract_area:
+                (st.success if _extract_banner.get("ok") else st.error)(_extract_banner["msg"])
         _scan_banner = st.session_state.pop("admin_scan_banner", None)
         if _scan_banner:
             (st.success if _scan_banner.get("ok") else st.error)(_scan_banner["msg"])
@@ -1606,21 +1634,21 @@ with tab_scan:
                    "  \n🎯 You have not screened it since — run an **Eligibility Scan** to see "
                    "what this organisation is now eligible for."))
             _ext = None                      # fall through without drawing the crawl counters
-        if _ext:
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("Last extraction", _ext["ts"])
-            c2.metric("Triggered by", _ext["trigger"])
-            c3.metric("Found", _ext["found"],
-                      help="Candidates returned by the crawlers across all sources.")
-            c4.metric("Extracted", _ext["new"],
-                      help="Written to the global Extracted Solicitations store.")
-            c5.metric("Rejected", _ext["rejected"],
-                      help="Failed the extraction gate (not-an-rfp / off-theme / "
-                           "opportunity-type / language / past-deadline).")
+        if _ext:                             # dev-admin only (non-dev set _ext=None above)
+            with _extract_area:
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric("Last extraction", _ext["ts"])
+                c2.metric("Triggered by", _ext["trigger"])
+                c3.metric("Found", _ext["found"],
+                          help="Candidates returned by the crawlers across all sources.")
+                c4.metric("Extracted", _ext["new"],
+                          help="Written to the global Extracted Solicitations store.")
+                c5.metric("Rejected", _ext["rejected"],
+                          help="Failed the extraction gate (not-an-rfp / off-theme / "
+                               "opportunity-type / language / past-deadline).")
 
         # ----- History (split): Extraction runs (the crawl) vs Found-matches runs --
         from core.scan_pipeline import MATCH_RUN_LABEL
-        st.markdown("---")
         # Reuse the rows already fetched above (`_all_logs`) instead of re-running the identical
         # scan_logs select — it is the same query, and Streamlit re-runs this whole tab body on
         # every widget interaction, so the duplicate cost a round-trip (~0.35s) every click.
@@ -1636,49 +1664,50 @@ with tab_scan:
         extr_logs = logs[~_is_match] if not logs.empty else logs
         match_logs = logs[_is_match] if not logs.empty else logs
 
-        # --- Extraction history (the donor-source crawl) — DEVELOPER TENANT ONLY ---
-        # Same reasoning as the counters above: this is the log of a platform crawl over the
-        # shared store, not a record of anything this tenant did. "Eligible funding history"
-        # below IS per-tenant and stays visible to everyone.
+        # --- Extraction history (the donor-source crawl) — DEVELOPER TENANT ONLY, on the
+        #     EXTRACTION tab. This is the log of a platform crawl over the shared store, not a
+        #     record of anything this tenant did; "Eligible funding history" below IS
+        #     per-tenant and stays on the Eligibility tab for everyone.
+        # Render into the Extraction tab via the container's own methods (no `with`, so the
+        # indentation stays flat and 4-space).
         if _dev_admin:
-            st.subheader("Extraction history")
-            st.caption("Each donor-source crawl (“Run Extraction”). Most recent 500 runs.")
-        if _dev_admin and extr_logs.empty:
-            st.info("No extraction runs recorded yet.")
-        elif _dev_admin:
-            hist_cols = [
-                "scan_date", "triggered_by", "source",
-                "rfps_found", "rfps_new", "rfps_duplicate",
-            ]
-            if "rfps_rejected" in extr_logs.columns:
-                hist_cols.append("rfps_rejected")
-            hist_cols += ["duration_sec", "errors"]
-            st.dataframe(
-                extr_logs[[c for c in hist_cols if c in extr_logs.columns]],
-                width='stretch',
-                hide_index=True,
-                column_config={
-                    "scan_date": st.column_config.TextColumn("Scan time"),
-                    "triggered_by": st.column_config.TextColumn("Triggered by"),
-                    "source": st.column_config.TextColumn("Source"),
-                    "rfps_found": st.column_config.NumberColumn("Found"),
-                    "rfps_new": st.column_config.NumberColumn(
-                        "Extracted",
-                        help="Calls written to the shared extracted store by this run. "
-                             "An extraction run adds nothing to anyone's pipeline — "
-                             "screening does that — so this is not a count of new "
-                             "opportunities to review.",
-                    ),
-                    "rfps_duplicate": st.column_config.NumberColumn("Dup"),
-                    "rfps_rejected": st.column_config.NumberColumn(
-                        "Rejected",
-                        help="Filtered out by the strict eligibility gate "
-                             "(country / theme / deadline / feasibility).",
-                    ),
-                    "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.2f"),
-                    "errors": st.column_config.TextColumn("Errors"),
-                },
-            )
+            _extract_area.markdown("---")
+            _extract_area.subheader("Extraction history")
+            _extract_area.caption(
+                "Each donor-source crawl (“Run Extraction”). Most recent 500 runs.")
+            if extr_logs.empty:
+                _extract_area.info("No extraction runs recorded yet.")
+            else:
+                hist_cols = ["scan_date", "triggered_by", "source",
+                             "rfps_found", "rfps_new", "rfps_duplicate"]
+                if "rfps_rejected" in extr_logs.columns:
+                    hist_cols.append("rfps_rejected")
+                hist_cols += ["duration_sec", "errors"]
+                _extract_area.dataframe(
+                    extr_logs[[c for c in hist_cols if c in extr_logs.columns]],
+                    width='stretch',
+                    hide_index=True,
+                    column_config={
+                        "scan_date": st.column_config.TextColumn("Scan time"),
+                        "triggered_by": st.column_config.TextColumn("Triggered by"),
+                        "source": st.column_config.TextColumn("Source"),
+                        "rfps_found": st.column_config.NumberColumn("Found"),
+                        "rfps_new": st.column_config.NumberColumn(
+                            "Extracted",
+                            help="Calls written to the shared extracted store by this run. "
+                                 "An extraction run adds nothing to anyone's pipeline — "
+                                 "screening does that — so this is not a count of new "
+                                 "opportunities to review."),
+                        "rfps_duplicate": st.column_config.NumberColumn("Dup"),
+                        "rfps_rejected": st.column_config.NumberColumn(
+                            "Rejected",
+                            help="Filtered out by the strict eligibility gate "
+                                 "(country / theme / deadline / feasibility)."),
+                        "duration_sec": st.column_config.NumberColumn(
+                            "Duration (s)", format="%.2f"),
+                        "errors": st.column_config.TextColumn("Errors"),
+                    },
+                )
 
         # --- Eligible funding history (the fast internal re-screen) ---
         st.markdown("---")
