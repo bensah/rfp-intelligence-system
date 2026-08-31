@@ -670,6 +670,65 @@ def _render_pending_approvals(user: dict, svc) -> None:
     st.divider()
 
 
+def render_active_tenant(user: dict, sb) -> None:
+    """Settings → Accounts → Active tenant. A member who belongs to MORE THAN ONE tenant
+    picks which one the whole session is scoped to. Switching re-mints the tenant JWT (via
+    set_active_tenant) and persists the choice to users.last_tenant_id, so it sticks across
+    sign-ins — i.e. you land in your last-used tenant next time. Single-tenant members just
+    see which tenant they're in; the super_user browses tenants via the Tenants view-as flow.
+
+    Moved here from the global header banner (owner 2026-08-31): switching is now a
+    deliberate Settings action, not an always-present top-of-page control."""
+    st.subheader("Active tenant")
+    if permissions.is_super_user(user):
+        st.caption("As the Super User you browse any tenant from the **Tenants** tab "
+                   "(click a tenant name to open it in a sticky view-as). This picker is "
+                   "for members who belong to more than one tenant.")
+        return
+    try:
+        from auth.tenant_context import (active_memberships, set_active_tenant,
+                                         multitenant_enabled)
+        if not multitenant_enabled():
+            st.caption("Multi-tenant is not enabled on this deployment.")
+            return
+        _uid = user.get("id")
+        mems = active_memberships(_uid) if _uid else []
+    except Exception as exc:
+        st.caption(f"Couldn't load your memberships: {exc}")
+        return
+    if not mems:
+        st.info("You don't belong to any tenant yet.")
+        return
+    _opts = {str(m["tenant_id"]): (m.get("name") or m.get("slug") or "tenant") for m in mems}
+    _cur = str(st.session_state.get("tenant_id") or "")
+    if len(mems) == 1:
+        st.write(f"You belong to one tenant: **{next(iter(_opts.values()))}**. "
+                 "It is selected automatically when you sign in.")
+        return
+    st.caption("You belong to more than one tenant. Switching scopes every page to the "
+               "selected tenant, and your choice is remembered across sign-ins.")
+    _ids = list(_opts)
+    _idx = _ids.index(_cur) if _cur in _ids else 0
+    c1, c2, _sp = st.columns([3, 1, 2])
+    _pick = c1.selectbox("Tenant", _ids, index=_idx,
+                         format_func=lambda t: _opts.get(t, "tenant"),
+                         key="settings_active_tenant", label_visibility="collapsed")
+    _same = (_pick == _cur)
+    if c2.button("Switch", type="primary", width="stretch", disabled=_same,
+                 key="settings_switch_tenant",
+                 help="This is already your active tenant." if _same else None):
+        _role = next((m.get("role") for m in mems if str(m["tenant_id"]) == _pick), None)
+        set_active_tenant(user, _pick, role=_role, name=_opts.get(_pick))
+        try:
+            service_client().table("users").update(
+                {"last_tenant_id": _pick}).eq("id", user.get("id")).execute()
+            user["last_tenant_id"] = _pick
+            st.session_state["app_user"] = user
+        except Exception:
+            pass
+        st.rerun()
+
+
 def render_manage_tenants(user: dict, sb, *, can_manage: bool | None = None) -> None:
     """Settings → Tenants. Tenants = organizations/individuals registered to the platform.
 
