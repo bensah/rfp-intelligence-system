@@ -238,7 +238,7 @@ try:
     _sysvals = {k: (_derived.get(k) or row.get(k)) for k in CRITERIA}
     _pm = _matching.composite_match({**row, **_sysvals}, _org_prof, _donor_eff, _org_set)
     _pcomp = round(_pm["composite"], 1)          # 100% of the 9 weighted criteria
-    _pfatal, _ = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set, graph=_graph)
+    _pfatal, _ = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set)
     _sys_dec = ("Decline" if _pfatal else
                 "Proceed" if _pcomp >= 90 else "Park" if _pcomp >= 70 else "Decline")
 except Exception:
@@ -503,8 +503,7 @@ if isinstance(_overrides, str):
 if not isinstance(_overrides, dict):
     _overrides = {}
 try:
-    _is_fatal, _trigger = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set,
-                                                 graph=_graph)
+    _is_fatal, _trigger = _cderive.fatal_decline(_org_prof, row, _donor_eff, _org_set)
     _bd = _cderive.factor_breakdown(row, _org_prof, _donor_eff, _org_set,
                                     overrides=_overrides, graph=_graph)
 except Exception:

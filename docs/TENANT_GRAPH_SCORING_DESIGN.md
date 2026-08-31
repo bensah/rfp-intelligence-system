@@ -40,6 +40,16 @@ Decisions locked with owner (2026-08-31):
 - Build the **tenant graph** as the primary lever (this doc), then the two
   isolated fixes ride on it.
 
+**Correction (2026-08-31, after P1–P6 shipped):** ELIGIBILITY criteria are **self-only**
+and are NOT inherited — a US-based parent must not make a Cameroon child eligible for work
+it cannot deliver. So **MUST-1 registration** and **MUST-4 geographic** were reverted to
+self-only, and the pre-existing `_is_us_federal → "United States"` registration proxy was
+removed (an international grants.gov/USDoS call does not require US incorporation; SAM/UEI
+stays a MUST-5 credential, and a genuinely US-only call is already caught by the HQ/geo
+gates — registration with no explicit rule is "?" excluded). Inheritance is KEPT only for
+the non-eligibility signals that strengthen a bid: MUST-5 signatory, PREFER-7 relationships,
+PREFER-8 track record. The soft-0.5 registration tier was dropped with the proxy.
+
 ---
 
 ## 1. Current seam (what changes plug into)
@@ -144,8 +154,8 @@ first, so we never downgrade a credential we actually hold).
 
 | Component | Class | Consults (in order) | Rule |
 |---|---|---|---|
-| MUST-1 Registration region | **Consortium (prime-led)** | self → parent → prime | Prime/parent US-registered ⇒ **1**. Named-but-unresolved Prime ⇒ **0.5 soft**. Self US-registered ⇒ 1. Else 0.5 when we are a Sub; 0 when we are Prime and not registered. |
-| MUST-1 HQ country (item C) | **Consortium** | self → prime | For an HQ-restricted call where we are a Sub, the Prime's HQ satisfies it. (Phase 2 — low frequency.) |
+| MUST-1 Registration region | **Self only** *(corrected 2026-08-31)* | self | ELIGIBILITY is the applying entity's own — never inherited (a US parent does not make a Cameroon child eligible for a US-only call). Active ONLY on an explicit `donor_registration_region`; the US-federal cue no longer activates it (SAM/UEI stays a MUST-5 credential). Registered in the required region ⇒ 1, else 0; no requirement ⇒ "?" excluded. |
+| MUST-1 HQ country (item C) | **Self only** | self | Same reasoning — the applying entity's own HQ. |
 | MUST-5 Authorized signatory | **Parent + consortium** | self → parent → prime → cosubs | Any consulted profile lists this donor in `org_authorized_signatory_donors` ⇒ 1. |
 | PREFER-7 Past/current grantee | **Parent + consortium** | self → parent → prime → cosubs | Any is a grantee of this donor ⇒ tier met. |
 | PREFER-7 Donor already engaged | **Parent + consortium** | self → parent → prime → cosubs | Reviewer per-RFP answer still wins first. |
@@ -155,7 +165,7 @@ first, so we never downgrade a credential we actually hold).
 | PREFER-8 Established (age) | **Parent** | self → parent | Parent's founding year available if child is newer. |
 | MUST-2 Strategic fit | **Self only** | self | Our own strategy — never inherited. |
 | MUST-3 Capacity | **Self only** | self | The implementing entity's own delivery capacity. |
-| MUST-4 Geographic presence | **Consortium** | self → prime → cosubs → parent | A Sub inherits the Prime's (or a co-Sub's / parent's) in-country presence — the consortium delivers in the work geography even if we do not. Own presence still scores strongest (own=1 · via partner/consortium=0.5). |
+| MUST-4 Geographic presence | **Self only** *(corrected 2026-08-31)* | self | ELIGIBILITY is the applying entity's own presence — deliberately NOT inherited. A US-based parent must not make a child appear able to deliver work it cannot. (Reverts the earlier P5b consortium-inheritance.) |
 | MUST-5 Co/pre-financing capacity | **Self only** | self | Our own balance-sheet capacity. |
 | PREFER-6 Funding quality | **Self only** | self | Purely call value vs our target band. |
 | PREFER-9 Bid effort | **Self only** | self | Our own deadline/BD-team. |

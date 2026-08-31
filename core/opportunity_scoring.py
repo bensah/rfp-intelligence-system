@@ -111,7 +111,7 @@ def analyse(rfp: dict, org: dict | None, donor: dict | None,
     bd = _cd.factor_breakdown(rfp, org, donor_eff, org_settings,
                               overrides=overrides or {}, graph=graph)
     try:
-        fatal, trigger = _cd.fatal_decline(org, rfp, donor_eff, org_settings, graph=graph)
+        fatal, trigger = _cd.fatal_decline(org, rfp, donor_eff, org_settings)
     except Exception:
         fatal, trigger = False, None
 

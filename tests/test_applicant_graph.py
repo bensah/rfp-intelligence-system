@@ -105,10 +105,10 @@ class ApplicantGraphTests(unittest.TestCase):
     def test_precedence_order_self_first(self):
         rfp = {"applicant_role": "sub", "lead_applicant": "Prime Lead Org"}
         g = AG.build_graph(rfp, SELF, CHILD_ID, ROWS)
-        reg = g.for_registration()                           # self → parent → prime
-        self.assertEqual(reg[0], SELF)
-        self.assertEqual(reg[1], g.parent)
-        self.assertEqual(reg[2], g.prime)
+        rel = g.for_relationships()                          # self → parent → prime → cosubs
+        self.assertEqual(rel[0], SELF)
+        self.assertEqual(rel[1], g.parent)
+        self.assertEqual(rel[2], g.prime)
         self.assertEqual(g.for_competitiveness(), [SELF, g.parent])
 
     def test_no_parent_no_applicants_is_self_only(self):
@@ -120,7 +120,7 @@ class ApplicantGraphTests(unittest.TestCase):
         self.assertIsNone(g.prime)
         self.assertEqual(g.cosubs, ())
         self.assertFalse(g.unresolved_prime)
-        self.assertEqual(g.for_registration(), [SELF])
+        self.assertEqual(g.for_relationships(), [SELF])
 
     def test_inactive_tenant_is_not_consulted(self):
         rows = [dict(r) for r in ROWS]

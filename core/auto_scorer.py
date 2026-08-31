@@ -2955,13 +2955,8 @@ def auto_score(
         from core import criteria_derive as _cd
         from core import org_profile as _op
         from core import settings as _st
-        from core import applicant_graph as _ag2
-        try:
-            _fg = _ag2.resolve(candidate, _op.get_profile())
-        except Exception:
-            _fg = None
         _is_fatal, _ = _cd.fatal_decline(
-            _op.get_profile(), candidate, _donor_row, _st.get_org(), graph=_fg)
+            _op.get_profile(), candidate, _donor_row, _st.get_org())
     except Exception:
         _is_fatal = False
     try:

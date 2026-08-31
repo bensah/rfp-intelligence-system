@@ -809,17 +809,16 @@ def _geo_scope_with_source(rfp: dict, donor: dict | None) -> tuple[list[str], st
 
 
 def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
-                  org_settings: dict | None = None, graph=None) -> dict:
+                  org_settings: dict | None = None) -> dict:
     """MUST-4 tiered result: {active, score 1/0.5/0, label, scope, via}. ACTIVE-ONLY
     (owner 2026-06-29b): a US-federal / US-only call (no intl cue) → scope = United
     States; a call/donor with a stated scope → tiered match; NO scope at all → 'Not
     sure' (active=False, excluded).
 
-    `graph` (owner 2026-08-31): geographic reach is CONSORTIUM-transferable — a Sub with
-    no OWN presence in the work scope still delivers when the Prime / a co-Sub / the parent
-    operates there. That scores as "via a partner" (0.5), never our own 1.0, and it moves
-    the label off "No presence there" so the fatal geo gate no longer fires. Own presence
-    still wins; self-only when no graph (byte-for-byte)."""
+    SELF-ONLY (owner 2026-08-31): geographic eligibility is the APPLYING entity's own
+    presence — deliberately NOT inherited from a parent / Prime / consortium, because a
+    US-based parent does not make a Cameroon child eligible for work the child cannot
+    actually deliver. Inheritance stays for relationships / signatory / competitiveness."""
     # Strip the label-not-a-place values BEFORE deciding whether a scope exists, so a row
     # scoped only "Regional" reads as unstated rather than as somewhere we are not.
     scope, scope_src = _geo_scope_with_source(rfp, donor)
@@ -876,34 +875,24 @@ def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
         # registration proxy on 2026-08-07.
         return {"active": False, "score": None, "label": "Not sure", "scope": scope,
                 "via": "the call states who may apply but not where the work happens"}
-    # CONSORTIUM (P5b): we have no own presence, but a Prime / co-Sub / parent operates in
-    # scope — the consortium covers the work geography. Scores "via a partner" (0.5), never
-    # our own 1.0, and the label moves off "No presence there" so this no longer fatal-gates.
-    if graph is not None:
-        for p in _graph_profiles(graph, "for_geographic", org)[1:]:      # skip self
-            if (_covers_scope(p.get("org_registered_countries") or [], scope)
-                    or _covers_scope(p.get("org_operating_countries") or [], scope)
-                    or _geo_partner_in_scope(p, scope)):
-                return {"active": True, "score": 0.5, "label": "Yes, via a partner",
-                        "scope": scope, "via": "a co-applicant / parent operates in scope"}
     return {"active": True, "score": 0.0, "label": "No presence there", "scope": scope,
             "via": ""}
 
 
 def derive_geographic_fit(org: dict, rfp: dict, org_settings: dict | None = None,
-                          donor: dict | None = None, graph=None) -> str | None:
+                          donor: dict | None = None) -> str | None:
     """MUST-4 GEOGRAPHIC FIT label — registered ∩ scope → 'Yes, our own presence';
     operation ∩ scope / qualifying partner → 'Yes, via a partner'; neither → 'No
-    presence there'. Scope = call ∪ donor; no scope → 'Not sure' (Park). `graph`: a
-    Sub inherits a consortium member's / parent's in-scope presence ('via a partner')."""
-    return _geo_presence(org, rfp, donor, org_settings, graph)["label"]
+    presence there'. Scope = call ∪ donor; no scope → 'Not sure' (Park). SELF-ONLY —
+    geographic eligibility is not inherited from a parent/consortium."""
+    return _geo_presence(org, rfp, donor, org_settings)["label"]
 
 
 def geographic_bid_strength(org: dict, rfp: dict, org_settings: dict | None = None,
-                            donor: dict | None = None, graph=None) -> tuple[float, int]:
+                            donor: dict | None = None) -> tuple[float, int]:
     """(score, denom) — MUST-4 is ONE tiered component (own=1 · via partner=0.5 ·
     none=0); denom 0 when no scope (Not sure)."""
-    g = _geo_presence(org, rfp, donor, org_settings, graph)
+    g = _geo_presence(org, rfp, donor, org_settings)
     return (g["score"], 1) if g["active"] else (0.0, 0)
 
 
@@ -2102,7 +2091,7 @@ def _invitation_only(rfp: dict, donor: dict | None = None) -> bool:
 
 
 def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
-                          org_settings: dict | None = None, graph=None) -> list[dict]:
+                          org_settings: dict | None = None) -> list[dict]:
     """MUST-1 — LEGAL STATUS & QUALIFICATION (reworked 2026-06-28; D/F revised
     2026-06-29). SIX scored items: A legal type · B entity type · C HQ · D registration
     · E individual-PI · F prior beneficiary — all HARD (0/1). Strict rule: an active item
@@ -2178,53 +2167,31 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     items.append(_qfactor("donor_hq_country", "HQ country", active=detected,
                           score=(1.0 if _hq_ok else 0.0), hard=True))
 
-    # --- D. Registration region — where the applicant must be INCORPORATED. Active only
-    #    on an EXPLICIT rule: a stated registration region, an explicit "Any" (a real
-    #    pass), or a US-federal call (SAM/UEI + US incorporation is a genuine registration
-    #    requirement, not a geography).
+    # --- D. Registration region — where the applicant must be INCORPORATED. Active ONLY
+    #    on an EXPLICIT rule the call/donor states: a stated `donor_registration_region`, or
+    #    an explicit "Any" (a real pass). No requirement stated → "Not sure" (excluded).
     #
-    #    The call's GEOGRAPHIC SCOPE is no longer used as a proxy (owner 2026-08-07).
-    #    Where the money is SPENT is not where the applicant must be REGISTERED, and using
-    #    it made this item MUST-4 wearing a legal-eligibility label: executed across eight
-    #    scopes (Cameroon · India · Global · Sub-Saharan Africa · LMIC · Nigeria+Kenya ·
-    #    United States · Bangladesh+Global) against an org registered in Cameroon, item D
-    #    and MUST-4 `geo_presence` agreed 8/8. It carried no independent information, it
-    #    double-counted geography into Bid Strength, and because `fatal_decline` checks
-    #    MUST-1 FIRST the reviewer was told the blocker was "Registration region" when the
-    #    real finding was geographic reach.
+    #    NOT derived from the call's GEOGRAPHIC SCOPE (owner 2026-08-07: where the money is
+    #    SPENT is not where the applicant must be REGISTERED) and NOT derived from a
+    #    US-federal cue (owner 2026-08-31): a grants.gov / USDoS call for international work
+    #    does not require US incorporation — foreign entities obtain SAM/UEI without being
+    #    US-registered, and a genuinely US-ONLY call is already caught by the HQ-country /
+    #    geographic gates. Inferring "must be US-registered" here mislabelled an
+    #    international Cameroon call as a registration failure. SAM/UEI stays a MUST-5
+    #    credential (still `_is_us_federal`-activated there); this item does not double it.
     #
-    #    Geographic reach is NOT lost: MUST-4 still auto-Declines an org with no presence
-    #    or partner in scope — with the correct trigger name.
+    #    SELF-ONLY, and deliberately NOT parent/consortium-transferable (owner 2026-08-31):
+    #    eligibility is about the APPLYING entity — a US parent does not make a Cameroon
+    #    child eligible for a US-only call. Inheritance stays for relationships / signatory /
+    #    competitiveness (which strengthen a bid), never for who is legally eligible.
     reg_req = _as_list(donor.get("donor_registration_region"))
     explicit_any = any(str(r).lower() in ("any", "any country", "worldwide", "global")
                        for r in reg_req)
     region = [] if explicit_any else list(reg_req)
-    if not region and not explicit_any and _is_us_federal(rfp):
-        region = ["United States"]               # US-federal / US-only → must be US-registered
-    # TENANT GRAPH (owner 2026-08-31): registration is a CONSORTIUM/PARENT-transferable
-    # gate — a child Sub inherits the Prime's (or parent org's) registration. With a
-    # `graph`, coverage is tested across self → parent → prime (`for_registration`);
-    # WITHOUT one, self only, so every graph-less caller is byte-for-byte unchanged.
-    if graph is not None:
-        _reg_covered = explicit_any or any(
-            _region_covered(region, p) for p in graph.for_registration())
-        _reg_role = graph.role
-    else:
-        _reg_covered = explicit_any or _region_covered(region, org)
-        _reg_role = ""
-    # A Sub whose Prime carries the US-registration burden and whom we could not confirm
-    # scores 0.5 "unclear" (met=None → NON-FATAL: `fatal_decline` gates only on met is
-    # False) rather than a hard 0 — the PRIME, not the Sub, must be registered. A Prime
-    # (or single applicant) that is not registered still hard-fails at 0.
-    if _reg_covered:
-        _reg_score = 1.0
-    elif region and _reg_role == "sub":
-        _reg_score = 0.5
-    else:
-        _reg_score = 0.0
     items.append(_qfactor("local_registration", "Registration region",
                           active=bool(explicit_any or region),
-                          score=_reg_score, hard=True))
+                          score=(1.0 if (explicit_any or _region_covered(region, org)) else 0.0),
+                          hard=True))
 
     # --- E. Individual-PI — PI gate then base country -------------------------
     _qtext = " ".join(str(rfp.get(x) or "") for x in
@@ -2343,29 +2310,29 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
 
 def qualification_bid_strength(org: dict, rfp: dict, donor: dict | None = None,
                                org_settings: dict | None = None,
-                               rfp_compliance: dict | None = None, graph=None) -> tuple[float, int]:
+                               rfp_compliance: dict | None = None) -> tuple[float, int]:
     """(numerator, denominator) over ACTIVE MUST-1 items — numerator = Σ scores,
     denominator = count. Bid Strength = numerator ÷ denominator (caller divides;
     denominator 0 → undefined → 'Not sure'). Transparency only — NOT forced to 0
     when the label is a decline. `rfp_compliance` folds in call-stated requirements."""
     items = [x for x in qualification_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
         if x["active"] and x["score"] is not None]            # denominator = ACTIVE only
     return sum(x["score"] for x in items), len(items)
 
 
 def derive_qualification(org: dict, rfp: dict, donor: dict | None = None,
                          org_settings: dict | None = None,
-                         rfp_compliance: dict | None = None, graph=None) -> str:
+                         rfp_compliance: dict | None = None) -> str:
     """MUST-1 label (2026-06-28 rework). Decision order over ACTIVE items:
       denominator 0 (nothing imposed) → 'Not sure';
       any item scored 0 → 'No, not eligible' (one mismatch overrides all);
       any item scored 0.5 → 'Mostly, one item unclear';
       all items scored 1 → 'Yes, fully'.
     `rfp_compliance` folds in requirements the CALL itself states (extraction).
-    `graph` (applicant graph) lets a Sub inherit the Prime's/parent's registration."""
+    MUST-1 is SELF-ONLY (eligibility of the applying entity — not inherited)."""
     scores = [x["score"] for x in qualification_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
         if x["active"] and x["score"] is not None]            # ACTIVE items only
     if not scores:
         return "Not sure"                                     # denominator 0
@@ -2383,10 +2350,10 @@ def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = Non
     optional) feeds the transfer-aware criteria; None → single-tenant behaviour."""
     org = org or {}
     return {
-        "qualification": derive_qualification(org, rfp, donor, org_settings, graph=graph),
+        "qualification": derive_qualification(org, rfp, donor, org_settings),
         "strategic_fit": derive_strategic_fit(org, rfp, donor),
         "capacity": derive_capacity(org, rfp, donor, org_settings),
-        "geographic_fit": derive_geographic_fit(org, rfp, org_settings, donor, graph=graph),
+        "geographic_fit": derive_geographic_fit(org, rfp, org_settings, donor),
         "cofinancing": derive_cofinancing(org, rfp, donor, org_settings=org_settings,
                                            graph=graph),
         "funding_quality": derive_funding_quality(rfp, org, policies),
@@ -2398,11 +2365,11 @@ def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = Non
 
 # --- factor breakdowns for the graded criteria (Review pass/fail panel) ------
 def _geo_factors(org: dict, rfp: dict, org_settings: dict | None = None,
-                 donor: dict | None = None, graph=None) -> list[dict]:
+                 donor: dict | None = None) -> list[dict]:
     """MUST-4 is ONE tiered component "Geographic presence" (own=1 · via partner=0.5 ·
     none=0). Carries `_via` + `_scope` for the Review info line. No scope → permissive
     default pass."""
-    g = _geo_presence(org, rfp, donor, org_settings, graph)
+    g = _geo_presence(org, rfp, donor, org_settings)
     it = _qfactor("geo_presence", "Geographic presence", active=g["active"],
                   score=g["score"], hard=False)
     it["_via"] = g.get("via", "")
@@ -2730,15 +2697,15 @@ _NON_FATAL_QUALIFICATION = frozenset({"invitation_only", "applicant_countries"})
 
 def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
                   org_settings: dict | None = None,
-                  rfp_compliance: dict | None = None, graph=None) -> tuple[bool, str | None]:
+                  rfp_compliance: dict | None = None) -> tuple[bool, str | None]:
     """THE auto-Decline gate (replaces the blanket 'any MUST<2 → Decline').
     Returns (decline?, trigger_name). True ONLY when a 🔒 non-dynamic factor is
     EXPLICITLY failed (met is False) — a structural ineligibility the org can't
     fix before the deadline: a MUST-1 identity gate or no geographic reach. (MUST-5
     has no fatal floor — its credential gates are acquirable.) Unknowns (None) never
     trigger a decline — they only soften the score (→ usually Park for review).
-    `graph`: with an applicant graph a Sub's inherited/unclear registration reads 0.5
-    (met None) and no longer fatally declines — the Prime carries that burden."""
+    SELF-ONLY: the eligibility gates (MUST-1, MUST-4) are the applying entity's own —
+    never inherited from a parent/consortium."""
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     # MUST-1 — identity / qualification gates.
@@ -2752,7 +2719,7 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     # `invitation_only` is exactly that: whether we hold an invitation to a closed round is
     # not visible on the call page. It still takes MUST-1 to 0 through the ordinary mean, so
     # an uninvited org still reads Decline — it is simply reviewable rather than closed.
-    for f in qualification_factors(org, rfp, eff, org_settings, graph):
+    for f in qualification_factors(org, rfp, eff, org_settings):
         if f["key"] in _NON_FATAL_QUALIFICATION:
             continue
         if f["active"] and f["met"] is False:
@@ -2772,10 +2739,10 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     for p in _capacity_value_parts(org, rfp, eff):
         if p["hard"] and p["score"] <= 0.0:
             return True, p["name"]
-    # MUST-4 — no geographic reach (own presence or a partner in the call's scope). With a
-    # graph, a Sub inheriting a consortium member's / parent's in-scope presence reads
-    # "Yes, via a partner" (0.5), not "No presence there", so it no longer fatal-gates.
-    if derive_geographic_fit(org, rfp, org_settings, eff, graph=graph) == "No presence there":
+    # MUST-4 — no geographic reach (own presence or a partner in the call's scope). SELF-
+    # ONLY: geographic eligibility is the applying entity's own — a parent/consortium
+    # presence does not qualify the child (owner 2026-08-31).
+    if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
         return True, "Geographic reach (no presence or partner)"
     # MUST-5 has NO structural auto-Decline gate (owner 2026-06-30): the hard credential
     # gates are all acquirable before the deadline, and funding-route / funding-platform
@@ -2844,10 +2811,10 @@ def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = No
     org = org or {}
     eff = _merge_rfp_compliance(donor, rfp_compliance)
     out = {
-        "qualification": qualification_factors(org, rfp, eff, org_settings, graph),
+        "qualification": qualification_factors(org, rfp, eff, org_settings),
         "strategic_fit": _strategic_factors(org, rfp, donor),
         "capacity": _capacity_factors(org, rfp, eff, org_settings),
-        "geographic_fit": _geo_factors(org, rfp, org_settings, eff, graph),
+        "geographic_fit": _geo_factors(org, rfp, org_settings, eff),
         "cofinancing": compliance_factors(org, rfp, eff, org_settings, graph),
         "funding_quality": _funding_quality_factors(rfp, org),
         "funder_relationship": _relationship_factors(org, rfp, donor, graph),
