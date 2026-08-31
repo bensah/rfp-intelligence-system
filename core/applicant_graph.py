@@ -69,14 +69,12 @@ class ApplicantGraph:
                 out.append(n)
         return out
 
-    # Ordered profile lists per §4 (self first — own standing is strongest). Consumers
-    # in criteria_derive OR a predicate across the list; the first satisfying wins.
-    def for_registration(self) -> list[dict]:
-        return self._chain(self.self_, self.parent, self.prime)
-
-    def for_hq(self) -> list[dict]:
-        return self._chain(self.self_, self.prime)
-
+    # Ordered profile lists per transfer class (self first — own standing is strongest).
+    # Consumers in criteria_derive OR a predicate across the list; the first satisfying
+    # wins. ONLY non-eligibility signals inherit — signatory (MUST-5), relationships
+    # (PREFER-7), competitiveness (PREFER-8). ELIGIBILITY gates (MUST-1 registration/HQ,
+    # MUST-4 geographic) are deliberately self-only and do NOT consult the graph: a US
+    # parent must not make a Cameroon child eligible for work it cannot deliver.
     def for_relationships(self) -> list[dict]:
         return self._chain(self.self_, self.parent, self.prime, self.cosubs)
 
@@ -85,9 +83,6 @@ class ApplicantGraph:
 
     def for_competitiveness(self) -> list[dict]:
         return self._chain(self.self_, self.parent)
-
-    def for_geographic(self) -> list[dict]:
-        return self._chain(self.self_, self.prime, self.cosubs, self.parent)
 
 
 def _name_index(rows: list[dict], exclude_id: str | None) -> list[tuple[set[str], dict]]:

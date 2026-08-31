@@ -87,12 +87,16 @@ class RegistrationIsNoLongerGeographyTests(unittest.TestCase):
         self.assertTrue(it["active"])
         self.assertEqual(it["score"], 1.0)
 
-    def test_a_us_federal_call_still_demands_us_registration(self):
-        # SAM/UEI + US incorporation IS a registration requirement, not a geography.
+    def test_a_us_federal_call_no_longer_demands_us_registration(self):
+        # A grants.gov / USDoS call for INTERNATIONAL work does not require US
+        # incorporation: foreign entities obtain SAM/UEI without being US-registered, and a
+        # genuinely US-only call is caught by the HQ/geographic gates. So a bare US-federal
+        # cue no longer ACTIVATES registration region — it is "Not sure" (excluded), not a
+        # 0. (owner 2026-08-31; SAM/UEI stays a MUST-5 credential, still _is_us_federal-fed.)
         rfp = {"opportunity_link": "https://www.grants.gov/web/grants/view-opportunity.html"}
         it = _regitem(ORG, rfp)
-        self.assertTrue(it["active"])
-        self.assertEqual(it["score"], 0.0)
+        self.assertFalse(it["active"])
+        self.assertIsNone(it["score"])
 
     def test_a_donor_geographic_scope_alone_does_not_activate_it_either(self):
         it = _regitem(ORG, {}, {"donor_geographic_scope": "India"})
