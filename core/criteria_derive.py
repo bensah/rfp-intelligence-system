@@ -1614,6 +1614,19 @@ def _registered_on_portal(org: dict, rfp: dict, donor: dict | None) -> bool:
     if (_canonical_donor_match(org.get("org_active_donors"), d, rfp)
             or _canonical_donor_match(org.get("org_engaged_donors"), d, rfp)):
         return True
+    # (c) US-federal calls file through grants.gov + sam.gov (the federal pair). A
+    # registration on EITHER is genuine familiarity with how a federal call is
+    # submitted, even when the call's OWN link host is a programme/bureau site
+    # (state.gov, an agency page) rather than the portal itself — so the host-only
+    # match in (a) misses it. Mirrors how registration-region + SAM/UEI already trust
+    # `_is_us_federal`. (Owner 2026-08-31, uid BE-260831-1210: org held a sam.gov
+    # registration, the call link was a grants.gov URL, and (a) found nothing to
+    # compare the federal pair against.)
+    if _is_us_federal(rfp):
+        _fed = {"grants.gov", "sam.gov"}
+        if any(clean_portal_url(r) in _fed
+               for r in (org.get("org_donor_registrations") or []) if r):
+            return True
     # (a) explicit portal-registration host match (sub-domain-aware).
     regs = {clean_portal_url(r) for r in (org.get("org_donor_registrations") or []) if r}
     if not regs:
