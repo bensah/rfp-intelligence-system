@@ -809,11 +809,17 @@ def _geo_scope_with_source(rfp: dict, donor: dict | None) -> tuple[list[str], st
 
 
 def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
-                  org_settings: dict | None = None) -> dict:
+                  org_settings: dict | None = None, graph=None) -> dict:
     """MUST-4 tiered result: {active, score 1/0.5/0, label, scope, via}. ACTIVE-ONLY
     (owner 2026-06-29b): a US-federal / US-only call (no intl cue) → scope = United
     States; a call/donor with a stated scope → tiered match; NO scope at all → 'Not
-    sure' (active=False, excluded)."""
+    sure' (active=False, excluded).
+
+    `graph` (owner 2026-08-31): geographic reach is CONSORTIUM-transferable — a Sub with
+    no OWN presence in the work scope still delivers when the Prime / a co-Sub / the parent
+    operates there. That scores as "via a partner" (0.5), never our own 1.0, and it moves
+    the label off "No presence there" so the fatal geo gate no longer fires. Own presence
+    still wins; self-only when no graph (byte-for-byte)."""
     # Strip the label-not-a-place values BEFORE deciding whether a scope exists, so a row
     # scoped only "Regional" reads as unstated rather than as somewhere we are not.
     scope, scope_src = _geo_scope_with_source(rfp, donor)
@@ -870,23 +876,34 @@ def _geo_presence(org: dict, rfp: dict, donor: dict | None = None,
         # registration proxy on 2026-08-07.
         return {"active": False, "score": None, "label": "Not sure", "scope": scope,
                 "via": "the call states who may apply but not where the work happens"}
+    # CONSORTIUM (P5b): we have no own presence, but a Prime / co-Sub / parent operates in
+    # scope — the consortium covers the work geography. Scores "via a partner" (0.5), never
+    # our own 1.0, and the label moves off "No presence there" so this no longer fatal-gates.
+    if graph is not None:
+        for p in _graph_profiles(graph, "for_geographic", org)[1:]:      # skip self
+            if (_covers_scope(p.get("org_registered_countries") or [], scope)
+                    or _covers_scope(p.get("org_operating_countries") or [], scope)
+                    or _geo_partner_in_scope(p, scope)):
+                return {"active": True, "score": 0.5, "label": "Yes, via a partner",
+                        "scope": scope, "via": "a co-applicant / parent operates in scope"}
     return {"active": True, "score": 0.0, "label": "No presence there", "scope": scope,
             "via": ""}
 
 
 def derive_geographic_fit(org: dict, rfp: dict, org_settings: dict | None = None,
-                          donor: dict | None = None) -> str | None:
+                          donor: dict | None = None, graph=None) -> str | None:
     """MUST-4 GEOGRAPHIC FIT label — registered ∩ scope → 'Yes, our own presence';
     operation ∩ scope / qualifying partner → 'Yes, via a partner'; neither → 'No
-    presence there'. Scope = call ∪ donor; no scope → 'Not sure' (Park)."""
-    return _geo_presence(org, rfp, donor, org_settings)["label"]
+    presence there'. Scope = call ∪ donor; no scope → 'Not sure' (Park). `graph`: a
+    Sub inherits a consortium member's / parent's in-scope presence ('via a partner')."""
+    return _geo_presence(org, rfp, donor, org_settings, graph)["label"]
 
 
 def geographic_bid_strength(org: dict, rfp: dict, org_settings: dict | None = None,
-                            donor: dict | None = None) -> tuple[float, int]:
+                            donor: dict | None = None, graph=None) -> tuple[float, int]:
     """(score, denom) — MUST-4 is ONE tiered component (own=1 · via partner=0.5 ·
     none=0); denom 0 when no scope (Not sure)."""
-    g = _geo_presence(org, rfp, donor, org_settings)
+    g = _geo_presence(org, rfp, donor, org_settings, graph)
     return (g["score"], 1) if g["active"] else (0.0, 0)
 
 
@@ -2356,7 +2373,7 @@ def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = Non
         "qualification": derive_qualification(org, rfp, donor, org_settings, graph=graph),
         "strategic_fit": derive_strategic_fit(org, rfp, donor),
         "capacity": derive_capacity(org, rfp, donor, org_settings),
-        "geographic_fit": derive_geographic_fit(org, rfp, org_settings, donor),
+        "geographic_fit": derive_geographic_fit(org, rfp, org_settings, donor, graph=graph),
         "cofinancing": derive_cofinancing(org, rfp, donor, org_settings=org_settings,
                                            graph=graph),
         "funding_quality": derive_funding_quality(rfp, org, policies),
@@ -2368,11 +2385,11 @@ def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = Non
 
 # --- factor breakdowns for the graded criteria (Review pass/fail panel) ------
 def _geo_factors(org: dict, rfp: dict, org_settings: dict | None = None,
-                 donor: dict | None = None) -> list[dict]:
+                 donor: dict | None = None, graph=None) -> list[dict]:
     """MUST-4 is ONE tiered component "Geographic presence" (own=1 · via partner=0.5 ·
     none=0). Carries `_via` + `_scope` for the Review info line. No scope → permissive
     default pass."""
-    g = _geo_presence(org, rfp, donor, org_settings)
+    g = _geo_presence(org, rfp, donor, org_settings, graph)
     it = _qfactor("geo_presence", "Geographic presence", active=g["active"],
                   score=g["score"], hard=False)
     it["_via"] = g.get("via", "")
@@ -2742,8 +2759,10 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     for p in _capacity_value_parts(org, rfp, eff):
         if p["hard"] and p["score"] <= 0.0:
             return True, p["name"]
-    # MUST-4 — no geographic reach (own presence or a partner in the call's scope).
-    if derive_geographic_fit(org, rfp, org_settings, eff) == "No presence there":
+    # MUST-4 — no geographic reach (own presence or a partner in the call's scope). With a
+    # graph, a Sub inheriting a consortium member's / parent's in-scope presence reads
+    # "Yes, via a partner" (0.5), not "No presence there", so it no longer fatal-gates.
+    if derive_geographic_fit(org, rfp, org_settings, eff, graph=graph) == "No presence there":
         return True, "Geographic reach (no presence or partner)"
     # MUST-5 has NO structural auto-Decline gate (owner 2026-06-30): the hard credential
     # gates are all acquirable before the deadline, and funding-route / funding-platform
@@ -2815,7 +2834,7 @@ def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = No
         "qualification": qualification_factors(org, rfp, eff, org_settings, graph),
         "strategic_fit": _strategic_factors(org, rfp, donor),
         "capacity": _capacity_factors(org, rfp, eff, org_settings),
-        "geographic_fit": _geo_factors(org, rfp, org_settings, eff),
+        "geographic_fit": _geo_factors(org, rfp, org_settings, eff, graph),
         "cofinancing": compliance_factors(org, rfp, eff, org_settings, graph),
         "funding_quality": _funding_quality_factors(rfp, org),
         "funder_relationship": _relationship_factors(org, rfp, donor, graph),
