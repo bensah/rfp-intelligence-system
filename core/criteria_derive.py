@@ -1187,6 +1187,49 @@ def _signatory_donor_match(org: dict, donor: dict, rfp: dict) -> bool:
     return _canonical_donor_match(org.get("org_authorized_signatory_donors"), donor, rfp)
 
 
+# --- TENANT-GRAPH proxy helpers (owner 2026-08-31) ---------------------------------
+# A child Sub inherits transferable standing from the parent org / Prime / co-Subs. Each
+# helper ORs its self-only predicate across the profiles the applicant graph says may be
+# consulted for that transfer class; with NO graph it is exactly the self-only predicate,
+# so every graph-less caller is byte-for-byte unchanged. HONEST: when no consulted profile
+# holds the credential/relationship, the result is still False — the graph can only RAISE.
+def _graph_profiles(graph, accessor: str, org: dict) -> list[dict]:
+    """Profiles to consult for a transfer class (self-only when no graph). `accessor`
+    is an ApplicantGraph method name: for_signatory / for_relationships / …."""
+    if graph is None:
+        return [org or {}]
+    fn = getattr(graph, accessor, None)
+    return (fn() or [org or {}]) if callable(fn) else [org or {}]
+
+
+def _sig_match_graph(org: dict, donor: dict, rfp: dict, graph=None) -> bool:
+    """MUST-5 authorized signatory held by self OR a transferable profile (parent /
+    Prime / co-Sub). Honest — 0 when NO consulted profile holds it for this donor."""
+    return any(_signatory_donor_match(p, donor, rfp)
+               for p in _graph_profiles(graph, "for_signatory", org))
+
+
+def _grantee_graph(org: dict, rfp: dict, donor: dict | None, graph=None) -> bool:
+    return any(_is_past_grantee(p, rfp, donor)
+               for p in _graph_profiles(graph, "for_relationships", org))
+
+
+def _shared_graph(org: dict, donor: dict | None, graph=None) -> bool:
+    return any(bool(_shared_collaborator(p, donor))
+               for p in _graph_profiles(graph, "for_relationships", org))
+
+
+def _engaged_graph(org: dict, rfp: dict, donor: dict | None, graph=None):
+    """(score, source). The reviewer's per-RFP answer wins (checked via _donor_engaged on
+    self); else any consulted profile's engaged-donors list."""
+    sc, src = _donor_engaged(org, rfp, donor)
+    if sc is None and graph is not None:
+        for p in _graph_profiles(graph, "for_relationships", org)[1:]:      # skip self
+            if _canonical_donor_match(p.get("org_engaged_donors"), donor, rfp):
+                return 1.0, "from a consortium / parent profile"
+    return sc, src
+
+
 def _capacity_score(level: Any) -> float | None:
     """An org co-financing / pre-financing capacity level → its component score.
 
@@ -1225,7 +1268,7 @@ def _requirement(donor: dict, *cols: str) -> str:
 
 
 def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
-                       org_settings: dict | None = None) -> list[dict]:
+                       org_settings: dict | None = None, graph=None) -> list[dict]:
     """MUST-5 COFINANCING & COMPLIANCE (rework 2026-06-29; ACTIVE-ONLY 2026-06-29b).
     Each component is ACTIVE only when the donor explicitly imposes it OR the call
     detects it (no proxy applies to these credentials). An undetected component is
@@ -1400,9 +1443,12 @@ def compliance_factors(org: dict, rfp: dict, donor: dict | None = None,
     # Authorized-signatory — matched to the org's list of donors it has ALREADY
     # obtained an authorized signatory from (not a generic checkbox).
     a_sig = _need("donor_authorized_signatory_signoff_required", "donor_welcome_registration_required")
+    # Parent/consortium-transferable: a signatory the PARENT (or Prime / co-Sub) already
+    # holds for this donor counts (owner 2026-08-31). Honest — 0 when NO consulted profile
+    # holds it; the graph never forces a pass. Self-only when no graph.
     items.append(_qfactor("authorized_signatory", "Authorized signatory (this donor)",
                           active=a_sig,
-                          score=(1.0 if _signatory_donor_match(org, donor, rfp) else 0.0),
+                          score=(1.0 if _sig_match_graph(org, donor, rfp, graph) else 0.0),
                           hard=True))
 
     # Partnership mandatory — org has an Implementing/Collaborator partner. (The
@@ -1455,24 +1501,24 @@ def _settle_all_clear(items: list[dict]) -> list[dict]:
 
 def cofinancing_bid_strength(org: dict, rfp: dict, donor: dict | None = None,
                              org_settings: dict | None = None,
-                             rfp_compliance: dict | None = None) -> tuple[float, int]:
+                             rfp_compliance: dict | None = None, graph=None) -> tuple[float, int]:
     """(numerator, denominator) over the MUST-5 components — Σ scores ÷ count."""
     items = [f for f in compliance_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
         if f["active"] and f["score"] is not None]
     return sum(f["score"] for f in items), len(items)
 
 
 def derive_cofinancing(org: dict, rfp: dict, donor: dict | None = None,
                        rfp_compliance: dict | None = None,
-                       org_settings: dict | None = None) -> str | None:
+                       org_settings: dict | None = None, graph=None) -> str | None:
     """MUST-5 label (gate logic over ACTIVE components only): any 0 → 'Not met';
     any 0.5 → 'Partial, with effort'; all 1 → 'Yes, fully met'. NO active component
     (nothing the call/donor imposes) → 'Not sure' → scores value 1 (Park). MUST-5 spans
     co-financing AND the compliance gates (SAM/tax-exempt/…), so ANY unmet requirement —
     a hard non-dynamic gate OR co-financing — forces 'Not met' even if the rest are met."""
     scores = [f["score"] for f in compliance_factors(
-        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings)
+        org, rfp, _merge_rfp_compliance(donor, rfp_compliance), org_settings, graph)
         if f["active"] and f["score"] is not None]
     if not scores:
         return "Not sure"
@@ -1708,19 +1754,22 @@ def _norm_rel(s: Any) -> str:
     return re.sub(r"\s+", " ", str(s or "").strip().lower())
 
 
-def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None) -> str | None:
+def derive_funder_relationship(org: dict, rfp: dict, donor: dict | None = None,
+                               graph=None) -> str | None:
     """FUNDER OR PARTNER relationship (PREFER 7). Past grantee of this donor
     (org.funder_history ∋ donor) → "Current/past grantee" (strongest). Else a warm
     route in → "Some contact": we've ENGAGED this donor before (org.engaged_donors),
     OR a SHARED COLLABORATOR — an org we partner with is also among the donor's
     partners/collaborators — OR we're registered on their portal. Else "None"; None
-    only when we hold no relationship data."""
+    only when we hold no relationship data. `graph`: grantee / engaged / shared are
+    parent+consortium-transferable, so the same fact held by the parent org / Prime /
+    a co-Sub counts (label + components share the graph helpers → never disagree)."""
     hist = [h for h in (org.get("org_funder_history") or []) if h]
-    if _is_past_grantee(org, rfp, donor):
+    if _grantee_graph(org, rfp, donor, graph):
         return "Current/past grantee"
-    _eng, _ = _donor_engaged(org, rfp, donor)
+    _eng, _ = _engaged_graph(org, rfp, donor, graph)
     if ((_eng is not None and _eng > 0.0)
-            or _shared_collaborator(org, donor) or _registered_on_portal(org, rfp, donor)):
+            or _shared_graph(org, donor, graph) or _registered_on_portal(org, rfp, donor)):
         return "Some contact"
     if (not hist and not (org.get("org_donor_registrations") or [])
             and not (org.get("trusted_partners") or [])
@@ -2308,9 +2357,10 @@ def derive_criteria(rfp: dict, org: dict | None = None, donor: dict | None = Non
         "strategic_fit": derive_strategic_fit(org, rfp, donor),
         "capacity": derive_capacity(org, rfp, donor, org_settings),
         "geographic_fit": derive_geographic_fit(org, rfp, org_settings, donor),
-        "cofinancing": derive_cofinancing(org, rfp, donor, org_settings=org_settings),
+        "cofinancing": derive_cofinancing(org, rfp, donor, org_settings=org_settings,
+                                           graph=graph),
         "funding_quality": derive_funding_quality(rfp, org, policies),
-        "funder_relationship": derive_funder_relationship(org, rfp, donor),
+        "funder_relationship": derive_funder_relationship(org, rfp, donor, graph=graph),
         "competitiveness": derive_competitiveness(org, rfp, donor, org_settings),
         "bid_effort": derive_bid_effort(rfp, org_settings),
     }
@@ -2357,7 +2407,8 @@ def _donor_engaged(org: dict, rfp: dict, donor: dict | None) -> tuple[float | No
     return None, ""
 
 
-def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> list[dict]:
+def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None,
+                          graph=None) -> list[dict]:
     # Match the funder history CANONICALLY, not by raw name. `_funder_in_history` compares
     # `rfp.funding_agency` as a STRING, so a call published under a programme brand missed
     # the funder behind it: "Grand Challenges" never matched an org history holding "Bill &
@@ -2367,7 +2418,7 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
     # authorized-signatory and PREFER-8's portal checks match the same fact — PREFER-7 was
     # the odd one out. The raw-name test is KEPT as a fallback for free-typed funders that
     # are not in the donor catalog at all.
-    grantee = _is_past_grantee(org, rfp, donor)
+    grantee = _grantee_graph(org, rfp, donor, graph)
     # PORTAL REGISTRATION IS NOT A RELATIONSHIP. This read
     # `_shared_collaborator(...) or _registered_on_portal(...)`, and the portal arm was
     # answering a different question: having an account on the submission platform says
@@ -2383,8 +2434,8 @@ def _relationship_factors(org: dict, rfp: dict, donor: dict | None = None) -> li
     # submission platform is a real competitiveness edge and is what the owner added it
     # for (2026-07-20). PREFER-7 asks whether we know the FUNDER, so the only warm route
     # left here is a partner of ours who is also a partner of theirs.
-    contact = bool(_shared_collaborator(org, donor))
-    sc, src = _donor_engaged(org, rfp, donor)
+    contact = _shared_graph(org, donor, graph)
+    sc, src = _engaged_graph(org, rfp, donor, graph)
     eng = _factor("rel_engaged", "Donor already engaged on this opportunity", "R",
                   (None if sc is None else sc >= 1.0 if sc >= 1.0 else sc > 0.0),
                   active=sc is not None, score=sc)
@@ -2753,9 +2804,9 @@ def factor_breakdown(rfp: dict, org: dict | None = None, donor: dict | None = No
         "strategic_fit": _strategic_factors(org, rfp, donor),
         "capacity": _capacity_factors(org, rfp, eff, org_settings),
         "geographic_fit": _geo_factors(org, rfp, org_settings, eff),
-        "cofinancing": compliance_factors(org, rfp, eff, org_settings),
+        "cofinancing": compliance_factors(org, rfp, eff, org_settings, graph),
         "funding_quality": _funding_quality_factors(rfp, org),
-        "funder_relationship": _relationship_factors(org, rfp, donor),
+        "funder_relationship": _relationship_factors(org, rfp, donor, graph),
         "competitiveness": _competitiveness_factors(org, rfp, eff, org_settings),
         "bid_effort": _bid_effort_factors(rfp, org_settings),
     }
