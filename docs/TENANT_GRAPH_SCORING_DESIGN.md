@@ -306,7 +306,12 @@ every existing test and caller is byte-for-byte unaffected.
   (per branch/migration discipline). Run in the Supabase SQL editor.
 - **P2 — Graph resolver:** `core/applicant_graph.py` + name→tenant + whitelist read
   + self-only fallback. No scoring change yet.
-- **P3 — Registration soft-0.5 + graph:** §5.1 (highest-value, unblocks the case).
+- **P3 — Registration soft-0.5 + graph (DONE):** §5.1. `graph=` threaded through
+  `qualification_factors`/`derive_qualification`/`qualification_bid_strength`/
+  `derive_criteria`/`fatal_decline`/`factor_breakdown` (None → byte-for-byte
+  single-tenant); `resolve()` wired into review_rfp, opportunity_scoring, auto_scorer
+  (fail-closed). Sub → 0.5 "unclear" (non-fatal), inherits a registered prime/parent →
+  1.0. `tests/test_must1_sub_registration_graph.py`.
 - **P4 — Signatory + PREFER-7 graph:** §5.2.
 - **P5 — PREFER-8 portal (US-federal + parent) + track-record parent-max:** §5.3–5.4.
 - **P6 — UI:** parent-link picker + `share_for_consortium_scoring` toggle in
