@@ -330,10 +330,14 @@ every existing test and caller is byte-for-byte unaffected.
 - **P6 — UI:** parent-link picker + `share_for_consortium_scoring` toggle in
   Settings/Tenant admin (reusing the mig-082 create→pending→approve flow), and the
   **"Leadership authorized signatory" validated multiselect** (§5.2) on the org profile.
-- **P5b — MUST-4 geographic consortium transfer** (§4, `_geo_presence`): a Sub
-  inherits Prime/co-Sub/parent in-country presence (own presence still scores
-  strongest).
-- **Later:** MUST-1 HQ (item C) consortium transfer — lower frequency (§4).
+- **P5b — MUST-4 geographic consortium transfer (DONE):** §4, `_geo_presence`. When
+  self reads "No presence there" but a `for_geographic()` profile (Prime / co-Sub /
+  parent) covers scope → "Yes, via a partner" (0.5), moving the label off the fatal
+  trigger. Own presence still wins. Threaded through `derive_geographic_fit` /
+  `_geo_factors` / `geographic_bid_strength` + the dispatchers.
+  `tests/test_must4_geographic_consortium.py`.
+- **Later:** MUST-1 HQ (item C) consortium transfer — lower frequency (§4);
+  PREFER-8 portal parent-transfer (fold in when the §5.3 branch merges).
 
 ---
 
