@@ -1915,7 +1915,15 @@ if tab_learning is not None:
     # the body on purpose. Never rename it with a leading underscore — Streamlit drops
     # underscore-prefixed args from the key. See core.cache_scope.
             try:
-                q = get_client().table("scan_decisions").select("id", count="exact")
+                # SHARED training signal across ALL tenants — read with the RLS-bypassing
+                # service client, NOT get_client(). scan_decisions is tenant-scoped by RLS, so
+                # get_client() returned only the viewer's HOME tenant (empty for a super_user
+                # homed to the developer tenant) — the "No signals captured yet" bug, even
+                # though feedback logged under other tenants (e.g. a country team) is exactly
+                # the labeled set this developer-only view is meant to show. Body is gated on
+                # _dev_member above, so only developer members reach this cross-tenant read.
+                from db.supabase_client import service_client
+                q = service_client().table("scan_decisions").select("id", count="exact")
                 if event_type:
                     q = q.eq("event_type", event_type)
                 return int(q.execute().count or 0)
@@ -1930,10 +1938,11 @@ if tab_learning is not None:
     # the body on purpose. Never rename it with a leading underscore — Streamlit drops
     # underscore-prefixed args from the key. See core.cache_scope.
             from collections import Counter as _Counter
+            from db.supabase_client import service_client   # shared cross-tenant set (see _ld_count)
             out, start, page = _Counter(), 0, 1000
             try:
                 while True:
-                    chunk = (get_client().table("scan_decisions").select("label")
+                    chunk = (service_client().table("scan_decisions").select("label")
                              .eq("event_type", "system_reject")
                              .range(start, start + page - 1).execute().data or [])
                     if not chunk:
@@ -1948,7 +1957,10 @@ if tab_learning is not None:
 
         _total = _ld_count(scope=scope_key())
         try:
-            _ld = (sb.table("scan_decisions").select("*")
+            # Cross-tenant shared training set (RLS-bypass) — see _ld_count. Was `sb`
+            # (get_client), which scoped the display window to the viewer's home tenant.
+            from db.supabase_client import service_client as _svc
+            _ld = (_svc().table("scan_decisions").select("*")
                    .order("created_at", desc=True).limit(1000).execute().data or [])
         except Exception as exc:
             st.warning(f"Couldn't load scan_decisions — did you run migration 027? ({exc})")
@@ -1972,6 +1984,55 @@ if tab_learning is not None:
                     st.dataframe(_by, hide_index=True, width='stretch')
                 else:
                     st.caption("No rejects logged yet.")
+
+            # FALSE REJECTS — auto-rejects a human overturned (verdict 'false_reject' on a
+            # reject_verification). Far more of these labels exist than human decisions, and
+            # each one is a good opportunity the gate wrongly dropped — the highest-value
+            # learning signal here: recover the call AND see which gate rule over-rejects.
+            @st.cache_data(ttl=30)
+            def _false_rejects(scope: str) -> list[dict]:
+                # `scope` keys the process-global cache; unused in the body (see _ld_count).
+                try:
+                    from db.supabase_client import service_client
+                    return (service_client().table("scan_decisions")
+                            .select("created_at,reason,opportunity_title,funding_agency,"
+                                    "opportunity_link,decided_by,geographic_scope")
+                            .eq("event_type", "reject_verification")
+                            .eq("label", "false_reject")
+                            .order("created_at", desc=True).limit(500).execute().data or [])
+                except Exception:
+                    return []
+
+            _fr = _false_rejects(scope_key())
+            with st.expander(f"🔁 False rejects — gate mistakes to recover ({len(_fr)})",
+                             expanded=bool(_fr)):
+                if not _fr:
+                    st.caption("None flagged yet. Mark an auto-reject as a false reject in "
+                               "the Sources → Verify Registry review to populate this.")
+                else:
+                    st.caption("Opportunities the gate rejected but a human overturned. "
+                               "**Recover** each (open the link, then Add to pipeline), and "
+                               "the reason breakdown shows which gate rule to tune.")
+                    _frf = pd.DataFrame(_fr)
+                    # Pattern summary: which ORIGINAL reject reason produced the false reject.
+                    _rzn = (_frf["reason"].fillna("(none recorded)")
+                            .replace("", "(none recorded)").str.slice(0, 48)
+                            .value_counts().rename_axis("original reject reason")
+                            .reset_index(name="count"))
+                    st.dataframe(_rzn, hide_index=True, width='stretch')
+                    _frcols = [c for c in ["created_at", "opportunity_title",
+                                           "funding_agency", "reason", "opportunity_link",
+                                           "decided_by"] if c in _frf.columns]
+                    st.dataframe(
+                        _frf[_frcols], hide_index=True, width='stretch',
+                        column_config={"opportunity_link": st.column_config.LinkColumn(
+                            "Link", display_text="Open ↗")})
+                    st.download_button(
+                        "⬇ Download false rejects CSV",
+                        _frf[_frcols].to_csv(index=False).encode("utf-8"),
+                        file_name="false_rejects.csv", mime="text/csv",
+                        key="dl_false_rejects")
+
             st.caption(f"Table below shows the **{len(_ldf)}** most recent of **{_total}** "
                        f"total signals (newest first). Counts above are the full-table totals.")
             _cols = [c for c in ["created_at", "event_type", "label", "reason",
