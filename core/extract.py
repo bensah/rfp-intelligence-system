@@ -95,6 +95,18 @@ def _money_values_in_text(text: str) -> set[float]:
     return out
 
 
+def _amount_val(v) -> float | None:
+    """Coerce a value to a positive float, or None. Shared by the synthesis
+    range-fill so "1,200,000" / "$300000" / 800000 all normalise."""
+    if v in (None, "", 0, "0") or isinstance(v, bool):
+        return None
+    try:
+        f = float(str(v).replace(",", "").replace("$", "").strip())
+    except (TypeError, ValueError):
+        return None
+    return f if f > 0 else None
+
+
 def _amount_grounded(amount, text: str) -> bool:
     """True if `amount` (±1%) matches a real money expression in the text."""
     if amount in (None, 0, "0", ""):
@@ -105,6 +117,34 @@ def _amount_grounded(amount, text: str) -> bool:
         return True
     return any(v > 0 and abs(v - a) / max(v, a) <= 0.01
               for v in _money_values_in_text(text))
+
+
+def tiers_to_bounds(tiers: Any) -> tuple[float | None, float | None]:
+    """Overall award (floor, ceiling) across staged/tiered funding.
+
+    Each tier contributes its OWN representative edges. A "Tier 1: up to US$300,000"
+    tier gives amount_max=300000 with amount_min null-or-0, so the lower edge of the
+    award SPECTRUM is that tier's cap (300k), not None — giving a real 300k–800k range
+    across ["up to 300k", "up to 600k", "up to 800k"] rather than a lone 800k figure.
+    0 / negative are treated as "no bound" (models emit amount_min=0 for "up to X")."""
+    if not isinstance(tiers, (list, tuple)) or not tiers:
+        return None, None
+
+    def _num(x):
+        return (x if isinstance(x, (int, float)) and not isinstance(x, bool)
+                and x > 0 else None)
+
+    lo_edges, hi_edges = [], []
+    for t in tiers:
+        if not isinstance(t, dict):
+            continue
+        lo, hi = _num(t.get("amount_min")), _num(t.get("amount_max"))
+        if lo is None and hi is None:
+            continue
+        lo_edges.append(lo if lo is not None else hi)   # this tier's lower edge
+        hi_edges.append(hi if hi is not None else lo)   # this tier's upper edge
+    return (min(lo_edges) if lo_edges else None,
+            max(hi_edges) if hi_edges else None)
 
 
 def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
@@ -215,13 +255,15 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
         g_cur = _llm("currency")
 
     # staged / tiered amounts (LLM only) -> derive floor/ceiling + headline amount.
+    # Each tier contributes its OWN representative bounds: a "Tier 1: up to US$300,000"
+    # gives amount_max=300k with amount_min null, so the lower edge of the AWARD SPECTRUM
+    # is the smallest tier cap (300k) and the upper edge the largest (800k). Using
+    # min(amount_min) alone collapsed the floor to None for these "up to X" tier tables
+    # (the GC pathogen-sequencing case) — the call publishes a 300k–800k range, not a
+    # single 800k figure.
     tiers = _llm("funding_tiers") or []
-    floor = ceil = None
+    floor, ceil = tiers_to_bounds(tiers)
     if tiers:
-        _mins = [t.get("amount_min") for t in tiers if isinstance(t.get("amount_min"), (int, float))]
-        _maxs = [t.get("amount_max") for t in tiers if isinstance(t.get("amount_max"), (int, float))]
-        floor = min(_mins) if _mins else None
-        ceil = max(_maxs) if _maxs else None
         if g_amt is None and ceil is not None:        # headline = largest tier
             g_amt = ceil
             _amt_is_llm = True
@@ -323,6 +365,15 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # read straight off the page always wins.
     _syn_amount = _syn.get("call_award_value")
     _syn_duration = _syn.get("project_duration")
+    # RANGE fallback: when the structured extractor found no tiers, the synthesis may still
+    # have read a ranged award ("grants of EUR 1–3 million", "up to $2M"). Fill floor/ceiling
+    # from it, grounded like every LLM amount. Only when the judge left them blank.
+    _sf = _amount_val(_syn.get("call_award_floor"))
+    _sc = _amount_val(_syn.get("call_award_ceiling"))
+    if floor is None and _sf is not None and _amount_grounded(_sf, text):
+        floor = _sf
+    if ceil is None and _sc is not None and _amount_grounded(_sc, text):
+        ceil = _sc
 
     rec = {
         "uid": extracted_store.make_uid(url, title),

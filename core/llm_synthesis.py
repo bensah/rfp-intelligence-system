@@ -326,6 +326,15 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
         "tracks with different amounts, return the HIGHEST amount; convert to USD if the "
         "call uses another currency; null if the call states no amount. Ground it in the "
         "text — never invent.\n"
+        '  "call_award_value_min_usd": the LOWEST per-award amount when the call publishes a '
+        "RANGE or SEVERAL tiers/tracks with different amounts (e.g. tiers of 'up to $300,000', "
+        "'up to $600,000', 'up to $800,000' → 300000; 'grants of EUR 1–3 million' → the USD "
+        "value of 1 million). A plain NUMBER in US dollars, converted if needed. null when the "
+        "call states a SINGLE amount or no amount. Ground it in the text — never invent.\n"
+        '  "call_award_value_max_usd": the HIGHEST per-award amount when the call publishes a '
+        "RANGE or SEVERAL tiers/tracks (the top of the range / largest tier). A plain NUMBER "
+        "in US dollars, converted if needed. null when the call states a SINGLE amount or no "
+        "amount. Ground it in the text — never invent.\n"
         '  "project_duration_months": the project / grant length for THIS call as an '
         "INTEGER number of MONTHS. If a range or multiple tracks, return the HIGHEST; null "
         "if the call states no duration. Never invent.\n"
@@ -429,16 +438,19 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
                           or os.environ.get("LLM_JUDGE_TIMEOUT", "60") or 60),
             max_retries=0,
         )
-        resp = client.chat.completions.create(
-            model=chosen,
+        from core.llm_client import model_chain, chat_with_fallback
+        models = model_chain("LLM_SYNTH_MODEL", chosen)
+        raw, used_model, resp = chat_with_fallback(
+            client, models,
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}],
             # Mild temperature so the prose VARIES per RFP (not robotic); the
             # strong "ground every statement / never invent" instructions keep the
             # factual fields (compliance_flags etc.) accurate.
             temperature=0.4, max_tokens=_MAX_OUTPUT_TOKENS)
-        raw = (resp.choices[0].message.content or "") if resp.choices else ""
-        usage = getattr(resp, "usage", None)
+        if used_model:
+            chosen = used_model
+        usage = getattr(resp, "usage", None) if resp is not None else None
         prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
         completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
         if usage:
@@ -488,6 +500,15 @@ def synthesize(candidate: dict[str, Any], org: dict[str, Any],
     _av = _num_or_none(parsed.get("call_award_value_usd"))
     if _av:
         out["call_award_value"] = _av
+    # RANGE bounds — only when the call actually published a range/tiers (min ≠ max). These
+    # fill call_award_floor/ceiling downstream (extract.build_record) so the Value field can
+    # show "US $300,000 – US $800,000" instead of only the top figure. A single-amount call
+    # returns null for both (min == max is treated as single → no range).
+    _amin = _num_or_none(parsed.get("call_award_value_min_usd"))
+    _amax = _num_or_none(parsed.get("call_award_value_max_usd"))
+    if _amin and _amax and _amin != _amax:
+        out["call_award_floor"] = min(_amin, _amax)
+        out["call_award_ceiling"] = max(_amin, _amax)
     _pd = _num_or_none(parsed.get("project_duration_months"))
     if _pd:
         out["project_duration"] = int(round(_pd))

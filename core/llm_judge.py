@@ -56,7 +56,12 @@ _DEFAULT_MODEL = "gpt-4o-mini"
 # Per-call timeout. Hosted models answer in 1-3s; a local CPU model (Ollama)
 # can take 30-90s, so make it tunable via LLM_JUDGE_TIMEOUT (seconds).
 _DEFAULT_TIMEOUT = 60
-_MAX_INPUT_CHARS = 6000     # ~1.5K tokens of body — keeps cost bounded
+_MAX_INPUT_CHARS = 9000     # ~2.25K tokens of body — bounded, but big enough that an
+                            # amount-anchored excerpt keeps the funding section (see
+                            # _body_excerpt) even on a long RFP whose "Award Structure /
+                            # tiers" table sits well past the opening.
+_OPENING_CHARS = 3000       # always-included lead (purpose/scope usually lead)
+_ANCHOR_WINDOW = 1000       # chars kept around each money/section anchor
 # Reasoning models (gpt-oss, deepseek-r1, o-series) spend completion tokens on
 # an internal reasoning pass BEFORE emitting `content`; a tight cap gets eaten by
 # reasoning and the JSON never finishes (finish_reason="length", empty content).
@@ -113,11 +118,53 @@ def _org_context(policies: dict[str, Any]) -> str:
     )
 
 
+def _body_excerpt(candidate: dict[str, Any]) -> str:
+    """Body text sent to the judge. A flat [:_MAX_INPUT_CHARS] slice dropped the
+    funding/eligibility section on long RFPs — the "Award Structure and Funding
+    Level" tier table (up to US$300,000 … US$800,000) sits past the opening, so the
+    judge never saw the tiers and returned no funding_tiers. This keeps the opening
+    PLUS windows anchored on money expressions and eligibility/deadline labels, so
+    the figures survive within the same bounded budget."""
+    body = str(candidate.get("brief_description") or candidate.get("_page_text") or "").strip()
+    if len(body) <= _MAX_INPUT_CHARS:
+        return body
+    try:
+        from core.deep_read import _AMOUNT_RE
+    except Exception:
+        return body[:_MAX_INPUT_CHARS]
+    n = len(body)
+    opening_end = min(_OPENING_CHARS, _MAX_INPUT_CHARS)
+    half = _ANCHOR_WINDOW // 2
+    spans: list[list[int]] = []
+    for m in _AMOUNT_RE.finditer(body):
+        c = (m.start() + m.end()) // 2
+        if c < opening_end:
+            continue
+        spans.append([max(opening_end, c - half), min(n, c + half)])
+    if not spans:
+        return body[:_MAX_INPUT_CHARS]
+    spans.sort()
+    merged: list[list[int]] = []
+    for s, e in spans:
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    budget = max(0, _MAX_INPUT_CHARS - opening_end)
+    kept: list[tuple[int, int]] = []
+    for s, e in merged:
+        if budget <= 0:
+            break
+        take = min(e - s, budget)
+        kept.append((s, s + take))
+        budget -= take
+    return "\n[...]\n".join([body[:opening_end]] + [body[s:e] for s, e in kept])
+
+
 def _build_messages(candidate: dict[str, Any], policies: dict[str, Any]) -> list[dict]:
     title = (candidate.get("opportunity_title") or "")[:300]
     url = candidate.get("opportunity_link") or ""
-    body = (candidate.get("brief_description") or candidate.get("_page_text") or "")
-    body = str(body).strip()[:_MAX_INPUT_CHARS]
+    body = _body_excerpt(candidate)
     system = (
         "You are a precise grants/RFP screening analyst. You read a web page and "
         "the funding org's eligibility policy, then return ONE JSON object — no "
@@ -201,7 +248,7 @@ def judge(candidate: dict[str, Any], policies: dict[str, Any],
         return None
     chosen = model or os.environ.get("LLM_JUDGE_MODEL", _DEFAULT_MODEL)
     ckey = hashlib.sha1(
-        (chosen + "|" + title + "|" + str(body)[:_MAX_INPUT_CHARS]).encode("utf-8")
+        (chosen + "|" + title + "|" + _body_excerpt(candidate)).encode("utf-8")
     ).hexdigest()
     if ckey in _CACHE:
         return _CACHE[ckey]
@@ -225,13 +272,14 @@ def judge(candidate: dict[str, Any], policies: dict[str, Any],
             timeout=timeout,
             max_retries=0,          # one shot — we fall back to regex on failure
         )
-        resp = client.chat.completions.create(
-            model=chosen,
+        from core.llm_client import model_chain, chat_with_fallback
+        models = [model] if model else model_chain("LLM_JUDGE_MODEL", _DEFAULT_MODEL)
+        raw, used_model, _resp = chat_with_fallback(
+            client, models,
             messages=_build_messages(candidate, policies),
             temperature=0,
             max_tokens=_MAX_OUTPUT_TOKENS,
         )
-        raw = (resp.choices[0].message.content or "") if resp.choices else ""
     except Exception as exc:
         log.warning("llm_judge failed (%s): %s: %s",
                     candidate.get("opportunity_link"), type(exc).__name__, exc)
@@ -243,7 +291,7 @@ def judge(candidate: dict[str, Any], policies: dict[str, Any],
                  candidate.get("opportunity_link"), raw[:200])
         return None
 
-    out = _normalise(parsed, chosen)
+    out = _normalise(parsed, used_model or chosen)
     _CACHE[ckey] = out
     return out
 

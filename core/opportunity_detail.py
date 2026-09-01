@@ -208,6 +208,34 @@ def format_money_range(floor: Any, ceiling: Any, currency: Any = "USD") -> str:
     return lo or hi
 
 
+def award_range_bounds(row: Any) -> tuple[float | None, float | None]:
+    """(floor, ceiling) award bounds for a record, from the range columns
+    (call_award_floor / call_award_ceiling). Either may be None."""
+    if not hasattr(row, "get"):
+        return None, None
+    return _amount(row.get("call_award_floor")), _amount(row.get("call_award_ceiling"))
+
+
+def award_headline(row: Any, currency: Any = None) -> str:
+    """The Value/Award figure to SHOW for a call: a RANGE ("US $300,000 – US $800,000")
+    when the call published several or ranged amounts (floor ≠ ceiling), else the single
+    value — the "single clear value keeps current behaviour" rule. Reads whichever value
+    column the row carries (grant_amount in the store, call_award_value in submissions),
+    so both the Review tab and the opportunity page render values identically.
+
+    Returns "" when no amount is known (caller shows "—")."""
+    cur = row.get("currency") if (currency is None and hasattr(row, "get")) else currency
+    lo, hi = award_range_bounds(row)
+    if lo and hi and lo != hi:
+        return format_money_range(lo, hi, cur)
+    single = None
+    if hasattr(row, "get"):
+        single = row.get("grant_amount")
+        if single in (None, "", 0, "0"):
+            single = row.get("call_award_value")
+    return format_money(single, cur) or format_money(hi or lo, cur)
+
+
 def usd_reference(value: Any, currency: Any) -> str:
     """The USD figure for an award, ALWAYS — "≈US $38,108,565" for a converted amount, and
     "=US $1,500,000" when the call is already in USD.

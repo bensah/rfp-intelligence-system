@@ -1041,6 +1041,13 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
             if _pd:
                 cand["date_posted"] = _pd
 
+    # Keep the FULL detail-page body so build_record's regex AND LLM see it — not just
+    # the local one-shot _extract_amount below. Without this, an amount / tier table that
+    # lives only on the detail page (and past the 1800-char brief_description cap) never
+    # reached the LLM judge or the synthesis, so ranged/tiered awards read as blank.
+    if text and not cand.get("_page_text"):
+        cand["_page_text"] = _clean(text)[:20000] or None
+
     # Deadline detection — four sources, in priority order:
     #   1. Explicit deadline phrase in body text (most reliable).
     #   2. PDF guide linked from the HTML page (Pierre Fabre case —
@@ -2831,6 +2838,43 @@ def _ts_to_date(ts: Any) -> date | None:
         return None
 
 
+# Cap on GC detail-page fetches per scan — each is a throttled request; a weekly
+# job can afford the whole listing, but bound it so a runaway listing can't stall.
+try:
+    _GC_DETAIL_MAX = int(os.environ.get("GC_DETAIL_MAX", "60") or 60)
+except ValueError:
+    _GC_DETAIL_MAX = 60
+
+
+def _gc_challenge_text(detail_url: str) -> str | None:
+    """Full challenge body for a Grand Challenges /challenge/ page.
+
+    The LISTING JSON only carries a truncated summary (opportunity_description[:1800]),
+    which omits the "Award Structure and Funding Level" tier table — so amounts published
+    ONLY on the detail page (e.g. 'up to US$300,000 … US$800,000') never reached the
+    extractor. The detail page embeds the FULL body in __NEXT_DATA__ at
+    props.pageProps.challenge.opportunityDescription (clean prose, no nav chrome), so a
+    plain GET + JSON read recovers it — no Playwright needed. Returns cleaned text, or
+    None on any failure (caller keeps the listing summary)."""
+    try:
+        r = _http.get(detail_url, headers={"User-Agent": USER_AGENT,
+                                           "Accept": "text/html"}, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
+        if not m:
+            return None
+        chal = (((json.loads(m.group(1)).get("props") or {}).get("pageProps") or {})
+                .get("challenge") or {})
+        body = chal.get("opportunityDescription") or ""
+        if not body:
+            return None
+        text = re.sub(r"<[^>]+>", " ", html.unescape(body))
+        return _clean(text)[:20000] or None
+    except Exception as exc:
+        log.debug("GC detail fetch failed %s: %s", detail_url, exc)
+        return None
+
+
 def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
     """Grand Challenges family (grandchallenges.org + gcgh.grandchallenges.org).
     The /grant-opportunities listing is a Next.js app that server-side-embeds the
@@ -2859,6 +2903,7 @@ def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
     # gcgh. host so the stored link works AND the crawl reads the REAL challenge body.
     from core.source_resolver import canonical_grandchallenges
     out: list[dict[str, Any]] = []
+    _detail_fetches = 0
     for it in data:
         if it.get("hidden"):
             continue
@@ -2866,18 +2911,28 @@ def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
         rel = it.get("url") or ""
         if not title or not rel:
             continue
+        link = canonical_grandchallenges(urljoin(base + "/", rel.lstrip("/")))
         desc = re.sub(r"<[^>]+>", " ", html.unescape(it.get("opportunity_description") or ""))
-        out.append({
+        cand = {
             "opportunity_title": title[:300],
-            "opportunity_link": canonical_grandchallenges(
-                urljoin(base + "/", rel.lstrip("/"))),
+            "opportunity_link": link,
             "funding_agency": _clean(it.get("initiative_title") or "")
                               or _funder_from_source_name(name),
             "brief_description": _clean(desc)[:1800] or None,
             "date_posted": _ts_to_date(it.get("date")),
             "call_submission_deadline": _ts_to_date(it.get("date_end")),
             "_source_origin": f"{name}{' (coming soon)' if it.get('coming_soon') else ''}",
-        })
+        }
+        # Pull the FULL challenge body (with the Award Structure / tier amounts) from the
+        # detail page so regex + LLM can read the figures the listing summary omits. Skip
+        # coming-soon calls (no body yet) and stay within the per-scan fetch cap.
+        if (not it.get("coming_soon") and link
+                and _detail_fetches < _GC_DETAIL_MAX):
+            _detail_fetches += 1
+            full = _gc_challenge_text(link)
+            if full:
+                cand["_page_text"] = full
+        out.append(cand)
     return _dedup_by_link_or_title(out)
 
 
