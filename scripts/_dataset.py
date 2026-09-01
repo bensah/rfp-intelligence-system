@@ -20,14 +20,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np  # noqa: E402
 
 from core.decision_model import CLASSES, FEATURE_NAMES, raw_vector  # noqa: E402
-from db.supabase_client import get_client, safe_execute  # noqa: E402
+from db.supabase_client import service_client, safe_execute  # noqa: E402
 
 _CLS_IDX = {c: i for i, c in enumerate(CLASSES)}
 
 
 def _fetch_all(table: str, columns: str, *, eq: dict | None = None,
                page: int = 1000) -> list[dict]:
-    sb = get_client()
+    # The decision model is a PLATFORM-SHARED model — it must train on human
+    # decisions from ALL tenants, so read with the RLS-bypassing service client,
+    # NOT get_client() (which scopes to the runner's home tenant and would train
+    # the shared model on one tenant only). Mirrors the Learning-data view fix.
+    sb = service_client()
     out: list[dict] = []
     start = 0
     while True:
