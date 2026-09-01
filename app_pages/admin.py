@@ -1907,7 +1907,15 @@ if tab_learning is not None:
     # the body on purpose. Never rename it with a leading underscore — Streamlit drops
     # underscore-prefixed args from the key. See core.cache_scope.
             try:
-                q = get_client().table("scan_decisions").select("id", count="exact")
+                # SHARED training signal across ALL tenants — read with the RLS-bypassing
+                # service client, NOT get_client(). scan_decisions is tenant-scoped by RLS, so
+                # get_client() returned only the viewer's HOME tenant (empty for a super_user
+                # homed to the developer tenant) — the "No signals captured yet" bug, even
+                # though feedback logged under other tenants (e.g. a country team) is exactly
+                # the labeled set this developer-only view is meant to show. Body is gated on
+                # _dev_member above, so only developer members reach this cross-tenant read.
+                from db.supabase_client import service_client
+                q = service_client().table("scan_decisions").select("id", count="exact")
                 if event_type:
                     q = q.eq("event_type", event_type)
                 return int(q.execute().count or 0)
@@ -1922,10 +1930,11 @@ if tab_learning is not None:
     # the body on purpose. Never rename it with a leading underscore — Streamlit drops
     # underscore-prefixed args from the key. See core.cache_scope.
             from collections import Counter as _Counter
+            from db.supabase_client import service_client   # shared cross-tenant set (see _ld_count)
             out, start, page = _Counter(), 0, 1000
             try:
                 while True:
-                    chunk = (get_client().table("scan_decisions").select("label")
+                    chunk = (service_client().table("scan_decisions").select("label")
                              .eq("event_type", "system_reject")
                              .range(start, start + page - 1).execute().data or [])
                     if not chunk:
@@ -1940,7 +1949,10 @@ if tab_learning is not None:
 
         _total = _ld_count(scope=scope_key())
         try:
-            _ld = (sb.table("scan_decisions").select("*")
+            # Cross-tenant shared training set (RLS-bypass) — see _ld_count. Was `sb`
+            # (get_client), which scoped the display window to the viewer's home tenant.
+            from db.supabase_client import service_client as _svc
+            _ld = (_svc().table("scan_decisions").select("*")
                    .order("created_at", desc=True).limit(1000).execute().data or [])
         except Exception as exc:
             st.warning(f"Couldn't load scan_decisions — did you run migration 027? ({exc})")
