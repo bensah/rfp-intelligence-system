@@ -509,6 +509,14 @@ def _extract_description_from_soup(soup: BeautifulSoup) -> str | None:
 # frequently 15-25 MB (e.g. the 21 MB Grand Challenges "Nexa" RFP), and we now
 # deep-read the WHOLE RFP to exhaust the extraction data, so the cap is 30 MB.
 ENRICH_PDF_MAX_BYTES = 30 * 1024 * 1024
+# Below this many chars, a detail page is a "teaser" — a landing whose real RFP content
+# (eligibility, scope, information requested, evaluation) lives in a linked application/RFI
+# PDF. Trigger the FULL-PDF harvest so the LLM reads the whole document (MMV market-intel
+# RFI: a ~5.5k-char table-of-contents landing → a 20-page instructions PDF). Set generously
+# — the harvest only fires when the page ALSO links a guide-relevant document (see
+# _find_application_pdf(require_keyword=True)), so a self-contained content page that
+# happens to be short but links no RFP PDF is untouched.
+_THIN_PAGE_CHARS = int(os.environ.get("RFPIS_THIN_PAGE_CHARS", "15000") or 15000)
 # Pages to parse. 3 → 8 (2026-06-04, Pierre Fabre deadlines on p4-5) → 30
 # (2026-07-02): the FULL RFP is the extraction target — eligibility, funding and
 # duration detail routinely sit deep in a 40-page package. ~50ms/page of pypdf
@@ -544,7 +552,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
 # used to find the most relevant PDF on a landing page like Pierre Fabre.
 _GUIDE_PDF_KEYWORDS = (
     "guide", "application", "applicant", "instruction",
-    "call", "rfp", "rfa", "tender", "proposal", "submission",
+    "call", "rfp", "rfa", "rfi", "information", "tender", "proposal", "submission",
     "terms", "conditions", "tor", "terms of reference",
     "download", "details",
 )
@@ -557,14 +565,18 @@ _DOC_DOWNLOAD_RE = re.compile(
     r"/downloaddocument\b|[?&]documentid=|/getdocument\b|/download/[^?]*document", re.I)
 
 
-def _find_application_pdf(soup: "BeautifulSoup | None", base_url: str) -> str | None:
+def _find_application_pdf(soup: "BeautifulSoup | None", base_url: str,
+                          require_keyword: bool = False) -> str | None:
     """Find the most likely 'application guide' PDF linked from an HTML
     page. Pierre Fabre (and many foundations) publish a landing page
     with the deadline buried inside a downloadable PDF. We follow that
     PDF for deadline extraction.
 
     Strategy: prefer PDFs whose anchor text mentions guide / application
-    / call / etc. If none match, fall back to the first PDF on the page.
+    / call / etc. If none match, fall back to the first PDF on the page —
+    UNLESS `require_keyword` (used by the full-body harvest, which must not
+    pull a random logo/annual-report PDF), in which case return None when no
+    anchor is guide-relevant.
     """
     if soup is None:
         return None
@@ -594,7 +606,7 @@ def _find_application_pdf(soup: "BeautifulSoup | None", base_url: str) -> str | 
     if relevant:
         relevant.sort(reverse=True)  # highest score first
         return relevant[0][1]
-    return fallback
+    return None if require_keyword else fallback
 
 
 def _try_pdf_guide_deadline(pdf_url: str) -> tuple[date | None, str | None]:
@@ -1040,6 +1052,31 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
             _pd = _extract_page_date(soup)
             if _pd:
                 cand["date_posted"] = _pd
+
+    # Keep the FULL detail-page body so build_record's regex AND LLM see it — not just
+    # the local one-shot _extract_amount below. Without this, an amount / tier table that
+    # lives only on the detail page (and past the 1800-char brief_description cap) never
+    # reached the LLM judge or the synthesis, so ranged/tiered awards read as blank.
+    if text and not cand.get("_page_text"):
+        cand["_page_text"] = _clean(text)[:20000] or None
+
+    # TEASER detail page + a linked application/RFI DOCUMENT PDF → harvest the FULL PDF
+    # body into _page_text (and the local `text` the deadline/eligibility/amount extractors
+    # read below), so the whole document reaches regex AND the LLM. Many donors publish a
+    # short landing page (a table of contents + a "Document pdf" link) whose real RFP
+    # content — scope, eligibility, information requested, evaluation — lives only in the
+    # linked instructions/RFI PDF (MMV market-intel RFI). require_keyword=True so this
+    # follows a genuine RFP-document link, never a stray logo/annual-report PDF; the length
+    # ceiling skips already-substantial pages that are likely self-contained. One bounded
+    # PDF fetch, only for pages that link a guide-relevant document.
+    if soup is not None and len(_clean(text or "")) < _THIN_PAGE_CHARS:
+        _detail_pdf = _find_application_pdf(soup, link, require_keyword=True)
+        if _detail_pdf:
+            _pdf_full = fetch_pdf_text(_detail_pdf)
+            if _pdf_full and len(_pdf_full) > 400:
+                text = _clean(((text or "") + "\n\n" + _pdf_full))
+                cand["_page_text"] = text[:20000] or None
+                cand["_detail_pdf"] = _detail_pdf
 
     # Deadline detection — four sources, in priority order:
     #   1. Explicit deadline phrase in body text (most reliable).
@@ -2831,6 +2868,43 @@ def _ts_to_date(ts: Any) -> date | None:
         return None
 
 
+# Cap on GC detail-page fetches per scan — each is a throttled request; a weekly
+# job can afford the whole listing, but bound it so a runaway listing can't stall.
+try:
+    _GC_DETAIL_MAX = int(os.environ.get("GC_DETAIL_MAX", "60") or 60)
+except ValueError:
+    _GC_DETAIL_MAX = 60
+
+
+def _gc_challenge_text(detail_url: str) -> str | None:
+    """Full challenge body for a Grand Challenges /challenge/ page.
+
+    The LISTING JSON only carries a truncated summary (opportunity_description[:1800]),
+    which omits the "Award Structure and Funding Level" tier table — so amounts published
+    ONLY on the detail page (e.g. 'up to US$300,000 … US$800,000') never reached the
+    extractor. The detail page embeds the FULL body in __NEXT_DATA__ at
+    props.pageProps.challenge.opportunityDescription (clean prose, no nav chrome), so a
+    plain GET + JSON read recovers it — no Playwright needed. Returns cleaned text, or
+    None on any failure (caller keeps the listing summary)."""
+    try:
+        r = _http.get(detail_url, headers={"User-Agent": USER_AGENT,
+                                           "Accept": "text/html"}, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
+        if not m:
+            return None
+        chal = (((json.loads(m.group(1)).get("props") or {}).get("pageProps") or {})
+                .get("challenge") or {})
+        body = chal.get("opportunityDescription") or ""
+        if not body:
+            return None
+        text = re.sub(r"<[^>]+>", " ", html.unescape(body))
+        return _clean(text)[:20000] or None
+    except Exception as exc:
+        log.debug("GC detail fetch failed %s: %s", detail_url, exc)
+        return None
+
+
 def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
     """Grand Challenges family (grandchallenges.org + gcgh.grandchallenges.org).
     The /grant-opportunities listing is a Next.js app that server-side-embeds the
@@ -2859,6 +2933,7 @@ def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
     # gcgh. host so the stored link works AND the crawl reads the REAL challenge body.
     from core.source_resolver import canonical_grandchallenges
     out: list[dict[str, Any]] = []
+    _detail_fetches = 0
     for it in data:
         if it.get("hidden"):
             continue
@@ -2866,18 +2941,28 @@ def _scan_grandchallenges(name: str, url: str) -> list[dict[str, Any]]:
         rel = it.get("url") or ""
         if not title or not rel:
             continue
+        link = canonical_grandchallenges(urljoin(base + "/", rel.lstrip("/")))
         desc = re.sub(r"<[^>]+>", " ", html.unescape(it.get("opportunity_description") or ""))
-        out.append({
+        cand = {
             "opportunity_title": title[:300],
-            "opportunity_link": canonical_grandchallenges(
-                urljoin(base + "/", rel.lstrip("/"))),
+            "opportunity_link": link,
             "funding_agency": _clean(it.get("initiative_title") or "")
                               or _funder_from_source_name(name),
             "brief_description": _clean(desc)[:1800] or None,
             "date_posted": _ts_to_date(it.get("date")),
             "call_submission_deadline": _ts_to_date(it.get("date_end")),
             "_source_origin": f"{name}{' (coming soon)' if it.get('coming_soon') else ''}",
-        })
+        }
+        # Pull the FULL challenge body (with the Award Structure / tier amounts) from the
+        # detail page so regex + LLM can read the figures the listing summary omits. Skip
+        # coming-soon calls (no body yet) and stay within the per-scan fetch cap.
+        if (not it.get("coming_soon") and link
+                and _detail_fetches < _GC_DETAIL_MAX):
+            _detail_fetches += 1
+            full = _gc_challenge_text(link)
+            if full:
+                cand["_page_text"] = full
+        out.append(cand)
     return _dedup_by_link_or_title(out)
 
 

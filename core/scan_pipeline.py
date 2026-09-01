@@ -105,6 +105,7 @@ _SCRAPE_STRUCTURED_FIELDS = (
     # Distinct award-scope fields (migration 036) — grants.gov + LLM extractor.
     "call_award_floor",
     "call_award_ceiling",
+    "funding_tiers",
     "total_program_funding",
     "expected_awards",
     "funding_opportunity_number",

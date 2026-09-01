@@ -138,7 +138,52 @@ def _deadline_chip(item: dict) -> str:
     return f"🗓 {d}d"
 
 
-def _render_item(item: dict, key_prefix: str = "rail") -> None:
+def _add_to_pipeline(uid: str, key: str) -> None:
+    """Inline "push this catalog call into MY pipeline" — the sidebar equivalent of the
+    opportunity page's "Add to my pipeline". Featured cards come from the SHARED catalog and
+    are, by construction, not yet in this tenant's pipeline (featured() filters seen links),
+    so every one is a valid add. Fetches the catalog row, screens it against the tenant's
+    criteria and inserts it (found_loader), then clears the cached feeds so it moves out of
+    Featured into the pipeline. provenance='opportunity-rail' skips the re-gate, exactly like
+    the opportunity page — the whole point is to recover a call the soft gate didn't pick."""
+    added = st.session_state.get(f"_rail_added_{uid}")
+    if added:
+        st.caption(f":green[✓ Added as `{added}` — screening it now.]")
+        return
+    if not st.button("➕ Add to pipeline", key=f"add_{key}", help="Screen this call and "
+                     "queue it in your pipeline"):
+        return
+    try:
+        from db.supabase_client import service_client
+        from core import opportunity_detail as _od
+        from core import found_loader
+        row = (service_client().table("extracted_solicitations").select("*")
+               .eq("uid", uid).limit(1).execute().data or [None])[0]
+        if not row:
+            st.warning("Couldn't find this opportunity in the catalog.")
+            return
+        user = st.session_state.get("app_user") or {}
+        res = found_loader.load_candidate(_od.to_candidate(row), user,
+                                          provenance="opportunity-rail")
+        if res.get("ok"):
+            st.session_state[f"_rail_added_{uid}"] = res["uid"]
+            try:
+                from core import decision_log
+                decision_log.log_feedback(_od.to_candidate(row), "good",
+                                          by=user.get("email"), reason="opportunity-rail")
+            except Exception:
+                pass
+            st.cache_data.clear()
+            st.rerun()
+        elif res.get("skipped"):
+            st.info("Already in your pipeline — not added twice.")
+        else:
+            st.warning(f"Couldn't add it: {res.get('reason') or 'unknown error'}")
+    except Exception as exc:
+        st.warning(f"Couldn't add it: {exc}")
+
+
+def _render_item(item: dict, key_prefix: str = "rail", addable: bool = False) -> None:
     # Title opens THAT opportunity's own page, carrying its uid. Every title used to
     # link to the bare `/pipelines` — the same destination for all of them, so the click
     # told you nothing and you still had to find the row by hand. Worse, a FEATURED item
@@ -171,10 +216,13 @@ def _render_item(item: dict, key_prefix: str = "rail") -> None:
     # without a reason it reads as noise rather than a recovered miss.
     if item.get("_why"):
         st.caption(f":green[**Why:** {item['_why']}]")
+    # One-click push into the tenant's pipeline (Featured cards only — see _add_to_pipeline).
+    if addable and str(item.get("uid") or "").strip():
+        _add_to_pipeline(str(item["uid"]).strip(), key=key_prefix)
 
 
 def _card(title: str, help_txt: str, items: list[dict], empty: str,
-          key_prefix: str = "c") -> None:
+          key_prefix: str = "c", addable: bool = False) -> None:
     with st.container(border=True):
         st.markdown(f"#### {title}")
         st.caption(help_txt)
@@ -184,7 +232,7 @@ def _card(title: str, help_txt: str, items: list[dict], empty: str,
         for i, it in enumerate(items):
             # Key prefix from the CARD, because the same opportunity can legitimately
             # appear in two cards and Streamlit keys must be unique per widget.
-            _render_item(it, key_prefix=f"rail_{key_prefix}_{i}")
+            _render_item(it, key_prefix=f"rail_{key_prefix}_{i}", addable=addable)
             if i < len(items) - 1:
                 st.divider()
 
@@ -226,8 +274,10 @@ def render_opportunity_rail() -> None:
         _featured = []
     _card("🎯 Featured for you",
           "Ranked from the whole catalog against your geography, programme areas and the "
-          "funders you work with — including calls your screening didn't pick up.",
-          _featured, "Nothing to feature yet — run an extraction.", key_prefix="feat")
+          "funders you work with — including calls your screening didn't pick up. Use "
+          "➕ Add to pipeline to screen one against your criteria.",
+          _featured, "Nothing to feature yet — run an extraction.", key_prefix="feat",
+          addable=True)
     _card("✅ Top Matches",
           _labels.fill("Strong fit for {tenant} (Proceed / Park / high alignment)."),
           groups["top_matches"], "No strong matches yet.", key_prefix="match")

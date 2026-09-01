@@ -264,12 +264,12 @@ with _main:
     if _brief:
         st.markdown(f"<div class='opp-lede'>{_txt(_brief)}</div>", unsafe_allow_html=True)
 
-    # Headline money + deadline, the two facts a reviewer looks for first.
-    _money = _od.format_money(_view.get("grant_amount"), _view.get("currency"))
-    _usd = _od.usd_equivalent(_view.get("grant_amount"), _view.get("currency"))
-    _range = _od.format_money_range(_view.get("call_award_floor"),
-                                    _view.get("call_award_ceiling"),
-                                    _view.get("currency"))
+    # Headline money + deadline, the two facts a reviewer looks for first. The headline
+    # is a RANGE when the call published tiers / a ranged amount (floor ≠ ceiling), else
+    # the single value (award_headline enforces that rule); the USD line sits beneath.
+    _money = _od.award_headline(_view)
+    _lo, _hi = _od.award_range_bounds(_view)
+    _ref_amt = _hi or _lo or _view.get("grant_amount")
     # Breathing room: the summary card sat flush against the metrics, so the three read as
     # part of the same block instead of as the headline facts drawn out of it.
     st.markdown("<div style='height:22px'></div>", unsafe_allow_html=True)
@@ -279,8 +279,7 @@ with _main:
     # sat unevenly; and a reader comparing calls wants the USD figure in the same place every
     # time rather than only on the foreign-currency ones.
     _h1.metric("Award value", _money or "—",
-               _od.usd_reference(_view.get("grant_amount"), _view.get("currency"))
-               or (_range if _range and _range != _money else None))
+               _od.usd_reference(_ref_amt, _view.get("currency")))
     _h2.metric("Submission deadline", str(_view.get("deadline") or "—")[:10], _dl_txt)
     _h3.metric("Project duration",
                _od.format_duration(_view.get("project_duration")) or "—",

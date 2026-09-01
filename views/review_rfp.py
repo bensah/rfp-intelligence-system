@@ -306,23 +306,23 @@ _CCY = {"USD": ("US", "$"), "EUR": ("EU", "€"), "GBP": ("GB", "£")}
 
 
 def _value_html() -> str:
-    raw = row.get("call_award_value")
-    try:
-        amt = float(raw)
-        if pd.isna(amt):
-            amt = 0.0
-    except (TypeError, ValueError):
-        amt = 0.0
-    if amt <= 0:
+    # A RANGE ("US $300,000 – US $800,000") when the call published tiers / a ranged
+    # amount (floor ≠ ceiling); the single value otherwise. Shared with the opportunity
+    # page via core.opportunity_detail so both render identically.
+    from core import opportunity_detail as _od
+    headline = _od.award_headline(row)
+    if not headline:
         return "—"
-    code = (str(row.get("currency")).strip().split()[0].upper()
-            if row.get("currency") else "USD") or "USD"
-    pre, sym = _CCY.get(code, (code, ""))
-    orig = f"{pre} {sym}{amt:,.0f}" if sym else f"{pre} {amt:,.0f}"
-    if code != "USD":
-        usd = amt * dropdowns.usd_rate(row.get("currency"))
-        return (f"{orig} <span style='color:#8a8a8a'>/ &asymp;US ${usd:,.0f}</span>")
-    return orig
+    # USD reference line — off the ceiling (the headline max) so a foreign-currency call
+    # still carries its dollar figure. Escape "$" so Streamlit markdown doesn't LaTeX it.
+    _lo, _hi = _od.award_range_bounds(row)
+    _ref_amt = _hi or _lo or row.get("call_award_value")
+    usd = _od.usd_equivalent(_ref_amt, row.get("currency"))
+    out = _html.escape(headline).replace("$", "&#36;")
+    if usd:
+        out += (f" <span style='color:#8a8a8a'>/ "
+                f"{_html.escape(usd).replace('$', '&#36;')}</span>")
+    return out
 
 
 def _kd(label: str, value: str) -> str:

@@ -872,7 +872,7 @@ def migrate(xlsx_path: Path, dry_run: bool = False,
         if not dry_run and m_rows:
             existing = (
                 sb.table("meeting_logs")
-                .select("id,external_id,is_resolved")
+                .select("id,external_id,is_resolved,meeting_date,donor_title,rfp_uid")
                 .eq("source", "migration")
                 .execute()
                 .data
@@ -886,6 +886,29 @@ def migrate(xlsx_path: Path, dry_run: bool = False,
             for e in existing:
                 if e.get("external_id"):
                     ext_to_rows.setdefault(e["external_id"], []).append(e)
+
+            # CONTENT index: a key built from each EXISTING row's OWN fields —
+            # (meeting_date + rfp_uid/donor) PLUS the normalised actions text — NOT
+            # from its stored external_id. This is what makes is_resolved survive when
+            # the stored external_id drifts between syncs — a MID column appearing/
+            # disappearing, a MID being regenerated, or any key change — which otherwise
+            # made the row miss every match above and get RE-INSERTED as a fresh
+            # unresolved duplicate (the "resolved actions come back as Not Resolved"
+            # bug). Recognising the same logical action from its content lets us UPDATE
+            # the existing row in place (is_resolved preserved) and collapse to the
+            # resolved copy instead of duplicating it. Actions text is IN the key so two
+            # DISTINCT actions for the same meeting (same date+donor) are never merged
+            # into one — only true duplicates (identical action text) collapse.
+            def _content_key(mdate: Any, donor: Any, rfp: Any, actions: Any) -> str:
+                base = _meeting_external_id(str(mdate or "")[:10], donor, rfp)
+                a = (actions or "").strip().lower()
+                return base + ":" + _hashlib.md5(a.encode("utf-8")).hexdigest()[:8]
+
+            content_to_rows: dict[str, list[dict[str, Any]]] = {}
+            for e in existing:
+                ck = _content_key(e.get("meeting_date"), e.get("donor_title"),
+                                  e.get("rfp_uid"), e.get("actions"))
+                content_to_rows.setdefault(ck, []).append(e)
 
             def _survivor(rows: list[dict[str, Any]]):
                 """(keep, [extras]) — keep a resolved copy if any so an in-app
@@ -907,6 +930,20 @@ def migrate(xlsx_path: Path, dry_run: bool = False,
                 # key, migrating to the stable MID (keeps is_resolved).
                 if not cands:
                     cands = [c for c in ext_to_rows.get(r.get("_derived_id"), [])
+                             if str(c["id"]) not in consumed]
+                    if cands:
+                        adopted += 1
+                # Robust fallback: match by the content key computed from the EXISTING
+                # rows' own fields (date + rfp_uid/donor + actions text). Catches every
+                # case where the stored external_id drifted (MID added/removed/
+                # regenerated) so a resolved action is UPDATED in place rather than
+                # re-inserted unresolved. Self-heals to the current external_id via the
+                # UPDATE below, and _survivor keeps the resolved duplicate. Actions text
+                # is in the key, so distinct actions for one meeting are never merged.
+                if not cands:
+                    ck = _content_key(r["meeting_date"], r["donor_title"],
+                                      r["rfp_uid"], r["actions"])
+                    cands = [c for c in content_to_rows.get(ck, [])
                              if str(c["id"]) not in consumed]
                     if cands:
                         adopted += 1
