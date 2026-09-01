@@ -7,9 +7,12 @@ never matched them. This collapses each set of duplicates down to a single
 row, preferring a RESOLVED copy so an in-app "Resolved" decision is never lost.
 
 How a duplicate is detected: rows are grouped by their natural meeting
-identity — meeting_date + (rfp_uid, or donor_title when there's no RFP) —
-computed from the row's own content, so copies group together regardless of
-what stored external_id each happens to carry.
+identity — meeting_date + (rfp_uid, or donor_title when there's no RFP) + the
+normalised ACTIONS text — computed from the row's own content, so copies group
+together regardless of what stored external_id each happens to carry. Actions
+text is part of the key so two DISTINCT actions for the same meeting (same date
++ donor) are never merged into one — only true duplicates collapse. This mirrors
+the merge key in migrate_excel.py (the sync's own preservation logic).
 
 Scope: ONLY source='migration' rows. In-app notes (source IS NULL) are never
 touched. Dry-run by default — pass --apply to actually delete.
@@ -35,12 +38,16 @@ for _s in (sys.stdout, sys.stderr):  # UTF-8 so status glyphs never crash on Win
 from db.supabase_client import get_client  # noqa: E402
 
 
-def _natural_key(meeting_date, donor_title, rfp_uid) -> str:
-    """Content-derived meeting identity — mirrors migrate_excel._meeting_external_id."""
+def _natural_key(meeting_date, donor_title, rfp_uid, actions=None) -> str:
+    """Content-derived ACTION identity — mirrors migrate_excel._content_key: the
+    meeting identity (date + rfp_uid/donor) PLUS the normalised actions text, so
+    distinct actions for one meeting are never collapsed into each other."""
     nk = (str(rfp_uid).strip() if rfp_uid else "")
     if not nk:
         nk = (str(donor_title).strip().lower() if donor_title else "")
-    return hashlib.md5(f"{meeting_date}|{nk}".encode("utf-8")).hexdigest()[:16]
+    base = hashlib.md5(f"{str(meeting_date or '')[:10]}|{nk}".encode("utf-8")).hexdigest()[:16]
+    a = (str(actions).strip().lower() if actions else "")
+    return base + ":" + hashlib.md5(a.encode("utf-8")).hexdigest()[:8]
 
 
 def _survivor_first(rows: list[dict]) -> list[dict]:
@@ -57,7 +64,7 @@ def main() -> None:
     sb = get_client()
     rows = (
         sb.table("meeting_logs")
-        .select("id,meeting_date,donor_title,rfp_uid,is_resolved,external_id")
+        .select("id,meeting_date,donor_title,rfp_uid,is_resolved,external_id,actions")
         .eq("source", "migration")
         .execute()
         .data
@@ -69,7 +76,7 @@ def main() -> None:
     groups: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         groups[_natural_key(r.get("meeting_date"), r.get("donor_title"),
-                            r.get("rfp_uid"))].append(r)
+                            r.get("rfp_uid"), r.get("actions"))].append(r)
 
     dup_groups = {k: v for k, v in groups.items() if len(v) > 1}
     print(f"{len(groups)} distinct meetings · {len(dup_groups)} have duplicates.\n")
