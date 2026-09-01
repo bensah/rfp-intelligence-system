@@ -509,6 +509,14 @@ def _extract_description_from_soup(soup: BeautifulSoup) -> str | None:
 # frequently 15-25 MB (e.g. the 21 MB Grand Challenges "Nexa" RFP), and we now
 # deep-read the WHOLE RFP to exhaust the extraction data, so the cap is 30 MB.
 ENRICH_PDF_MAX_BYTES = 30 * 1024 * 1024
+# Below this many chars, a detail page is a "teaser" — a landing whose real RFP content
+# (eligibility, scope, information requested, evaluation) lives in a linked application/RFI
+# PDF. Trigger the FULL-PDF harvest so the LLM reads the whole document (MMV market-intel
+# RFI: a ~5.5k-char table-of-contents landing → a 20-page instructions PDF). Set generously
+# — the harvest only fires when the page ALSO links a guide-relevant document (see
+# _find_application_pdf(require_keyword=True)), so a self-contained content page that
+# happens to be short but links no RFP PDF is untouched.
+_THIN_PAGE_CHARS = int(os.environ.get("RFPIS_THIN_PAGE_CHARS", "15000") or 15000)
 # Pages to parse. 3 → 8 (2026-06-04, Pierre Fabre deadlines on p4-5) → 30
 # (2026-07-02): the FULL RFP is the extraction target — eligibility, funding and
 # duration detail routinely sit deep in a 40-page package. ~50ms/page of pypdf
@@ -544,7 +552,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
 # used to find the most relevant PDF on a landing page like Pierre Fabre.
 _GUIDE_PDF_KEYWORDS = (
     "guide", "application", "applicant", "instruction",
-    "call", "rfp", "rfa", "tender", "proposal", "submission",
+    "call", "rfp", "rfa", "rfi", "information", "tender", "proposal", "submission",
     "terms", "conditions", "tor", "terms of reference",
     "download", "details",
 )
@@ -557,14 +565,18 @@ _DOC_DOWNLOAD_RE = re.compile(
     r"/downloaddocument\b|[?&]documentid=|/getdocument\b|/download/[^?]*document", re.I)
 
 
-def _find_application_pdf(soup: "BeautifulSoup | None", base_url: str) -> str | None:
+def _find_application_pdf(soup: "BeautifulSoup | None", base_url: str,
+                          require_keyword: bool = False) -> str | None:
     """Find the most likely 'application guide' PDF linked from an HTML
     page. Pierre Fabre (and many foundations) publish a landing page
     with the deadline buried inside a downloadable PDF. We follow that
     PDF for deadline extraction.
 
     Strategy: prefer PDFs whose anchor text mentions guide / application
-    / call / etc. If none match, fall back to the first PDF on the page.
+    / call / etc. If none match, fall back to the first PDF on the page —
+    UNLESS `require_keyword` (used by the full-body harvest, which must not
+    pull a random logo/annual-report PDF), in which case return None when no
+    anchor is guide-relevant.
     """
     if soup is None:
         return None
@@ -594,7 +606,7 @@ def _find_application_pdf(soup: "BeautifulSoup | None", base_url: str) -> str | 
     if relevant:
         relevant.sort(reverse=True)  # highest score first
         return relevant[0][1]
-    return fallback
+    return None if require_keyword else fallback
 
 
 def _try_pdf_guide_deadline(pdf_url: str) -> tuple[date | None, str | None]:
@@ -1047,6 +1059,24 @@ def _enrich_candidate(cand: dict[str, Any]) -> dict[str, Any]:
     # reached the LLM judge or the synthesis, so ranged/tiered awards read as blank.
     if text and not cand.get("_page_text"):
         cand["_page_text"] = _clean(text)[:20000] or None
+
+    # TEASER detail page + a linked application/RFI DOCUMENT PDF → harvest the FULL PDF
+    # body into _page_text (and the local `text` the deadline/eligibility/amount extractors
+    # read below), so the whole document reaches regex AND the LLM. Many donors publish a
+    # short landing page (a table of contents + a "Document pdf" link) whose real RFP
+    # content — scope, eligibility, information requested, evaluation — lives only in the
+    # linked instructions/RFI PDF (MMV market-intel RFI). require_keyword=True so this
+    # follows a genuine RFP-document link, never a stray logo/annual-report PDF; the length
+    # ceiling skips already-substantial pages that are likely self-contained. One bounded
+    # PDF fetch, only for pages that link a guide-relevant document.
+    if soup is not None and len(_clean(text or "")) < _THIN_PAGE_CHARS:
+        _detail_pdf = _find_application_pdf(soup, link, require_keyword=True)
+        if _detail_pdf:
+            _pdf_full = fetch_pdf_text(_detail_pdf)
+            if _pdf_full and len(_pdf_full) > 400:
+                text = _clean(((text or "") + "\n\n" + _pdf_full))
+                cand["_page_text"] = text[:20000] or None
+                cand["_detail_pdf"] = _detail_pdf
 
     # Deadline detection — four sources, in priority order:
     #   1. Explicit deadline phrase in body text (most reliable).
