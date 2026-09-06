@@ -62,11 +62,19 @@ class TheApplyListLandsOnMust1Tests(unittest.TestCase):
 
 
 class ItNeverAutoDeclinesTests(unittest.TestCase):
-    """The whole reason the component is shaped this way."""
+    """It never auto-declines on NOISY prose — but a CLEAN bounded-country mismatch does
+    (owner 2026-08-31)."""
 
-    def test_an_unmatched_apply_list_is_not_a_fatal_gate(self):
+    def test_a_clean_country_apply_list_the_org_fails_now_declines(self):
+        # A recognised, bounded country restriction the org is not in is a real
+        # ineligibility → fatal. (applicant_countries stays in the general non-fatal skip;
+        # the fatal comes from the explicit clean-country check.)
         rfp = {"eligibility_countries": ["Finland"]}
         self.assertIn("applicant_countries", cd._NON_FATAL_QUALIFICATION)
+        self.assertTrue(cd.fatal_decline(ORG, rfp, None, {})[0])
+
+    def test_the_org_in_a_clean_eligible_set_does_not_decline(self):
+        rfp = {"eligibility_countries": ["Kenya", "Finland"]}   # ORG is registered in Kenya
         self.assertFalse(cd.fatal_decline(ORG, rfp, None, {})[0])
 
     def test_model_prose_that_resolves_to_nothing_still_does_not_decline(self):
