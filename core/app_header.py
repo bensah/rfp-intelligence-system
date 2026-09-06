@@ -483,16 +483,13 @@ _GLOBAL_CSS = f"""
      st.switch_page (same session, no reload). The card gets a real hover affordance
      (lift + shadow + brighter spine + a CTA that resolves in) so it reads as clickable. */
   [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker) {{
-    position: relative;
-    overflow: hidden;                 /* clip the click-layer to the rounded corners */
     border: 1px solid #e6ebf1;
     border-left: 4px solid {THEME_PRIMARY};
     border-radius: 12px;
     background: {THEME_BG_CARD};
     height: 100%;                     /* fill the column so every tile is the SAME height */
-    min-height: 9.5rem;
+    min-height: 9rem;
     margin-bottom: 0.6rem;
-    cursor: pointer;
     transition: box-shadow .18s ease, transform .18s ease, border-color .18s ease;
   }}
   [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker):hover {{
@@ -501,26 +498,18 @@ _GLOBAL_CSS = f"""
     transform: translateY(-3px);
   }}
   .qc-marker {{ display: none; }}
-  /* INVISIBLE FULL-COVER CLICK LAYER. Targeted by the button's STABLE Streamlit key class
-     (st-key-qs_<page>), not DOM nesting, so the overlay is robust: the transparent button
-     spans the whole tile, so a click anywhere navigates and there is NO visible button and
-     NO redundant CTA — the tile itself is the button. */
-  [class*="st-key-qs_"] {{
-    position: absolute; inset: 0; margin: 0; z-index: 4;
+  /* THE HEADLINE IS THE LINK — a tertiary button styled to read as a heading (icon + green
+     bold title), full-width, underline on hover so it is unmistakably clickable. */
+  [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker)
+    [data-testid="stBaseButton-tertiary"] {{
+    color: {THEME_PRIMARY}; font-size: 1.04rem; font-weight: 700; letter-spacing: -0.01em;
+    justify-content: flex-start; text-align: left; padding: 2px 0; min-height: 0;
+    width: 100%;
   }}
-  [class*="st-key-qs_"] > button {{
-    position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0;
-    opacity: 0; border: none; background: transparent; box-shadow: none;
-    padding: 0; cursor: pointer;
+  [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker)
+    [data-testid="stBaseButton-tertiary"]:hover {{
+    color: {THEME_PRIMARY}; text-decoration: underline;
   }}
-  /* The content is purely visual — it must NOT swallow the click; pointer-events:none lets
-     every click pass straight through to the full-cover button, so the whole tile navigates.
-     (This was the missing piece: the content div was intercepting the pointer.) */
-  .qc-content {{ position: relative; z-index: 1; padding: 4px 6px; pointer-events: none; }}
-  .qc-head {{ display: flex; align-items: center; gap: 10px; }}
-  .qc-icon {{ font-size: 1.35rem; line-height: 1; }}
-  .qc-title {{ color: {THEME_PRIMARY}; font-weight: 700; font-size: 1.04rem;
-               letter-spacing: -0.01em; }}
   /* BREADCRUMBS. The trail sits between the top bar and the page body: quiet by default
      (it is orientation, not content), with the current page in the app's own green so the
      reader can see at a glance which crumb they are standing on. */
