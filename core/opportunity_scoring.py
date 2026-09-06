@@ -150,6 +150,19 @@ def analyse(rfp: dict, org: dict | None, donor: dict | None,
     except Exception:
         below_floor = False
 
+    # SAME-ENGINE screening reason (owner 2026-08-31): run the pipeline's own eligibility gate
+    # so the catalogue / sidebar view can EXPLAIN why a call is (or would be) kept out of the
+    # pipeline, not merely score it. This is the exact `is_eligible` the scan uses. Cheap
+    # (regex/text, no LLM); fail-OPEN so a policy/gate hiccup never blanks the page.
+    _screened_out, _screen_reason = False, ""
+    try:
+        from core.auto_scorer import is_eligible
+        from core.policies import get_policies
+        _ok, _reason = is_eligible(rfp, get_policies(), geo_org_gates=True, theme_gate=True)
+        _screened_out, _screen_reason = (not _ok), (_reason or "")
+    except Exception:
+        pass
+
     system = decide(composite, fatal=fatal, below_award_floor=below_floor)
     dpct = _dq.donor_completeness(donor)[0]
     cpct = _dq.call_completeness(rfp)[0]
@@ -166,6 +179,9 @@ def analyse(rfp: dict, org: dict | None, donor: dict | None,
         "fatal": bool(fatal),
         "fatal_trigger": trigger,
         "below_award_floor": below_floor,
+        # Would the pipeline's screening gate keep this out, and why (for the catalogue view).
+        "screened_out": _screened_out,
+        "screen_reason": _screen_reason,
         "confidence": {
             "band": band, "pct": bpct, "call_pct": cpct,
             "donor_pct": dpct, "donor_matched": _dq.donor_matched(donor),
