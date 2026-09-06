@@ -484,11 +484,13 @@ _GLOBAL_CSS = f"""
      (lift + shadow + brighter spine + a CTA that resolves in) so it reads as clickable. */
   [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker) {{
     position: relative;
+    overflow: hidden;                 /* clip the click-layer to the rounded corners */
     border: 1px solid #e6ebf1;
     border-left: 4px solid {THEME_PRIMARY};
     border-radius: 12px;
     background: {THEME_BG_CARD};
-    min-height: 10rem;
+    height: 100%;                     /* fill the column so every tile is the SAME height */
+    min-height: 9.5rem;
     margin-bottom: 0.6rem;
     cursor: pointer;
     transition: box-shadow .18s ease, transform .18s ease, border-color .18s ease;
@@ -499,27 +501,23 @@ _GLOBAL_CSS = f"""
     transform: translateY(-3px);
   }}
   .qc-marker {{ display: none; }}
-  /* invisible full-cover click layer — the button spans the card and is transparent */
-  [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker)
-    [data-testid="stButton"] {{
+  /* INVISIBLE FULL-COVER CLICK LAYER. Targeted by the button's STABLE Streamlit key class
+     (st-key-qs_<page>), not DOM nesting, so the overlay is robust: the transparent button
+     spans the whole tile, so a click anywhere navigates and there is NO visible button and
+     NO redundant CTA — the tile itself is the button. */
+  [class*="st-key-qs_"] {{
     position: absolute; inset: 0; margin: 0; z-index: 3;
   }}
-  [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker)
-    [data-testid="stButton"] > button {{
-    width: 100%; height: 100%; opacity: 0; border: none; background: transparent;
-    box-shadow: none; padding: 0; cursor: pointer;
+  [class*="st-key-qs_"] > button {{
+    width: 100%; height: 100%; min-height: 0; opacity: 0; border: none;
+    background: transparent; box-shadow: none; padding: 0; cursor: pointer;
   }}
   /* visible content sits beneath the click layer */
-  .qc-content {{ position: relative; z-index: 1; padding: 2px 4px; }}
+  .qc-content {{ position: relative; z-index: 1; padding: 4px 6px; }}
   .qc-head {{ display: flex; align-items: center; gap: 10px; }}
   .qc-icon {{ font-size: 1.35rem; line-height: 1; }}
-  .qc-title {{ color: {THEME_PRIMARY}; font-weight: 700; font-size: 1.03rem;
+  .qc-title {{ color: {THEME_PRIMARY}; font-weight: 700; font-size: 1.04rem;
                letter-spacing: -0.01em; }}
-  .qc-cta {{ display: inline-block; margin-top: 12px; color: {THEME_PRIMARY};
-             font-size: 0.82rem; font-weight: 650; opacity: .5;
-             transition: opacity .18s ease, transform .18s ease; }}
-  [data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > .qc-marker):hover
-    .qc-cta {{ opacity: 1; transform: translateX(3px); }}
   /* BREADCRUMBS. The trail sits between the top bar and the page body: quiet by default
      (it is orientation, not content), with the current page in the app's own green so the
      reader can see at a glance which crumb they are standing on. */
