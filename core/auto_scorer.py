@@ -245,6 +245,39 @@ _US_DOMESTIC_ONLY_PATTERN = re.compile(
 )
 
 
+# US-STATE government funder → DOMESTIC (owner 2026-08-31, from the NY-State AIDS Institute
+# leak). A call funded by a US STATE agency ("New York State Department of Health", "New York
+# State AIDS Institute", "State of California …") is state-level domestic — a non-US org can't
+# apply — even when the page states no country and no "domestic" phrase (the restriction is
+# implied by the funder identity, so `_US_DOMESTIC_ONLY_PATTERN` misses it). Deliberately
+# NARROW: only US STATE bodies, NOT US FEDERAL agencies (USDoS / USAID / NIH / CDC), which
+# fund international work. Precision comes from requiring the literal "State" qualifier
+# ("<State> State <agency>") or "State/Commonwealth of <State>", so the country Georgia
+# ("a project in Georgia") never trips it — only "Georgia State Department …" / "State of
+# Georgia" does.
+_US_STATE_NAMES = (
+    r"alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|"
+    r"georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|"
+    r"massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|"
+    r"new\s+hampshire|new\s+jersey|new\s+mexico|new\s+york|north\s+carolina|north\s+dakota|"
+    r"ohio|oklahoma|oregon|pennsylvania|rhode\s+island|south\s+carolina|south\s+dakota|"
+    r"tennessee|texas|utah|vermont|virginia|washington|west\s+virginia|wisconsin|wyoming"
+)
+_US_STATE_AGENCY_PATTERN = re.compile(
+    r"\b(?:" + _US_STATE_NAMES + r")\s+state\s+(?:[a-z&'\-]+\s+){0,3}"
+    r"(?:department|office|division|commission|board|authorit|institute|agency|"
+    r"health|human\s+services)\b"
+    r"|\b(?:state|commonwealth)\s+of\s+(?:" + _US_STATE_NAMES + r")\b",
+    re.IGNORECASE,
+)
+
+
+def us_state_agency_funder(text: str | None) -> bool:
+    """True when TEXT names a US STATE government funder/agency (state-level, domestic).
+    Narrow by design — federal agencies (which fund international work) never match."""
+    return bool(text) and bool(_US_STATE_AGENCY_PATTERN.search(text))
+
+
 # Explicit FOREIGN-EXCLUSION — "Foreign entities are not eligible …", "international
 # applicants are ineligible", "not eligible … foreign". This is a US-only signal that
 # carries NO "domestic"/"US" token, so the _US_DOMESTIC_ONLY_PATTERN above misses it —
@@ -1365,6 +1398,12 @@ def us_domestic_only_reject(candidate: dict[str, Any], policies: dict[str, Any])
     text = _full_text(candidate) + " " + (candidate.get("notes") or "")
     if _has_inclusive_eligibility(text):
         return False, ""
+    # US STATE government funder (state-level, domestic) — implied by the funder identity even
+    # when no country / "domestic" phrase is stated. Search the funder name too, since it often
+    # carries the state agency ("New York State Department of Health / AIDS Institute").
+    if us_state_agency_funder(text + " " + str(candidate.get("funding_agency") or "")):
+        return True, ("funded by a US STATE government agency (state-level, domestic) — "
+                      "out of scope for a non-US deployment")
     # Grants.gov is a US-FEDERAL portal. Absent an EXPLICIT foreign/international
     # eligibility statement (ruled out just above), default to US-domestic and drop for
     # a non-US deployment — grants.gov calls rarely admit foreign entities, so "unclear"
