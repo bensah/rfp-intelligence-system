@@ -1193,6 +1193,14 @@ def to_candidate(row: dict) -> dict:
         "call_award_value": row.get("grant_amount"),
         "currency": row.get("currency"),
         "call_geographic_scope": row.get("call_geographic_scope"),
+        # WHO MAY APPLY, by country — the call's own applicant restriction (schema §4.4).
+        # Dropped here previously, so the opportunity page lost the UK-only / country
+        # restriction that the SCREENING engine uses, and a country-restricted call scored a
+        # rosy 100% off the DONOR's general scope while the pipeline had (correctly) kept it
+        # out. Carrying it lets MUST-1's applicant_countries gate read the same fact, so the
+        # catalogue view and the screened pipeline agree. (owner 2026-08-31)
+        "eligibility_countries": row.get("eligibility_countries"),
+        "eligibility_other": row.get("eligibility_other"),
         "call_domain_areas": row.get("call_domain_areas") or row.get("focus_themes"),
         "instrument_type": row.get("instrument_type") or row.get("solicitation_type"),
         "project_duration": row.get("project_duration"),
