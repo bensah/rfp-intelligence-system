@@ -491,6 +491,19 @@ def standard_view(kind: str, row: dict, extraction: dict | None = None) -> dict:
     if kind == KIND_PIPELINE and not extraction             and str((row or {}).get("source") or "").strip().lower() in _HAND_ENTERED:
         if not _blank(out.get("call_geographic_scope")):
             out["_submitter_geographic_scope"] = out.pop("call_geographic_scope")
+    # DISPLAY-ONLY (owner 2026-08-31): when the call publishes no work-scope but DOES restrict
+    # applicants by country (eligibility_countries), surface that under "Geographic scope" so
+    # the field isn't confusingly blank next to an explicit applicant restriction (the Wellcome
+    # UK-only case). Each entry is tagged "(applicants)" so it never reads as a work-geography
+    # claim, and this touches the DISPLAY view only — scoring reads eligibility_countries
+    # directly via MUST-1 (core.opportunity_scoring uses to_candidate, not this view), so it
+    # does not double-count into MUST-4.
+    if _blank(out.get("call_geographic_scope")) and not _blank(out.get("eligibility_countries")):
+        _ec = out.get("eligibility_countries")
+        _ec = _ec if isinstance(_ec, (list, tuple)) else [_ec]
+        _tagged = [f"{str(c).strip()} (applicants)" for c in _ec if str(c).strip()]
+        if _tagged:
+            out["call_geographic_scope"] = _tagged
     return out
 
 
