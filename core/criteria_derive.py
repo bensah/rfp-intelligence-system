@@ -2036,6 +2036,22 @@ def _region_covered(region: Any, org: dict) -> bool:
     return False
 
 
+_COUNTRY_SET = set(_geo.COUNTRIES)
+
+
+def _clean_country_restriction(terms: Any) -> bool:
+    """True when EVERY applicant-country term canonicalises to a RECOGNISED COUNTRY (not an
+    inclusive tier like Global / LMIC, not free prose) — a high-confidence, bounded
+    restriction it is safe to HARD-gate on. A single unrecognised / inclusive / prose term
+    makes it False, so noisy LLM lists ("EU Member States", "African malaria-endemic
+    countries", "England") never hard-gate — they stay the soft, reviewable signal.
+    (owner 2026-08-31: a clean single/bounded-country mismatch is a real ineligibility.)"""
+    ts = _as_list(terms)
+    if not ts or _is_inclusive_geo(ts):
+        return False
+    return all(_geo.canonical_geo(t) in _COUNTRY_SET for t in ts)
+
+
 # Partner types/statuses that can serve as a FOREIGN PI (MUST-1 item E child).
 _PI_PARTNER_TYPES = ("nonprofit / ngo", "academic / research institutions",
                      "for-profit / private")
@@ -2295,10 +2311,18 @@ def qualification_factors(org: dict, rfp: dict, donor: dict | None = None,
     # Coverage is `_region_covered` — the SAME helper item D uses, so registered-then-operating
     # -then-inclusive-tier matching is not reimplemented here.
     _apply_to = _drop_non_geographies(rfp.get("eligibility_countries"))
-    items.append(_qfactor("applicant_countries", _applicant_countries_label(_apply_to),
-                          active=bool(_apply_to),
-                          score=(1.0 if _region_covered(_apply_to, org) else 0.0),
-                          hard=False, default=False))
+    _apply_covered = _region_covered(_apply_to, org)
+    _ac = _qfactor("applicant_countries", _applicant_countries_label(_apply_to),
+                   active=bool(_apply_to),
+                   score=(1.0 if _apply_covered else 0.0),
+                   hard=False, default=False)
+    # A CLEAN canonical bounded-country restriction the org does not meet is a genuine hard
+    # eligibility miss (e.g. "applicants must be UK-based" for a Cameroon org) → mark it FATAL
+    # so it can auto-Decline and rank at the bottom. Vague LLM prose / inclusive tiers stay
+    # NON-fatal (the general skip below), never hard-gating on extraction noise.
+    _ac["_fatal_country"] = bool(_apply_to and not _apply_covered
+                                 and _clean_country_restriction(_apply_to))
+    items.append(_ac)
 
     items.append(_qfactor("invitation_only", "Invitation received (closed round)",
                           active=_invitation_only(rfp, donor),
@@ -2719,11 +2743,18 @@ def fatal_decline(org: dict | None, rfp: dict, donor: dict | None = None,
     # `invitation_only` is exactly that: whether we hold an invitation to a closed round is
     # not visible on the call page. It still takes MUST-1 to 0 through the ordinary mean, so
     # an uninvited org still reads Decline — it is simply reviewable rather than closed.
-    for f in qualification_factors(org, rfp, eff, org_settings):
+    _qitems = qualification_factors(org, rfp, eff, org_settings)
+    for f in _qitems:
         if f["key"] in _NON_FATAL_QUALIFICATION:
             continue
         if f["active"] and f["met"] is False:
             return True, f["name"]
+    # `applicant_countries` is non-fatal in general (noisy LLM prose — see
+    # _NON_FATAL_QUALIFICATION), but a CLEAN canonical bounded-country restriction the org
+    # fails IS a hard eligibility miss and auto-Declines (owner 2026-08-31).
+    for f in _qitems:
+        if f.get("key") == "applicant_countries" and f.get("_fatal_country"):
+            return True, "Applicant-country restriction — not eligible to apply"
     # MUST-2 (strategic fit) is intentionally NOT a hard auto-Decline gate: unlike legal
     # status / geography / a budget ceiling, an off-strategy call is not a STRUCTURAL
     # impossibility, and the strategic component's 0/0.5/1 band can't cleanly separate
