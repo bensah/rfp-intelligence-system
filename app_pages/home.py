@@ -226,21 +226,27 @@ with _main:
                       "Org profile, year setting, Excel sync, currency rates, Manage Users + User Access, "
                       "the full Records backend, donor sources, manual scans. Also in the 👤 menu (top-right)."))
 
-    # THE CARD IS THE CONTROL. Each card used to be inert HTML with an "Open <page>"
-    # button bolted underneath, so every tile carried a second, redundant thing to read and
-    # the obvious click — the headline — did nothing. The headline is now the button
-    # (tertiary, so it still reads as a heading rather than a form control) and the
-    # separate Open button is gone. st.switch_page, so it stays in the same session.
+    # THE WHOLE CARD IS THE CONTROL. The visible content (icon · headline · body · CTA) is
+    # HTML; an invisible full-cover st.button sits on top (styled in app_header CSS) so a
+    # click ANYWHERE on the tile navigates — via st.switch_page, so it stays in the same
+    # session (a raw <a> would full-reload and wipe session_state). The button label is kept
+    # meaningful ("Open <page>") for screen readers even though it is visually transparent.
     cols = st.columns(3)
     for i, (page, path, icon, headline, body) in enumerate(CARDS):
         with cols[i % 3]:
             with st.container(border=True):
                 st.markdown("<div class='qc-marker'></div>", unsafe_allow_html=True)
-                if st.button(f"{icon}  {headline}", key=f"qs_{page}",
-                             type="tertiary", width="stretch",
+                st.markdown(
+                    f"<div class='qc-content'>"
+                    f"<div class='qc-head'><span class='qc-icon'>{icon}</span>"
+                    f"<span class='qc-title'>{headline}</span></div>"
+                    f"<p class='qc-body'>{body}</p>"
+                    f"<span class='qc-cta'>Open {page} →</span>"
+                    f"</div>",
+                    unsafe_allow_html=True)
+                if st.button(f"Open {page}", key=f"qs_{page}", width="stretch",
                              help=f"Go to {page}"):
                     st.switch_page(path)
-                st.markdown(f"<p class='qc-body'>{body}</p>", unsafe_allow_html=True)
 
 
     # -----------------------------------------------------------------------------
