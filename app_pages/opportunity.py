@@ -494,6 +494,17 @@ with _main:
             f"<span style='font-size:1.05rem'> · data {_conf['pct']}% "
             f"(donor {_txt(_dtxt)} · call {_conf['call_pct']}%)</span></div>"
             "</div>", unsafe_allow_html=True)
+        # SAME-ENGINE explanation: for a CATALOGUE item (not in the pipeline), say WHY the
+        # scan's eligibility gate kept it out. The sidebar surfaces close-but-ineligible calls
+        # on purpose, but a reviewer needs the reason, not just a score, so a 100-looking card
+        # never reads as "why isn't this in my pipeline?".
+        if _kind != _od.KIND_PIPELINE and _an.get("screened_out"):
+            st.error(
+                "⛔ **Not in your pipeline — screened out.** The scan's eligibility gate "
+                "rejects this: "
+                f"**{_od.display_value(_an.get('screen_reason')) or 'ineligible'}**. It shows "
+                "here because the catalogue surfaces close matches, but it did not enter your "
+                "pipeline.")
         if _an["fatal"]:
             st.error(f"🔒 **Fatal gate — {_od.display_value(_an['fatal_trigger'])}.** "
                      "This is a structural ineligibility we cannot fix before the "

@@ -1229,6 +1229,15 @@ def to_candidate(row: dict) -> dict:
         # catalogue view and the screened pipeline agree. (owner 2026-08-31)
         "eligibility_countries": row.get("eligibility_countries"),
         "eligibility_other": row.get("eligibility_other"),
+        # `notes` is the applicant-eligibility prose the reject gates read (us_domestic_only /
+        # foreign-excluded / state-agency all search `_full_text + notes`); mapping it lets the
+        # opportunity page run the SAME screening decision as the pipeline. `opportunity_type`
+        # + `eligibility_applicant_types` + `source` feed the type / applicant-type / aggregator
+        # gates for the same reason. (owner 2026-08-31)
+        "notes": row.get("eligibility_other"),
+        "opportunity_type": row.get("opportunity_type"),
+        "eligibility_applicant_types": row.get("eligibility_applicant_types"),
+        "source": row.get("source"),
         "call_domain_areas": row.get("call_domain_areas") or row.get("focus_themes"),
         "instrument_type": row.get("instrument_type") or row.get("solicitation_type"),
         "project_duration": row.get("project_duration"),
