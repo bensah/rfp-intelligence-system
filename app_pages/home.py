@@ -227,26 +227,21 @@ with _main:
         CARDS.append(("Settings", "app_pages/admin.py", "⚙️", "Settings",
                       "Setup, users, data, donor sources, Excel sync, rates and manual scans."))
 
-    # THE WHOLE CARD IS THE CONTROL. The visible content (icon · headline · body) is HTML;
-    # an invisible full-cover st.button sits on top (styled in app_header CSS, targeted by its
-    # `st-key-qs_` key so the overlay is robust to Streamlit's DOM nesting) so a click ANYWHERE
-    # on the tile navigates — via st.switch_page, so it stays in the same session (a raw <a>
-    # would full-reload and wipe session_state). No visible button, no redundant CTA: the tile
-    # IS the button. The label is kept meaningful ("Open <page>") for screen readers.
+    # THE HEADLINE IS THE LINK. A full-cover invisible-button overlay was tried and did not
+    # navigate reliably in this Streamlit build, so the click target is the headline itself —
+    # a real st.button (tertiary, so it reads as a heading, not a form control) that
+    # st.switch_page navigates within the SAME session (a raw <a> would full-reload and wipe
+    # session_state). The whole card still lifts on hover so it clearly invites a click; the
+    # green, underline-on-hover headline is the unambiguous, working link.
     cols = st.columns(3)
     for i, (page, path, icon, headline, body) in enumerate(CARDS):
         with cols[i % 3]:
             with st.container(border=True):
                 st.markdown("<div class='qc-marker'></div>", unsafe_allow_html=True)
-                st.markdown(
-                    f"<div class='qc-content'>"
-                    f"<div class='qc-head'><span class='qc-icon'>{icon}</span>"
-                    f"<span class='qc-title'>{headline}</span></div>"
-                    f"<p class='qc-body'>{body}</p></div>",
-                    unsafe_allow_html=True)
-                if st.button(f"Open {page}", key=f"qs_{page}", width="stretch",
-                             help=f"Go to {page}"):
+                if st.button(f"{icon}  {headline}", key=f"qs_{page}",
+                             type="tertiary", width="stretch", help=f"Go to {page}"):
                     st.switch_page(path)
+                st.markdown(f"<p class='qc-body'>{body}</p>", unsafe_allow_html=True)
 
 
     # -----------------------------------------------------------------------------
