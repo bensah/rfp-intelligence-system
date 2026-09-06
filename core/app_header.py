@@ -506,14 +506,17 @@ _GLOBAL_CSS = f"""
      spans the whole tile, so a click anywhere navigates and there is NO visible button and
      NO redundant CTA — the tile itself is the button. */
   [class*="st-key-qs_"] {{
-    position: absolute; inset: 0; margin: 0; z-index: 3;
+    position: absolute; inset: 0; margin: 0; z-index: 4;
   }}
   [class*="st-key-qs_"] > button {{
-    width: 100%; height: 100%; min-height: 0; opacity: 0; border: none;
-    background: transparent; box-shadow: none; padding: 0; cursor: pointer;
+    position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0;
+    opacity: 0; border: none; background: transparent; box-shadow: none;
+    padding: 0; cursor: pointer;
   }}
-  /* visible content sits beneath the click layer */
-  .qc-content {{ position: relative; z-index: 1; padding: 4px 6px; }}
+  /* The content is purely visual — it must NOT swallow the click; pointer-events:none lets
+     every click pass straight through to the full-cover button, so the whole tile navigates.
+     (This was the missing piece: the content div was intercepting the pointer.) */
+  .qc-content {{ position: relative; z-index: 1; padding: 4px 6px; pointer-events: none; }}
   .qc-head {{ display: flex; align-items: center; gap: 10px; }}
   .qc-icon {{ font-size: 1.35rem; line-height: 1; }}
   .qc-title {{ color: {THEME_PRIMARY}; font-weight: 700; font-size: 1.04rem;
