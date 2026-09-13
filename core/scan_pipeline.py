@@ -561,7 +561,15 @@ def ingest_candidates(
         # gate reject expired calls that would otherwise slip through (the scraper
         # misses deadlines in prose / FR "date limite" / mixed formats). Low-
         # confidence guesses are ignored so a genuinely rolling call isn't dropped.
-        if not cand.get("call_submission_deadline") and not cand.get("extraction_uid"):
+        #
+        # RUNS ON THE RE-SCREEN PATH TOO. This used to be skipped whenever the candidate
+        # carried `extraction_uid` (i.e. came from the extracted store rather than a live
+        # crawl), on the reasoning that a stored row is "already extracted". But a row can
+        # only be as good as the day it was stored, and the store holds rows whose deadline
+        # came back low-confidence and was therefore dropped — so re-screening re-admitted
+        # them forever with no deadline and no way to ever acquire one. It is pure regex
+        # over text we already hold (no network), so there is no cost reason to skip it.
+        if not cand.get("call_submission_deadline"):
             try:
                 from datetime import date as _date
                 _dl = deadline_extract.extract_deadline(
@@ -572,7 +580,8 @@ def ingest_candidates(
                         and _dl["method"] != "default-rolling"):
                     cand["call_submission_deadline"] = _dl["deadline"]
                 elif (_dl["deadline"] and _dl["method"] != "default-rolling"
-                        and str(_dl["deadline"])[:10] < _date.today().isoformat()):
+                        and str(_dl["deadline"])[:10] < _date.today().isoformat()
+                        and not is_rolling_call(cand)):
                     # A LOW-confidence date that has already PASSED is still evidence.
                     # The two questions are different: "is this good enough to publish as
                     # the deadline" (no - we are not sure what it labels) and "does this
@@ -582,6 +591,13 @@ def ingest_candidates(
                     # came back every week. Recorded as an expiry signal, NOT written to
                     # call_submission_deadline, so nothing downstream shows a date we do
                     # not trust.
+                    #
+                    # EXEMPT ROLLING CALLS. `deadline_in_future` acts on _expired_window
+                    # before it ever asks whether the call is rolling, so an open-ended
+                    # fund that happens to show a past date on its page (its posting date,
+                    # a previous round) would be retired for being open — the one error
+                    # the owner's 2026-08-17 rule exists to prevent. Cheap to rule out
+                    # here, where the signal is created, rather than at every reader.
                     cand["_expired_window"] = str(_dl["deadline"])[:10]
             except Exception as _exc:
                 log.debug("deadline backstop skipped: %s", _exc)
@@ -1148,11 +1164,25 @@ def _candidate_from_extracted(row: dict[str, Any]) -> dict[str, Any]:
         "opportunity_link": row.get("opportunity_url"),
         "opportunity_id": row.get("opportunity_id"),
         "brief_description": row.get("brief_description"),
-        # Use the SHORT synthesized brief for the gate (the row already passed the
-        # extraction theme/not-rfp gate) — avoids re-running heavy regex over the
-        # full 20k-char raw_text, which is what made screening slow.
-        "_page_text": (row.get("brief_description")
-                       or (row.get("raw_text") or "")[:3000]),
+        # THE PAGE, NOT THE SUMMARY OF IT. This preferred the synthesized brief and fell
+        # back to raw_text only when the brief was empty — so for every row that HAD a
+        # brief (nearly all of them), the gates read an LLM paraphrase instead of the
+        # call. That is fatal for the expiry rules specifically, because they work on
+        # evidence the paraphrase does not preserve: the posting date under the headline,
+        # a window stated in prose, the latest year actually printed on the page. The
+        # Fondation Pierre Fabre / ODESS call sat in this store with "17/10/2025" in its
+        # raw_text and a brief asserting "Applications are open now" — an LLM flourish, not
+        # something the page says — and the gates, reading only the brief, admitted it
+        # every week.
+        #
+        # Bounded at 12k (matching live_check's own cap) rather than the full 20k: the
+        # concern that motivated the brief — heavy regex over long text making screening
+        # slow — is real, and 12k covers the 90th percentile of stored rows. The live-crawl
+        # path already puts the full page text in this field (scraper.py, deep_read.py), so
+        # this makes re-screening agree with the crawl it is standing in for instead of
+        # quietly gating on different evidence.
+        "_page_text": ((row.get("raw_text") or "")[:12000]
+                       or row.get("brief_description")),
         "funding_agency": row.get("funder_name"),
         "call_submission_deadline": row.get("deadline"),
         "call_award_value": row.get("grant_amount"),

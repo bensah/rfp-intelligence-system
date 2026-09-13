@@ -712,7 +712,12 @@ def main() -> None:
             _today = _date.today().isoformat()
             _past = extracted_store.mark_closed_past_deadline(_today)
             _stale = extracted_store.mark_closed_stale_undated(_today)
-            print(f"Store ageing · {_past} past-deadline · {_stale} stale undated → Closed")
+            # Ages on the FUNDER's publication date, which our own re-crawling cannot
+            # reset — the gap that let a weekly-crawled expired call look permanently
+            # fresh to the timestamp-based rule above.
+            _posted = extracted_store.mark_closed_stale_posted(_today)
+            print(f"Store ageing · {_past} past-deadline · {_stale} stale undated "
+                  f"· {_posted} stale posted → Closed")
         except Exception as _aexc:
             print(f"  (store ageing failed: {_aexc})", file=sys.stderr)
 

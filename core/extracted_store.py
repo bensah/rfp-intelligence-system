@@ -204,3 +204,43 @@ def mark_closed_stale_undated(today_iso: str, *, days: int = _STALE_UNDATED_DAYS
         except Exception:
             continue
     return closed
+
+
+def mark_closed_stale_posted(today_iso: str, *, days: int = _STALE_UNDATED_DAYS) -> int:
+    """Close Open, undated rows the FUNDER published more than `days` ago.
+
+    `mark_closed_stale_undated` ages a row by OUR crawl timestamps, and that is precisely
+    what an expired call defeats: we re-crawl it every week, so `updated_at` is always
+    fresh and the row never looks stale, however long ago its window shut. The docstring
+    above calls that refresh a feature (it protects a rolling call still being crawled) —
+    it is, but it also means the only rows the rule can ever close are ones we have STOPPED
+    looking at, which is the opposite of the problem.
+
+    `date_posted` is the funder's own publication date. Re-crawling cannot move it, so it
+    ages honestly. An undated call published more than a real application window ago is
+    closed — the same evidence, threshold and reasoning as
+    auto_scorer.deadline_in_future's stale-posting rule, applied to the store instead of
+    to a single candidate.
+
+    Rolling calls are exempt: an open-ended fund has no closing date by design, so its age
+    says nothing about whether it is still open.
+    """
+    from datetime import date, timedelta
+    try:
+        cutoff = (date.fromisoformat(today_iso[:10]) - timedelta(days=days)).isoformat()
+    except (ValueError, TypeError):
+        return 0
+    try:
+        from core.auto_scorer import ROLLING_WINDOW
+        # `funding_window` is NULL on most rows, and SQL's `<> 'Rolling'` is NULL — i.e.
+        # NOT TRUE — for those, so a bare .neq() would silently exempt almost every row
+        # this is meant to close. Spell the NULL case out.
+        res = (get_client().table(_TABLE).update({"funding_status": "Closed"})
+               .eq("funding_status", "Open").is_("deadline", "null")
+               .not_.is_("date_posted", "null").lt("date_posted", cutoff)
+               .or_(f"funding_window.is.null,funding_window.neq.{ROLLING_WINDOW}")
+               .execute())
+        return len(res.data or [])
+    except Exception as exc:
+        log.warning("extracted_store.mark_closed_stale_posted failed: %s", exc)
+        return 0
