@@ -500,6 +500,22 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
         st.rerun()
 
     if delete_pressed:
+        # TOMBSTONE BEFORE DELETING. Deleting is how a reviewer says "I do not want to see
+        # this again", and it used to do the opposite: it removed the live row that the
+        # deduplicator matches against, leaving nothing but the ingest-time tombstone (and
+        # nothing at all for rows ingested before that write started working). The next
+        # scan then re-found the call and inserted it afresh. Recorded first, so a failed
+        # delete cannot leave an un-tombstoned row behind.
+        try:
+            from core import seen_ledger
+            seen_ledger.record_human_close(row, reason="human_reject")
+        except Exception:
+            pass
+        try:
+            from core import decision_log
+            decision_log.log_human_reject([row], by=user.get("email"))
+        except Exception:
+            pass
         sb.table("rfp_submissions").delete().eq("uid", row["uid"]).execute()
         st.cache_data.clear()
         st.toast(f"Deleted {row['uid']}", icon="🗑")
@@ -655,6 +671,13 @@ def render_rfp_editor(row: dict, *, sb, user, is_admin: bool = False,
                 from core import decision_log
                 decision_log.log_decision({**row, **update}, _new_dec,
                                           by=user.get("email"))
+            except Exception:
+                pass
+            # See review_rfp.py — the ML label and the scan's own memory are two
+            # different records, and only the first was being written.
+            try:
+                from core import seen_ledger
+                seen_ledger.record_decision({**row, **update}, _new_dec)
             except Exception:
                 pass
         st.cache_data.clear()

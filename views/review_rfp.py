@@ -1041,6 +1041,14 @@ else:
                                           by=user.get("email"))
             except Exception:
                 pass
+            # A Decline must also be remembered by the SCAN, not only by the model.
+            # log_decision writes scan_decisions, which nothing reads at gate time, so
+            # a declined call that was later deleted came straight back on the next run.
+            try:
+                from core import seen_ledger
+                seen_ledger.record_decision({**row, **update}, new_decision)
+            except Exception:
+                pass
         _exit_edit_and_reset()        # back to the plain display
         st.cache_data.clear()
         st.success(
