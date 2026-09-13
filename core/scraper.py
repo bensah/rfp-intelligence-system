@@ -3295,7 +3295,101 @@ def _scan_html(name: str, url: str, *, extract_only: bool = False,
                  "retrying via Playwright renderer", name)
         return _scan_html_js(name, url, extract_only=extract_only,
                              fresh_uids=fresh_uids)
+    if not cands:
+        self_cand = _self_candidate(name, url, r.text)
+        if self_cand:
+            log.info("no linked candidates for %s — the page itself reads as a call; "
+                     "emitting it as one candidate", name)
+            return [self_cand]
     return cands
+
+
+# Wording that marks a page as BEING a call rather than listing other calls. Deliberately
+# demanding: this runs only when anchor extraction found nothing, and a false positive here
+# puts a funder's generic "grants" page into the pipeline as if it were an opportunity.
+_SELF_CALL_RE = re.compile(
+    r"(request for (?:proposals?|applications?|expressions? of interest)"
+    r"|call for (?:proposals?|projects?|applications?|expressions? of interest|concept notes?)"
+    r"|apply (?:now|here|for (?:funding|a grant))|submit (?:your |an? )?(?:idea|application|"
+    r"proposal|expression of interest|concept note)|application (?:process|form|guidelines)"
+    r"|eligibility (?:criteria|requirements)|how to apply)", re.IGNORECASE)
+
+
+def _self_candidate(name: str, url: str, html_text: str) -> dict[str, Any] | None:
+    """The listing page IS the call — return it as a single candidate, or None.
+
+    `_extract_candidates_from_html` is pure ANCHOR extraction: a page only produces
+    candidates by linking out to them. That assumption holds for a donor that publishes an
+    index of calls, and fails completely for one whose call has no separate page — an
+    always-open application like The Audacious Project's /apply, a single-programme
+    foundation, a fund whose "how to apply" IS the opportunity. Those sources scanned
+    cleanly and returned 0 candidates forever, which reads in every log and counter as "this
+    source has nothing open" rather than "this scraper cannot see this shape of page".
+
+    This does NOT lower the bar for what enters the pipeline. The candidate goes through
+    exactly the same enrichment and the same `is_eligible` gate as any other — not-an-rfp,
+    theme, geography, deadline. It only stops the page being discarded before any gate has
+    seen it. Guarded three ways so a generic grants-landing page doesn't qualify: real body
+    text, explicit call/apply wording, and no sign that the page is an index of other calls.
+    """
+    try:
+        soup = BeautifulSoup(html_text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        text = soup.get_text(" ", strip=True)
+        title = _clean(soup.title.string if soup.title else "") or ""
+    except Exception:
+        return None
+    if len(text) < 600:                     # too thin to judge — not worth a gate slot
+        return None
+    if not _SELF_CALL_RE.search(text):
+        return None
+    # An index of other calls that simply used non-anchor markup is NOT a call itself;
+    # emitting it would put a listing URL in the pipeline. Reuse auto_scorer's own list-page
+    # pattern rather than writing a second one that can drift from it. Imported locally:
+    # auto_scorer imports from this module, so a top-level import would be circular.
+    try:
+        from core.auto_scorer import _LISTING_URL_RE
+        if _LISTING_URL_RE.search(url):
+            return None
+    except Exception:
+        pass
+    # Strip the site-name suffix that titles carry ("Apply | The Audacious Project").
+    for sep in (" | ", " – ", " — ", " - "):
+        if sep in title:
+            title = title.split(sep)[0].strip()
+            break
+    # A page whose <title> is just "Apply" or "Grants" names the nav item, not the call, and
+    # a reviewer scanning a week's list cannot tell what it is. Prefer the h1 when it says
+    # more; otherwise qualify the bare word with the funder.
+    funder = _funder_from_source_name(name)
+    if len(title.split()) <= 2:
+        try:
+            h1 = _clean(soup.find("h1").get_text(" ", strip=True)) if soup.find("h1") else ""
+        except Exception:
+            h1 = ""
+        if len(h1.split()) > 2:
+            title = h1
+        elif funder and funder.lower() not in title.lower():
+            title = f"{funder} — {title}"
+    if not title:
+        return None
+    cand = {
+        "opportunity_title": title,
+        "opportunity_link": url,
+        "funding_agency": funder,
+        "brief_description": None,
+        "date_posted": None,
+        "call_submission_deadline": None,
+        "_source_origin": f"{name} (HTML self)",
+        # Provenance: this candidate is the source page itself, not a link found on it.
+        "_self_candidate": True,
+    }
+    try:
+        _enrich_candidate(cand)
+    except Exception as exc:
+        log.debug("self-candidate enrichment failed for %s: %s", url, exc)
+    return cand
 
 
 def _scan_html_js(name: str, url: str, *, extract_only: bool = False,

@@ -13,6 +13,7 @@ faked.
 
 Run:  python -m unittest tests.test_playwright_setup
 """
+import io
 import os
 import sys
 import types
@@ -303,6 +304,28 @@ class HostLibraryTests(_Reset):
         self.assertIn("libglib-2.0.so.0", out["missing"])
 
     def test_packages_txt_is_read_from_the_deployed_tree(self):
+        # packages.txt is currently DISABLED on purpose — renamed to packages.txt.disabled
+        # on 2026-09-08 because an expired Debian `bullseye-security` release file made
+        # Streamlit's apt step fail and abort the whole deploy (see packages.README.md).
+        # The old assertion hard-coded the enabled state and has failed ever since.
+        #
+        # Both states are legitimate, and the contract worth protecting is the same in
+        # each: whichever file is in the tree lists the headless-Chromium system libs, and
+        # packages_txt() reports presence honestly. Asserting that keeps the test true
+        # through the documented re-enable (`git mv packages.txt.disabled packages.txt`)
+        # without anyone having to remember to edit it.
         out = ps.packages_txt()
-        self.assertTrue(out["present"])
-        self.assertIn("libglib2.0-0", out["packages"])
+        disabled = os.path.join(_ROOT, "packages.txt.disabled")
+        if out["present"]:
+            self.assertIn("libglib2.0-0", out["packages"])
+            self.assertFalse(os.path.exists(disabled),
+                             "both packages.txt and packages.txt.disabled exist — "
+                             "the deploy would run apt again")
+        else:
+            self.assertTrue(os.path.exists(disabled),
+                            "packages.txt is neither enabled nor deliberately disabled")
+            with io.open(disabled, encoding="utf-8") as fh:
+                body = fh.read()
+            self.assertIn("libglib2.0-0", body,
+                          "the disabled file must keep the libs for the re-enable")
+            self.assertEqual(out["entries"], 0)
