@@ -1629,7 +1629,15 @@ def deadline_in_future(candidate: dict[str, Any]) -> tuple[bool, str]:
             candidate.get("_page_text") or "",
         ])
         yr = _latest_year_in(blob)
-        if yr and yr < today.year:
+        # ROLLING CALLS ARE EXEMPT, as they are in the stale-posting branch directly above.
+        # This branch infers "expired" from the ABSENCE of a current-year mention, which is
+        # evidence only for a call that has a window at all. An always-open application
+        # (The Audacious Project's /apply, an open-ended fund) states no dates by design, so
+        # whether its page happens to print the current year somewhere is an accident of
+        # copywriting — and a page that has not been reworded since last year was being
+        # retired for it. Same principle as the owner's 2026-08-17 rule: reject on positive
+        # evidence that the window closed, never on the absence of evidence that it is open.
+        if yr and yr < today.year and not _is_rolling_call(candidate):
             return False, (
                 f"latest year on page is {yr} (past) and no explicit deadline "
                 "parsed — treating as expired"

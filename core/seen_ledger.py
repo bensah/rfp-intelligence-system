@@ -162,3 +162,41 @@ def record(rows: Iterable[Mapping[str, Any]], *, reason: str = "ingested") -> in
 
 def record_one(row: Mapping[str, Any], *, reason: str = "ingested") -> None:
     record([row], reason=reason)
+
+
+# Decisions that mean "we have considered this and we are not pursuing it". A call the
+# reviewer parked or is proceeding with is still live work and must NOT be tombstoned.
+_CLOSING_DECISIONS = frozenset({"decline", "declined", "not approved", "rejected"})
+
+
+def record_human_close(row: Mapping[str, Any], *, reason: str) -> None:
+    """Tombstone a row a HUMAN has finished with — declined, or deleted outright.
+
+    Until this existed the ledger was written at INGEST and nowhere else, so the system
+    remembered "we have seen this" but never "we looked at this and said no". Those are
+    different facts, and only the first was being kept. A reviewer who declined a call and
+    then deleted the row (the obvious way to make an unwanted call go away) removed the
+    only evidence the call had ever been handled, and the next scan re-ingested it — the
+    reported "we keep declining this and it keeps coming back".
+
+    Best-effort, like the rest of this module: a failed tombstone must never block the
+    decision or the delete the user actually asked for. It is logged at WARNING by
+    `record` when it fails, because a tombstone that was never written is an opportunity
+    that will return.
+    """
+    record([row], reason=reason)
+
+
+def record_decision(row: Mapping[str, Any], decision: str, *,
+                    reason: str = "human_decline") -> bool:
+    """Tombstone the row when `decision` is a closing one. Returns whether it recorded.
+
+    Kept separate from `decision_log.log_decision` on purpose: that writes the ML training
+    label to `scan_decisions`, which nothing consults at gate time. This writes the
+    operational fact the SCAN reads. Both should happen on a Decline; neither substitutes
+    for the other.
+    """
+    if str(decision or "").strip().lower() not in _CLOSING_DECISIONS:
+        return False
+    record_human_close(row, reason=reason)
+    return True

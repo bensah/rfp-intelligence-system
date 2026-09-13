@@ -489,6 +489,43 @@ def run(
                            err=bool(_b.get("err")))
     scrape_seconds = time.time() - wall_start
 
+    # PER-SOURCE HEALTH. `donor_sources.last_scraped_at` / `last_scrape_status` have
+    # columns, and the Admin → Donor Sources table has COLUMNS FOR THEM — but nothing has
+    # ever written either one, so both read empty for all 54 active sources and always
+    # have. The practical effect is that there is no way, anywhere in the product, to tell
+    # a source that is producing from one that has been silently returning nothing for
+    # months: a dead selector, a changed URL and a genuinely quiet donor all look identical.
+    # That is the blind spot behind "why didn't we detect this call" — the answer usually
+    # lives here and nobody could see it. Best-effort and after the fact: a failed status
+    # write must never fail a scan that otherwise worked.
+    if not dry_run:
+        _hz = _hs = 0
+        for _b in scraped:
+            _src = _b.get("source") or {}
+            _url = _src.get("url") or _src.get("rfp_listing_url")
+            if not _url:
+                continue
+            _found = len(_b.get("results") or [])
+            if _b.get("err"):
+                _status = f"error: {str(_b['err'])[:160]}"
+            elif _found:
+                _status = f"ok: {_found} candidate(s) in {_b.get('duration', 0):.0f}s"
+            else:
+                # NOT an error, and not success either — the case worth surfacing.
+                _status = f"empty: 0 candidates in {_b.get('duration', 0):.0f}s"
+                _hz += 1
+            try:
+                from db.supabase_client import safe_execute as _safe
+                _safe(get_client().table("donor_sources").update({
+                    "last_scraped_at": datetime.now(timezone.utc).isoformat(),
+                    "last_scrape_status": _status,
+                }).eq("rfp_listing_url", _url))
+                _hs += 1
+            except Exception as _hexc:
+                print(f"  (source health write failed for {_url}: {_hexc})",
+                      file=sys.stderr)
+        print(f"Source health · recorded {_hs}/{len(scraped)} · {_hz} returned 0 candidates")
+
     # Incremental extraction — always report the run-wide skip total (never silently
     # drop it), even when 0, so the log makes the saving explicit.
     if extract_only and EXTRACT_INCREMENTAL:
@@ -712,7 +749,12 @@ def main() -> None:
             _today = _date.today().isoformat()
             _past = extracted_store.mark_closed_past_deadline(_today)
             _stale = extracted_store.mark_closed_stale_undated(_today)
-            print(f"Store ageing · {_past} past-deadline · {_stale} stale undated → Closed")
+            # Ages on the FUNDER's publication date, which our own re-crawling cannot
+            # reset — the gap that let a weekly-crawled expired call look permanently
+            # fresh to the timestamp-based rule above.
+            _posted = extracted_store.mark_closed_stale_posted(_today)
+            print(f"Store ageing · {_past} past-deadline · {_stale} stale undated "
+                  f"· {_posted} stale posted → Closed")
         except Exception as _aexc:
             print(f"  (store ageing failed: {_aexc})", file=sys.stderr)
 

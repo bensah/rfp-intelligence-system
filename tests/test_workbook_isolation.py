@@ -141,8 +141,20 @@ class ManualScanSurfaceTests(unittest.TestCase):
         self.assertNotIn("disabled=not _dev_admin", self.src)
 
     def test_counters_and_history_are_developer_only(self):
+        # Asserted as a CONTRACT, not as one line of source. The old form pinned the exact
+        # string "if _dev_admin and extr_logs.empty:", which stopped being true the moment
+        # the Extraction history moved inside an `if _dev_admin:` block and rendered through
+        # `_extract_area`. The gating never weakened — the literal just went stale, and a
+        # test that fails for that reason teaches people to ignore it.
         self.assertIn("if _ext and not _dev_admin:", self.src)
-        self.assertIn("if _dev_admin and extr_logs.empty:", self.src)
+        # The history is unreachable for a client-tenant admin by construction: it renders
+        # only through `_extract_area`, which is None unless _dev_admin.
+        self.assertIn("_extract_area = None", self.src)
+        render = self.src.index('_extract_area.subheader("Extraction history")')
+        guard = self.src.rindex("if _dev_admin:", 0, render)
+        between = self.src[guard:render]
+        self.assertNotIn(chr(10) + "        else:", between,
+                         "Extraction history must render inside the _dev_admin branch")
 
     def test_a_client_tenant_is_told_when_the_store_was_refreshed(self):
         self.assertIn("last refreshed by the system administrator", self.src)
@@ -165,7 +177,29 @@ class ManualScanLayoutTests(unittest.TestCase):
             self.src = fh.read()
 
     def test_the_three_sub_tabs_exist_in_order(self):
-        self.assertIn('["🔍 Search", "🎯 Eligibility Scan", "📊 Excel Sync"]', self.src)
+        # There are now TWO tab layouts, not one: a developer admin also gets an Extraction
+        # tab (extraction is a platform job over the shared store), and the order settled as
+        # Eligibility Scan | Search | Excel Sync. The old assertion pinned the single
+        # pre-Extraction literal and has failed since that split landed.
+        #
+        # What actually matters is that both layouts exist, that Search and Excel Sync are
+        # still present in each, and that only the developer layout carries Extraction.
+        # Both layouts live between the `if _dev_admin:` that builds them and the shared
+        # `_excel_area`; the first st.tabs( in that region is the developer one.
+        region = self.src[self.src.index("_t_extract, _t_scan"):
+                          self.src.index("_excel_area = _t_excel.container()")]
+        calls = []
+        for i in range(len(region)):
+            if region.startswith("st.tabs(", i):
+                calls.append(region[i:region.index("]", i) + 1])
+        self.assertEqual(len(calls), 2, "expected a developer and a client tab layout")
+        dev_tabs, client_tabs = calls
+        for label in ("Eligibility Scan", "Search", "Excel Sync"):
+            self.assertIn(label, dev_tabs, f"developer layout lost {label}")
+            self.assertIn(label, client_tabs, f"client layout lost {label}")
+        self.assertIn("Extraction", dev_tabs)
+        self.assertNotIn("Extraction", client_tabs,
+                         "extraction is a platform job — not for a client tenant admin")
 
     def test_search_reuses_the_existing_engine_rather_than_a_second_one(self):
         # It hands off to the results page on the same contract the header 🔍 uses: query
