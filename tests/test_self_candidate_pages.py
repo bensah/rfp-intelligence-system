@@ -51,9 +51,10 @@ _BODY = (
     "Submit your idea. We look for ideas that cover a wide range of issues, from global "
     "health and climate change, to social justice and education. Read on to see if your "
     "idea is a good fit. Eligibility criteria: your organisation must be a registered "
-    "non-profit with a proven concept. How to apply: applications are accepted on a rolling "
-    "basis through our online portal. The application process has several stages and our "
-    "team reviews submissions year-round as they arrive from around the world."
+    "non-profit with a proven concept. How to apply: submit an expression of interest; "
+    "applications are accepted on a rolling basis through our online portal. The "
+    "application process has several stages and our team reviews submissions year-round "
+    "as they arrive from around the world."
 )
 
 
@@ -84,11 +85,33 @@ class TheSelfCandidateTests(unittest.TestCase):
         self.assertIsNone(self._cand(body="Coming soon."))
 
     def test_a_page_with_no_call_wording_is_not_a_candidate(self):
-        # The h1 counts as page text too, so it has to be neutral here — an <h1>Submit your
-        # idea</h1> IS call wording and the page would rightly qualify on it alone.
         self.assertIsNone(self._cand(
             title="About | The Audacious Project", h1="Who we are",
             body="We are a foundation supporting bold ideas. " * 30))
+
+    def test_weak_wording_alone_is_not_enough(self):
+        # THE REASON THIS USES THE PROJECT'S OWN TEST. An earlier version of
+        # _self_candidate carried its own regex that accepted "how to apply" /
+        # "eligibility criteria" / "apply now" on their own — looser than the codebase's
+        # settled rule, under which those are _RFP_WEAK_PHRASES and count only alongside
+        # corroborating detail. Every funder's generic grants page says "how to apply".
+        self.assertIsNone(self._cand(
+            title="Grants | A Foundation", h1="Grants",
+            body=("Apply now for funding opportunities. How to apply: read the "
+                  "eligibility criteria and follow the application process. " * 8)))
+
+    def test_the_rule_is_the_same_one_the_search_scan_uses(self):
+        # web_search._fetch_signals validates a search hit with exactly this pair; a second
+        # private vocabulary here would drift from it.
+        from core import auto_scorer as _A
+        self.assertTrue(S._page_body_is_a_call(
+            "We invite a request for proposals from eligible organisations."))
+        self.assertTrue(S._page_body_is_a_call("Submit an EOI by Friday."))
+        self.assertFalse(S._page_body_is_a_call("We are a foundation supporting ideas."))
+        self.assertFalse(S._page_body_is_a_call(""))
+        # Sourced from auto_scorer, not redefined here.
+        self.assertTrue(any(p in "a request for proposals" for p in
+                            _A._RFP_STRONG_PHRASES))
 
     def test_a_listing_url_is_never_emitted_as_a_call(self):
         # Emitting an index page would put a listing URL in the pipeline — the thing
@@ -96,6 +119,11 @@ class TheSelfCandidateTests(unittest.TestCase):
         self.assertIsNone(self._cand(url="https://audaciousproject.org/grants/list"))
 
     def test_it_only_runs_when_anchor_extraction_found_nothing(self):
+        # The zero-candidate guard is load-bearing, not incidental. A donor's INDEX page
+        # carries strong call wording too — unitaid.org/calls-for-proposals/ contains
+        # "call for proposals" — so emitting a page that verifies as a call regardless of
+        # whether it linked out would inject listing pages into the pipeline. Having
+        # linked to real calls is the evidence that a page is an index rather than a call.
         import io as _io
         with _io.open(os.path.join(_ROOT, "core", "scraper.py"), encoding="utf-8") as fh:
             src = fh.read()
@@ -103,6 +131,18 @@ class TheSelfCandidateTests(unittest.TestCase):
         guard = src.rindex("if not cands:", 0, call)
         self.assertLess(call - guard, 200,
                         "the self-candidate must never pre-empt real linked candidates")
+
+    def test_the_rendered_path_has_the_same_fallback(self):
+        # Several never-producing sources are html_js. If only the static path had the
+        # fallback, the two would disagree about what is findable purely because of how a
+        # donor's site is built.
+        import io as _io
+        with _io.open(os.path.join(_ROOT, "core", "scraper.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        js = src[src.index("def _scan_html_js"):]
+        js = js[:js.index(chr(10) + "def ", 10)]
+        self.assertIn("_self_candidate(name, url, html_text)", js)
+        self.assertIn("if not cands:", js)
 
 
 class RollingCallsSurviveTheYearFallbackTests(unittest.TestCase):
