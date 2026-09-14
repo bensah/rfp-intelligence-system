@@ -3304,15 +3304,31 @@ def _scan_html(name: str, url: str, *, extract_only: bool = False,
     return cands
 
 
-# Wording that marks a page as BEING a call rather than listing other calls. Deliberately
-# demanding: this runs only when anchor extraction found nothing, and a false positive here
-# puts a funder's generic "grants" page into the pipeline as if it were an opportunity.
-_SELF_CALL_RE = re.compile(
-    r"(request for (?:proposals?|applications?|expressions? of interest)"
-    r"|call for (?:proposals?|projects?|applications?|expressions? of interest|concept notes?)"
-    r"|apply (?:now|here|for (?:funding|a grant))|submit (?:your |an? )?(?:idea|application|"
-    r"proposal|expression of interest|concept note)|application (?:process|form|guidelines)"
-    r"|eligibility (?:criteria|requirements)|how to apply)", re.IGNORECASE)
+def _page_body_is_a_call(text: str) -> bool:
+    """Does this page BODY carry real call wording? The project's one answer to that.
+
+    Reuses auto_scorer._RFP_STRONG_PHRASES + _has_rfp_acronym — the exact test
+    web_search._fetch_signals runs to confirm a search hit is a genuine call rather than a
+    snippet that merely matched. Deliberately NOT a second regex of our own: an earlier
+    version of this function carried one, and it was looser than the project's own standard
+    because it accepted "how to apply" / "eligibility criteria" / "apply now" on their own.
+    Those are _RFP_WEAK_PHRASES here, and the codebase's settled rule is that weak wording
+    counts only alongside corroborating detail (_has_request_details) — every funder's
+    generic grants page says "how to apply".
+
+    Checked against the live pages: the strong/acronym test admits the Audacious /apply
+    call ("expression of interest"), the Unitaid and Pierre Fabre calls ("call for
+    proposals" / "call for projects") and the Packard page (acronym), and correctly
+    REJECTS audaciousproject.org/about, which the old regex would have accepted.
+    """
+    if not text:
+        return False
+    try:
+        from core.auto_scorer import _RFP_STRONG_PHRASES, _has_rfp_acronym
+    except Exception:
+        return False
+    low = text.lower()
+    return any(p in low for p in _RFP_STRONG_PHRASES) or _has_rfp_acronym(text)
 
 
 def _self_candidate(name: str, url: str, html_text: str) -> dict[str, Any] | None:
@@ -3342,7 +3358,7 @@ def _self_candidate(name: str, url: str, html_text: str) -> dict[str, Any] | Non
         return None
     if len(text) < 600:                     # too thin to judge — not worth a gate slot
         return None
-    if not _SELF_CALL_RE.search(text):
+    if not _page_body_is_a_call(text):
         return None
     # An index of other calls that simply used non-anchor markup is NOT a call itself;
     # emitting it would put a listing URL in the pipeline. Reuse auto_scorer's own list-page
@@ -3448,9 +3464,20 @@ def _scan_html_js(name: str, url: str, *, extract_only: bool = False,
 
     if not html_text:
         return []
-    return _extract_candidates_from_html(name, url, html_text,
-                                         extract_only=extract_only,
-                                         fresh_uids=fresh_uids)
+    cands = _extract_candidates_from_html(name, url, html_text,
+                                          extract_only=extract_only,
+                                          fresh_uids=fresh_uids)
+    if not cands:
+        # Same fallback as the plain-HTML path: a JS-rendered page can BE the call just as
+        # easily as a static one, and several never-producing sources are html_js. Without
+        # this the two paths disagree about what counts as findable purely because of how
+        # the donor's site happens to be built.
+        self_cand = _self_candidate(name, url, html_text)
+        if self_cand:
+            log.info("no linked candidates for %s (rendered) — the page itself reads as "
+                     "a call; emitting it as one candidate", name)
+            return [self_cand]
+    return cands
 
 
 # ---------------------------------------------------------------------------
