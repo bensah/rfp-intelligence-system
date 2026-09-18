@@ -93,11 +93,32 @@ if df.empty:
     st.info("No RFPs yet. Submit one via the Submit page or trigger a scan from Admin.")
     st.stop()
 
-# Newest first by Search date (recently-found RFPs on top). search_date is an ISO
-# string/datetime; parse for a correct chronological sort (NaT/blank sink to the
-# bottom). This is the table's primary order regardless of insertion order.
-df["_search_dt"] = pd.to_datetime(df.get("search_date"), errors="coerce", format="ISO8601")
-df = df.sort_values("_search_dt", ascending=False, na_position="last").reset_index(drop=True)
+# Newest-ADDED first. `_fetch_all` already asks the DB for exactly this order
+# (created_at, submitted_at, uid — all descending); this re-sort used to throw that away
+# and order by `search_date` instead, which put newly-added RFPs well down the list.
+#
+# WHY search_date IS THE WRONG KEY. It is not "when we found this" — it is refreshed
+# whenever a scan re-encounters a call, so it means "last seen". On the live table 115 of
+# 291 rows have a search_date more than a day from their created_at, and seven rows
+# inserted between 2026-07-03 and 2026-08-31 all carry the same search_date of
+# 2026-09-11 11:10 — the last scan's timestamp, stamped onto rows that were already there.
+# Sorting by it bunches every re-seen old call at the top on an identical timestamp (so
+# their relative order is arbitrary), and pushes a genuinely new row BELOW them whenever
+# its search_date wasn't refreshed by that same run. A manually submitted RFP, which no
+# scan ever re-stamps, sinks fastest of all.
+#
+# created_at is the true INSERTION time: DB-defaulted now() on insert, never touched by
+# Excel sync or later updates. Sorted with the same tiebreakers the query uses, so the
+# page agrees with the DB rather than fighting it. search_date remains a displayed column.
+df["_entered_dt"] = pd.to_datetime(df.get("created_at"), errors="coerce", format="ISO8601")
+# The Excel migration inserted its whole batch in one transaction, so those rows share a
+# created_at to the microsecond. submitted_at carries each one's real original date and
+# breaks the tie meaningfully; uid keeps the order stable when even that ties.
+df["_submitted_dt"] = pd.to_datetime(df.get("submitted_at"), errors="coerce",
+                                     format="ISO8601")
+df = df.sort_values(["_entered_dt", "_submitted_dt", "uid"],
+                    ascending=[False, False, False],
+                    na_position="last").reset_index(drop=True)
 
 
 # -----------------------------------------------------------------------------
