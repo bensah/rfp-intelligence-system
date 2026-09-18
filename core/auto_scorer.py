@@ -1170,15 +1170,44 @@ def theme_eligible(candidate: dict[str, Any], policies: dict[str, Any],
             return True, "matches required theme keyword"
         return False, "no required theme keyword matched"
 
+    # PAGE-TEXT RESCUE. `_full_text` is deliberately NARROW — title + brief + scope +
+    # funder — because the required list contains bare words like "health", and a 20k-char
+    # page that says "health and safety" once is not a health call. But that narrowness
+    # also means the gate never reads the page, so a real call whose BRIEF happens to miss
+    # the keyword is rejected while the evidence sits in `_page_text` unread.
+    #
+    # THE REPORTED CASE. The UBS Optimus / Outcomes Accelerator "Cohort 5" call for
+    # proposals is about mental-health outcomes in LMICs and says "mental health" 34 times
+    # on its page. Its extracted brief (594 chars) happened to capture the eligibility
+    # paragraph, which says "UBS Optimus Foundation" and "Who can apply" and never once
+    # says health — so `_full_text` was 652 chars with no required hit and the call was
+    # rejected as off-theme. Measured on the live store: 56 of 544 Open rows are in this
+    # state (no required hit in the narrow fields, one in raw_text).
+    #
+    # Those 56 are a MIX, which is why this routes to the judge instead of just widening
+    # the regex. Most are Horizon Europe calls (batteries, photonics, textile circularity)
+    # that mention health incidentally — exactly what the narrow text was protecting
+    # against. A few are real: an immunisation-supplies notice ("au profit du PEV") among
+    # them. Spot-checked against the live judge, which got all four right: the PEV notice
+    # on-theme, battery / textile / business-model calls off-theme, 3-5s each.
+    #
+    # Fails to TODAY'S behaviour when the judge is unavailable: `_regex_verdict()` still
+    # returns "no required theme keyword matched", so nothing is widened without an
+    # arbiter that can tell incidental from real.
+    _page = candidate.get("_page_text") or candidate.get("raw_text") or ""
+    page_only_hit = bool(_page) and not req_hit and any(
+        _theme_hit(kw, _normalize(_page)) for kw in required if kw)
+
     # LLM adjudication on the AMBIGUOUS cases only — where substring matching is
-    # unreliable: a conflict (excluded AND required both hit), or a THIN required
+    # unreliable: a conflict (excluded AND required both hit), a THIN required
     # match (≤2 distinct keywords) that may be incidental (e.g. an animal-ag RFP
-    # matching "influenza"/"pandemic"). The judge reads the whole page and rules
-    # on-theme vs incidental. Cheap: the verdict is content-hash cached, so the
-    # enrichment call in core.extract reuses it. Gated to the extraction gate
-    # (llm_theme=True) so tenant screening stays regex-fast. A clear regex verdict
-    # (no required hit at all, or a strong ≥3-keyword match) skips the LLM.
-    ambiguous = req_hit and ((exc_in_title or exc_in_body) or len(req_hits) <= 2)
+    # matching "influenza"/"pandemic"), or the page-text rescue above. The judge reads the
+    # whole page and rules on-theme vs incidental. Cheap: the verdict is content-hash
+    # cached, so the enrichment call in core.extract reuses it. Gated to the extraction
+    # gate (llm_theme=True) so tenant screening stays regex-fast. A clear regex verdict
+    # (nothing on-theme anywhere, or a strong ≥3-keyword match) skips the LLM.
+    ambiguous = (req_hit and ((exc_in_title or exc_in_body) or len(req_hits) <= 2)
+                 or page_only_hit)
     if llm_theme and ambiguous:
         try:
             from core import llm_judge
@@ -2292,7 +2321,21 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
         rejected, reason = construction_works_reject(candidate)
         if rejected:
             return False, f"theme: {reason}"
-        ok, reason = theme_eligible(candidate, policies, llm_theme=llm_theme)
+        # WIRE THE THEME JUDGE. `llm_theme` had a parameter, a working code path in
+        # theme_eligible, and NO CALLER anywhere in the repository — nothing has ever
+        # passed it True, so the arbiter meant to settle ambiguous theme calls has never
+        # once run in production. (Same shape as mark_closed_past_deadline, which also
+        # existed uncalled; see tests.test_expiry_no_deadline.) The theme gate has been
+        # regex-only over a ~650-char blob the whole time.
+        #
+        # `llm_adjudicate` is the existing, explicit "you may spend an LLM call on a hard
+        # case" opt-in — passed by run_screening and nothing else — so theme adjudication
+        # belongs under it rather than behind a second switch no one sets. Measured on the
+        # live store: 188 of 544 Open rows are ambiguous, ~13 min per cron run at ~4s each,
+        # and llm_judge caches per (model, content) within a process, so screening all
+        # tenants in one run pays once.
+        ok, reason = theme_eligible(candidate, policies,
+                                    llm_theme=llm_theme or llm_adjudicate)
         if not ok:
             return False, f"theme: {reason}"
     # Deadline LAST: only attribute a "deadline" reject when the call is
