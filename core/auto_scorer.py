@@ -2014,6 +2014,37 @@ def rfp_signal_gate(candidate: dict[str, Any]) -> tuple[bool, str]:
     # 6. Trusted funding-specific source (not open-web) + concrete details.
     if details and not open_web:
         return True, ""
+
+    # SAY WHICH IT IS. Everything above judged the candidate on its title, URL,
+    # description and notes. When there was nothing to read, "no valid RFP signal (no call
+    # wording, deadline, or award amount)" states a conclusion about the OPPORTUNITY that
+    # the evidence does not support — it reads as "this is not a call" when the truth is
+    # "nobody could read this page". The outcome is the same either way (reject, and
+    # rightly: an unreadable page cannot be screened), so this changes no verdict. It
+    # changes what the reject log says, which is what anyone diagnosing coverage reads.
+    #
+    # This distinction cost real time. A Fondation Pierre Fabre URL that was a plain 404
+    # was logged as "no valid RFP signal" and read as a gate problem for an hour before
+    # the page turned out to be gone. On a sample of the live reject log, 4 of 36 pages
+    # were unreachable and every one of them carried the misleading reason.
+    # A KNOWN-DEAD page keeps its own, better reason. `error_page_reject` owns this
+    # verdict, but it runs AFTER this gate in `is_eligible`, so without this line a 404
+    # would fall into the no-text branch below and lose "dead link (HTTP 404)" — trading a
+    # precise reason for a vaguer one, the opposite of the point of this change.
+    if candidate.get("_dead_page"):
+        return False, (candidate.get("_dead_reason")
+                       or "dead link (page gone / error)")
+    if candidate.get("_fetch_failed"):
+        return False, (f"page could not be fetched "
+                       f"({candidate.get('_fetch_error') or 'fetch failed'}) — "
+                       "cannot confirm whether this is a call")
+    if not (desc.strip() or (candidate.get("_page_text") or "").strip()):
+        # No description AND no page body. Distinct from the case above: nothing here says
+        # a fetch was even attempted (a listing-derived candidate whose enrichment was
+        # skipped or capped looks exactly like this), so the wording claims only what is
+        # known — there was no text to judge.
+        return False, ("no readable description or page text — cannot confirm whether "
+                       "this is a call")
     return False, "no valid RFP signal (no call wording, deadline, or award amount)"
 
 

@@ -70,6 +70,21 @@ def recheck_and_enrich(cand: dict) -> bool:
         r = requests.get(url, headers={"User-Agent": USER_AGENT},
                          timeout=HTTP_TIMEOUT, allow_redirects=True)
     except Exception as exc:
+        # RECORD THE FAILURE, don't just log it. A 404/410 or a soft-404 body sets
+        # `_dead_page` below and the gate reports "dead link"; a request that RAISES
+        # (timeout, DNS failure, connection reset, TLS error) used to leave no mark at
+        # all, so the candidate went on to be judged on its TITLE alone and was rejected
+        # as "no valid RFP signal (no call wording, deadline, or award amount)" — which
+        # says "this is not a call" about a page nobody managed to read. Measured on a
+        # sample of the live reject log, 4 of 36 pages were in exactly that state.
+        #
+        # Deliberately NOT `_dead_page`: a timeout is not evidence the resource is gone
+        # (that flag is a hard reject), and a bot wall or a slow server must not become a
+        # permanent verdict. This only sharpens the REASON; the outcome is unchanged.
+        # The return value stays False so the pipeline's control flow (re-gate only when
+        # `fetched`) is untouched.
+        cand["_fetch_failed"] = True
+        cand["_fetch_error"] = f"{type(exc).__name__}: {str(exc)[:120]}"
         log.debug("live_check fetch failed for %s: %s", url, exc)
         return False
 
