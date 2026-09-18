@@ -372,6 +372,7 @@ def run(
     triggered_by: str = "cron",
     dry_run: bool = False,
     source_filter: str | None = None,
+    discover: bool = False,
     workers: int = DEFAULT_WORKERS,
     extract_only: bool = False,
 ) -> dict:
@@ -489,6 +490,45 @@ def run(
                            err=bool(_b.get("err")))
     scrape_seconds = time.time() - wall_start
 
+    # ------------------------------------------------------------------
+    # WEB-SEARCH DISCOVERY (opt-in via --discover)
+    # ------------------------------------------------------------------
+    # The registry is DONOR-KEYED — we list a funder, then crawl their site — and that has
+    # a structural blind spot no amount of donor coverage closes: a call published on a
+    # partner's programme microsite under the programme's name, never on the funder's own
+    # domain. Three live calls were lost to it (Fondation Pierre Fabre -> odess.io, UBS
+    # Optimus -> outcomesaccelerator.org, The Audacious Project), each found only because
+    # someone shared a link. A search engine does not care whose domain a call sits on.
+    #
+    # `web_search` already did the hard part — provider fan-out, query expansion across
+    # every health pivot, and per-hit verification by fetching the page and testing it with
+    # the same _RFP_STRONG_PHRASES / _has_rfp_acronym / body-geography checks the gates use.
+    # It was reachable only from a UI button. This makes it a phase.
+    #
+    # Its hits enter as ONE MORE BATCH in the list below, so they go through the identical
+    # sequential ingest as any crawled source: same gates, same enrichment, same dedup,
+    # same store write. A discovered call is not privileged — it clears not-an-rfp, theme
+    # and deadline on its own merits, lands in the shared store, and each tenant's
+    # screening decides from there.
+    if discover:
+        try:
+            from core import search_discovery
+            _d = search_discovery.discover()
+            print(search_discovery.summarize(_d["stats"]))
+            if _d["candidates"]:
+                scraped.append({
+                    "name": search_discovery.SOURCE_LABEL,
+                    # No donor_sources row backs this channel, so there is no URL to key
+                    # source-health telemetry on; the summarize() line above is its log.
+                    "source": {"name": search_discovery.SOURCE_LABEL,
+                               "source_class": "primary"},
+                    "results": _d["candidates"],
+                    "err": None, "skipped": 0, "duration": 0.0,
+                })
+        except Exception as _dexc:
+            print(f"  (search discovery failed: {_dexc})", file=sys.stderr)
+
+
     # PER-SOURCE HEALTH. `donor_sources.last_scraped_at` / `last_scrape_status` have
     # columns, and the Admin → Donor Sources table has COLUMNS FOR THEM — but nothing has
     # ever written either one, so both read empty for all 54 active sources and always
@@ -524,7 +564,13 @@ def run(
             except Exception as _hexc:
                 print(f"  (source health write failed for {_url}: {_hexc})",
                       file=sys.stderr)
-        print(f"Source health · recorded {_hs}/{len(scraped)} · {_hz} returned 0 candidates")
+        # Denominator is REGISTERED sources only — the search-discovery batch has no
+        # donor_sources row behind it, so counting it would make the ratio read as a
+        # failed write every time discovery runs.
+        _n_reg = sum(1 for _b in scraped
+                     if (_b.get("source") or {}).get("url")
+                     or (_b.get("source") or {}).get("rfp_listing_url"))
+        print(f"Source health · recorded {_hs}/{_n_reg} · {_hz} returned 0 candidates")
 
     # Incremental extraction — always report the run-wide skip total (never silently
     # drop it), even when 0, so the log makes the saving explicit.
@@ -690,6 +736,12 @@ def main() -> None:
                     help="After the crawl, screen EACH active tenant against its own "
                          "policies/profile into that tenant's pipeline (multi-tenant "
                          "auto-populate). Pair with --extract-only for the Friday cron.")
+    ap.add_argument("--discover", action="store_true",
+                    help="Also run a WEB-SEARCH discovery sweep and ingest its verified "
+                         "hits alongside the crawled sources. Reaches calls no registry "
+                         "entry can — one published on a partner's programme microsite "
+                         "rather than the funder's own site. Off by default; "
+                         "RFPIS_SEARCH_DISCOVERY=0 disables it even when passed.")
     ap.add_argument("--source", default=None, help="Restrict to one source name")
     ap.add_argument(
         "--workers", type=int, default=DEFAULT_WORKERS,
@@ -735,6 +787,7 @@ def main() -> None:
         triggered_by=args.triggered_by,
         dry_run=args.dry_run,
         source_filter=args.source,
+        discover=args.discover,
         workers=args.workers,
         extract_only=_extract_only,
     )

@@ -46,6 +46,12 @@ jobs:
           # without it the resolver simply no-ops and DevelopmentAid hits stay as
           # listings. Add SERPER_API_KEY as a repo Actions secret to enable it.
           SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          # …and now also powers the WEB-SEARCH DISCOVERY sweep (--discover below).
+          # Tavily is an optional SECOND provider for that sweep: either alone works, and
+          # both together improve recall. Add TAVILY_API_KEY as a repo Actions secret to
+          # enable it. Set RFPIS_SEARCH_DISCOVERY=0 to switch the sweep off without
+          # touching the command.
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           # Multi-tenant: lets the per-tenant screening step treat the run as multi-tenant.
           # Optional — the --screen-tenants override works without it — but keeps the
           # app's tenant state consistent. Add SUPABASE_JWT_SECRET as a repo Actions secret.
@@ -66,4 +72,12 @@ jobs:
           SCAN_PARALLELISM: "6"
         # Option-C multi-tenant discovery: crawl → SHARED extracted store (--extract-only),
         # then auto-screen EACH active tenant into its own pipeline (--screen-tenants).
-        run: python scripts/run_scan.py --triggered-by cron --extract-only --screen-tenants
+        #
+        # --discover adds a WEB-SEARCH sweep alongside the crawl. The registry is
+        # donor-keyed, so it cannot reach a call published on a partner's programme
+        # microsite under the programme's name rather than the funder's own domain — three
+        # live calls were lost to exactly that and found only because someone shared a
+        # link. Search does not care whose domain a call sits on. Its hits go through the
+        # same gates, enrichment and store write as a crawled candidate; ~14 queries per
+        # provider per run, so about 1,500 Serper queries a year against a 2,500 free tier.
+        run: python scripts/run_scan.py --triggered-by cron --extract-only --screen-tenants --discover
