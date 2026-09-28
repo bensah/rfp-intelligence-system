@@ -24,7 +24,7 @@ from datetime import date
 from typing import Any
 
 from core import deadline_extract, extracted_store, geographies, type_detect
-from core.auto_scorer import is_eligible
+from core.auto_scorer import discovered_but_never_read, is_eligible
 
 log = logging.getLogger(__name__)
 
@@ -328,7 +328,22 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     # the rfp_submissions insert.
     _store_brief = None
     _syn: dict[str, Any] = {}
-    if use_llm and len(text) >= 120:
+    # DO NOT WRITE A BRIEF OUT OF A SEARCH SNIPPET.
+    #
+    # The 120-char floor was meant to skip boilerplate, and a search provider's ~160
+    # characters clear it comfortably. So a snippet became a 1000-char brief - a
+    # 6x expansion - written in the confident voice of a real call, naming a funder
+    # that was itself guessed from the domain: "supported by the Mesamalaria funder",
+    # "The Errin call invites proposals". Neither is a funder; neither page was ever
+    # read. That prose is what made an expired call look worth a reviewer's minutes,
+    # and it is worse than a blank brief, which at least tells the truth.
+    #
+    # Only the SEARCH channel is held to this. A structured feed legitimately has no
+    # page text and a description straight from the API, and must keep synthesising.
+    _unread, _unread_why = discovered_but_never_read(cand)
+    if _unread:
+        log.info("store synthesis skipped for %s - %s", url, _unread_why)
+    if use_llm and len(text) >= 120 and not _unread:
         try:
             from core import llm_synthesis
             _neutral = llm_synthesis.synthesize_store(cand)
