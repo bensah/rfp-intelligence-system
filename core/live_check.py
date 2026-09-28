@@ -37,6 +37,25 @@ def max_checks() -> int:
         return 80
 
 
+def max_page_captures() -> int:
+    """Per-run cap on PAGE-CAPTURE fetches (env-tunable).
+
+    A SEPARATE budget from `max_checks`, and that separation is the point. The
+    liveness budget serves thin / undated candidates; page capture serves the ones
+    that look complete because a feed handed us a snippet and a deadline. Sharing
+    one counter would let whichever candidates come first in the list consume it
+    and starve the other case.
+
+    Sized from a real run rather than guessed: a full scan finds ~1250 candidates
+    and rejects ~1000 on cheap signals, so roughly 250 reach the point where
+    reading the page can change the verdict.
+    """
+    try:
+        return int(os.environ.get("RFPIS_PAGE_CAPTURE_MAX", "250"))
+    except (TypeError, ValueError):
+        return 250
+
+
 def recheck_and_enrich(cand: dict) -> bool:
     """Fetch the candidate's link once. Set `_dead_page`/`_dead_reason` if the
     page is gone / an error template; otherwise fill any missing
