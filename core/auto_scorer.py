@@ -1657,6 +1657,58 @@ def language_eligible(candidate: dict[str, Any]) -> tuple[bool, str]:
 # Six months was letting a January call sit in an August review week.
 _STALE_POSTING_DAYS = 90   # ~3 months
 
+# A SEARCH SNIPPET IS NOT A CALL PAGE.
+#
+# A search provider returns ~160 characters with an ellipsis. Web-search discovery
+# builds a candidate from that, guesses a funder from the domain, and the pipeline
+# then tries to fetch the real page. When that fetch fails - and it silently did,
+# on every host that refused our missing User-Agent - the snippet is all we ever
+# have, and nothing downstream says so.
+#
+# What made it invisible: the synthesis expanded the 160-char snippet into a
+# 1000-char brief, so the row arrived with prose that reads like a real
+# opportunity. It even satisfied the blank-stub branch below, whose text length is
+# measured on the brief. Generated content was answering the question "did we
+# manage to read this call?".
+#
+# Measured on the live store, rows discovered by search whose fetched text stayed
+# snippet-sized: 11 of them, EVERY one with no deadline, and of the 8 that reached
+# a tenant pipeline ALL 8 were auto-scored Decline. Six were in a single review
+# week, including the four the owner reported by hand. Their funders read
+# "Mesamalaria", "Errin", "International", "Ahpsr" - domain brand words, because no
+# page was ever read to find the real one.
+#
+# So this is a data-completeness fact, not a screening opinion: we hold a URL and a
+# snippet, and we have not read the call. Keyed on PROVENANCE plus fetched length,
+# never on length alone - a structured feed legitimately has no page text at all
+# (EU TED: 50 of 50 rows with zero raw_text, deadlines and values from the API),
+# and rejecting those would throw away whole sources.
+_SNIPPET_CEILING = 400     # chars; a real call page is thousands
+_SEARCH_ORIGINS = ("web search", "google alert")
+
+
+def _page_was_fetched(candidate: dict[str, Any]) -> bool:
+    """True when we hold text that came from the call's OWN page.
+
+    Deliberately ignores `brief_description`: that may be a synthesis, and
+    generated prose must never be evidence that the page was read.
+    """
+    page = (candidate.get("_page_text") or candidate.get("raw_text") or "")
+    return len(str(page).strip()) >= _SNIPPET_CEILING
+
+
+def discovered_but_never_read(candidate: dict[str, Any]) -> tuple[bool, str]:
+    """(True, reason) for a search-discovered call whose page we never read."""
+    origin = str(candidate.get("_source_origin") or candidate.get("source") or "").lower()
+    if not any(o in origin for o in _SEARCH_ORIGINS):
+        return False, ""
+    if _page_was_fetched(candidate):
+        return False, ""
+    page = (candidate.get("_page_text") or candidate.get("raw_text") or "")
+    return True, (f"found by web search but the call page was never read "
+                  f"({len(str(page).strip())} chars of search snippet only) - "
+                  f"nothing here is the donor's own text")
+
 _ROLLING_RE = re.compile(
     r"(rolling\s+basis|on\s+a\s+rolling|no\s+(?:fixed\s+|set\s+)?deadline"
     r"|deadline\s*:?\s*(?:none|n/?a|ongoing|rolling|continuous)"
@@ -1822,6 +1874,13 @@ def insufficient_data_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
     if not deadline and text_len < 120 and not has_value and not has_geo and not has_dom:
         return True, ("insufficient extraction — no deadline, value, scope, area or "
                       "description (blank stub; cannot verify a real open call)")
+
+    # (a2) found by search, never actually read. Distinct from (a) because these rows
+    # are NOT blank — the synthesis filled them out from the snippet, which is exactly
+    # why (a) could not see them. See `discovered_but_never_read`.
+    _unread, _why = discovered_but_never_read(candidate)
+    if _unread and not deadline:
+        return True, _why
 
     # (b) no verifiable live deadline.
     if not deadline and not _is_rolling_call(candidate):
