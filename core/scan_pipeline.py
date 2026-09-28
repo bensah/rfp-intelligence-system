@@ -25,7 +25,7 @@ from core import extract as extraction        # extraction-first global store (s
 from core import deadline_extract             # confidence-gated deadline backstop
 from core.auto_scorer import (auto_score, is_eligible, is_index_page,
                               theme_eligible, insufficient_data_reject,
-                              is_rolling_call, ROLLING_WINDOW)
+                              is_rolling_call, ROLLING_WINDOW, have_call_page)
 from core.deduplicator import find_duplicates
 from core.policies import get_policies
 from core.review_week import review_week_label
@@ -435,6 +435,13 @@ def ingest_candidates(
     _source_encounters: list[dict] = []  # host registry — aggregator vs primary log
     _live_checks = 0                   # bounded HTTP liveness fetches this run
     _live_check_max = live_check.max_checks()
+    # Separate budget for PAGE CAPTURE (see the block that uses it). Kept apart from
+    # the liveness budget so neither can starve the other; ~250 covers the candidates
+    # that survive the cheap first gate in a full run (measured: ~1250 found, ~1000
+    # rejected on cheap signals).
+    _page_captures = 0
+    _page_capture_skipped = 0
+    _page_capture_max = live_check.max_page_captures()
     ts = datetime.now()
 
     # LISTING-CHILDREN CRAWL: a candidate that is an index/listing/aggregator page
@@ -683,6 +690,51 @@ def ingest_candidates(
             log.info("reject: %s — %s", cand.get("opportunity_title", "")[:60], reason)
             _reject_records.append({**cand, "_reject_reason": reason})
             continue
+
+        # PAGE CAPTURE — READ THE CALL'S OWN PAGE BEFORE JUDGING IT.
+        #
+        # The two enrichment steps below are both gated on the candidate looking
+        # THIN (no description) or UNDATED. So a feed item that arrives with a
+        # snippet AND a deadline looks complete, and its page is never fetched -
+        # which is precisely the case where the page carries the things that decide
+        # the verdict. Three gates read `_full_text` (title + brief + scope +
+        # funder, ~1000 chars) and were therefore ruling on a summary:
+        #
+        #   AS-260918-111124  RSS feed gave 403 chars of "Calendar of Events" and a
+        #                     deadline. The real 3794-char page says "New York State
+        #                     Department of Health" and the US-state gate rejects it.
+        #   AS-260918-111157  882 chars of snippet. The real 4649-char page states a
+        #                     2022-07-28 deadline; the expiry gate rejects it.
+        #
+        # Both sat in a review week as rows a human had to open and dismiss. Nothing
+        # about the gates was wrong - they had never been shown the page.
+        #
+        # ITS OWN BUDGET, deliberately. Widening the condition below instead would
+        # let the first candidates consume the liveness budget in list order and
+        # starve the thin/undated ones that most need it. The counters are separate
+        # so neither can exhaust the other, and the skipped count is LOGGED, because
+        # a budget that silently runs out is how this became invisible in the first
+        # place.
+        if (not dry_run and not cand.get("extraction_uid")
+                and not have_call_page(cand)):
+            if _page_captures < _page_capture_max:
+                _page_captures += 1
+                try:
+                    if live_check.recheck_and_enrich(cand):
+                        ok, reason = is_eligible(
+                            cand, policies, geo_org_gates=not extract_only,
+                            theme_gate=not extract_only,
+                            llm_adjudicate=llm_adjudicate)
+                        if not ok:
+                            rejected += 1
+                            log.info("reject (post page-capture): %s — %s",
+                                     (cand.get("opportunity_title") or "")[:60], reason)
+                            _reject_records.append({**cand, "_reject_reason": reason})
+                            continue
+                except Exception as exc:
+                    log.debug("page capture skipped: %s", exc)
+            else:
+                _page_capture_skipped += 1
 
         # Cheap liveness + re-enrich (plain HTTP — runs on Cloud too, unlike the
         # Chromium deep-read below). For a thin candidate (no deadline / no
@@ -1106,6 +1158,13 @@ def ingest_candidates(
         "suppressed_seen=%d rejected=%d store_errors=%d",
         inserted, updated, duplicate_unchanged, suppressed_seen, rejected, store_errors,
     )
+    # SAY IT WHEN THE BUDGET RUNS OUT. A candidate skipped here was judged on a feed
+    # snippet, which is the failure this whole step exists to end - so it must not be
+    # possible to hit the ceiling silently and wonder later why rows still leak.
+    log.info("scan ingest: page captures=%d/%d%s", _page_captures, _page_capture_max,
+             (f"  ** {_page_capture_skipped} candidate(s) were gated WITHOUT their page "
+              f"because the budget ran out - raise RFPIS_PAGE_CAPTURE_MAX **")
+             if _page_capture_skipped else "")
     if stats is not None:
         # The uncollapsed truth, for a caller that needs to tell a created row from a
         # refreshed one (scan_logs.rfps_added). Written before every return so no path

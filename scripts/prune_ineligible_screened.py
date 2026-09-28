@@ -9,8 +9,24 @@ SAFE BY DESIGN:
   * Skips any row showing human review (a `decision`, decision_note, amount_requested,
     a non-default donor_decision, or a decision override).
   * Deletes ONLY when the row's CURATED-STORE counterpart (extracted_solicitations,
-    matched by normalised link) now FAILS is_eligible(geo_org_gates=True). Orphans
-    (no store row) are left alone.
+    matched by normalised link) now FAILS the gate. Orphans (no store row) are
+    left alone.
+  * TOMBSTONES BEFORE DELETING, and skips any row it could not tombstone. A
+    deleted row is remembered only in rfp_seen; without that record the next scan
+    re-ingests exactly what this script just removed.
+
+THIS SCRIPT NEARLY DELETED GENUINE CALLS, and the reason is worth keeping in view.
+It used to call `is_eligible(cand, pol, geo_org_gates=True)` with no adjudicator.
+The theme gate reads `_full_text` - title + brief + scope + funder, ~1100 chars -
+and its page-text rescue only runs when the LLM judge is available. So both
+Wellcome career-award schemes, whose pages carry 12,000 characters saying "health"
+twenty times, came back "theme: no required theme keyword matched" and were listed
+for deletion. With the adjudicator they are (True, 'eligible').
+
+A leak costs a reviewer minutes. This costs them the opportunity. So:
+  * the gate now runs WITH llm_adjudicate / llm_theme, and
+  * a row rejected ONLY on theme is HELD, never deleted, when the judge is
+    unavailable - because that verdict was reached without reading the page.
 
 ORDER: run **Run Extraction** first so the store carries the corrected geography
 (grants.gov US-default) + prize tags, THEN run this, THEN "My eligible funding".
@@ -37,7 +53,7 @@ except Exception:
     pass
 
 from core import extracted_store, scan_pipeline
-from core.auto_scorer import is_eligible
+from core.auto_scorer import insufficient_data_reject, is_eligible
 from core.policies import get_policies
 from db.supabase_client import get_client
 
@@ -84,7 +100,17 @@ def main() -> int:
             .eq("source", "auto").limit(5000).execute().data or [])
     print(f"auto rows: {len(rows)} · curated store rows: {len(store)}\n")
 
-    to_delete, skipped_human, no_store = [], 0, 0
+    # Can the theme gate read the page? If not, a theme-only reject is a verdict
+    # reached on ~1100 characters and must not delete anything.
+    try:
+        from core import llm_judge
+        judge_ok = llm_judge.is_enabled()
+    except Exception:
+        judge_ok = False
+    print(f"theme adjudicator available: {judge_ok}"
+          + ("" if judge_ok else "  -> theme-only rejects will be HELD, not deleted"))
+
+    to_delete, held, skipped_human, no_store = [], [], 0, 0
     for r in rows:
         if _human_touched(r):
             skipped_human += 1
@@ -96,29 +122,57 @@ def main() -> int:
             continue
         cand = scan_pipeline._candidate_from_extracted(srow)
         cand["_source_class"] = "primary"
-        ok, reason = is_eligible(cand, pol, geo_org_gates=True)
-        if not ok:
-            to_delete.append((r, reason))
+        # WITH the adjudicator, so the theme gate can consult the page rather than
+        # ruling on the summary alone.
+        ok, reason = is_eligible(cand, pol, geo_org_gates=True,
+                                 llm_adjudicate=True, llm_theme=True)
+        if ok:
+            # The same data-sufficiency gate the scan runs for a tenant pipeline:
+            # a row we still cannot verify as a real, open call does not belong.
+            bad, why = insufficient_data_reject(cand)
+            if not bad:
+                continue
+            reason = why
+        if not judge_ok and reason.startswith("theme:"):
+            held.append((r, reason))
+            continue
+        to_delete.append((r, reason, cand))
 
-    print(f"Would delete {len(to_delete)} now-ineligible auto row(s). "
-          f"(skipped {skipped_human} human-touched, {no_store} not-in-store/orphan)\n")
-    for r, reason in to_delete[:40]:
-        print(f"  ✗ {str(r.get('opportunity_title'))[:46]:46} "
-              f"{str(r.get('funding_agency'))[:22]:22} — {reason[:48]}")
-    if len(to_delete) > 40:
-        print(f"  … and {len(to_delete) - 40} more")
+    print(f"\nWould delete {len(to_delete)} now-ineligible auto row(s). "
+          f"(skipped {skipped_human} human-touched, {no_store} not-in-store/orphan, "
+          f"{len(held)} held)\n")
+    for r, reason, _ in to_delete[:60]:
+        print(f"  x {str(r.get('opportunity_title'))[:44]:44} "
+              f"{str(r.get('funding_agency'))[:20]:20} - {reason[:52]}")
+    if len(to_delete) > 60:
+        print(f"  ... and {len(to_delete) - 60} more")
+    if held:
+        print(f"\nHELD ({len(held)}) - theme reject with no adjudicator, so the page "
+              f"was never read. Not deleted:")
+        for r, reason in held[:20]:
+            print(f"  ? {str(r.get('opportunity_title'))[:44]:44} "
+                  f"{str(r.get('funding_agency'))[:20]:20} - {reason[:40]}")
 
     if not args.apply:
-        print("\nDRY-RUN — nothing deleted. Re-run with --apply to delete.")
+        print("\nDRY-RUN - nothing deleted. Re-run with --apply to delete.")
         return 0
-    deleted = 0
-    for r, _ in to_delete:
+
+    from core import seen_ledger
+    deleted, untombstoned = 0, 0
+    for r, _reason, cand in to_delete:
+        # Tombstone FIRST. A row we delete without one comes straight back.
+        if not seen_ledger.record_decision(r, "declined", reason="pruned_ineligible") \
+                and not seen_ledger.record([r], reason="pruned_ineligible"):
+            untombstoned += 1
+            print(f"  ! not tombstoned, so NOT deleted: {r.get('uid')}")
+            continue
         try:
             sb.table("rfp_submissions").delete().eq("id", r["id"]).execute()
             deleted += 1
         except Exception as exc:
             print(f"  delete failed for {r.get('id')}: {exc}")
-    print(f"\nDeleted {deleted} row(s). Run “My eligible funding” to refresh.")
+    print(f"\nDeleted {deleted} row(s); {untombstoned} skipped because they could "
+          f"not be tombstoned.")
     return 0
 
 

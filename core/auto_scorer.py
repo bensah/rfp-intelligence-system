@@ -1687,14 +1687,42 @@ _SNIPPET_CEILING = 400     # chars; a real call page is thousands
 _SEARCH_ORIGINS = ("web search", "google alert")
 
 
-def _page_was_fetched(candidate: dict[str, Any]) -> bool:
-    """True when we hold text that came from the call's OWN page.
+def _page_text_of(candidate: dict[str, Any]) -> str:
+    """The text we hold from the call's OWN page.
 
     Deliberately ignores `brief_description`: that may be a synthesis, and
     generated prose must never be evidence that the page was read.
     """
-    page = (candidate.get("_page_text") or candidate.get("raw_text") or "")
-    return len(str(page).strip()) >= _SNIPPET_CEILING
+    return str(candidate.get("_page_text") or candidate.get("raw_text") or "").strip()
+
+
+def _page_was_fetched(candidate: dict[str, Any]) -> bool:
+    """True when we hold more than a SEARCH SNIPPET (~160 chars from a provider).
+
+    This answers "is a snippet all we ever got?", which is the question the
+    never-read gate asks. It is NOT the same question as "do we hold the call's
+    page" - see `have_call_page`.
+    """
+    return len(_page_text_of(candidate)) >= _SNIPPET_CEILING
+
+
+# Below this, what we hold is a feed snippet or a fragment rather than the call's
+# page. Taken from the live store, where stored page-text length is strongly
+# bimodal - 315 rows under 500 chars, 301 over 6000 - with a clear valley around
+# 2000. Both real leaks sat under it (403 chars of RSS "Calendar of Events", 882
+# of search snippet) and both real pages sat well over it (3794 and 4649).
+PAGE_TEXT_FLOOR = 2000
+
+
+def have_call_page(candidate: dict[str, Any]) -> bool:
+    """True when we hold enough of the call's own page to judge it on.
+
+    Separate from `_page_was_fetched`, and the separation matters: 403 characters
+    is more than a search snippet but nowhere near a call page, and a row with
+    exactly that much RSS boilerplate was screened by three page-reading gates
+    that consequently saw nothing.
+    """
+    return len(_page_text_of(candidate)) >= PAGE_TEXT_FLOOR
 
 
 def discovered_but_never_read(candidate: dict[str, Any]) -> tuple[bool, str]:
