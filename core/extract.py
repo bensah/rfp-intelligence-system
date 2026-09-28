@@ -23,7 +23,8 @@ import re
 from datetime import date
 from typing import Any
 
-from core import deadline_extract, extracted_store, geographies, type_detect
+from core import (deadline_extract, eligible_countries, extracted_store,
+                  geographies, type_detect)
 from core.auto_scorer import discovered_but_never_read, is_eligible
 
 log = logging.getLogger(__name__)
@@ -315,6 +316,28 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
     if "Global / worldwide" in geo and not geographies.worldwide_ok(blob):
         geo.discard("Global / worldwide")
 
+    # A PUBLISHED COUNTRY LIST OUTRANKS A REGION KEYWORD.
+    #
+    # Everything above derives geography from keywords in the text, which is the
+    # most permissive reading available: the SGCI/STISA call names nineteen
+    # eligible countries under a COUNTRIES heading on its own page, and this
+    # produced ['Africa', 'Sub-Saharan Africa'] - 'Africa' off the title, the other
+    # off the programme's name. Both contain the tenant's countries, so every
+    # geography gate passed a call the tenant was not eligible for, and the
+    # nineteen names reached no field at all (eligibility_countries was []) so
+    # nothing downstream could correct it either.
+    #
+    # Read off the page rather than inferred, so it does not depend on the LLM
+    # being enabled - and it must run AFTER the keyword work above precisely so it
+    # can overrule it. `drop_broad_when_listed` removes the regions, because
+    # leaving them alongside the names changes no gate's mind: a region that
+    # contains the tenant's country still passes.
+    _listed, _listed_label = eligible_countries.extract(text or blob)
+    if _listed:
+        geo = set(eligible_countries.drop_broad_when_listed(sorted(geo), _listed))
+        log.info("eligible-country list published (%s): %d countries -> scope %s",
+                 _listed_label, len(_listed), sorted(geo)[:4])
+
     funding_status = "Closed" if (llm and llm.get("is_closed")) else "Open"
     overall_conf = "high" if (llm and llm.get("confidence") == "high") else d_conf
 
@@ -405,6 +428,9 @@ def build_record(candidate: dict[str, Any], policies: dict[str, Any], *,
         "opportunity_type": candidate.get("opportunity_type"),
         "call_geographic_scope": sorted(geo),
         "eligibility_applicant_types": candidate.get("eligibility_applicant_types") or [],
+        # Who may APPLY, which is a different question from where the money is spent.
+        # Read structurally here; the synthesis only ever fills a blank (below).
+        "eligibility_countries": _listed or None,
         # Structural extraction first; the synthesis fills a blank, never overrides.
         "grant_amount": g_amt if g_amt else _syn_amount,
         "project_duration": _syn_duration or None,

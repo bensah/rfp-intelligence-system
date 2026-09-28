@@ -528,6 +528,24 @@ _COUNTRY_ALIASES: dict[str, str] = {
     "great britain": "United Kingdom",
     "uae": "United Arab Emirates",
     "drc": "Congo (DRC)", "dr congo": "Congo (DRC)",
+    # Former / colloquial names funders still publish. Each one was reaching the
+    # gates as unrecognised free text, which reads as "silent geography" and
+    # passes permissively - the same absence-of-evidence failure as a missing
+    # deadline. "Ivory Coast" is not hypothetical: it is the spelling in our own
+    # store rows, and an eligible-country list that carried it was truncated at
+    # that word because the walk stops where the vocabulary does.
+    "ivory coast": "Côte d'Ivoire", "cote d'ivoire": "Côte d'Ivoire",
+    "cote divoire": "Côte d'Ivoire",
+    "cape verde": "Cabo Verde",
+    "swaziland": "Eswatini",
+    "burma": "Myanmar",
+    "congo-brazzaville": "Congo (Brazzaville)",
+    "congo brazzaville": "Congo (Brazzaville)",
+    "congo-kinshasa": "Congo (DRC)", "congo kinshasa": "Congo (DRC)",
+    "east timor": "Timor-Leste",
+    "macedonia": "North Macedonia",
+    "czech republic": "Czechia",
+    "holland": "Netherlands",
 }
 for _al, _canon in _COUNTRY_ALIASES.items():
     _COUNTRY_CANON.setdefault(_al, _canon)

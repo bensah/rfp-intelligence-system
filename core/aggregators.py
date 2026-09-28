@@ -33,10 +33,16 @@ from core.source_registry import confirmed_class, normalize_host
 #   reliefweb.int — explicit exception (OCHA's humanitarian opportunities portal).
 _KNOWN_PRIMARY = ("grants.gov", "sam.gov", "reliefweb.int")
 
-# Known competitor aggregators — third-party republishers, matched as a host
-# substring. Curated seed list; unknown ones get logged to source_registry for
-# human confirmation, after which confirmed_class() overrides this. NB: ReliefWeb
-# is deliberately NOT here — it's a primary exception (see _KNOWN_PRIMARY).
+# Known competitor aggregators — third-party republishers. Curated seed list;
+# unknown ones get logged to source_registry for human confirmation, after which
+# confirmed_class() overrides this. NB: ReliefWeb is deliberately NOT here — it's
+# a primary exception (see _KNOWN_PRIMARY).
+#
+# Matched by `_host_hits`, which also tries a needle's BRAND STEM as a label
+# prefix. That matters: `fundsforngos.org` was in this list from the start and
+# `fundsforngospremium.com` — the same republisher's paywalled sibling — still put
+# four rows into the pipeline, because a plain substring test cannot see past the
+# TLD the needle carries. Listing every sibling domain by hand is a losing race.
 _KNOWN_AGGREGATORS = (
     # Grant databases / intelligence platforms
     "grantbite.com", "instrumentl.com", "developmentaid.org", "devex.com",
@@ -44,6 +50,9 @@ _KNOWN_AGGREGATORS = (
     "grantstation.com", "grantforward.com", "opengrants.io", "grantwatch.com",
     "grantgateway", "grantgopher.com", "pivot.proquest.com", "candid.org",
     "terravivagrants.org", "grantnav", "ngobox.org", "fundsforcompanies.com",
+    # AI/SEO grant republishers — observed putting calls into the pipeline under
+    # their OWN name as the funder, with the call itself behind a paywall.
+    "grantedai.com", "globalscholardesk.com", "advance-africa.com",
     # Job aggregators (UN / development / general)
     "impactpool.org", "unjobs.org", "unjobnet.org", "untalent.org",
     "adzuna.com", "jooble.org", "theirstack.com",
@@ -54,7 +63,8 @@ _KNOWN_AGGREGATORS = (
     "opportunitiesfeed.com", "opportunitiescorners.com", "greatyop.com",
     # Tender / procurement aggregators
     "globaltenders.com", "tendersontime.com", "dgmarket.com",
-    "tenderimpulse.com", "biddetail.com", "openopps.com",
+    "tenderimpulse.com", "biddetail.com", "tenderdetail.com", "openopps.com",
+    "australiantenders.com.au",
 )
 
 # Blog / self-publish platforms — never the primary host of a funder's call.
@@ -65,8 +75,47 @@ _BLOG_PLATFORMS = (
 )
 
 
+# A brand stem shorter than this is matched exactly, never as a prefix. "candid"
+# would otherwise prefix-match "candidate…" and "devex" any host starting "devex";
+# a stem this long is distinctive enough that a prefix hit is the same operator.
+_STEM_MIN = 8
+
+
+def _host_owns(host: str, domain: str) -> bool:
+    """True when `domain` IS the host or its parent — a label-boundary match.
+
+    Deliberately STRICTER than a substring: "grants.gov" must not be satisfied by
+    "notgrants.gov". Used for the allowlists, where a false positive whitelists a
+    republisher and undoes the whole gate.
+    """
+    return host == domain or host.endswith("." + domain)
+
+
 def _host_hits(host: str, needles) -> bool:
-    return any(n in host for n in needles)
+    """Blocklist match: label-boundary, plus a long brand stem as a label prefix.
+
+    The prefix arm is what catches an operator's other domains — `fundsforngos`
+    prefix-matches the label `fundsforngospremium`. It is applied ONLY here and
+    never to `_KNOWN_PRIMARY`: over-matching a blocklist costs us a call that a
+    human can reinstate from the reject log, while over-matching the allowlist
+    silently readmits every aggregator that happens to share a prefix. The two
+    lists fail in opposite directions, so they do not share a matcher.
+    """
+    labels = host.split(".")
+    for n in needles:
+        n = (n or "").lower()
+        if not n:
+            continue
+        if "." not in n:                     # already a bare stem ("grantnav")
+            if any(lab.startswith(n) for lab in labels):
+                return True
+            continue
+        if _host_owns(host, n):
+            return True
+        stem = n.rsplit(".", 1)[0]
+        if len(stem) >= _STEM_MIN and any(lab.startswith(stem) for lab in labels):
+            return True
+    return False
 
 
 def classify(url: str | None, title: str | None = None) -> tuple[str, str]:
@@ -85,7 +134,8 @@ def classify(url: str | None, title: str | None = None) -> tuple[str, str]:
             return c, f"registry-confirmed: {host}"
     except Exception:
         pass
-    if _host_hits(host, _KNOWN_PRIMARY):
+    # Allowlist: label-boundary only (see _host_hits on why the lists differ).
+    if any(_host_owns(host, d) for d in _KNOWN_PRIMARY):
         return "primary", f"known primary portal: {host}"
     if _host_hits(host, _KNOWN_AGGREGATORS):
         return "aggregator", f"known aggregator: {host}"

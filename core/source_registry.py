@@ -398,6 +398,8 @@ def record_encounters(encounters: list[dict]) -> int:
         {url, title, detected, accepted}
     New hosts are inserted (status='pending'); existing ones get hits bumped +
     last_seen refreshed (pending rows also adopt the latest detector guess).
+    `accepted` is carried by the caller but no longer influences the guess — see
+    "ACCEPTANCE IS NOT EVIDENCE" below.
     Best-effort: returns rows written, 0 on any error. Never raises."""
     if not encounters:
         return 0
@@ -418,14 +420,22 @@ def record_encounters(encounters: list[dict]) -> int:
         det = (e.get("detected") or "unknown").lower()
         # Precedence: a detected aggregator/blog/listing STICKS (even if the
         # candidate was accepted — that means its resolved primary passed, not
-        # that THIS host is primary). Otherwise an accepted candidate is strong
-        # evidence the host itself is a primary source.
+        # that THIS host is primary).
+        #
+        # ACCEPTANCE IS NOT EVIDENCE. This used to read "an accepted candidate is
+        # strong evidence the host itself is a primary source", and promoted any
+        # accepted unknown host to `primary`. That is circular: acceptance is the
+        # gate's OUTPUT, and an unrecognised republisher is accepted precisely
+        # BECAUSE it classified as 'unknown' and unknown fails open. So the
+        # registry took its own miss as proof the host was legitimate and wrote
+        # `classification='primary'` — grantedai.com sat there as primary over 26
+        # hits, one bulk-confirm away from becoming authoritative via
+        # confirmed_class(). An unknown host now STAYS unknown, which is what puts
+        # it in front of a human instead of quietly whitelisting it.
         if det in ("aggregator", "blog", "listing"):
             a["detected"] = det
         elif a["detected"] not in ("aggregator", "blog", "listing"):
-            if e.get("accepted"):
-                a["detected"] = "primary"
-            elif a["detected"] == "unknown" and det in VALID_CLASS:
+            if a["detected"] == "unknown" and det in VALID_CLASS:
                 a["detected"] = det
     if not agg:
         return 0

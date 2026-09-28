@@ -406,11 +406,31 @@ def _bucket(label: str) -> set[str]:
 
 
 # A published applicant-country list longer than this is treated as unusable rather than
-# as a restriction. A genuine "who may apply" rule names a handful of countries; a list of
-# 130 is a WORK geography that the extractor filed under the wrong heading (the Finnish
-# scheme publishes ~130 developing markets it will fund projects IN), and rejecting on that
-# would throw away calls the org is perfectly eligible for.
-_APPLICANT_COUNTRY_MAX = 5
+# as a restriction. A list of 130 is a WORK geography that the extractor filed under the
+# wrong heading (the Finnish scheme publishes ~130 developing markets it will fund projects
+# IN), and rejecting on that would throw away calls the org is perfectly eligible for.
+#
+# THE OLD VALUE WAS 5, WHICH WAS GUESSED, AND THE DATA DISAGREES. "A genuine who-may-apply
+# rule names a handful of countries" is simply not how funders write these. Every list in
+# the live store above 5 is a real eligibility rule:
+#
+#   36  a foundation's intervention countries, where applicants must also be based
+#   16  a research network's member countries
+#   11  a US programme (states and territories)
+#    9  EU member states plus associated countries
+#    7  a regional disease-specific call
+#    6  six named European countries
+#
+# The largest genuine list is 36, and there is no 130-row in the store at all, so the cap
+# sat below the real data and silenced the gate on every one of them. The SGCI/STISA call
+# that prompted this names NINETEEN eligible countries - a rule the org plainly fails - and
+# the cap alone would have stood down on it.
+#
+# What actually protects the mis-filed case is the check below this one: any non-country
+# term in the list (a region, a tier, "EU Member States") means we cannot read it cleanly
+# and we say nothing. That guard is doing the work the number was credited with. So the cap
+# now sits above the observed data and below a continental work geography.
+_APPLICANT_COUNTRY_MAX = 60
 
 
 def applicant_country_mismatch_reject(candidate: dict[str, Any],
@@ -1294,6 +1314,35 @@ _SOFT_CLOSED_RE = re.compile(
 )
 
 
+# "closed" starting a COMPOUND ADJECTIVE is not a status: "closed-loop systems",
+# "closed-circuit diagnostics", "closed-ended fund", "closed-door session". `\b`
+# treats the hyphen as a boundary, so `fund|call|window ... closed\b` happily
+# matched "We fund closed-loop water systems".
+#
+# This was latent while the detector only ever saw ~1000 characters of
+# synthesised summary. Letting it read whole pages makes it real, so it is fixed
+# here rather than shipped as a new source of false rejects - which is the exact
+# thing this change exists to reduce.
+_HYPHENATED_CLOSED = re.compile(r"-\w")
+
+
+def _closure_match(text: str):
+    """First GENUINE closure-phrase match in `text`, or None.
+
+    Skips a match whose trailing "closed" is really the head of a compound
+    adjective, and keeps scanning - one "closed-loop" early in a page must not
+    hide a real "no longer accepting applications" further down.
+    """
+    if not text:
+        return None
+    for m in _CLOSURE_PHRASE_RE.finditer(text):
+        if m.group(0).rstrip().lower().endswith("closed") \
+                and _HYPHENATED_CLOSED.match(text[m.end():m.end() + 2]):
+            continue
+        return m
+    return None
+
+
 def _max_deadline_future(candidate: dict[str, Any]) -> bool:
     """True when the candidate's EFFECTIVE (latest) submission deadline is today or later.
     call_submission_deadline already holds the MAX/stage-2 date for two-stage EU topics
@@ -1332,15 +1381,40 @@ def closed_call_hard_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
         if _future:
             return False, ""       # two-stage: portal-Closed but a later deadline is still open
         return True, "portal status: closed"
-    text = _full_text(candidate)
-    m = _CLOSURE_PHRASE_RE.search(text)
+    # THE DETECTOR HAD NEVER READ THE PAGE. `_full_text` is title + brief + scope +
+    # funder, so this searched ~1000 characters of synthesised summary while the
+    # closure notice sat in the page body, which is where donors put it. Proven on
+    # the MalariaGEN procurement grant: its page says BOTH "now closed" and "no
+    # longer accepting applications", and with `_page_text` populated this function
+    # still returned (False, '') - because it was not looking there.
+    #
+    # Reading the page is safe HERE in a way it was not for the theme gate (see
+    # theme_eligible's page-text rescue, which had to route through the judge). The
+    # required-theme list contains bare words like "health", so a long page matches
+    # incidentally; these phrases are whole clauses that only appear when someone
+    # means them.
+    #
+    # The one real risk is a page that advertises an OPEN round while recounting a
+    # closed one. So a match found ONLY in the page body is overridden by a still-
+    # future deadline whatever its strength, while a match in the narrow fields keeps
+    # today's behaviour exactly - strong prose there rejects regardless of date. A
+    # page with closure wording and NO future deadline is the leak, and it rejects.
+    narrow = _full_text(candidate)
+    m = _closure_match(narrow)
+    page_only = False
+    if not m:
+        page = _normalize(candidate.get("_page_text")
+                          or candidate.get("raw_text") or "")
+        m = _closure_match(page)
+        page_only = bool(m)
     if m:
         # A future deadline overrides a SOFT status-word match (badge/shorthand), but never
         # the strong "the opportunity is over" phrases.
-        if _future and _SOFT_CLOSED_RE.match(m.group(0).strip()):
+        if _future and (page_only or _SOFT_CLOSED_RE.match(m.group(0).strip())):
             return False, ""
         # Trim the match to keep the reason line compact in scan_logs.
-        return True, f"call explicitly closed: {m.group(0)!r}"
+        where = "on the page" if page_only else "in the summary"
+        return True, f"call explicitly closed ({where}): {m.group(0)!r}"
     return False, ""
 
 
@@ -1425,12 +1499,38 @@ def us_domestic_only_reject(candidate: dict[str, Any], policies: dict[str, Any])
     if us_entity:
         return False, ""
     text = _full_text(candidate) + " " + (candidate.get("notes") or "")
-    if _has_inclusive_eligibility(text):
+    # BOTH ARMS READ THE SAME EVIDENCE. The state-agency check below now searches
+    # the page, and widening only the REJECT side would be worse than not widening
+    # at all: a call that says "open to applicants in any country" on its page would
+    # be dropped on the strength of a state agency named on that same page. So the
+    # inclusive-eligibility stand-down reads the page too. Caught by its own test.
+    _page = _normalize(candidate.get("_page_text") or candidate.get("raw_text") or "")
+    if _has_inclusive_eligibility(text) or _has_inclusive_eligibility(_page):
         return False, ""
     # US STATE government funder (state-level, domestic) — implied by the funder identity even
     # when no country / "domestic" phrase is stated. Search the funder name too, since it often
     # carries the state agency ("New York State Department of Health / AIDS Institute").
-    if us_state_agency_funder(text + " " + str(candidate.get("funding_agency") or "")):
+    #
+    # …AND SEARCH THE PAGE, because that is where it actually says so. This gate was
+    # added FROM the NY-State AIDS Institute leak, and the same funder leaked again:
+    # `RFP C043113 AIDS Intervention Management System`, funder "Health Research,
+    # Inc." — a pass-through research foundation whose name names no state — with an
+    # EMPTY brief. So `text` was the title plus the word "Global", and there was
+    # nothing for the pattern to match. Isolated by putting the page's own text into
+    # brief_description instead, where `_full_text` does look: the gate then returns
+    # True with the right reason. The detector was never wrong; it was never shown
+    # the page. `_full_text` is deliberately narrow for keyword gates and is the
+    # shared cause here, in closed_call_hard_reject, and in the theme gate before it.
+    #
+    # Safe to widen for THIS pattern specifically: it needs a state name adjacent to
+    # "state" and an agency word ("New York State Department of Health", "State of
+    # California ..."), which is not something a page says in passing, and the two
+    # guards above still stand down first for a US org or an explicit
+    # foreign-eligibility statement.
+    _state_text = " ".join([
+        text, str(candidate.get("funding_agency") or ""), _page,
+    ])
+    if us_state_agency_funder(_state_text):
         return True, ("funded by a US STATE government agency (state-level, domestic) — "
                       "out of scope for a non-US deployment")
     # Grants.gov is a US-FEDERAL portal. Absent an EXPLICIT foreign/international
@@ -1859,6 +1959,18 @@ _LISTING_URL_RE = re.compile(
     r"|[?&](?:status|statut)(?:%5b|\[)"    # ?status[ongoing]=…  (filtered list)
     r"|[?&]page=\d"                        # paginated index
     r"|[?&]disjunctive\."                  # faceted catalog listing
+    # A SECTION path with no call slug after it. Every pattern above needs a
+    # marker the site chose to add (/list, ?page=2); a donor whose index simply
+    # lives at /grant-opportunities has none, and that is the common shape -
+    # grandchallenges.org/grant-opportunities was stored as a single call, with
+    # the brief synthesised from the FIRST item on the index and that item's
+    # deadline, so it arrived looking like a real opportunity.
+    # Anchored to the END of the path: the noun must be the last segment, so
+    # /en/funding/supporting-stisa-2034-... (a real call beneath a section) does
+    # NOT match while /en/funding does.
+    r"|/(?:(?:grant|grants|funding|research|fellowship|award|tender|business)[-_])?"
+    r"(?:opportunities|grants|tenders|calls|solicitations|competitions)/?(?:[?#]|$)"
+    r"|/(?:funding|tenders|procurement)/?(?:[?#]|$)"
     r")",
     re.IGNORECASE,
 )
@@ -1887,6 +1999,58 @@ _LISTING_TITLE_RE = re.compile(
     r")\s*$",
     re.IGNORECASE,
 )
+
+# A page's <title> is usually "<heading> | <site name>", and the anchored regex
+# above cannot see past the tail: "Grant Opportunities" matched, "Grant
+# Opportunities | Grand Challenges" did not, so the index page was screened as a
+# call. Strip the site name before testing.
+#
+# Only on separators a site uses to append its OWN name. A COLON is excluded on
+# purpose: "Call for Proposals: Daylight Research Grant Program" would reduce to
+# "Call for Proposals", which the listing regex matches - stripping there would
+# reject genuine calls. Dashes must be spaced, so a hyphenated word survives.
+_SITE_SUFFIX_SEP = re.compile(r"\s*(?:\||»|•|::|\s[-–—]\s)\s*")
+# The tail has to look like a SITE NAME, not the rest of a headline: a few words,
+# no digits (a year or a notice number means it is still the call), and none of
+# the call vocabulary that would mean we are cutting off the subject.
+_NOT_A_SITE_NAME = re.compile(
+    r"\b(call|calls|proposal|proposals|application|applications|award|awards|"
+    r"tender|tenders|grants?|eoi|rfp|rfa|nofo|fellowship|deadline|funding)\b", re.I)
+_SITE_NAME_MAX_WORDS = 6
+
+
+def strip_site_suffix(title: str | None) -> str:
+    """`title` with a trailing site name removed, else unchanged.
+
+    Conservative by design — see _SITE_SUFFIX_SEP. Returns the input stripped of
+    whitespace when there is nothing site-name-shaped to remove.
+    """
+    t = (title or "").strip()
+    if not t:
+        return t
+    cuts = list(_SITE_SUFFIX_SEP.finditer(t))
+    if not cuts:
+        return t
+    last = cuts[-1]                      # the site name is the LAST segment
+    head, tail = t[:last.start()].strip(), t[last.end():].strip()
+    if not head or not tail:
+        return t
+    if len(tail.split()) > _SITE_NAME_MAX_WORDS:
+        return t
+    if any(ch.isdigit() for ch in tail) or _NOT_A_SITE_NAME.search(tail):
+        return t
+    return head
+
+
+def is_listing_title(title: str | None) -> bool:
+    """True when `title` is a generic calls-index heading rather than one call.
+
+    Tested on the title with any site-name suffix removed, which is the whole
+    point: real page titles carry one.
+    """
+    t = (title or "").strip()
+    return bool(_LISTING_TITLE_RE.match(t)
+                or _LISTING_TITLE_RE.match(strip_site_suffix(t)))
 
 
 # ---------------------------------------------------------------------------
@@ -2248,7 +2412,7 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
         return False, ("not-an-rfp: Coefficient Giving fund overview page "
                        "(RFPs live in a sub-page tab, not the fund landing page)")
     _t = (candidate.get("opportunity_title") or "").strip()
-    if _LISTING_TITLE_RE.match(_t):
+    if is_listing_title(_t):
         return False, "title is a generic calls-listing heading, not a single call"
     # News / press / blog page about an opportunity — not the call itself.
     if _NEWS_URL_RE.search(link) or _NEWS_TITLE_RE.match(_t):
@@ -2492,7 +2656,7 @@ def is_index_page(candidate: dict[str, Any]) -> bool:
     title = (candidate.get("opportunity_title") or "").strip()
     return bool(_SEARCH_URL_PATTERN_AS.search(link)
                 or _LISTING_URL_RE.search(link)
-                or (title and _LISTING_TITLE_RE.match(title)))
+                or (title and is_listing_title(title)))
 
 
 # ---------------------------------------------------------------------------
