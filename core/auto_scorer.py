@@ -406,11 +406,31 @@ def _bucket(label: str) -> set[str]:
 
 
 # A published applicant-country list longer than this is treated as unusable rather than
-# as a restriction. A genuine "who may apply" rule names a handful of countries; a list of
-# 130 is a WORK geography that the extractor filed under the wrong heading (the Finnish
-# scheme publishes ~130 developing markets it will fund projects IN), and rejecting on that
-# would throw away calls the org is perfectly eligible for.
-_APPLICANT_COUNTRY_MAX = 5
+# as a restriction. A list of 130 is a WORK geography that the extractor filed under the
+# wrong heading (the Finnish scheme publishes ~130 developing markets it will fund projects
+# IN), and rejecting on that would throw away calls the org is perfectly eligible for.
+#
+# THE OLD VALUE WAS 5, WHICH WAS GUESSED, AND THE DATA DISAGREES. "A genuine who-may-apply
+# rule names a handful of countries" is simply not how funders write these. Every list in
+# the live store above 5 is a real eligibility rule:
+#
+#   36  a foundation's intervention countries, where applicants must also be based
+#   16  a research network's member countries
+#   11  a US programme (states and territories)
+#    9  EU member states plus associated countries
+#    7  a regional disease-specific call
+#    6  six named European countries
+#
+# The largest genuine list is 36, and there is no 130-row in the store at all, so the cap
+# sat below the real data and silenced the gate on every one of them. The SGCI/STISA call
+# that prompted this names NINETEEN eligible countries - a rule the org plainly fails - and
+# the cap alone would have stood down on it.
+#
+# What actually protects the mis-filed case is the check below this one: any non-country
+# term in the list (a region, a tier, "EU Member States") means we cannot read it cleanly
+# and we say nothing. That guard is doing the work the number was credited with. So the cap
+# now sits above the observed data and below a continental work geography.
+_APPLICANT_COUNTRY_MAX = 60
 
 
 def applicant_country_mismatch_reject(candidate: dict[str, Any],
