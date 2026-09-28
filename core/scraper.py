@@ -66,10 +66,10 @@ def last_scan_skipped() -> int:
 # Network defaults — keep per-request timeout aggressive so the orchestrator
 # doesn't hang on slow donor sites.
 HTTP_TIMEOUT = 15
-USER_AGENT = (
-    "Mozilla/5.0 (compatible; RFPIS/1.0; "
-    f"+contact: {os.environ.get('SCRAPER_CONTACT_EMAIL', 'contact@example.org')})"
-)
+# Defined in core.http (the layer that now applies it to every request by
+# default) and re-exported here, because ~30 call sites in this module pass it
+# explicitly and a second definition could drift from the one actually sent.
+USER_AGENT = _http.USER_AGENT
 
 # Health-relevant keyword filter applied to candidate titles + descriptions.
 # Keeps generic donor listings from flooding the inbox with totally

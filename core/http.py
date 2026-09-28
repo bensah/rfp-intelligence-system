@@ -53,6 +53,30 @@ def _f(env: str, default: float) -> float:
         return default
 
 
+# THE CRAWLER'S IDENTITY, and it belongs at this layer.
+#
+# This session set no User-Agent, so every fetch that did not pass one explicitly
+# went out as `python-requests/2.x`, which a fair number of hosts refuse outright.
+# Measured, same URL, same second:
+#
+#   mesamalaria.org   default -> 403 (146 bytes)    this UA -> 200 (274,105 bytes)
+#   idrc-crdi.ca      default -> 403  (93 bytes)    this UA -> 200  (51,577 bytes)
+#
+# The damage was not a visible error. A 403 body is short, so the page "read"
+# fine, produced no deadline, no posted date and no closure text, and the gates
+# then kept the row because none of them can reject on absence of evidence. Three
+# of the nine undated Decline rows in one review week were this, and so was a call
+# whose eligible-country list was sitting unread on the page.
+#
+# Note this is the POLITE, self-identifying UA the scraper already used at its own
+# call sites - measured as sufficient here, so there is no need to pose as a
+# browser. It lives here rather than in core.scraper because scraper imports this
+# module; scraper now imports the constant back, so there is one definition.
+USER_AGENT = (
+    "Mozilla/5.0 (compatible; RFPIS/1.0; "
+    f"+contact: {os.environ.get('SCRAPER_CONTACT_EMAIL', 'contact@example.org')})"
+)
+
 # Minimum seconds between two requests to the SAME host. 0 disables throttling.
 HOST_MIN_INTERVAL = _f("RFPIS_HOST_MIN_INTERVAL", 1.0)
 # In-process GET cache lifetime, seconds. 0 disables caching.
@@ -120,6 +144,16 @@ def _make_retry():
 
 def _build_session() -> requests.Session:
     s = requests.Session()
+    # Session defaults, so EVERY call through this layer identifies itself even if
+    # the call site passes no headers. requests merges per-request headers over
+    # these, so an explicit User-Agent or Accept at a call site still wins.
+    s.headers.update({
+        "User-Agent": USER_AGENT,
+        # Some hosts key their bot-blocking on a missing Accept / Accept-Language
+        # as well; sending what any real client sends costs nothing.
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en;q=0.9",
+    })
     try:
         retry = _make_retry()
         if retry is not None:
