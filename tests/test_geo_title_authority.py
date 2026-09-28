@@ -128,11 +128,29 @@ class TheApplicantCountryRuleTests(unittest.TestCase):
         self.assertTrue(A.applicant_country_mismatch_reject(cand, POLICIES)[0])
 
     def test_a_long_list_is_treated_as_a_mis_filed_work_geography(self):
-        # A genuine "who may apply" rule names a handful of countries. 130 is a work
-        # geography under the wrong heading, and rejecting on it would lose good calls.
-        many = ["Mali", "Ghana", "Benin", "Togo", "Chad", "Niger", "Senegal", "Peru"]
+        # A list this long is a work geography under the wrong heading, and
+        # rejecting on it would lose good calls.
+        #
+        # THIS TEST USED TO ASSERT THE OPPOSITE ON EIGHT COUNTRIES, because the cap
+        # was 5 - while its own comment described the 130-country case. The live
+        # store says the number was wrong: every applicant-country list in it above
+        # 5 is a genuine eligibility rule (36, 16, 11, 9, 7, 6), and the scheme this
+        # comment is about keeps its 154-entry work geography in
+        # call_geographic_scope, a DIFFERENT column, with eligibility_countries
+        # holding just ["Finland"]. So the cap never saw the shape it was credited
+        # with catching. See _APPLICANT_COUNTRY_MAX.
+        from core import geographies as geo
+        many = list(geo.COUNTRIES[:130])
         self.assertFalse(A.applicant_country_mismatch_reject(
             _cand("Developing markets fund", eligibility_countries=many), POLICIES)[0])
+
+    def test_a_short_plain_country_list_excluding_us_IS_a_barrier(self):
+        # The corrected expectation for the case this test used to hold: eight named
+        # plain countries, none of them ours, is a legal bar we cannot argue with.
+        many = ["Mali", "Ghana", "Benin", "Togo", "Chad", "Niger", "Senegal", "Peru"]
+        rejects, why = A.applicant_country_mismatch_reject(
+            _cand("Developing markets fund", eligibility_countries=many), POLICIES)
+        self.assertTrue(rejects, why)
 
     def test_a_region_in_the_list_stands_the_rule_down(self):
         # "applicants from the Global South" is inclusive wording, not a restriction.

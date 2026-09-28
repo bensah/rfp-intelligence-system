@@ -455,6 +455,23 @@ def _countries(v: Any) -> list[str] | None:
     return out[:60] or None
 
 
+def _listed_countries(body: str | None) -> list[str] | None:
+    """Eligible countries read STRUCTURALLY off the page, or None.
+
+    A fallback for when the model does not report the field, which is the common
+    case: 1093 of the 1205 store rows carry an empty `eligibility_countries`, and
+    the SGCI/STISA call - which names nineteen of them under a COUNTRIES heading -
+    is one of them. Fills a blank only, never overrides a model answer, so the 112
+    rows that do have a value are untouched.
+    """
+    try:
+        from core.eligible_countries import extract
+        found, _label = extract(body)
+        return found or None
+    except Exception:
+        return None
+
+
 def _stages(v: Any) -> str | None:
     """The funded stages as ONE TEXT VALUE, not a list.
 
@@ -720,7 +737,8 @@ def synthesize_row(row: dict, *, html: str | None = None) -> dict:
         "what_is_funded": _lines(parsed.get("what_is_funded"), _LIMITS["what_is_funded"]),
         "what_is_not_funded": _lines(parsed.get("what_is_not_funded"),
                                      _LIMITS["what_is_not_funded"]),
-        "eligibility_countries": _countries(parsed.get("eligibility_countries")),
+        "eligibility_countries": (_countries(parsed.get("eligibility_countries"))
+                                  or _listed_countries(body)),
         "eligibility_other": _lines(parsed.get("eligibility_other"),
                                     _LIMITS["eligibility_other"]),
         "applicant_fit_profile": _text(parsed.get("applicant_fit_profile"),
