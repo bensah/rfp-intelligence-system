@@ -115,7 +115,16 @@ def _norm_url(u: str | None) -> str:
         p = urlsplit(u.strip())
         # Drop query/fragment + trailing slash; lowercase scheme/host.
         path = p.path.rstrip("/")
-        return urlunsplit((p.scheme.lower(), p.netloc.lower(), path, "", ""))
+        # …and drop the scheme and a leading "www." entirely. http vs https, and
+        # www.donor.org vs donor.org, are the same page every time, and rule 2
+        # treats an identical link as DISPOSITIVE proof of the same call - so a
+        # difference that cannot distinguish two calls must not be able to hide
+        # one. No row in the live pipeline currently differs only this way; this
+        # closes the hole rather than fixes a present symptom.
+        # The PATH keeps its case, because servers do distinguish it.
+        host = p.netloc.lower()
+        host = host[4:] if host.startswith("www.") else host
+        return urlunsplit(("", host, path, "", "")) if host else path
     except Exception:
         return u.strip().lower()
 

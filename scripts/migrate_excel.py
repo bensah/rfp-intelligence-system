@@ -49,6 +49,43 @@ def _blankish(v: Any) -> bool:
     return is_no_answer(v)
 
 
+def drop_rows_already_in_the_pipeline(
+    new_rows: Iterable[dict[str, Any]],
+    existing: Iterable[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """``(rows to insert, one report line per row skipped as a duplicate)``.
+
+    Only the two DISPOSITIVE identity rules are applied - an identical link or an
+    identical opportunity_id is proof of the same call. Title similarity is
+    deliberately NOT used: it is what merged sibling programmes and corrupted the
+    surviving row, and an import is the wrong place to take that risk.
+
+    Reports rather than merges, which is how the app-owned-field guard in
+    `migrate` already behaves. A sync must not be the moment something silently
+    changes.
+    """
+    link_to_uid: dict[str, str] = {}
+    oppid_to_uid: dict[str, str] = {}
+    for e in existing or []:
+        link = _norm_url(e.get("opportunity_link"))
+        if link:
+            link_to_uid.setdefault(link, e.get("uid") or "")
+        oppid = _norm_oppid(e.get("opportunity_id"))
+        if oppid:
+            oppid_to_uid.setdefault(oppid, e.get("uid") or "")
+    keep: list[dict[str, Any]] = []
+    dups: list[str] = []
+    for r in new_rows or []:
+        hit = (link_to_uid.get(_norm_url(r.get("opportunity_link")))
+               or oppid_to_uid.get(_norm_oppid(r.get("opportunity_id"))))
+        if hit:
+            dups.append(f"{r.get('uid')} · already in the pipeline as {hit} "
+                        f"· {(r.get('opportunity_title') or '')[:54]}")
+        else:
+            keep.append(r)
+    return keep, dups
+
+
 def _fetch_app_owned(sb, uids: list[str]) -> dict[str, dict[str, Any]]:
     """{uid: {app-owned field: stored value}} for the rows about to be updated.
 
@@ -90,6 +127,9 @@ from core.funder_names import canonical_funder  # noqa: E402
 from db.supabase_client import get_client  # noqa: E402
 from core.scorer import CRITERIA, score_submission  # noqa: E402
 from core.review_week import review_week_label  # noqa: E402
+# The SAME normalisation the scan-time deduplicator uses, so "is this the same
+# call" has one answer across every ingest path.
+from core.deduplicator import _norm_oppid, _norm_url  # noqa: E402
 
 # Repo-root *.xlsx fallback — Excel files are gitignored so this is a
 # developer-local convenience. Resolves to whichever *.xlsx happens to
@@ -708,16 +748,40 @@ def migrate(xlsx_path: Path, dry_run: bool = False,
               "new + update existing on uid (non-null cells only; blanks preserved)")
     elif sb is not None and rfp_rows:
         try:
-            _ex = sb.table("rfp_submissions").select("uid").execute().data or []
+            _ex = (sb.table("rfp_submissions")
+                   .select("uid,opportunity_link,opportunity_id").execute().data or [])
             _existing_uids = {(e.get("uid") or "") for e in _ex}
         except Exception as _e:
             print(f"  ⚠ could not read existing uids ({_e}); skipped rfp sync for safety")
-            _existing_uids = None
+            _ex, _existing_uids = [], None
         if _existing_uids is not None:
             _new = [r for r in rfp_rows
                     if r.get("uid") and r["uid"] not in _existing_uids]
             _existing = [r for r in rfp_rows
                          if r.get("uid") and r["uid"] in _existing_uids]
+
+            # THE IMPORT NEVER CONSULTED THE DEDUPLICATOR. Identity here was the
+            # uid (Form_ID) and nothing else, so a workbook row given a new
+            # Form_ID for a call that is ALREADY in the pipeline inserted a second
+            # copy - and the matcher that would have caught it was never asked.
+            #
+            # Six pairs of rows with byte-identical links sit in one tenant today,
+            # including the Pandemic Fund's own call twice, and twelve of the
+            # fifteen duplicate pairs the matcher finds came in on this path.
+            #
+            # Only the two DISPOSITIVE rules are applied: an identical link or an
+            # identical opportunity_id is proof of the same call. Title similarity
+            # is deliberately NOT used here - it is what merged sibling programmes
+            # and corrupted the surviving row, and an import is the wrong place to
+            # take that risk. Matches are reported and skipped rather than merged,
+            # which is how the app-owned-field guard below already behaves: a sync
+            # must not be the moment something silently changes.
+            _new, _dups = drop_rows_already_in_the_pipeline(_new, _ex)
+            if _dups:
+                print(f"  ⏭ SKIPPED {len(_dups)} workbook row(s) that duplicate a call "
+                      "already in the pipeline (same link or opportunity id):")
+                for _d in _dups:
+                    print(f"     · {_d}")
             for i in range(0, len(_new), 200):
                 sb.table("rfp_submissions").insert(_new[i:i + 200]).execute()
             # Update existing rows with ONLY the Excel cells that carry a value;
