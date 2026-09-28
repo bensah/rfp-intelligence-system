@@ -1499,12 +1499,38 @@ def us_domestic_only_reject(candidate: dict[str, Any], policies: dict[str, Any])
     if us_entity:
         return False, ""
     text = _full_text(candidate) + " " + (candidate.get("notes") or "")
-    if _has_inclusive_eligibility(text):
+    # BOTH ARMS READ THE SAME EVIDENCE. The state-agency check below now searches
+    # the page, and widening only the REJECT side would be worse than not widening
+    # at all: a call that says "open to applicants in any country" on its page would
+    # be dropped on the strength of a state agency named on that same page. So the
+    # inclusive-eligibility stand-down reads the page too. Caught by its own test.
+    _page = _normalize(candidate.get("_page_text") or candidate.get("raw_text") or "")
+    if _has_inclusive_eligibility(text) or _has_inclusive_eligibility(_page):
         return False, ""
     # US STATE government funder (state-level, domestic) — implied by the funder identity even
     # when no country / "domestic" phrase is stated. Search the funder name too, since it often
     # carries the state agency ("New York State Department of Health / AIDS Institute").
-    if us_state_agency_funder(text + " " + str(candidate.get("funding_agency") or "")):
+    #
+    # …AND SEARCH THE PAGE, because that is where it actually says so. This gate was
+    # added FROM the NY-State AIDS Institute leak, and the same funder leaked again:
+    # `RFP C043113 AIDS Intervention Management System`, funder "Health Research,
+    # Inc." — a pass-through research foundation whose name names no state — with an
+    # EMPTY brief. So `text` was the title plus the word "Global", and there was
+    # nothing for the pattern to match. Isolated by putting the page's own text into
+    # brief_description instead, where `_full_text` does look: the gate then returns
+    # True with the right reason. The detector was never wrong; it was never shown
+    # the page. `_full_text` is deliberately narrow for keyword gates and is the
+    # shared cause here, in closed_call_hard_reject, and in the theme gate before it.
+    #
+    # Safe to widen for THIS pattern specifically: it needs a state name adjacent to
+    # "state" and an agency word ("New York State Department of Health", "State of
+    # California ..."), which is not something a page says in passing, and the two
+    # guards above still stand down first for a US org or an explicit
+    # foreign-eligibility statement.
+    _state_text = " ".join([
+        text, str(candidate.get("funding_agency") or ""), _page,
+    ])
+    if us_state_agency_funder(_state_text):
         return True, ("funded by a US STATE government agency (state-level, domestic) — "
                       "out of scope for a non-US deployment")
     # Grants.gov is a US-FEDERAL portal. Absent an EXPLICIT foreign/international
