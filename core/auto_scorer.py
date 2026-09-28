@@ -1800,6 +1800,18 @@ _LISTING_URL_RE = re.compile(
     r"|[?&](?:status|statut)(?:%5b|\[)"    # ?status[ongoing]=…  (filtered list)
     r"|[?&]page=\d"                        # paginated index
     r"|[?&]disjunctive\."                  # faceted catalog listing
+    # A SECTION path with no call slug after it. Every pattern above needs a
+    # marker the site chose to add (/list, ?page=2); a donor whose index simply
+    # lives at /grant-opportunities has none, and that is the common shape -
+    # grandchallenges.org/grant-opportunities was stored as a single call, with
+    # the brief synthesised from the FIRST item on the index and that item's
+    # deadline, so it arrived looking like a real opportunity.
+    # Anchored to the END of the path: the noun must be the last segment, so
+    # /en/funding/supporting-stisa-2034-... (a real call beneath a section) does
+    # NOT match while /en/funding does.
+    r"|/(?:(?:grant|grants|funding|research|fellowship|award|tender|business)[-_])?"
+    r"(?:opportunities|grants|tenders|calls|solicitations|competitions)/?(?:[?#]|$)"
+    r"|/(?:funding|tenders|procurement)/?(?:[?#]|$)"
     r")",
     re.IGNORECASE,
 )
@@ -1828,6 +1840,58 @@ _LISTING_TITLE_RE = re.compile(
     r")\s*$",
     re.IGNORECASE,
 )
+
+# A page's <title> is usually "<heading> | <site name>", and the anchored regex
+# above cannot see past the tail: "Grant Opportunities" matched, "Grant
+# Opportunities | Grand Challenges" did not, so the index page was screened as a
+# call. Strip the site name before testing.
+#
+# Only on separators a site uses to append its OWN name. A COLON is excluded on
+# purpose: "Call for Proposals: Daylight Research Grant Program" would reduce to
+# "Call for Proposals", which the listing regex matches - stripping there would
+# reject genuine calls. Dashes must be spaced, so a hyphenated word survives.
+_SITE_SUFFIX_SEP = re.compile(r"\s*(?:\||»|•|::|\s[-–—]\s)\s*")
+# The tail has to look like a SITE NAME, not the rest of a headline: a few words,
+# no digits (a year or a notice number means it is still the call), and none of
+# the call vocabulary that would mean we are cutting off the subject.
+_NOT_A_SITE_NAME = re.compile(
+    r"\b(call|calls|proposal|proposals|application|applications|award|awards|"
+    r"tender|tenders|grants?|eoi|rfp|rfa|nofo|fellowship|deadline|funding)\b", re.I)
+_SITE_NAME_MAX_WORDS = 6
+
+
+def strip_site_suffix(title: str | None) -> str:
+    """`title` with a trailing site name removed, else unchanged.
+
+    Conservative by design — see _SITE_SUFFIX_SEP. Returns the input stripped of
+    whitespace when there is nothing site-name-shaped to remove.
+    """
+    t = (title or "").strip()
+    if not t:
+        return t
+    cuts = list(_SITE_SUFFIX_SEP.finditer(t))
+    if not cuts:
+        return t
+    last = cuts[-1]                      # the site name is the LAST segment
+    head, tail = t[:last.start()].strip(), t[last.end():].strip()
+    if not head or not tail:
+        return t
+    if len(tail.split()) > _SITE_NAME_MAX_WORDS:
+        return t
+    if any(ch.isdigit() for ch in tail) or _NOT_A_SITE_NAME.search(tail):
+        return t
+    return head
+
+
+def is_listing_title(title: str | None) -> bool:
+    """True when `title` is a generic calls-index heading rather than one call.
+
+    Tested on the title with any site-name suffix removed, which is the whole
+    point: real page titles carry one.
+    """
+    t = (title or "").strip()
+    return bool(_LISTING_TITLE_RE.match(t)
+                or _LISTING_TITLE_RE.match(strip_site_suffix(t)))
 
 
 # ---------------------------------------------------------------------------
@@ -2189,7 +2253,7 @@ def is_eligible(candidate: dict[str, Any], policies: dict[str, Any],
         return False, ("not-an-rfp: Coefficient Giving fund overview page "
                        "(RFPs live in a sub-page tab, not the fund landing page)")
     _t = (candidate.get("opportunity_title") or "").strip()
-    if _LISTING_TITLE_RE.match(_t):
+    if is_listing_title(_t):
         return False, "title is a generic calls-listing heading, not a single call"
     # News / press / blog page about an opportunity — not the call itself.
     if _NEWS_URL_RE.search(link) or _NEWS_TITLE_RE.match(_t):
@@ -2433,7 +2497,7 @@ def is_index_page(candidate: dict[str, Any]) -> bool:
     title = (candidate.get("opportunity_title") or "").strip()
     return bool(_SEARCH_URL_PATTERN_AS.search(link)
                 or _LISTING_URL_RE.search(link)
-                or (title and _LISTING_TITLE_RE.match(title)))
+                or (title and is_listing_title(title)))
 
 
 # ---------------------------------------------------------------------------

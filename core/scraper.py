@@ -3371,10 +3371,15 @@ def _self_candidate(name: str, url: str, html_text: str) -> dict[str, Any] | Non
     except Exception:
         pass
     # Strip the site-name suffix that titles carry ("Apply | The Audacious Project").
-    for sep in (" | ", " – ", " — ", " - "):
-        if sep in title:
-            title = title.split(sep)[0].strip()
-            break
+    # Shares auto_scorer's helper rather than keeping a second rule here, for the same
+    # reason the import above does. The local version split on the FIRST separator and
+    # did it unconditionally, so "Grand Challenges India 2026 | Call for Proposals" lost
+    # its subject and became "Grand Challenges India 2026".
+    try:
+        from core.auto_scorer import strip_site_suffix
+        title = strip_site_suffix(title)
+    except Exception:
+        pass
     # A page whose <title> is just "Apply" or "Grants" names the nav item, not the call, and
     # a reviewer scanning a week's list cannot tell what it is. Prefer the h1 when it says
     # more; otherwise qualify the bare word with the funder.
