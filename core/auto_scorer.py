@@ -1314,6 +1314,35 @@ _SOFT_CLOSED_RE = re.compile(
 )
 
 
+# "closed" starting a COMPOUND ADJECTIVE is not a status: "closed-loop systems",
+# "closed-circuit diagnostics", "closed-ended fund", "closed-door session". `\b`
+# treats the hyphen as a boundary, so `fund|call|window ... closed\b` happily
+# matched "We fund closed-loop water systems".
+#
+# This was latent while the detector only ever saw ~1000 characters of
+# synthesised summary. Letting it read whole pages makes it real, so it is fixed
+# here rather than shipped as a new source of false rejects - which is the exact
+# thing this change exists to reduce.
+_HYPHENATED_CLOSED = re.compile(r"-\w")
+
+
+def _closure_match(text: str):
+    """First GENUINE closure-phrase match in `text`, or None.
+
+    Skips a match whose trailing "closed" is really the head of a compound
+    adjective, and keeps scanning - one "closed-loop" early in a page must not
+    hide a real "no longer accepting applications" further down.
+    """
+    if not text:
+        return None
+    for m in _CLOSURE_PHRASE_RE.finditer(text):
+        if m.group(0).rstrip().lower().endswith("closed") \
+                and _HYPHENATED_CLOSED.match(text[m.end():m.end() + 2]):
+            continue
+        return m
+    return None
+
+
 def _max_deadline_future(candidate: dict[str, Any]) -> bool:
     """True when the candidate's EFFECTIVE (latest) submission deadline is today or later.
     call_submission_deadline already holds the MAX/stage-2 date for two-stage EU topics
@@ -1352,15 +1381,40 @@ def closed_call_hard_reject(candidate: dict[str, Any]) -> tuple[bool, str]:
         if _future:
             return False, ""       # two-stage: portal-Closed but a later deadline is still open
         return True, "portal status: closed"
-    text = _full_text(candidate)
-    m = _CLOSURE_PHRASE_RE.search(text)
+    # THE DETECTOR HAD NEVER READ THE PAGE. `_full_text` is title + brief + scope +
+    # funder, so this searched ~1000 characters of synthesised summary while the
+    # closure notice sat in the page body, which is where donors put it. Proven on
+    # the MalariaGEN procurement grant: its page says BOTH "now closed" and "no
+    # longer accepting applications", and with `_page_text` populated this function
+    # still returned (False, '') - because it was not looking there.
+    #
+    # Reading the page is safe HERE in a way it was not for the theme gate (see
+    # theme_eligible's page-text rescue, which had to route through the judge). The
+    # required-theme list contains bare words like "health", so a long page matches
+    # incidentally; these phrases are whole clauses that only appear when someone
+    # means them.
+    #
+    # The one real risk is a page that advertises an OPEN round while recounting a
+    # closed one. So a match found ONLY in the page body is overridden by a still-
+    # future deadline whatever its strength, while a match in the narrow fields keeps
+    # today's behaviour exactly - strong prose there rejects regardless of date. A
+    # page with closure wording and NO future deadline is the leak, and it rejects.
+    narrow = _full_text(candidate)
+    m = _closure_match(narrow)
+    page_only = False
+    if not m:
+        page = _normalize(candidate.get("_page_text")
+                          or candidate.get("raw_text") or "")
+        m = _closure_match(page)
+        page_only = bool(m)
     if m:
         # A future deadline overrides a SOFT status-word match (badge/shorthand), but never
         # the strong "the opportunity is over" phrases.
-        if _future and _SOFT_CLOSED_RE.match(m.group(0).strip()):
+        if _future and (page_only or _SOFT_CLOSED_RE.match(m.group(0).strip())):
             return False, ""
         # Trim the match to keep the reason line compact in scan_logs.
-        return True, f"call explicitly closed: {m.group(0)!r}"
+        where = "on the page" if page_only else "in the summary"
+        return True, f"call explicitly closed ({where}): {m.group(0)!r}"
     return False, ""
 
 
